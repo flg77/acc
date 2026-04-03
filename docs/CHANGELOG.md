@@ -11,6 +11,38 @@ Versioning scheme: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.0.0] — 2026-04-03
+
+### Added — Phase 1a Implementation (commit [1])
+- **`pyproject.toml`** — full dependency matrix; `acc-agent` entry-point script
+- **`acc-config.yaml`** + **`.env.example`** — standalone solarSys defaults; 15 env-var overrides documented
+- **`acc/__init__.py`** — package marker; `__version__ = "0.1.0"`
+- **`acc/backends/__init__.py`** — four PEP-544 Protocol interfaces: `SignalingBackend`, `VectorBackend`, `LLMBackend`, `MetricsBackend`; `BackendConnectionError`, `LLMCallError` with `retryable` attribute
+- **`acc/config.py`** — `ACCConfig` Pydantic v2 model with RHOAI cross-field validation; `load_config()` with YAML + env overlay; `build_backends()` factory isolating all mode-switching logic; `BackendBundle` dataclass
+- **9 concrete backend implementations:**
+  - `signaling_nats.py` — NATS async pub/sub; MessagePack on wire
+  - `vector_lancedb.py` — LanceDB embedded; 4 standard tables auto-created; cosine search; `exist_ok=True` idempotency
+  - `vector_milvus.py` — MilvusClient; prefixed collection names; cosine ANNS
+  - `llm_ollama.py` — Ollama REST `/api/chat` + `/api/embeddings`; `format: "json"` when schema provided
+  - `llm_anthropic.py` — Anthropic SDK; local sentence-transformers embedding fallback
+  - `llm_vllm.py` — vLLM KServe OpenAI-compatible `/v1/chat/completions` + `/v1/embeddings`
+  - `llm_llama_stack.py` — Llama Stack `/inference/chat-completion`; local embedding fallback
+  - `metrics_log.py` — JSON-line stdout; zero external dependencies
+  - `metrics_otel.py` — OpenTelemetry SDK; OTLP gRPC export; lazy gauge registry
+- **`acc/agent.py`** — minimal agent lifecycle: `REGISTERING → ACTIVE → DRAINING`; do-while heartbeat loop (guaranteed first emission); SIGINT/SIGTERM handler
+- **`deploy/Containerfile.agent-core`** — UBI10/python-312 base; UID 1001; `all-MiniLM-L6-v2` baked in at build time; OCP restricted-SCC compatible
+- **`deploy/podman-compose.yml`** — solarSys standalone: 3 ACC agents (ingester, analyst, arbiter) + NATS JetStream + Redis; health-check gated `depends_on`
+- **`openspec/`** — proposal, design, tasks, specs for Phase 1a (28 tasks tracked)
+- **`tests/`** — 79 tests across 7 modules; 92.2% line coverage (threshold 80%); all infrastructure mocked except LanceDB (real tmp_path instance per REQ-TST-002)
+
+### Design Decisions
+- `build_backends()` is the **only** place deploy-mode branching occurs; all other modules are mode-agnostic
+- LanceDB `exist_ok=True` preferred over pre-flight `list_tables()` check for API stability
+- Heartbeat loop is do-while: emits once before checking stop event — guarantees one ACTIVE heartbeat on graceful shutdown
+- SSH to solarSys uses `~/.ssh/id_rsa` (passphrase-free); `id_ed25519` requires a passphrase and is not used in CI
+
+---
+
 ## [0.2.0] — 2026-04-03
 
 ### Added — RHOAI 3 Integration Evaluation
