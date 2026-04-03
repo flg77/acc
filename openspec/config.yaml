@@ -1,0 +1,25 @@
+project: agentic-cell-corpus
+description: Biologically-inspired distributed AI agent governance framework (Levin / ACC)
+language: python
+version: 0.2.0
+default_branch: master
+
+conventions:
+  branch_format: "<type>/ACC-<id>-<short-description>"
+  commit_format: "[N] <type>(<scope>): <summary>"
+  semver: true
+  ubi_images: true         # All containers use RHEL UBI base images
+  container_runtime: podman
+  orchestration: [podman, kubernetes, openshift]
+
+applied_changes: []
+active_changes:
+  - 20260403-phase1a-backend-abstraction
+
+test_environment:
+  host: solarSys
+  ip: 10.199.12.10
+  user: microcosm
+  ssh_key: ~/.ssh/id_ed25519
+  runtime: podman          # solarSys uses Podman (no full k8s)
+  compose_tool: podman-compose
