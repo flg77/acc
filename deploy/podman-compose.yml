@@ -1,0 +1,113 @@
+# ACC solarSys standalone deployment
+# Run with: podman-compose up -d
+# Requires: podman-compose >= 1.0.6
+version: "3.9"
+
+networks:
+  acc-net:
+    driver: bridge
+
+volumes:
+  lancedb-data:
+  redis-data:
+
+services:
+
+  # ── NATS JetStream ────────────────────────────────────────────────────
+  # NATS Inc. does not publish UBI images; nats:alpine is acceptable for
+  # the internal signaling bus (not internet-facing)
+  nats:
+    image: nats:2.10-alpine
+    container_name: acc-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"   # client
+      - "8222:8222"   # monitoring
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (working memory) ────────────────────────────────────────────
+  acc-redis:
+    image: registry.access.redhat.com/ubi8/redis-6:latest
+    container_name: acc-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/var/lib/redis/data
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Agent: Ingester ───────────────────────────────────────────────────
+  acc-agent-ingester:
+    image: localhost/acc-agent-core:0.1.0
+    container_name: acc-agent-ingester
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    environment:
+      ACC_AGENT_ROLE: ingester
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb
+    volumes:
+      - lancedb-data:/app/data/lancedb
+      - ./acc-config.yaml:/app/acc-config.yaml:ro
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  # ── Agent: Analyst ────────────────────────────────────────────────────
+  acc-agent-analyst:
+    image: localhost/acc-agent-core:0.1.0
+    container_name: acc-agent-analyst
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    environment:
+      ACC_AGENT_ROLE: analyst
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb
+    volumes:
+      - lancedb-data:/app/data/lancedb
+      - ./acc-config.yaml:/app/acc-config.yaml:ro
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  # ── Agent: Arbiter ────────────────────────────────────────────────────
+  acc-agent-arbiter:
+    image: localhost/acc-agent-core:0.1.0
+    container_name: acc-agent-arbiter
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    environment:
+      ACC_AGENT_ROLE: arbiter
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb
+    volumes:
+      - lancedb-data:/app/data/lancedb
+      - ./acc-config.yaml:/app/acc-config.yaml:ro
+    networks:
+      - acc-net
+    restart: unless-stopped

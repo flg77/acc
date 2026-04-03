@@ -1,0 +1,35 @@
+# ACC Configuration — Standalone (solarSys / Podman) defaults
+# Override individual fields with environment variables (see .env.example)
+
+deploy_mode: standalone   # standalone | rhoai
+
+agent:
+  role: ingester           # ingester | analyst | arbiter
+  collective_id: sol-01
+  heartbeat_interval_s: 30
+
+signaling:
+  backend: nats
+  nats_url: nats://localhost:4222
+
+vector_db:
+  backend: lancedb
+  lancedb_path: /app/data/lancedb
+  # RHOAI overrides (ignored in standalone mode)
+  milvus_uri: ""
+  milvus_collection_prefix: acc_
+
+llm:
+  backend: ollama          # ollama | anthropic | vllm | llama_stack
+  ollama_base_url: http://localhost:11434
+  ollama_model: llama3.2:3b
+  anthropic_model: claude-sonnet-4-6
+  vllm_inference_url: ""
+  llama_stack_url: ""
+  embedding_model: all-MiniLM-L6-v2
+  embedding_model_path: /app/models/all-MiniLM-L6-v2
+
+observability:
+  backend: log             # log | otel
+  otel_service_name: acc-agent
+  # OTEL_EXPORTER_OTLP_ENDPOINT from env when backend=otel

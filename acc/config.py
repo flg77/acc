@@ -1,0 +1,252 @@
+"""
+ACC Configuration loader and backend factory.
+
+Flow:
+    1. ``load_config()`` reads ``acc-config.yaml``, overlays env vars, and
+       validates with Pydantic.
+    2. ``build_backends()`` inspects ``config.deploy_mode`` and instantiates
+       exactly the concrete backend classes for that mode, returning a
+       ``BackendBundle``.
+
+No if/else branching for deploy_mode exists outside this module.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, Field, model_validator
+
+from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBackend
+
+# ---------------------------------------------------------------------------
+# Pydantic config model
+# ---------------------------------------------------------------------------
+
+DeployMode = Literal["standalone", "rhoai"]
+AgentRole = Literal["ingester", "analyst", "arbiter"]
+LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack"]
+MetricsBackendChoice = Literal["log", "otel"]
+VectorBackendChoice = Literal["lancedb", "milvus"]
+SignalingBackendChoice = Literal["nats"]
+
+
+class AgentConfig(BaseModel):
+    role: AgentRole = "ingester"
+    collective_id: str = "sol-01"
+    heartbeat_interval_s: int = 30
+
+
+class SignalingConfig(BaseModel):
+    backend: SignalingBackendChoice = "nats"
+    nats_url: str = "nats://localhost:4222"
+
+
+class VectorConfig(BaseModel):
+    backend: VectorBackendChoice = "lancedb"
+    lancedb_path: str = "/app/data/lancedb"
+    milvus_uri: str = ""
+    milvus_collection_prefix: str = "acc_"
+
+
+class LLMConfig(BaseModel):
+    backend: LLMBackendChoice = "ollama"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2:3b"
+    anthropic_model: str = "claude-sonnet-4-6"
+    vllm_inference_url: str = ""
+    llama_stack_url: str = ""
+    embedding_model: str = "all-MiniLM-L6-v2"
+    embedding_model_path: str = "/app/models/all-MiniLM-L6-v2"
+
+
+class ObservabilityConfig(BaseModel):
+    backend: MetricsBackendChoice = "log"
+    otel_service_name: str = "acc-agent"
+
+
+class ACCConfig(BaseModel):
+    deploy_mode: DeployMode = "standalone"
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    signaling: SignalingConfig = Field(default_factory=SignalingConfig)
+    vector_db: VectorConfig = Field(default_factory=VectorConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+
+    @model_validator(mode="after")
+    def _validate_rhoai_fields(self) -> "ACCConfig":
+        if self.deploy_mode == "rhoai":
+            if not self.vector_db.milvus_uri:
+                raise ValueError("vector_db.milvus_uri is required in rhoai deploy_mode")
+            if not self.llm.vllm_inference_url and not self.llm.llama_stack_url:
+                raise ValueError(
+                    "llm.vllm_inference_url or llm.llama_stack_url is required in rhoai deploy_mode"
+                )
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Environment variable overlay
+# ---------------------------------------------------------------------------
+
+_ENV_MAP: dict[str, tuple[str, ...]] = {
+    "ACC_DEPLOY_MODE":              ("deploy_mode",),
+    "ACC_AGENT_ROLE":               ("agent", "role"),
+    "ACC_COLLECTIVE_ID":            ("agent", "collective_id"),
+    "ACC_NATS_URL":                 ("signaling", "nats_url"),
+    "ACC_LANCEDB_PATH":             ("vector_db", "lancedb_path"),
+    "ACC_MILVUS_URI":               ("vector_db", "milvus_uri"),
+    "ACC_MILVUS_COLLECTION_PREFIX": ("vector_db", "milvus_collection_prefix"),
+    "ACC_LLM_BACKEND":              ("llm", "backend"),
+    "ACC_OLLAMA_BASE_URL":          ("llm", "ollama_base_url"),
+    "ACC_OLLAMA_MODEL":             ("llm", "ollama_model"),
+    "ACC_ANTHROPIC_MODEL":          ("llm", "anthropic_model"),
+    "ACC_VLLM_INFERENCE_URL":       ("llm", "vllm_inference_url"),
+    "ACC_LLAMA_STACK_URL":          ("llm", "llama_stack_url"),
+    "ACC_METRICS_BACKEND":          ("observability", "backend"),
+    "ACC_OTEL_SERVICE_NAME":        ("observability", "otel_service_name"),
+}
+
+
+def _apply_env(data: dict) -> dict:
+    """Overlay environment variables onto a config dict."""
+    for env_var, path in _ENV_MAP.items():
+        value = os.environ.get(env_var)
+        if value is None:
+            continue
+        node = data
+        for key in path[:-1]:
+            node = node.setdefault(key, {})
+        node[path[-1]] = value
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def load_config(path: str | Path = "acc-config.yaml") -> ACCConfig:
+    """Load and validate ACC configuration.
+
+    Args:
+        path: Path to the YAML config file.  Defaults to ``acc-config.yaml``
+              in the current working directory.
+
+    Returns:
+        Validated :class:`ACCConfig` instance.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+        pydantic.ValidationError: If validation fails for the selected deploy_mode.
+    """
+    config_path = Path(path)
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path.resolve()}")
+
+    with config_path.open() as fh:
+        raw: dict = yaml.safe_load(fh) or {}
+
+    raw = _apply_env(raw)
+    return ACCConfig.model_validate(raw)
+
+
+# ---------------------------------------------------------------------------
+# Backend bundle + factory
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BackendBundle:
+    """Container for all resolved backend instances."""
+
+    signaling: SignalingBackend
+    vector: VectorBackend
+    llm: LLMBackend
+    metrics: MetricsBackend
+
+
+def build_backends(config: ACCConfig) -> BackendBundle:
+    """Instantiate concrete backends from *config*.
+
+    The selection logic is entirely here; all other modules receive the
+    ``BackendBundle`` and are agnostic to the underlying implementation.
+
+    Args:
+        config: Validated :class:`ACCConfig`.
+
+    Returns:
+        :class:`BackendBundle` with all four backends instantiated.
+    """
+    # --- Signaling ---
+    signaling: SignalingBackend
+    if config.signaling.backend == "nats":
+        from acc.backends.signaling_nats import NATSBackend
+        signaling = NATSBackend(config.signaling.nats_url)
+    else:
+        raise ValueError(f"Unknown signaling backend: {config.signaling.backend}")
+
+    # --- Vector ---
+    vector: VectorBackend
+    if config.vector_db.backend == "lancedb":
+        from acc.backends.vector_lancedb import LanceDBBackend
+        vector = LanceDBBackend(config.vector_db.lancedb_path)
+    elif config.vector_db.backend == "milvus":
+        from acc.backends.vector_milvus import MilvusBackend
+        vector = MilvusBackend(
+            uri=config.vector_db.milvus_uri,
+            collection_prefix=config.vector_db.milvus_collection_prefix,
+        )
+    else:
+        raise ValueError(f"Unknown vector backend: {config.vector_db.backend}")
+
+    # --- LLM ---
+    llm: LLMBackend
+    if config.llm.backend == "ollama":
+        from acc.backends.llm_ollama import OllamaBackend
+        llm = OllamaBackend(
+            base_url=config.llm.ollama_base_url,
+            model=config.llm.ollama_model,
+        )
+    elif config.llm.backend == "anthropic":
+        from acc.backends.llm_anthropic import AnthropicBackend
+        llm = AnthropicBackend(
+            model=config.llm.anthropic_model,
+            embedding_model_path=config.llm.embedding_model_path,
+        )
+    elif config.llm.backend == "vllm":
+        from acc.backends.llm_vllm import VLLMBackend
+        llm = VLLMBackend(
+            inference_url=config.llm.vllm_inference_url,
+            model=config.llm.ollama_model,
+        )
+    elif config.llm.backend == "llama_stack":
+        from acc.backends.llm_llama_stack import LlamaStackBackend
+        llm = LlamaStackBackend(
+            base_url=config.llm.llama_stack_url,
+            embedding_model_path=config.llm.embedding_model_path,
+        )
+    else:
+        raise ValueError(f"Unknown LLM backend: {config.llm.backend}")
+
+    # --- Metrics ---
+    metrics: MetricsBackend
+    if config.observability.backend == "log":
+        from acc.backends.metrics_log import LogMetricsBackend
+        metrics = LogMetricsBackend()
+    elif config.observability.backend == "otel":
+        from acc.backends.metrics_otel import OTelMetricsBackend
+        metrics = OTelMetricsBackend(service_name=config.observability.otel_service_name)
+    else:
+        raise ValueError(f"Unknown metrics backend: {config.observability.backend}")
+
+    return BackendBundle(
+        signaling=signaling,
+        vector=vector,
+        llm=llm,
+        metrics=metrics,
+    )
