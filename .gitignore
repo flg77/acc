@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.*
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.pdf
+docs/__pycache__/
+.lancedb/
+data/
+*.wasm

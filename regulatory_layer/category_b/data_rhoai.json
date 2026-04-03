@@ -1,0 +1,21 @@
+{
+  "setpoints": {
+    "max_drift_score": 0.35,
+    "min_health_for_sync": 0.70,
+    "heartbeat_interval_s": 30,
+    "max_task_queue_depth": 10,
+    "memory_sync_batch_size": 50,
+    "icl_confidence_threshold": 0.80,
+    "max_llm_calls_per_minute": 20,
+    "max_task_duration_ms": {
+      "ingester": 300000,
+      "analyst": 600000,
+      "synthesizer": 900000
+    },
+    "min_quorum_agents": 2,
+    "max_gpu_hours_per_day": 24
+  },
+  "constitutional": {
+    "max_generation": 10
+  }
+}
