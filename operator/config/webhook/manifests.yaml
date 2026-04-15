@@ -1,0 +1,52 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: acc-operator-mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: acc-operator-webhook-service
+      namespace: system
+      path: /mutate-acc-redhat-io-v1alpha1-agentcorpus
+  failurePolicy: Fail
+  name: magentcorpus.kb.io
+  rules:
+  - apiGroups:
+    - acc.redhat.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - agentcorpora
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: acc-operator-validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: acc-operator-webhook-service
+      namespace: system
+      path: /validate-acc-redhat-io-v1alpha1-agentcorpus
+  failurePolicy: Fail
+  name: vagentcorpus.kb.io
+  rules:
+  - apiGroups:
+    - acc.redhat.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - agentcorpora
+  sideEffects: None

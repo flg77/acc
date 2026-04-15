@@ -1,0 +1,305 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: |-
+      [
+        {
+          "apiVersion": "acc.redhat.io/v1alpha1",
+          "kind": "AgentCorpus",
+          "metadata": {
+            "name": "sol-corpus",
+            "namespace": "acc-system"
+          },
+          "spec": {
+            "deployMode": "standalone",
+            "version": "0.1.0",
+            "collectives": [{"name": "sol-01"}],
+            "infrastructure": {
+              "nats": {"version": "2.10", "replicas": 1, "storageSize": "2Gi"},
+              "redis": {"version": "6", "replicas": 1, "storageSize": "1Gi"}
+            },
+            "governance": {
+              "categoryA": {"wasmConfigMapRef": "acc-cat-a-wasm"},
+              "categoryB": {"pollIntervalSeconds": 30},
+              "gatekeeperIntegration": false
+            },
+            "observability": {"backend": "log", "prometheusRules": true},
+            "upgradePolicy": {"mode": "auto"}
+          }
+        },
+        {
+          "apiVersion": "acc.redhat.io/v1alpha1",
+          "kind": "AgentCollective",
+          "metadata": {
+            "name": "sol-01",
+            "namespace": "acc-system"
+          },
+          "spec": {
+            "collectiveId": "sol-01",
+            "corpusRef": {"name": "sol-corpus"},
+            "agents": [
+              {"role": "ingester", "replicas": 2},
+              {"role": "analyst", "replicas": 2},
+              {"role": "synthesizer", "replicas": 1},
+              {"role": "arbiter", "replicas": 1},
+              {"role": "observer", "replicas": 1}
+            ],
+            "llm": {
+              "backend": "ollama",
+              "ollama": {"baseUrl": "http://ollama:11434", "model": "llama3.2:3b"}
+            }
+          }
+        }
+      ]
+    capabilities: Seamless Upgrades
+    categories: AI/Machine Learning, Integration & Delivery
+    containerImage: registry.access.redhat.com/acc-operator:0.1.0
+    createdAt: "2026-04-15T00:00:00Z"
+    description: >-
+      The Agentic Cell Corpus (ACC) Operator installs and manages the ACC
+      multi-agent governance framework on OpenShift 4.14+ and Kubernetes 1.27+.
+      Inspired by biological cell architecture, ACC provides a homeostatic
+      three-tier governance system (WASM, OPA bundle, ICL-signed) for
+      coordinated AI agent collectives.
+    operators.operatorframework.io/builder: operator-sdk-v1.34.0
+    operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
+    support: Red Hat AI Dev
+  name: acc-operator.v0.1.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - description: >-
+        AgentCorpus is the primary resource representing a full ACC deployment.
+        It configures the shared infrastructure (NATS, Redis, governance) and
+        references the AgentCollective resources it manages.
+      displayName: Agent Corpus
+      kind: AgentCorpus
+      name: agentcorpora.acc.redhat.io
+      version: v1alpha1
+    - description: >-
+        AgentCollective represents a single collective of ACC agents within an
+        AgentCorpus. Each collective has its own LLM backend, agent role
+        deployments, and optional KEDA-based autoscaling.
+      displayName: Agent Collective
+      kind: AgentCollective
+      name: agentcollectives.acc.redhat.io
+      version: v1alpha1
+  description: |
+    ## Overview
+
+    The **Agentic Cell Corpus (ACC) Operator** manages a biologically-inspired
+    multi-agent AI governance framework on OpenShift and Kubernetes.
+
+    ### Features
+
+    - **Three-tier governance**: Category A (immutable WASM), Category B
+      (live-updatable OPA bundles), Category C (arbiter-signed ICL rules)
+    - **NATS JetStream** signal bus with persistent storage
+    - **Redis** working memory, **LanceDB** (standalone) or **Milvus** (RHOAI)
+      vector storage
+    - **KEDA autoscaling** per agent role (optional)
+    - **KServe InferenceService** for vLLM / Llama Stack backends (RHOAI mode)
+    - **OTel + Prometheus** observability
+    - **Upgrade approval gate** for infrastructure version changes
+    - **OLM Level 3** — Seamless Upgrades with rolling deployments
+
+    ### Prerequisites (optional — graceful degradation when absent)
+
+    - OPA Gatekeeper (for ConstraintTemplate-based admission control)
+    - KEDA (for NATS consumer lag autoscaling)
+    - RHOAI / OpenShift AI (for vllm/llama_stack LLM backends)
+    - Kafka (for NATS→Kafka audit bridge)
+    - Prometheus Operator (for PrometheusRule CRs)
+
+    ### Quick Start
+
+    ```yaml
+    kubectl apply -f - <<EOF
+    apiVersion: acc.redhat.io/v1alpha1
+    kind: AgentCorpus
+    metadata:
+      name: my-corpus
+    spec:
+      deployMode: standalone
+      collectives:
+        - name: my-collective
+      governance:
+        categoryA:
+          wasmConfigMapRef: acc-cat-a-wasm
+    EOF
+    ```
+
+  displayName: Agentic Cell Corpus Operator
+  icon:
+  - base64data: ""
+    mediatype: image/svg+xml
+  install:
+    spec:
+      clusterPermissions:
+      - rules:
+        - apiGroups: ["acc.redhat.io"]
+          resources: ["agentcorpora", "agentcollectives"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["acc.redhat.io"]
+          resources: ["agentcorpora/status", "agentcollectives/status"]
+          verbs: ["get", "update", "patch"]
+        - apiGroups: ["acc.redhat.io"]
+          resources: ["agentcorpora/finalizers", "agentcollectives/finalizers"]
+          verbs: ["update"]
+        - apiGroups: ["apps"]
+          resources: ["deployments", "statefulsets"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: [""]
+          resources: ["services", "configmaps", "persistentvolumeclaims", "events"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: [""]
+          resources: ["secrets"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: ["templates.gatekeeper.sh"]
+          resources: ["constrainttemplates"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["keda.sh"]
+          resources: ["scaledobjects"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["serving.kserve.io"]
+          resources: ["inferenceservices"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["monitoring.coreos.com"]
+          resources: ["prometheusrules"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        serviceAccountName: acc-operator-controller-manager
+      deployments:
+      - label:
+          app.kubernetes.io/component: manager
+          app.kubernetes.io/created-by: acc-operator
+          app.kubernetes.io/instance: controller-manager
+          app.kubernetes.io/managed-by: kustomize
+          app.kubernetes.io/name: deployment
+          app.kubernetes.io/part-of: acc-operator
+          control-plane: controller-manager
+        name: acc-operator-controller-manager
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              control-plane: controller-manager
+          template:
+            metadata:
+              labels:
+                control-plane: controller-manager
+            spec:
+              containers:
+              - args:
+                - --leader-elect
+                - --health-probe-bind-address=:8081
+                - --metrics-bind-address=:8080
+                command:
+                - /manager
+                image: registry.access.redhat.com/acc-operator:0.1.0
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8081
+                  initialDelaySeconds: 15
+                  periodSeconds: 20
+                name: manager
+                readinessProbe:
+                  httpGet:
+                    path: /readyz
+                    port: 8081
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                resources:
+                  limits:
+                    cpu: 500m
+                    memory: 256Mi
+                  requests:
+                    cpu: 10m
+                    memory: 64Mi
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop:
+                    - ALL
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 65532
+              serviceAccountName: acc-operator-controller-manager
+              terminationGracePeriodSeconds: 10
+    strategy: deployment
+  installModes:
+  - supported: true
+    type: OwnNamespace
+  - supported: true
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: false
+    type: AllNamespaces
+  keywords:
+  - ai
+  - agents
+  - multi-agent
+  - governance
+  - openshift
+  - llm
+  - nats
+  links:
+  - name: ACC Operator Documentation
+    url: https://github.com/redhat-ai-dev/agentic-cell-corpus
+  maintainers:
+  - email: acc-dev@redhat.com
+    name: Red Hat AI Dev
+  maturity: alpha
+  minKubeVersion: 1.27.0
+  provider:
+    name: Red Hat
+    url: https://www.redhat.com
+  relatedImages:
+  - image: registry.access.redhat.com/acc-operator:0.1.0
+    name: manager
+  version: 0.1.0
+  webhookdefinitions:
+  - admissionReviewVersions:
+    - v1
+    containerPort: 443
+    deploymentName: acc-operator-controller-manager
+    failurePolicy: Fail
+    generateName: magentcorpus.kb.io
+    rules:
+    - apiGroups:
+      - acc.redhat.io
+      apiVersions:
+      - v1alpha1
+      operations:
+      - CREATE
+      - UPDATE
+      resources:
+      - agentcorpora
+    sideEffects: None
+    targetPort: 9443
+    type: MutatingAdmissionWebhook
+    webhookPath: /mutate-acc-redhat-io-v1alpha1-agentcorpus
+  - admissionReviewVersions:
+    - v1
+    containerPort: 443
+    deploymentName: acc-operator-controller-manager
+    failurePolicy: Fail
+    generateName: vagentcorpus.kb.io
+    rules:
+    - apiGroups:
+      - acc.redhat.io
+      apiVersions:
+      - v1alpha1
+      operations:
+      - CREATE
+      - UPDATE
+      resources:
+      - agentcorpora
+    sideEffects: None
+    targetPort: 9443
+    type: ValidatingAdmissionWebhook
+    webhookPath: /validate-acc-redhat-io-v1alpha1-agentcorpus

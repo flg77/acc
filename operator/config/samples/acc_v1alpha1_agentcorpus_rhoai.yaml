@@ -1,0 +1,105 @@
+---
+# Sample AgentCorpus — rhoai mode (OpenShift AI / datacenter).
+# Uses NATS + Redis + Milvus + KServe vllm backend.
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCorpus
+metadata:
+  name: rhoai-corpus
+  namespace: acc-system
+spec:
+  deployMode: rhoai
+  version: "0.1.0"
+  imageRegistry: registry.access.redhat.com
+
+  collectives:
+    - name: rhoai-collective-01
+
+  infrastructure:
+    nats:
+      version: "2.10"
+      replicas: 3
+      storageSize: 10Gi
+    redis:
+      version: "6"
+      replicas: 3
+      storageSize: 5Gi
+    milvus:
+      uri: "http://milvus.milvus-system.svc.cluster.local:19530"
+      collectionPrefix: "acc_"
+
+  governance:
+    categoryA:
+      wasmConfigMapRef: acc-cat-a-wasm
+    categoryB:
+      pollIntervalSeconds: 30
+      bundlePVCSize: 1Gi
+    categoryC:
+      confidenceThreshold: "0.80"
+      maxRulesPerCollective: 200
+    gatekeeperIntegration: true
+
+  kafka:
+    bootstrapServers: "kafka-bootstrap.kafka-system.svc.cluster.local:9092"
+    auditTopic: "acc.audit.all"
+    signalTopicsPrefix: "acc.signals"
+
+  observability:
+    backend: otel
+    otelCollector:
+      endpoint: "https://otel-collector.observability.svc.cluster.local:4317"
+    prometheusRules: true
+
+  upgradePolicy:
+    mode: manual
+    requireApproval: true
+    minKafkaVersion: "3.6"
+---
+# Sample AgentCollective for rhoai-corpus (vllm LLM backend via KServe).
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCollective
+metadata:
+  name: rhoai-collective-01
+  namespace: acc-system
+spec:
+  collectiveId: rhoai-01
+  corpusRef:
+    name: rhoai-corpus
+  heartbeatIntervalSeconds: 15
+  agents:
+    - role: ingester
+      replicas: 3
+      resources:
+        requests:
+          cpu: 200m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    - role: analyst
+      replicas: 3
+    - role: synthesizer
+      replicas: 2
+    - role: arbiter
+      replicas: 2
+    - role: observer
+      replicas: 1
+  llm:
+    backend: vllm
+    vllm:
+      inferenceServiceRef: "rhoai-01-llm"
+      model: "meta-llama/Llama-3.2-3B-Instruct"
+      deploy: true
+      modelStoragePVC: llama-3b-weights
+      resources:
+        limits:
+          nvidia.com/gpu: "1"
+  scaling:
+    enabled: true
+    roleScaling:
+      - role: ingester
+        minReplicas: 1
+        maxReplicas: 10
+        natsConsumerLagThreshold: 10
+      - role: arbiter
+        minReplicas: 2
+        maxReplicas: 2

@@ -1,0 +1,12 @@
+namePrefix: acc-operator-
+
+namespace: acc-operator-system
+
+resources:
+- ../rbac
+- ../manager
+- ../webhook
+- ../crd
+
+patchesStrategicMerge:
+- manager_auth_proxy_patch.yaml

@@ -1,0 +1,48 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: acc-operator-manager-role
+rules:
+# ACC CRDs
+- apiGroups: ["acc.redhat.io"]
+  resources: ["agentcorpora", "agentcollectives"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["acc.redhat.io"]
+  resources: ["agentcorpora/status", "agentcollectives/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["acc.redhat.io"]
+  resources: ["agentcorpora/finalizers", "agentcollectives/finalizers"]
+  verbs: ["update"]
+# Core Kubernetes
+- apiGroups: ["apps"]
+  resources: ["deployments", "statefulsets"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["services", "configmaps", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+# OPA Gatekeeper ConstraintTemplates (cluster-scoped)
+- apiGroups: ["templates.gatekeeper.sh"]
+  resources: ["constrainttemplates"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# KEDA
+- apiGroups: ["keda.sh"]
+  resources: ["scaledobjects"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# KServe
+- apiGroups: ["serving.kserve.io"]
+  resources: ["inferenceservices"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Prometheus Operator
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["prometheusrules"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# API discovery (for prerequisite detection)
+- nonResourceURLs: ["/healthz", "/readyz", "/livez"]
+  verbs: ["get"]

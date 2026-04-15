@@ -1,0 +1,32 @@
+domain: redhat.io
+layout:
+- go.kubebuilder.io/v4
+projectName: acc-operator
+repo: github.com/redhat-ai-dev/agentic-cell-corpus/operator
+version: "3"
+plugins:
+  manifests.sdk.operatorframework.io/v2: {}
+  scorecard.sdk.operatorframework.io/v2: {}
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: redhat.io
+  group: acc
+  kind: AgentCorpus
+  plural: agentcorpora
+  version: v1alpha1
+  webhooks:
+    defaulting: true
+    validation: true
+    webhookVersion: v1
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: redhat.io
+  group: acc
+  kind: AgentCollective
+  plural: agentcollectives
+  version: v1alpha1
