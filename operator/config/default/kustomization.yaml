@@ -3,10 +3,13 @@ namePrefix: acc-operator-
 namespace: acc-operator-system
 
 resources:
+- ../crd
 - ../rbac
 - ../manager
 - ../webhook
-- ../crd
 
-patchesStrategicMerge:
-- manager_auth_proxy_patch.yaml
+# manager_auth_proxy_patch.yaml is intentionally absent in v0.1.0.
+# Auth proxy (kube-rbac-proxy) will be added in a future change (ACC-6).
+# Uncomment the line below once the patch file is created:
+# patchesStrategicMerge:
+# - manager_auth_proxy_patch.yaml

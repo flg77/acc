@@ -1,0 +1,3 @@
+resources:
+- bases/acc.redhat.io_agentcorpora.yaml
+- bases/acc.redhat.io_agentcollectives.yaml
