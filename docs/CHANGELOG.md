@@ -11,6 +11,62 @@ Versioning scheme: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.2.0] — 2026-04-15
+
+### Added — ACC-5: Operator Deployment Guide & Certification Roadmap (commit [4])
+
+**Operator deployment documentation:**
+- **`docs/operator-install-local.md`** — complete installation guide for ACC Operator 0.1.0:
+  - Capabilities summary: NATS JetStream, Redis, OPA Bundle Server, Kafka bridge, OTel Collector, 5 agent role Deployments, KEDA ScaledObjects, KServe InferenceService, PrometheusRules, Gatekeeper ConstraintTemplates
+  - Prerequisites table: `go 1.22`, `kubectl/oc`, `kustomize v5`, `operator-sdk v1.36`
+  - Lab cluster option matrix: CRC (recommended), Kind+OLM, remote OCP node, solarSys (explicitly excluded — Podman-only)
+  - Method A (Kustomize `make deploy`), Method B (OLM bundle `operator-sdk run bundle`), Method C (internal CatalogSource via `opm`)
+  - Category-A WASM ConfigMap prerequisite; sample AgentCorpus deployment; verification checklist with NATS JetStream probe
+  - Uninstall for all three methods; PVC cleanup warning
+
+**Certification roadmap:**
+- **`docs/operator-certification.md`** — Red Hat OperatorHub certification guide:
+  - Two catalog targets: community-operators (tech preview, automated CI) vs. certified-operators (Red Hat partner review)
+  - Recommended sequence: community-operators first → certified-operators for GA
+  - Preflight CLI setup; `preflight check container` (12 standard checks with ACC status); `preflight check operator` (bundle + scorecard)
+  - Red Hat Connect submission walkthrough: project creation, bundle image linking, results upload
+  - Konflux/HACBS pipeline stages: preflight re-run, scorecard, OCP 4.14–4.18 version matrix
+  - Reviewer SLA table: 5–10 business days first submission, 3–5 for re-review
+  - Timeline & Common Failures table: 11 failure modes with fixes
+  - Tech preview path: community-operators fork + PR workflow
+
+**Missing operator artifacts (required for docs accuracy):**
+- **`operator/Containerfile`** — UBI10 multi-stage build (go-toolset:1.22 → ubi10-minimal), UID 65532, all required preflight labels
+- **`operator/bundle.Dockerfile`** — OLM bundle image definition
+- **`operator/config/crd/bases/acc.redhat.io_agentcorpora.yaml`** — hand-written CRD YAML (controller-gen not available on Windows dev machine)
+- **`operator/config/crd/bases/acc.redhat.io_agentcollectives.yaml`** — hand-written CRD YAML
+- **`operator/config/crd/kustomization.yaml`** — lists both CRD files
+- **`operator/config/default/kustomization.yaml`** — fixed: removed non-existent `manager_auth_proxy_patch.yaml` reference (guarded with ACC-6 comment)
+
+**OpenSpec change:**
+- `openspec/changes/20260415-operator-cluster-deployment/` — proposal, design, tasks (34 tasks tracked across 5 phases)
+
+### Related Documents
+- Install guide: [`docs/operator-install-local.md`](operator-install-local.md)
+- Certification guide: [`docs/operator-certification.md`](operator-certification.md)
+- OpenSpec change: [`openspec/changes/20260415-operator-cluster-deployment/`](../openspec/changes/20260415-operator-cluster-deployment/)
+
+---
+
+## [1.1.0] — 2026-04-14
+
+### Added — ACC-4: ACC Operator v0.1.0 Initial Scaffold (commit [3])
+
+- **`operator/`** — full Kubernetes Operator implementation (Go, controller-runtime v0.19, Operator SDK v1.36)
+- **CRDs:** `AgentCorpus` (primary) + `AgentCollective` (sub-CRD); all spec/status types; validation webhooks
+- **11 sub-reconcilers** in ordered pipeline: Prerequisites, Upgrade, NATS, Redis, Milvus, OPABundleServer, Gatekeeper, KafkaBridge, OTelCollector, PrometheusRules, Collective
+- **Status + phase computation:** 7-phase priority table; `ErrUpgradeApprovalPending` sentinel for approval gate halt
+- **Config rendering:** `internal/templates/acc_config.go` renders Python-compatible `acc-config.yaml` from Go spec
+- **OLM bundle:** CSV, annotations, RBAC; install modes OwnNamespace + SingleNamespace
+- **Unit tests:** prerequisites detection, upgrade flow, phase computation, template rendering
+
+---
+
 ## [1.0.0] — 2026-04-03
 
 ### Added — Phase 1a Implementation (commit [1])

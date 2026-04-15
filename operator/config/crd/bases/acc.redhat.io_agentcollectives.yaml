@@ -1,0 +1,353 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: agentcollectives.acc.redhat.io
+spec:
+  group: acc.redhat.io
+  names:
+    categories:
+    - acc
+    kind: AgentCollective
+    listKind: AgentCollectiveList
+    plural: agentcollectives
+    shortNames:
+    - acol
+    singular: agentcollective
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.collectiveId
+      name: CollectiveID
+      type: string
+    - jsonPath: .spec.llm.backend
+      name: LLM
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: AgentCollective represents a single collective within an AgentCorpus.
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AgentCollectiveSpec defines a single collective within the corpus.
+            properties:
+              agents:
+                description: Agents lists the role-specific deployment configurations.
+                items:
+                  properties:
+                    extraEnv:
+                      items:
+                        description: EnvVar represents an environment variable present in a Container.
+                        properties:
+                          name:
+                            type: string
+                          value:
+                            type: string
+                          valueFrom:
+                            properties:
+                              configMapKeyRef:
+                                properties:
+                                  key:
+                                    type: string
+                                  name:
+                                    type: string
+                                  optional:
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                              fieldRef:
+                                properties:
+                                  apiVersion:
+                                    type: string
+                                  fieldPath:
+                                    type: string
+                                required:
+                                - fieldPath
+                                type: object
+                              secretKeyRef:
+                                properties:
+                                  key:
+                                    type: string
+                                  name:
+                                    type: string
+                                  optional:
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                            type: object
+                        required:
+                        - name
+                        type: object
+                      type: array
+                    replicas:
+                      default: 1
+                      format: int32
+                      maximum: 100
+                      minimum: 0
+                      type: integer
+                    resources:
+                      description: ResourceRequirements describes the compute resource requirements.
+                      properties:
+                        limits:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          type: object
+                        requests:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          type: object
+                      type: object
+                    role:
+                      description: Role identifies the ACC agent role.
+                      enum:
+                      - ingester
+                      - analyst
+                      - synthesizer
+                      - arbiter
+                      - observer
+                      type: string
+                  required:
+                  - role
+                  type: object
+                minItems: 1
+                type: array
+              collectiveId:
+                description: CollectiveID is the logical identifier used in NATS subjects.
+                pattern: ^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$
+                type: string
+              corpusRef:
+                description: CorpusRef names the AgentCorpus that owns this collective.
+                properties:
+                  name:
+                    type: string
+                type: object
+              heartbeatIntervalSeconds:
+                default: 30
+                format: int32
+                maximum: 300
+                minimum: 5
+                type: integer
+              llm:
+                description: LLM configures the language model backend for this collective.
+                properties:
+                  anthropic:
+                    properties:
+                      apiKeySecretRef:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                      model:
+                        default: claude-sonnet-4-6
+                        type: string
+                    required:
+                    - apiKeySecretRef
+                    - model
+                    type: object
+                  backend:
+                    description: Backend selects the LLM implementation.
+                    enum:
+                    - ollama
+                    - anthropic
+                    - vllm
+                    - llama_stack
+                    type: string
+                  embeddingModel:
+                    default: all-MiniLM-L6-v2
+                    type: string
+                  llamaStack:
+                    properties:
+                      baseUrl:
+                        type: string
+                      modelId:
+                        type: string
+                    required:
+                    - baseUrl
+                    - modelId
+                    type: object
+                  ollama:
+                    properties:
+                      baseUrl:
+                        default: http://localhost:11434
+                        type: string
+                      model:
+                        default: llama3.2:3b
+                        type: string
+                    required:
+                    - baseUrl
+                    - model
+                    type: object
+                  vllm:
+                    properties:
+                      deploy:
+                        default: true
+                        type: boolean
+                      inferenceServiceRef:
+                        type: string
+                      model:
+                        type: string
+                      modelStoragePVC:
+                        type: string
+                      resources:
+                        properties:
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            type: object
+                        type: object
+                    required:
+                    - inferenceServiceRef
+                    - model
+                    type: object
+                required:
+                - backend
+                type: object
+              scaling:
+                description: Scaling configures KEDA-based autoscaling per role.
+                properties:
+                  enabled:
+                    default: false
+                    type: boolean
+                  roleScaling:
+                    items:
+                      properties:
+                        healthMetricThreshold:
+                          default: 70
+                          format: int32
+                          maximum: 100
+                          minimum: 0
+                          type: integer
+                        maxReplicas:
+                          default: 10
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        minReplicas:
+                          default: 1
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        natsConsumerLagThreshold:
+                          default: 10
+                          format: int64
+                          minimum: 1
+                          type: integer
+                        role:
+                          enum:
+                          - ingester
+                          - analyst
+                          - synthesizer
+                          - arbiter
+                          - observer
+                          type: string
+                      required:
+                      - role
+                      type: object
+                    type: array
+                required:
+                - enabled
+                type: object
+            required:
+            - agents
+            - collectiveId
+            - corpusRef
+            - llm
+            type: object
+          status:
+            description: AgentCollectiveStatus reports the observed state of one collective.
+            properties:
+              conditions:
+                items:
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      type: string
+                    observedGeneration:
+                      format: int64
+                      type: integer
+                    reason:
+                      type: string
+                    status:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              desiredAgents:
+                additionalProperties:
+                  format: int32
+                  type: integer
+                type: object
+              kserveReady:
+                type: boolean
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                type: string
+              readyAgents:
+                additionalProperties:
+                  format: int32
+                  type: integer
+                type: object
+              scaledObjectsActive:
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

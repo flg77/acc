@@ -1,0 +1,53 @@
+# ACC Operator — multi-stage container build
+# Stage 1: Build the manager binary using the Go toolchain image.
+# Stage 2: Copy the binary into a minimal UBI10 runtime image.
+#
+# Required labels (Red Hat preflight: HasRequiredLabel):
+#   name, vendor, version, summary, description
+
+# ── Build stage ─────────────────────────────────────────────────────────────
+FROM registry.access.redhat.com/ubi10/go-toolset:1.22 AS builder
+
+USER root
+WORKDIR /workspace
+
+# Cache module downloads separately from source.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source and build.
+COPY api/      api/
+COPY cmd/      cmd/
+COPY internal/ internal/
+COPY hack/     hack/
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -a -ldflags="-s -w" -o manager ./cmd/main.go
+
+# ── Runtime stage ────────────────────────────────────────────────────────────
+FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
+
+# Preflight-required labels.
+LABEL name="acc-operator" \
+      vendor="Red Hat" \
+      version="0.1.0" \
+      summary="Agentic Cell Corpus Operator — lifecycle manager for ACC deployments on OpenShift/Kubernetes" \
+      description="The ACC Operator installs and manages the Agentic Cell Corpus multi-agent AI \
+governance framework. It provisions NATS JetStream, Redis, optional Milvus connectivity, \
+OPA bundle server, NATS-Kafka bridge, and agent Deployments with three-tier governance \
+(WASM / OPA bundle / arbiter-signed ICL rules)." \
+      io.k8s.description="ACC Operator manages AgentCorpus and AgentCollective custom resources" \
+      io.k8s.display-name="Agentic Cell Corpus Operator" \
+      io.openshift.tags="ai,agents,governance,operator"
+
+# Run as non-root (OCP restricted SCC, preflight: RunAsNonRoot).
+RUN microdnf install -y shadow-utils && \
+    useradd -u 65532 -r -g 0 -s /sbin/nologin nonroot && \
+    microdnf clean all
+
+WORKDIR /
+COPY --from=builder /workspace/manager .
+
+USER 65532:0
+
+ENTRYPOINT ["/manager"]
