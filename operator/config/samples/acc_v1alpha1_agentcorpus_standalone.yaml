@@ -1,0 +1,70 @@
+---
+# Sample AgentCorpus — standalone mode (edge / solar-system).
+# Uses NATS + Redis + LanceDB, Ollama LLM backend.
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCorpus
+metadata:
+  name: sol-corpus
+  namespace: acc-system
+spec:
+  deployMode: standalone
+  version: "0.1.0"
+  imageRegistry: registry.access.redhat.com
+
+  collectives:
+    - name: sol-01
+
+  infrastructure:
+    nats:
+      version: "2.10"
+      replicas: 1
+      storageSize: 2Gi
+    redis:
+      version: "6"
+      replicas: 1
+      storageSize: 1Gi
+
+  governance:
+    categoryA:
+      wasmConfigMapRef: acc-cat-a-wasm
+    categoryB:
+      pollIntervalSeconds: 30
+      bundlePVCSize: 500Mi
+    gatekeeperIntegration: false
+
+  observability:
+    backend: log
+    prometheusRules: true
+
+  upgradePolicy:
+    mode: auto
+    requireApproval: false
+---
+# Sample AgentCollective for sol-corpus (standalone / Ollama LLM).
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCollective
+metadata:
+  name: sol-01
+  namespace: acc-system
+spec:
+  collectiveId: sol-01
+  corpusRef:
+    name: sol-corpus
+  heartbeatIntervalSeconds: 30
+  agents:
+    - role: ingester
+      replicas: 2
+    - role: analyst
+      replicas: 2
+    - role: synthesizer
+      replicas: 1
+    - role: arbiter
+      replicas: 1
+    - role: observer
+      replicas: 1
+  llm:
+    backend: ollama
+    ollama:
+      baseUrl: "http://ollama:11434"
+      model: "llama3.2:3b"
+    embeddingModel: "all-MiniLM-L6-v2"
