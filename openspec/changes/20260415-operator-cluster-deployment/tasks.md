@@ -39,7 +39,7 @@ the install guide can give accurate instructions.
   | Container registry access | — | quay.io org or internal mirror |
   | Cluster with `cluster-admin` | OCP 4.14+ / k8s 1.27+ | — |
 
-- [ ] **[2c]** Write **§3 Lab Cluster Option Matrix** — CRC setup (memory requirements: 16 GB RAM minimum for NATS + Redis + operator); Kind + OLM install commands; remote OCP node access pattern; explicit note that solarSys (Podman-only) is not supported for operator deployment
+- [ ] **[2c]** Write **§3 Lab Cluster Option Matrix** — CRC setup (memory requirements: 16 GB RAM minimum for NATS + Redis + operator); Kind + OLM install commands; remote OCP node access pattern; explicit note that local Podman (standalone, no Kubernetes) is not supported for operator deployment
 
 - [ ] **[2d]** Write **§4 Build & Push the Operator Image** — commands:
   ```

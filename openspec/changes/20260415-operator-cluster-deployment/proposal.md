@@ -24,7 +24,7 @@ the official Red Hat OperatorHub catalog — a prerequisite for any production o
 - Operator source lives at `operator/` with a working `Makefile`, CRDs, and OLM bundle skeleton.
 - No build pipeline, no registry configuration, and no step-by-step install guide exist.
 - No `docs/operator-install-local.md` or `docs/operator-certification.md` files exist.
-- The solarSys lab (10.199.12.10) runs Podman but has no Kubernetes/OpenShift runtime available
+- The local Podman environment has no Kubernetes/OpenShift runtime available
   for end-to-end operator testing.
 
 ## Desired Behavior
@@ -51,7 +51,7 @@ Two documents ship in `docs/`:
 - [ ] `docs/operator-install-local.md` exists and is accurate for the current `operator/` codebase
 - [ ] A developer with `cluster-admin` on OCP 4.14+ can follow the guide from zero to a `Ready` `AgentCorpus` without consulting any other source
 - [ ] `docs/operator-certification.md` exists with all Red Hat Connect steps enumerated
-- [ ] The lab deployment option matrix explicitly addresses solarSys limitations and proposes an alternative
+- [ ] The lab deployment option matrix explicitly addresses standalone Podman limitations and proposes an alternative
 
 ## Scope
 
@@ -73,5 +73,5 @@ Two documents ship in `docs/`:
 2. The operator image will be pushed to `quay.io/redhat-ai-dev/acc-operator:0.1.0` as per `Makefile`.
 3. CRC (OpenShift Local) version ≥ 2.38 is the recommended lab environment (ships with OLM).
 4. The Category A WASM blob (`category_a.wasm`) is provided by the user as a ConfigMap pre-requisite — its generation is out of scope.
-5. solarSys (Podman-only) **cannot** directly run the operator; the lab guide will redirect to CRC or a remote OCP 4.14 node.
+5. Local Podman (standalone, no Kubernetes) **cannot** directly run the operator; the lab guide redirects to CRC or a remote OCP 4.14 node.
 6. The Red Hat certification path targets the **certified-operators** catalog (not community-operators), which requires a Red Hat Technology Partner account.

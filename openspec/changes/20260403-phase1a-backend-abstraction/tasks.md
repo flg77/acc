@@ -30,7 +30,7 @@
 
 - [ ] `[15]` Create `acc/agent.py` — minimal agent entry point (REGISTERING state, heartbeat loop, graceful shutdown)
 - [ ] `[16]` Create `deploy/Containerfile.agent-core` — UBI10 python-312 image
-- [ ] `[17]` Create `deploy/podman-compose.yml` — solarSys standalone deployment (NATS + 3 agent roles + Redis)
+- [ ] `[17]` Create `deploy/podman-compose.yml` — standalone Podman deployment (NATS + 3 agent roles + Redis)
 
 ## Phase 4 — Testing
 
@@ -45,6 +45,6 @@
 ## Phase 5 — Polish
 
 - [ ] `[25]` Build container image: `podman build -f deploy/Containerfile.agent-core -t acc-agent-core:0.1.0 .`
-- [ ] `[26]` Push image to solarSys and run smoke test: `podman-compose up` → agent hits REGISTERING
+- [ ] `[26]` Build image and run smoke test: `podman-compose up` → agent hits REGISTERING
 - [ ] `[27]` Commit final state, update `docs/CHANGELOG.md` with v0.1.0 implementation note
 - [ ] `[28]` Open PR: `[feat] Phase 1a: backend abstraction layer (ACC-1)`

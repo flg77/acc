@@ -14,13 +14,13 @@
 ## Problem Statement
 
 The ACC framework (Python package, completed in Phase 1a) runs as standalone Podman containers
-(solarSys) or manually deployed Kubernetes resources. There is no automated lifecycle manager for
+or manually deployed Kubernetes resources. There is no automated lifecycle manager for
 OpenShift or Kubernetes clusters — users must hand-apply YAML, track upgrade sequences, and
 manually verify prerequisites like Kafka, KEDA, or RHOAI.
 
 ## Current Behavior
 
-- ACC is deployed via `podman-compose.yml` on solarSys (standalone mode)
+- ACC is deployed via `podman-compose.yml` in standalone Podman mode
 - No Kubernetes operator exists
 - No automated prerequisite checking
 - Upgrading NATS or Redis requires manual StatefulSet edits

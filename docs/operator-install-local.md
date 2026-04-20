@@ -75,7 +75,7 @@ kubectl annotate agentcorpus <name> acc.redhat.io/approve-upgrade=<version>
 | **CRC (OpenShift Local) ≥ 2.38** ✅ recommended | OCP 4.14 | ✅ built-in | ✅ built-in | All methods A, B, C |
 | **Remote OCP 4.14+ node** | OCP 4.14 | ✅ built-in | ✅ built-in | Integration + cert testing |
 | **Kind + OLM** | k8s 1.27 | ⚠️ manual install | ⚠️ needs cert-manager | Method A only (easier) |
-| **solarSys (Podman)** | ❌ none | ❌ | ❌ | **Not supported** — Podman-only; use for Python agent smoke tests only |
+| **Local Podman (no Kubernetes)** | ❌ none | ❌ | ❌ | **Not supported** — Podman-only; use for Python agent smoke tests only |
 
 ### CRC Setup (recommended lab)
 

@@ -17,9 +17,6 @@ active_changes:
   - 20260403-phase1a-backend-abstraction
 
 test_environment:
-  host: solarSys
-  ip: 10.199.12.10
-  user: microcosm
-  ssh_key: ~/.ssh/id_ed25519
-  runtime: podman          # solarSys uses Podman (no full k8s)
+  host: localhost
+  runtime: podman          # standalone mode uses Podman (no full k8s)
   compose_tool: podman-compose

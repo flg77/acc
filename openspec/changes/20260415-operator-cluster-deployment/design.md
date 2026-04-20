@@ -64,12 +64,12 @@ This exactly mirrors OperatorHub install and is the **required path before certi
 
 ### Lab Cluster Option Matrix
 
-| Option | Kubernetes | OLM | Webhook support | solarSys compatible | Recommended for |
-|--------|-----------|-----|-----------------|---------------------|-----------------|
+| Option | Kubernetes | OLM | Webhook support | Standalone compatible | Recommended for |
+|--------|-----------|-----|-----------------|----------------------|-----------------|
 | CRC (OpenShift Local) ≥ 2.38 | OCP 4.14 | ✅ built-in | ✅ cert-manager | ❌ (needs VM) | Primary dev lab |
 | Kind + OLM | k8s 1.27 | ✅ manual install | ⚠️ manual cert | ❌ | Pure k8s testing |
 | Remote OCP 4.14+ node | OCP 4.14 | ✅ built-in | ✅ built-in | ❌ (Podman-only) | Integration & cert testing |
-| solarSys (Podman) | ❌ | ❌ | ❌ | ✅ | **Not suitable** — use for agent smoke tests only |
+| Local Podman (standalone) | ❌ | ❌ | ❌ | ✅ | **Not suitable** — use for agent smoke tests only |
 
 ---
 

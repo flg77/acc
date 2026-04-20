@@ -14,7 +14,7 @@ package v1alpha1
 type DeployMode string
 
 const (
-	// DeployModeStandalone provisions NATS + Redis + LanceDB (edge/solarSys).
+	// DeployModeStandalone provisions NATS + Redis + LanceDB (edge/standalone Podman).
 	DeployModeStandalone DeployMode = "standalone"
 	// DeployModeRHOAI provisions NATS + Redis + Milvus and expects
 	// KServe and RHOAI operators to be installed on the cluster.

@@ -48,7 +48,7 @@ agentic-cell-corpus/
 ├── deploy/
 │   ├── Containerfile.agent-core           # UBI10-minimal agent image
 │   ├── Containerfile.nats                 # NATS with UBI10 wrapper (minimal)
-│   └── podman-compose.yml                 # solarSys standalone deployment
+│   └── podman-compose.yml                 # standalone Podman deployment
 ```
 
 ---
@@ -135,7 +135,7 @@ Layers:
 5. Run as non-root UID 1001 (OCP compatible)
 6. `CMD ["python", "-m", "acc.agent"]`
 
-### `deploy/podman-compose.yml` (solarSys target)
+### `deploy/podman-compose.yml` (standalone target)
 
 Services:
 - `nats` — `nats:2.10-alpine` (lightweight, not UBI — NATS Inc. doesn't publish UBI)
@@ -167,7 +167,7 @@ All agent containers mount the same `acc-config.yaml` volume.
 - Anthropic backend: mock `anthropic.AsyncAnthropic` — test prompt construction
 - Metrics backends: assert stdout output / OTel SDK span emission
 
-**Integration smoke test (runs on solarSys):**
+**Integration smoke test (standalone Podman):**
 - `podman-compose up` → agent reaches REGISTERING state → exits cleanly
 - Verified manually after SSH access is available
 
@@ -179,5 +179,5 @@ All agent containers mount the same `acc-config.yaml` volume.
   prevents using third-party objects that happen to satisfy the interface.
 - **Single backend file:** Rejected — would make it impossible to install a subset
   of dependencies (e.g., edge deployment without Milvus).
-- **Docker instead of Podman:** Rejected — solarSys uses Podman; docker-compose
+- **Docker instead of Podman:** Rejected — standalone target uses Podman; docker-compose
   syntax is compatible via `podman-compose`.

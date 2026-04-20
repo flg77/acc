@@ -1,4 +1,4 @@
-# ACC Configuration — Standalone (solarSys / Podman) defaults
+# ACC Configuration — Standalone (Podman) defaults
 # Override individual fields with environment variables (see .env.example)
 
 deploy_mode: standalone   # standalone | rhoai

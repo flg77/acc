@@ -1,4 +1,4 @@
-# ACC solarSys standalone deployment
+# ACC standalone deployment (Podman)
 # Run with: podman-compose up -d
 # Requires: podman-compose >= 1.0.6
 version: "3.9"

@@ -31,7 +31,7 @@ A Python package (`acc/`) is established with:
 - A config loader (`acc/config.py`) that reads `acc-config.yaml` and selects backends
 - A `pyproject.toml` with all dependencies pinned
 - A working `Containerfile` per service role using `ubi10-minimal` base
-- A `podman-compose.yml` targeting the solarSys test environment
+- A `podman-compose.yml` for standalone Podman deployment
 - Unit tests for all backends using mocks/stubs (no live infrastructure required)
 
 ## Success Criteria
@@ -41,7 +41,7 @@ A Python package (`acc/`) is established with:
 - [ ] `acc/config.py` selects correct backends from `acc-config.yaml`
 - [ ] `pytest tests/` passes with 100% of new tests green
 - [ ] `podman build` succeeds for `agent-core` image using `ubi10-minimal`
-- [ ] `podman-compose up` on solarSys starts at least one agent in REGISTERING state
+- [ ] `podman-compose up` starts at least one agent in REGISTERING state
 - [ ] All containers use RHEL UBI10 base images only
 
 ## Scope
@@ -50,7 +50,7 @@ A Python package (`acc/`) is established with:
 - `acc/` Python package (backends + config)
 - `pyproject.toml` with pinned dependencies
 - `Containerfile.agent-core` (UBI10-based)
-- `podman-compose.yml` for solarSys (standalone mode: NATS + agent-core + redis-sidecar + opa-sidecar)
+- `podman-compose.yml` for standalone mode (NATS + agent-core + redis-sidecar + opa-sidecar)
 - Unit tests for all backend implementations
 - `.env.example` for developer setup
 
@@ -59,13 +59,13 @@ A Python package (`acc/`) is established with:
 - RHOAI deployment manifests (Phase 2a)
 - NATS-Kafka bridge (Phase 2b)
 - MCP server implementations (Phase 3)
-- Live infrastructure on solarSys beyond initial smoke test
+- Live infrastructure beyond the initial smoke test
 
 ## Assumptions
 
-1. solarSys runs Podman (not Docker) — verified via SSH config
-2. solarSys host architecture is ARM64 or AMD64 — will build multi-arch
-3. NATS runs as a separate shared container (not embedded) even on solarSys
+1. Standalone target uses Podman (not Docker)
+2. Target host architecture is ARM64 or AMD64 — will build multi-arch
+3. NATS runs as a separate shared container (not embedded) in standalone mode
 4. The embedding model (all-MiniLM-L6-v2) is downloaded at container build time
 5. OPA binary is bundled in the agent-core image (not a separate sidecar initially — sidecar pattern comes in Phase 2a)
 6. `ubi10-minimal` is available on registry.access.redhat.com without auth for pull
