@@ -1,0 +1,77 @@
+# ACC TUI — optional Kubernetes Deployment
+# Deploys the acc-tui terminal UI as a pod alongside the collective.
+# The TUI connects to NATS by internal DNS and requires no storage volumes.
+#
+# Usage:
+#   kubectl apply -f operator/config/samples/acc_tui_deployment.yaml
+#
+# Prerequisites:
+#   - acc-config ConfigMap created by the operator for the target collective
+#   - NATS service reachable at nats:4222 within the namespace
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acc-tui
+  namespace: acc-corpus            # adjust to your namespace
+  labels:
+    app.kubernetes.io/name: acc-tui
+    app.kubernetes.io/component: tui
+    app.kubernetes.io/part-of: agentic-cell-corpus
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: acc-tui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: acc-tui
+        app.kubernetes.io/component: tui
+        app.kubernetes.io/part-of: agentic-cell-corpus
+        app.kubernetes.io/version: "0.1.0"
+    spec:
+      # OCP restricted SCC — run as non-root UID 1001
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: acc-tui
+          image: registry.access.redhat.com/acc/acc-tui:0.1.0   # replace with your registry
+          imagePullPolicy: IfNotPresent
+          env:
+            # NATS URL — sourced from acc-config ConfigMap (operator-managed)
+            - name: ACC_NATS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: sol-01-acc-config   # adjust: {collective-name}-acc-config
+                  key: nats_url
+                  optional: true            # falls back to container default
+            # Collective ID
+            - name: ACC_COLLECTIVE_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: sol-01-acc-config
+                  key: collective_id
+                  optional: true
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          # No storage volumes required (TUI is stateless — all data from NATS)
+          stdin: true
+          tty: true                         # required for Textual terminal rendering
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 10
