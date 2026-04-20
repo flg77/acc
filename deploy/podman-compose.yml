@@ -33,8 +33,14 @@ services:
       retries: 5
 
   # ── Redis (working memory) ────────────────────────────────────────────
+  # Built locally from deploy/Containerfile.redis (UBI9 + EPEL).
+  # registry.access.redhat.com/ubi8/redis-6 requires a subscription to pull
+  # and is therefore replaced by a local build that is subscription-free.
   acc-redis:
-    image: registry.access.redhat.com/ubi8/redis-6:latest
+    build:
+      context: ..
+      dockerfile: deploy/Containerfile.redis
+    image: localhost/acc-redis:7
     container_name: acc-redis
     ports:
       - "6379:6379"
@@ -44,10 +50,11 @@ services:
       - acc-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-h", "localhost", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 15s
 
   # ── Agent: Ingester ───────────────────────────────────────────────────
   acc-agent-ingester:
