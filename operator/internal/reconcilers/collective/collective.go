@@ -15,13 +15,17 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"gopkg.in/yaml.v3"
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers"
 	statuspkg "github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/status"
-	"k8s.io/apimachinery/pkg/runtime"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/util"
 )
 
 // CollectiveReconciler fans out per-collective reconciliation.
@@ -58,10 +62,16 @@ func (r *CollectiveReconciler) Reconcile(ctx context.Context, corpus *accv1alpha
 			return reconcilers.SubResult{}, fmt.Errorf("get AgentCollective %s: %w", ref.Name, err)
 		}
 
+		// Render acc-role ConfigMap (ACC-6a REQ-OP-002/003/004).
+		roleConfigMapName, err := r.reconcileRoleConfigMap(ctx, corpus, collective)
+		if err != nil {
+			return reconcilers.SubResult{}, fmt.Errorf("collective %s role ConfigMap: %w", ref.Name, err)
+		}
+
 		cs := corpus.Status.CollectiveStatuses[ref.Name]
 
 		// Agent Deployments.
-		agentRes, err := agentRec.ReconcileCollective(ctx, corpus, collective)
+		agentRes, err := agentRec.ReconcileCollective(ctx, corpus, collective, roleConfigMapName)
 		if err != nil {
 			return reconcilers.SubResult{}, fmt.Errorf("collective %s agent deployments: %w", ref.Name, err)
 		}
@@ -133,4 +143,81 @@ func collectivesReadyMessage(allReady bool) string {
 func needsKServe(collective *accv1alpha1.AgentCollective) bool {
 	b := collective.Spec.LLM.Backend
 	return b == accv1alpha1.LLMBackendVLLM || b == accv1alpha1.LLMBackendLlamaStack
+}
+
+// reconcileRoleConfigMap creates or updates the acc-role-{collectiveId} ConfigMap
+// containing the role definition YAML mounted into every agent pod at
+// /app/acc-role.yaml (ACC-6a REQ-OP-002, REQ-OP-003, REQ-OP-004).
+//
+// Returns the ConfigMap name so agent_deployment.go can mount it.
+func (r *CollectiveReconciler) reconcileRoleConfigMap(
+	ctx context.Context,
+	corpus *accv1alpha1.AgentCorpus,
+	collective *accv1alpha1.AgentCollective,
+) (string, error) {
+	cmName := fmt.Sprintf("acc-role-%s", collective.Spec.CollectiveID)
+
+	// Build YAML content from spec.roleDefinition (empty map if not set).
+	roleData := map[string]interface{}{
+		"version": "0.1.0",
+		"purpose": "",
+		"persona": "concise",
+	}
+	if rd := collective.Spec.RoleDefinition; rd != nil {
+		if rd.Purpose != "" {
+			roleData["purpose"] = rd.Purpose
+		}
+		if rd.Persona != "" {
+			roleData["persona"] = rd.Persona
+		}
+		if rd.Version != "" {
+			roleData["version"] = rd.Version
+		}
+		if rd.SeedContext != "" {
+			roleData["seed_context"] = rd.SeedContext
+		}
+		if len(rd.TaskTypes) > 0 {
+			roleData["task_types"] = rd.TaskTypes
+		}
+		if len(rd.AllowedActions) > 0 {
+			roleData["allowed_actions"] = rd.AllowedActions
+		}
+		if len(rd.CategoryBOverrides) > 0 {
+			roleData["category_b_overrides"] = rd.CategoryBOverrides
+		}
+	}
+
+	roleYAML, err := yaml.Marshal(roleData)
+	if err != nil {
+		return "", fmt.Errorf("marshal role definition: %w", err)
+	}
+
+	labels := util.CollectiveLabels(
+		corpus.Name,
+		collective.Spec.CollectiveID,
+		"acc-role",
+		corpus.Spec.Version,
+	)
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cmName,
+			Namespace: corpus.Namespace,
+			Labels:    labels,
+		},
+		Data: map[string]string{"acc-role.yaml": string(roleYAML)},
+	}
+
+	// Set owner reference → garbage collected when AgentCollective is deleted.
+	if err := controllerutil.SetControllerReference(collective, cm, r.Scheme); err != nil {
+		return "", fmt.Errorf("set controller reference on role ConfigMap: %w", err)
+	}
+
+	if _, err := util.Upsert(ctx, r.Client, r.Scheme, collective, cm, func(existing client.Object) error {
+		existing.(*corev1.ConfigMap).Data = cm.Data
+		return nil
+	}); err != nil {
+		return "", fmt.Errorf("upsert role ConfigMap %s: %w", cmName, err)
+	}
+
+	return cmName, nil
 }

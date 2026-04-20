@@ -28,11 +28,27 @@ from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBac
 # ---------------------------------------------------------------------------
 
 DeployMode = Literal["standalone", "rhoai"]
-AgentRole = Literal["ingester", "analyst", "arbiter"]
+AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer"]
 LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack"]
 MetricsBackendChoice = Literal["log", "otel"]
 VectorBackendChoice = Literal["lancedb", "milvus"]
 SignalingBackendChoice = Literal["nats"]
+
+
+class RoleDefinitionConfig(BaseModel):
+    """Role definition injected into the agent's CognitiveCore system prompt.
+
+    All fields have safe empty defaults so that agents without a role definition
+    section in their config still start without error.
+    """
+
+    purpose: str = ""
+    persona: Literal["concise", "formal", "exploratory", "analytical"] = "concise"
+    task_types: list[str] = Field(default_factory=list)
+    seed_context: str = ""
+    allowed_actions: list[str] = Field(default_factory=list)
+    category_b_overrides: dict[str, float] = Field(default_factory=dict)
+    version: str = "0.1.0"
 
 
 class AgentConfig(BaseModel):
@@ -76,6 +92,7 @@ class ACCConfig(BaseModel):
     vector_db: VectorConfig = Field(default_factory=VectorConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    role_definition: RoleDefinitionConfig = Field(default_factory=RoleDefinitionConfig)
 
     @model_validator(mode="after")
     def _validate_rhoai_fields(self) -> "ACCConfig":
@@ -109,6 +126,11 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_LLAMA_STACK_URL":          ("llm", "llama_stack_url"),
     "ACC_METRICS_BACKEND":          ("observability", "backend"),
     "ACC_OTEL_SERVICE_NAME":        ("observability", "otel_service_name"),
+    # Role definition overrides (ACC-6a)
+    "ACC_ROLE_PURPOSE":             ("role_definition", "purpose"),
+    "ACC_ROLE_PERSONA":             ("role_definition", "persona"),
+    "ACC_ROLE_VERSION":             ("role_definition", "version"),
+    # ACC_ROLE_CONFIG_PATH is consumed by RoleStore.load_at_startup(), not here
 }
 
 
