@@ -11,6 +11,32 @@ Versioning scheme: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.4.0] — 2026-04-20
+
+### Added — ACC-6b: TUI + Role Infusion Dashboard (commit [7])
+
+**New Python package `acc/tui/`:**
+- **`acc/tui/__init__.py`** — package marker with usage documentation
+- **`acc/tui/models.py`** — `AgentSnapshot` (per-agent live state; `is_stale()`, `drift_sparkbar`, `ladder_label` display helpers) and `CollectiveSnapshot` (aggregate state with computed properties: `total_cat_a_triggers`, `avg_token_utilization`, `p95_latency_ms`, `blocked_task_count`)
+- **`acc/tui/client.py`** — `NATSObserver`: connects to NATS, subscribes to `acc.{collective_id}.>`, routes HEARTBEAT → `AgentSnapshot` update, TASK_COMPLETE → `icl_episode_count` increment, ALERT_ESCALATE → Cat-A/B trigger counters; pushes `CollectiveSnapshot` copies to `asyncio.Queue` (drops if full — never blocks NATS thread)
+- **`acc/tui/screens/infuse.py`** — `InfuseScreen`: all `RoleDefinitionConfig` fields as Textual widgets; Apply action builds `ROLE_UPDATE` payload (no signature — TUI is not a signing party); Clear resets all widgets; History panel shows role_audit rows; status bar shows "Awaiting arbiter approval…" after submit
+- **`acc/tui/screens/dashboard.py`** — `DashboardScreen`: reactive `snapshot` var drives re-render of agent card grid (drift spark-bar, reprogramming ladder, staleness indicator), governance panel (Cat-A/B/C), memory panel (ICL episodes, patterns), LLM metrics panel (p95 latency, token util, blocked tasks)
+- **`acc/tui/app.py`** — `ACCTUIApp`: NATS connect with 3-retry exponential backoff; `_drain_queue()` background task bridges `asyncio.Queue` to Textual reactive system via `call_from_thread()`; screen registry for dashboard/infuse; `main()` entry point
+
+**Modified:**
+- **`pyproject.toml`** — Added `[tui]` optional extras group (`textual>=0.80`, `rich>=13`); added `acc-tui` CLI entry point pointing to `acc.tui.app:main`
+
+**New deployment files:**
+- **`deploy/Containerfile.tui`** — UBI10 + Python 3.12; installs `agentic-cell-corpus[tui]` only (no LanceDB/Redis/Milvus); `CMD ["acc-tui"]`
+- **`operator/config/samples/acc_tui_deployment.yaml`** — K8s `Deployment` with `stdin: true`, `tty: true`; `ACC_NATS_URL` and `ACC_COLLECTIVE_ID` sourced from `acc-config` ConfigMap; no PVCs
+
+**New tests (43 total):**
+- **`tests/test_tui_models.py`** — 23 tests: `is_stale()` boundary tests, display helpers, `CollectiveSnapshot` aggregate properties
+- **`tests/test_tui_client.py`** — 14 tests: HEARTBEAT/TASK_COMPLETE/ALERT_ESCALATE routing; malformed JSON handling; full queue drop; staleness integration
+- **`tests/test_tui_smoke.py`** — 6 Textual pilot tests: both screens render; Tab switches screen; Apply calls NATS publish exactly once; Clear resets purpose field; snapshot update reaches DashboardScreen
+
+---
+
 ## [1.3.0] — 2026-04-20
 
 ### Added — ACC-6a: Cognitive Core + Role Infusion (commit [6])
