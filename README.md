@@ -97,7 +97,7 @@ Requirements: Podman ≥ 4.0, `podman-compose` ≥ 1.0.6, Ollama running locally
 # 1. Build and push the operator image
 cd operator/
 export IMG=quay.io/<your-org>/acc-operator:0.1.0
-make docker-build IMG=$IMG && make docker-push IMG=$IMG
+podman build -f Containerfile -t $IMG . && podman push $IMG
 
 # 2. Deploy the operator (Method A — Kustomize, fastest)
 make install && make deploy IMG=$IMG
