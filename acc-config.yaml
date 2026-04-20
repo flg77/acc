@@ -33,3 +33,27 @@ observability:
   backend: log             # log | otel
   otel_service_name: acc-agent
   # OTEL_EXPORTER_OTLP_ENDPOINT from env when backend=otel
+
+# Role definition injected into CognitiveCore (ACC-6a).
+# Override at runtime via NATS ROLE_UPDATE (arbiter countersign required).
+# Loaded from ACC_ROLE_CONFIG_PATH (/app/acc-role.yaml) first if that file exists.
+role_definition:
+  # ingester: ingest and normalise raw signals from external sources
+  purpose: "Ingest and normalise incoming data signals, extract structured records, and forward them to the collective bus."
+  persona: concise           # concise | formal | exploratory | analytical
+  task_types:
+    - TASK_ASSIGN
+    - SYNC_MEMORY
+  seed_context: ""           # domain-specific priming injected into every LLM call
+  allowed_actions:
+    - publish_signal
+    - write_episode
+  category_b_overrides:
+    token_budget: 2048
+    rate_limit_rpm: 60
+  version: "0.1.0"
+  # Role-specific overrides per agent role (applied by the operator ConfigMap):
+  # analyst:      purpose / seed_context differ; persona=analytical
+  # synthesizer:  purpose / seed_context differ; persona=formal
+  # arbiter:      purpose / seed_context differ; allowed_actions includes sign_role_update
+  # observer:     CognitiveCore not instantiated for this role (REQ-CORE-008)

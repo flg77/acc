@@ -47,6 +47,31 @@ _SCHEMAS: dict[str, pa.Schema] = {
         pa.field("created_at", pa.float64()),
         pa.field("embedding", pa.list_(pa.float32(), 384)),
     ]),
+    # ACC-6a: role infusion tables
+    "role_definitions": pa.schema([
+        pa.field("id", pa.utf8()),                    # uuid
+        pa.field("agent_id", pa.utf8()),
+        pa.field("collective_id", pa.utf8()),
+        pa.field("version", pa.utf8()),
+        pa.field("purpose", pa.utf8()),
+        pa.field("persona", pa.utf8()),
+        pa.field("seed_context", pa.utf8()),
+        pa.field("task_types_json", pa.utf8()),        # JSON array
+        pa.field("allowed_actions_json", pa.utf8()),   # JSON array
+        pa.field("category_b_overrides_json", pa.utf8()),  # JSON object
+        pa.field("created_at", pa.float64()),
+        pa.field("purpose_embedding", pa.list_(pa.float32(), 384)),  # centroid seed
+    ]),
+    "role_audit": pa.schema([
+        pa.field("id", pa.utf8()),
+        pa.field("agent_id", pa.utf8()),
+        pa.field("ts", pa.float64()),
+        pa.field("event_type", pa.utf8()),   # "loaded" | "updated" | "rejected"
+        pa.field("old_version", pa.utf8()),
+        pa.field("new_version", pa.utf8()),
+        pa.field("diff_summary", pa.utf8()),
+        pa.field("approver_id", pa.utf8()),  # arbiter agent_id for ROLE_UPDATE events
+    ]),
 }
 
 _STANDARD_TABLES = list(_SCHEMAS.keys())

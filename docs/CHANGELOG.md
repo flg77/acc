@@ -11,6 +11,38 @@ Versioning scheme: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.3.0] — 2026-04-20
+
+### Added — ACC-6a: Cognitive Core + Role Infusion (commit [6])
+
+**New Python modules:**
+- **`acc/signals.py`** — Signal type string constants (`SIG_REGISTER`, `SIG_HEARTBEAT`, `SIG_TASK_ASSIGN`, `SIG_TASK_COMPLETE`, `SIG_ROLE_UPDATE`, `SIG_ROLE_APPROVAL`, `SIG_ALERT_ESCALATE`), NATS subject helpers (`subject_register`, `subject_heartbeat`, `subject_task`, `subject_role_update`, `subject_role_approval`, `subject_alert`), and Redis key helpers (`redis_role_key`, `redis_centroid_key`, `redis_stress_key`, `redis_collective_key`)
+- **`acc/role_store.py`** — `RoleStore`: three-tier startup load (ConfigMap → Redis → LanceDB → config default); `apply_update()` with arbiter countersign validation; `get_history()` returning ordered role_audit rows; asyncio.Event hot-reload notification
+- **`acc/cognitive_core.py`** — `CognitiveCore`: full LLM reasoning pipeline (pre-gate → prompt build → LLM call → post-gate → episode persist → drift scoring); `StressIndicators` dataclass; `CognitiveResult` dataclass; rolling centroid update (alpha=0.1); `_cosine_similarity` helper
+
+**Modified Python modules:**
+- **`acc/config.py`** — Added `RoleDefinitionConfig` Pydantic model (7 fields: `purpose`, `persona`, `task_types`, `seed_context`, `allowed_actions`, `category_b_overrides`, `version`); extended `ACCConfig` with `role_definition` field; extended `AgentRole` to include `synthesizer` and `observer`; extended `_ENV_MAP` with `ACC_ROLE_PURPOSE`, `ACC_ROLE_PERSONA`, `ACC_ROLE_VERSION`
+- **`acc/backends/vector_lancedb.py`** — Added `role_definitions` and `role_audit` LanceDB table schemas; both auto-created at `LanceDBBackend.__init__()`
+- **`acc/agent.py`** — `Agent` now instantiates `RoleStore.load_at_startup()` and `CognitiveCore` (observer role skipped); heartbeat payload extended with all `StressIndicators` fields; `_task_loop()` and `_subscribe_role_updates()` run concurrently with `_heartbeat_loop()`
+- **`acc-config.yaml`** — Added `role_definition` section with documented defaults for all 5 agent roles
+
+**Modified Operator (Go):**
+- **`operator/api/v1alpha1/agentcollective_types.go`** — Added `RoleDefinition` struct with all 7 role fields; added optional `RoleDefinition` field to `AgentCollectiveSpec`
+- **`operator/api/v1alpha1/zz_generated.deepcopy.go`** — Hand-written `DeepCopyInto`/`DeepCopy` for `RoleDefinition` and updated `AgentCollectiveSpec.DeepCopyInto`
+- **`operator/internal/reconcilers/collective/collective.go`** — Added `reconcileRoleConfigMap()` helper that renders `spec.roleDefinition` to `acc-role-{collectiveId}` ConfigMap with owner reference
+- **`operator/internal/reconcilers/collective/agent_deployment.go`** — Added `acc-role` volume and `/app/acc-role.yaml` read-only VolumeMount to all agent pods
+
+**New tests:**
+- **`tests/test_signals.py`** — 19 assertions covering all signal constants, subject helpers, and Redis key helpers
+- **`tests/test_role_store.py`** — 17 tests covering all 4 load precedence branches, `apply_update()` happy path, 5 rejection paths, `get_history()` ordering, and error handling
+- **`tests/test_cognitive_core.py`** — 53 tests covering prompt build (all 4 personas), pre-gate (RPM and token budget), process_task blocked and happy paths, drift computation, reprogramming level governance, and cosine similarity helper
+
+**OpenSpec change documents:**
+- `openspec/changes/20260418-acc-6a-cognitive-core-role-infusion/` (proposal, design, tasks, spec) — 34-task implementation plan; 22 formal requirements (REQ-ROLE, REQ-STORE, REQ-CORE, REQ-STRESS, REQ-OP)
+- `openspec/changes/20260418-acc-6b-tui-dashboard/` (proposal, design, tasks, spec) — 25-task TUI plan; 24 formal requirements (companion to ACC-6b implementation)
+
+---
+
 ## [1.2.0] — 2026-04-15
 
 ### Added — ACC-5: Operator Deployment Guide & Certification Roadmap (commit [4])

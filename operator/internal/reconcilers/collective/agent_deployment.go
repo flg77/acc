@@ -42,10 +42,13 @@ type AgentDeploymentReconciler struct {
 }
 
 // ReconcileCollective reconciles all role Deployments for one collective.
+// roleConfigMapName is the name of the acc-role-{collectiveId} ConfigMap
+// created by CollectiveReconciler.reconcileRoleConfigMap (ACC-6a REQ-OP-003).
 func (r *AgentDeploymentReconciler) ReconcileCollective(
 	ctx context.Context,
 	corpus *accv1alpha1.AgentCorpus,
 	collective *accv1alpha1.AgentCollective,
+	roleConfigMapName string,
 ) (AgentDeploymentResult, error) {
 	ns := corpus.Namespace
 	result := AgentDeploymentResult{
@@ -82,7 +85,7 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 	// One Deployment per agent role.
 	// -----------------------------------------------------------------------
 	for _, roleSpec := range collective.Spec.Agents {
-		ready, desired, progressing, err := r.reconcileRoleDeployment(ctx, corpus, collective, roleSpec, configMapName, ns)
+		ready, desired, progressing, err := r.reconcileRoleDeployment(ctx, corpus, collective, roleSpec, configMapName, roleConfigMapName, ns)
 		if err != nil {
 			return result, err
 		}
@@ -102,7 +105,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	corpus *accv1alpha1.AgentCorpus,
 	collective *accv1alpha1.AgentCollective,
 	roleSpec accv1alpha1.AgentRoleSpec,
-	configMapName, ns string,
+	configMapName, roleConfigMapName, ns string,
 ) (ready, desired int32, progressing bool, err error) {
 	role := roleSpec.Role
 	labels := util.AgentLabels(corpus.Name, collective.Spec.CollectiveID, role, corpus.Spec.Version)
@@ -144,6 +147,13 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "acc-config", MountPath: "/etc/acc"},
 								{Name: "wasm-governance", MountPath: "/etc/acc/governance"},
+								// ACC-6a: role definition mounted read-only at /app/acc-role.yaml
+								{
+									Name:      "acc-role",
+									MountPath: "/app/acc-role.yaml",
+									SubPath:   "acc-role.yaml",
+									ReadOnly:  true,
+								},
 							},
 						},
 					},
@@ -162,6 +172,17 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 								ConfigMap: &corev1.ConfigMapVolumeSource{
 									LocalObjectReference: corev1.LocalObjectReference{
 										Name: corpus.Spec.Governance.CategoryA.WASMConfigMapRef,
+									},
+								},
+							},
+						},
+						// ACC-6a: role definition ConfigMap (REQ-OP-003)
+						{
+							Name: "acc-role",
+							VolumeSource: corev1.VolumeSource{
+								ConfigMap: &corev1.ConfigMapVolumeSource{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: roleConfigMapName,
 									},
 								},
 							},

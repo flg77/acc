@@ -302,6 +302,43 @@ func (in *AgentCollectiveSpec) DeepCopyInto(out *AgentCollectiveSpec) {
 		*out = new(ScalingSpec)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.RoleDefinition != nil {
+		in, out := &in.RoleDefinition, &out.RoleDefinition
+		*out = new(RoleDefinition)
+		(*in).DeepCopyInto(*out)
+	}
+}
+
+// DeepCopyInto copies RoleDefinition.
+func (in *RoleDefinition) DeepCopyInto(out *RoleDefinition) {
+	*out = *in
+	if in.TaskTypes != nil {
+		in, out := &in.TaskTypes, &out.TaskTypes
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.AllowedActions != nil {
+		in, out := &in.AllowedActions, &out.AllowedActions
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
+	if in.CategoryBOverrides != nil {
+		in, out := &in.CategoryBOverrides, &out.CategoryBOverrides
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+}
+
+// DeepCopy returns a deep copy of RoleDefinition.
+func (in *RoleDefinition) DeepCopy() *RoleDefinition {
+	if in == nil {
+		return nil
+	}
+	out := new(RoleDefinition)
+	in.DeepCopyInto(out)
+	return out
 }
 
 // DeepCopyInto copies AgentRoleSpec.

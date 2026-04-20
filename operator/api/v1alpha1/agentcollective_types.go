@@ -45,7 +45,50 @@ type AgentCollectiveSpec struct {
 	// +kubebuilder:default=30
 	// +optional
 	HeartbeatIntervalSeconds int32 `json:"heartbeatIntervalSeconds,omitempty"`
+
+	// RoleDefinition sets the cognitive role for all agents in this collective.
+	// The reconciler renders this into a ConfigMap named acc-role-{collectiveId}
+	// mounted read-only into every agent pod at /app/acc-role.yaml.
+	// Agents load this as the highest-priority role source on startup.
+	// +optional
+	RoleDefinition *RoleDefinition `json:"roleDefinition,omitempty"`
 }
+
+// RoleDefinition mirrors RoleDefinitionConfig from acc/config.py.
+// All fields are optional; omitted fields use the agent's compiled defaults.
+type RoleDefinition struct {
+	// Purpose is the agent's primary objective statement, injected as the
+	// first component of the CognitiveCore system prompt.
+	// +optional
+	Purpose string `json:"purpose,omitempty"`
+
+	// Persona controls the LLM response style.
+	// +kubebuilder:validation:Enum=concise;formal;exploratory;analytical
+	// +kubebuilder:default=concise
+	// +optional
+	Persona string `json:"persona,omitempty"`
+
+	// TaskTypes lists the NATS signal types this agent will accept.
+	// +optional
+	TaskTypes []string `json:"taskTypes,omitempty"`
+
+	// SeedContext is a domain-specific priming string injected into every LLM call.
+	// +optional
+	SeedContext string `json:"seedContext,omitempty"`
+
+	// AllowedActions lists the actions the agent may perform.
+	// +optional
+	AllowedActions []string `json:"allowedActions,omitempty"`
+
+	// CategoryBOverrides are live-updatable Cat-B governance setpoints
+	// (e.g. token_budget, rate_limit_rpm).
+	// +optional
+	CategoryBOverrides map[string]string `json:"categoryBOverrides,omitempty"`
+
+	// Version is the semantic version of this role definition.
+	// +kubebuilder:default="0.1.0"
+	// +optional
+	Version string `json:"version,omitempty"`
 
 // AgentRoleSpec defines the deployment configuration for one agent role.
 type AgentRoleSpec struct {
