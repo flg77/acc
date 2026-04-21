@@ -29,6 +29,10 @@ import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from acc.config import ACCConfig
 
 from acc.config import load_config, build_backends
 from acc.cognitive_core import CognitiveCore, StressIndicators
@@ -46,6 +50,43 @@ from acc.signals import (
 )
 
 logger = logging.getLogger("acc.agent")
+
+
+# ---------------------------------------------------------------------------
+# Redis client factory (Phase 0b)
+# ---------------------------------------------------------------------------
+
+
+def _build_redis_client(config: "ACCConfig") -> "Optional[Any]":
+    """Build a synchronous Redis client from *config*, or return ``None``.
+
+    Returns ``None`` when:
+
+    * ``working_memory.url`` is empty (Redis not configured), or
+    * the ``redis`` package is not installed, or
+    * the connection parameters are invalid.
+
+    The caller (``Agent.__init__``) passes the result straight to
+    ``RoleStore`` and ``CognitiveCore``.  Both treat ``None`` as
+    "no Redis" and fall back to in-process state.
+    """
+    url = config.working_memory.url
+    if not url:
+        logger.debug("agent: working_memory.url not set — Redis client disabled")
+        return None
+    try:
+        import redis as redis_lib  # noqa: PLC0415 — intentional lazy import
+        password: Optional[str] = config.working_memory.password or None
+        client = redis_lib.from_url(url, password=password, decode_responses=False)
+        logger.info("agent: Redis client built (url=%s auth=%s)", url, password is not None)
+        return client
+    except Exception as exc:  # pragma: no cover — import / config error path
+        logger.warning(
+            "agent: failed to build Redis client (url=%s): %s — working memory disabled",
+            url,
+            exc,
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -79,11 +120,14 @@ class Agent:
         self.state = STATE_REGISTERING
         self._stop_event = asyncio.Event()
 
+        # Redis working-memory client (Phase 0b) — None when not configured
+        self._redis = _build_redis_client(self.config)
+
         # Role store — loaded before CognitiveCore is instantiated
         self._role_store = RoleStore(
             config=self.config,
             agent_id=self.agent_id,
-            redis_client=None,    # optional; wire in when Redis backend available
+            redis_client=self._redis,
             vector=self.backends.vector,
         )
         self._active_role = self._role_store.load_at_startup()
@@ -96,7 +140,7 @@ class Agent:
                 collective_id=self.config.agent.collective_id,
                 llm=self.backends.llm,
                 vector=self.backends.vector,
-                redis_client=None,
+                redis_client=self._redis,
                 role_label=self.config.agent.role,
             )
 

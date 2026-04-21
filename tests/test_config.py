@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from acc.config import ACCConfig, RoleDefinitionConfig, load_config, _apply_env
+from acc.config import ACCConfig, RoleDefinitionConfig, WorkingMemoryConfig, load_config, _apply_env
 
 
 # ---------------------------------------------------------------------------
@@ -178,3 +178,47 @@ class TestRoleDefinitionConfig:
         for role in ("synthesizer", "observer"):
             config = ACCConfig.model_validate({"agent": {"role": role}})
             assert config.agent.role == role
+
+
+# ---------------------------------------------------------------------------
+# WorkingMemoryConfig validation (Phase 0b)
+# ---------------------------------------------------------------------------
+
+
+class TestWorkingMemoryConfig:
+    def test_defaults_to_empty_url_and_password(self):
+        cfg = WorkingMemoryConfig()
+        assert cfg.url == ""
+        assert cfg.password == ""
+
+    def test_acc_config_has_working_memory_field(self):
+        config = ACCConfig()
+        assert isinstance(config.working_memory, WorkingMemoryConfig)
+
+    def test_working_memory_section_parsed_from_dict(self):
+        config = ACCConfig.model_validate({
+            "working_memory": {"url": "redis://localhost:6379", "password": "s3cr3t"},
+        })
+        assert config.working_memory.url == "redis://localhost:6379"
+        assert config.working_memory.password == "s3cr3t"
+
+    def test_acc_redis_url_env_var_applied(self, monkeypatch):
+        monkeypatch.setenv("ACC_REDIS_URL", "redis://acc-redis:6379")
+        data = _apply_env({})
+        assert data["working_memory"]["url"] == "redis://acc-redis:6379"
+
+    def test_acc_redis_password_env_var_applied(self, monkeypatch):
+        monkeypatch.setenv("ACC_REDIS_PASSWORD", "hunter2")
+        data = _apply_env({})
+        assert data["working_memory"]["password"] == "hunter2"
+
+    def test_empty_url_keeps_password_empty_by_default(self):
+        config = ACCConfig.model_validate({"working_memory": {"url": ""}})
+        assert config.working_memory.password == ""
+
+    def test_password_without_url_is_valid(self):
+        """Password can be set even if URL is empty (both handled gracefully)."""
+        config = ACCConfig.model_validate({
+            "working_memory": {"url": "", "password": "somepass"},
+        })
+        assert config.working_memory.password == "somepass"

@@ -39,6 +39,8 @@ dependencies = [
     "pyyaml>=6.0,<7.0",
     # Cryptography (Ed25519 arbiter signature verification — Phase 0a)
     "cryptography>=42,<45",
+    # Working memory (Redis — Phase 0b)
+    "redis>=5.0,<6.0",
     # Wire serialization
     "msgpack>=1.1,<2.0",
 ]

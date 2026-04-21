@@ -33,7 +33,9 @@ RUN mkdir -p /var/lib/redis/data \
     && chmod -R g=u /var/lib/redis
 
 # Minimal redis.conf: bind all interfaces, disable protected-mode for
-# container-internal use, persist data to the mounted volume
+# container-internal use, persist data to the mounted volume.
+# requirepass is intentionally absent here — it is injected at runtime
+# via the entrypoint script when REDIS_PASSWORD is set.
 RUN printf '\
 bind 0.0.0.0\n\
 protected-mode no\n\
@@ -45,6 +47,20 @@ loglevel notice\n\
 logfile ""\n\
 ' > /etc/redis.conf
 
+# Entrypoint: start redis-server, appending --requirepass when REDIS_PASSWORD
+# is set in the environment.  When REDIS_PASSWORD is empty, Redis starts
+# without authentication (backward compatible with non-auth deployments).
+RUN printf '#!/bin/sh\nexec redis-server /etc/redis.conf ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}\n' \
+    > /usr/local/bin/redis-entrypoint.sh \
+    && chmod +x /usr/local/bin/redis-entrypoint.sh
+
+# Healthcheck script: authenticates against Redis using REDIS_PASSWORD when
+# set, or falls back to unauthenticated ping.  Used by podman-compose and the
+# operator readiness probe.
+RUN printf '#!/bin/sh\nexec redis-cli -h 127.0.0.1 ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"} ping\n' \
+    > /usr/local/bin/redis-healthcheck.sh \
+    && chmod +x /usr/local/bin/redis-healthcheck.sh
+
 # Run as non-root (OCP restricted SCC compatible)
 USER 1001
 
@@ -52,4 +68,4 @@ EXPOSE 6379
 
 VOLUME ["/var/lib/redis/data"]
 
-CMD ["redis-server", "/etc/redis.conf"]
+ENTRYPOINT ["/usr/local/bin/redis-entrypoint.sh"]

@@ -85,6 +85,24 @@ class ObservabilityConfig(BaseModel):
     otel_service_name: str = "acc-agent"
 
 
+class WorkingMemoryConfig(BaseModel):
+    """Redis working-memory connection settings (Phase 0b).
+
+    ``url`` uses the standard ``redis://[user:password@]host:port[/db]`` scheme.
+    Leave empty to disable Redis working memory — the agent will operate with
+    in-process state only (role centroid, stress indicators, and role history
+    will not be persisted between restarts).
+
+    ``password`` is kept separate from the URL so it can be supplied via an
+    environment variable or a Kubernetes Secret without leaking into log lines
+    that might record the full connection URL.  When non-empty it overrides any
+    password embedded in ``url``.
+    """
+
+    url: str = ""       # e.g. redis://acc-redis:6379
+    password: str = ""  # Redis AUTH password; empty = no authentication
+
+
 class SecurityConfig(BaseModel):
     """Cryptographic security settings (Phase 0a onwards).
 
@@ -112,6 +130,7 @@ class ACCConfig(BaseModel):
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     role_definition: RoleDefinitionConfig = Field(default_factory=RoleDefinitionConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    working_memory: WorkingMemoryConfig = Field(default_factory=WorkingMemoryConfig)
 
     @model_validator(mode="after")
     def _validate_rhoai_fields(self) -> "ACCConfig":
@@ -152,6 +171,9 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     # ACC_ROLE_CONFIG_PATH is consumed by RoleStore.load_at_startup(), not here
     # Security (Phase 0a)
     "ACC_ARBITER_VERIFY_KEY":       ("security", "arbiter_verify_key"),
+    # Working memory / Redis (Phase 0b)
+    "ACC_REDIS_URL":                ("working_memory", "url"),
+    "ACC_REDIS_PASSWORD":           ("working_memory", "password"),
 }
 
 

@@ -36,12 +36,21 @@ services:
   # Built locally from deploy/Containerfile.redis (UBI9 + EPEL).
   # registry.access.redhat.com/ubi8/redis-6 requires a subscription to pull
   # and is therefore replaced by a local build that is subscription-free.
+  #
+  # Authentication (Phase 0b):
+  #   Set REDIS_PASSWORD in .env (see .env.example).  When empty, Redis
+  #   starts without authentication (suitable for isolated dev networks only).
   acc-redis:
     build:
       context: ..
       dockerfile: deploy/Containerfile.redis
     image: localhost/acc-redis:7
     container_name: acc-redis
+    env_file:
+      - path: .env
+        required: false   # tolerate absent .env in CI / first-run scenarios
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
       - "6379:6379"
     volumes:
@@ -50,7 +59,7 @@ services:
       - acc-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "localhost", "ping"]
+      test: ["CMD", "/usr/local/bin/redis-healthcheck.sh"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -65,11 +74,16 @@ services:
         condition: service_healthy
       acc-redis:
         condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
     environment:
       ACC_AGENT_ROLE: ingester
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb
       - ./acc-config.yaml:/app/acc-config.yaml:ro
@@ -86,11 +100,16 @@ services:
         condition: service_healthy
       acc-redis:
         condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
     environment:
       ACC_AGENT_ROLE: analyst
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb
       - ./acc-config.yaml:/app/acc-config.yaml:ro
@@ -107,11 +126,16 @@ services:
         condition: service_healthy
       acc-redis:
         condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
     environment:
       ACC_AGENT_ROLE: arbiter
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb
       - ./acc-config.yaml:/app/acc-config.yaml:ro

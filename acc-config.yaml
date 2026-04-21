@@ -34,6 +34,15 @@ observability:
   otel_service_name: acc-agent
   # OTEL_EXPORTER_OTLP_ENDPOINT from env when backend=otel
 
+# Working memory — Redis (Phase 0b).
+# Set ACC_REDIS_URL to enable Redis-backed working memory (role centroid,
+# stress state, role history).  Leave empty to run with in-process state only.
+# WARNING: in-process state is lost on pod restart; Redis is recommended for
+# production deployments.
+working_memory:
+  url: ""         # e.g. redis://acc-redis:6379 — set via ACC_REDIS_URL
+  password: ""    # set via ACC_REDIS_PASSWORD (populated from .env / K8s Secret)
+
 # Security (Phase 0a — Ed25519 arbiter countersign verification).
 # Set ACC_ARBITER_VERIFY_KEY env var to the Base64-encoded raw Ed25519 public key
 # of the collective's arbiter.  When empty, only signature presence is checked
