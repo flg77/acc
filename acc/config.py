@@ -85,6 +85,24 @@ class ObservabilityConfig(BaseModel):
     otel_service_name: str = "acc-agent"
 
 
+class SecurityConfig(BaseModel):
+    """Cryptographic security settings (Phase 0a onwards).
+
+    ``arbiter_verify_key`` is the Base64-encoded raw 32-byte Ed25519 public key
+    belonging to the collective's arbiter.  When non-empty, every incoming
+    ROLE_UPDATE payload must carry a valid Ed25519 signature produced by the
+    corresponding private key before it is applied.
+
+    When empty the signature presence check is still enforced (``signature``
+    field must be non-empty) but no cryptographic verification is performed.
+    This preserves backward compatibility with test fixtures that use
+    placeholder signatures and with environments where the arbiter key has not
+    yet been provisioned.
+    """
+
+    arbiter_verify_key: str = ""
+
+
 class ACCConfig(BaseModel):
     deploy_mode: DeployMode = "standalone"
     agent: AgentConfig = Field(default_factory=AgentConfig)
@@ -93,6 +111,7 @@ class ACCConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     role_definition: RoleDefinitionConfig = Field(default_factory=RoleDefinitionConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
 
     @model_validator(mode="after")
     def _validate_rhoai_fields(self) -> "ACCConfig":
@@ -131,6 +150,8 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_ROLE_PERSONA":             ("role_definition", "persona"),
     "ACC_ROLE_VERSION":             ("role_definition", "version"),
     # ACC_ROLE_CONFIG_PATH is consumed by RoleStore.load_at_startup(), not here
+    # Security (Phase 0a)
+    "ACC_ARBITER_VERIFY_KEY":       ("security", "arbiter_verify_key"),
 }
 
 

@@ -34,6 +34,13 @@ observability:
   otel_service_name: acc-agent
   # OTEL_EXPORTER_OTLP_ENDPOINT from env when backend=otel
 
+# Security (Phase 0a — Ed25519 arbiter countersign verification).
+# Set ACC_ARBITER_VERIFY_KEY env var to the Base64-encoded raw Ed25519 public key
+# of the collective's arbiter.  When empty, only signature presence is checked
+# (backward compatible; not suitable for production).
+security:
+  arbiter_verify_key: ""   # export ACC_ARBITER_VERIFY_KEY=<base64-pubkey>
+
 # Role definition injected into CognitiveCore (ACC-6a).
 # Override at runtime via NATS ROLE_UPDATE (arbiter countersign required).
 # Loaded from ACC_ROLE_CONFIG_PATH (/app/acc-role.yaml) first if that file exists.

@@ -37,6 +37,8 @@ dependencies = [
     # Config
     "pydantic>=2.8,<3.0",
     "pyyaml>=6.0,<7.0",
+    # Cryptography (Ed25519 arbiter signature verification — Phase 0a)
+    "cryptography>=42,<45",
     # Wire serialization
     "msgpack>=1.1,<2.0",
 ]
