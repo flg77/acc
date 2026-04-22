@@ -46,6 +46,11 @@ func (r *KEDAScaledObjectReconciler) ReconcileCollective(
 ) (struct{ ScaledObjectsActive bool }, error) {
 	result := struct{ ScaledObjectsActive bool }{}
 
+	// Guard: edge mode always uses static replicas (no KEDA at edge).
+	if corpus.Spec.DeployMode == accv1alpha1.DeployModeEdge {
+		return result, nil
+	}
+
 	// Guard: KEDA absent or scaling disabled.
 	if !corpus.Status.Prerequisites.KEDAInstalled {
 		return result, nil

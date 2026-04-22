@@ -41,6 +41,12 @@ func (r *GatekeeperReconciler) Name() string { return "governance/gatekeeper" }
 
 // Reconcile implements SubReconciler.
 func (r *GatekeeperReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.AgentCorpus) (reconcilers.SubResult, error) {
+	// Edge mode: Gatekeeper ConstraintTemplates are not available on
+	// MicroShift / K3s edge deployments — skip without logging.
+	if corpus.Spec.DeployMode == accv1alpha1.DeployModeEdge {
+		return reconcilers.SubResult{}, nil
+	}
+
 	// Skip if Gatekeeper is not installed or integration is disabled.
 	if !corpus.Status.Prerequisites.GatekeeperInstalled {
 		return reconcilers.SubResult{}, nil

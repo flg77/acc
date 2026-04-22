@@ -170,6 +170,142 @@ func TestRenderNATSConfig_Clustered(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Edge deploy mode tests (ACC-8)
+// ---------------------------------------------------------------------------
+
+func makeEdgeCorpus() *accv1alpha1.AgentCorpus {
+	c := makeTestCorpus()
+	c.Spec.DeployMode = accv1alpha1.DeployModeEdge
+	c.Spec.Edge = &accv1alpha1.EdgeSpec{
+		HubNatsUrl:           "nats-leaf://hub.example.com:7422",
+		HubCollectiveID:      "sol-dc-01",
+		RedisMaxMemoryMB:     512,
+		RedisMaxMemoryPolicy: "allkeys-lru",
+	}
+	return c
+}
+
+func TestRenderNATSConfig_EdgeLeafNode(t *testing.T) {
+	corpus := makeEdgeCorpus()
+	conf, err := templates.RenderNATSConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderNATSConfig error: %v", err)
+	}
+	if !strings.Contains(conf, "leafnodes") {
+		t.Error("edge config should contain leafnodes block")
+	}
+	if !strings.Contains(conf, "nats-leaf://hub.example.com:7422") {
+		t.Errorf("expected hub URL in leafnodes block\n\nFull output:\n%s", conf)
+	}
+	if !strings.Contains(conf, "jetstream") {
+		t.Error("edge config should still contain jetstream section")
+	}
+}
+
+func TestRenderNATSConfig_StandaloneNoLeafNode(t *testing.T) {
+	corpus := makeTestCorpus()
+	conf, err := templates.RenderNATSConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderNATSConfig error: %v", err)
+	}
+	if strings.Contains(conf, "leafnodes") {
+		t.Error("standalone config should NOT contain leafnodes block")
+	}
+}
+
+func TestRenderNATSConfig_EdgeNoHubUrl(t *testing.T) {
+	corpus := makeEdgeCorpus()
+	corpus.Spec.Edge.HubNatsUrl = "" // hub URL not yet configured
+	conf, err := templates.RenderNATSConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderNATSConfig error: %v", err)
+	}
+	// No hub URL → no leafnodes block (agent operates in disconnected mode)
+	if strings.Contains(conf, "leafnodes") {
+		t.Error("edge config without hub URL should not contain leafnodes block")
+	}
+}
+
+func TestRenderACCConfig_EdgeMode(t *testing.T) {
+	corpus := makeEdgeCorpus()
+	collective := makeTestCollective()
+
+	yaml, err := templates.RenderACCConfig(corpus, collective)
+	if err != nil {
+		t.Fatalf("RenderACCConfig error: %v", err)
+	}
+
+	checks := []string{
+		"deploy_mode: edge",
+		"hub_url: nats-leaf://hub.example.com:7422",
+		"hub_collective_id: sol-dc-01",
+		"bridge_enabled: true",
+		"backend: lancedb",   // LanceDB, not Milvus
+		"backend: log",       // log metrics, not otel
+	}
+	for _, check := range checks {
+		if !strings.Contains(yaml, check) {
+			t.Errorf("edge acc-config.yaml missing %q\n\nFull output:\n%s", check, yaml)
+		}
+	}
+
+	// Milvus should not appear in edge config
+	if strings.Contains(yaml, "milvus_uri") {
+		t.Errorf("edge config should not contain milvus_uri\n\nFull output:\n%s", yaml)
+	}
+}
+
+func TestRenderACCConfig_EdgeModeDefaultsOllamaModel(t *testing.T) {
+	corpus := makeEdgeCorpus()
+	collective := makeTestCollective()
+	// Set empty model to trigger edge default
+	collective.Spec.LLM.Ollama.Model = ""
+
+	yaml, err := templates.RenderACCConfig(corpus, collective)
+	if err != nil {
+		t.Fatalf("RenderACCConfig error: %v", err)
+	}
+	if !strings.Contains(yaml, "ollama_model: llama3.2:3b") {
+		t.Errorf("edge config should default to llama3.2:3b when model is empty\n\nFull output:\n%s", yaml)
+	}
+}
+
+func TestRenderACCConfig_EdgeModeOTelForcedToLog(t *testing.T) {
+	corpus := makeEdgeCorpus()
+	// Edge with OTel set in spec — should be overridden to log
+	corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{
+		Backend: accv1alpha1.MetricsBackendOTel,
+		OTelCollector: &accv1alpha1.OTelCollectorSpec{
+			Endpoint: "https://otel:4317",
+		},
+	}
+	collective := makeTestCollective()
+
+	yaml, err := templates.RenderACCConfig(corpus, collective)
+	if err != nil {
+		t.Fatalf("RenderACCConfig error: %v", err)
+	}
+	if !strings.Contains(yaml, "backend: log") {
+		t.Errorf("edge config should override OTel to log\n\nFull output:\n%s", yaml)
+	}
+}
+
+func TestRenderACCConfig_EdgeModeNoHubCollective(t *testing.T) {
+	corpus := makeEdgeCorpus()
+	corpus.Spec.Edge.HubCollectiveID = "" // no hub collective
+	collective := makeTestCollective()
+
+	yaml, err := templates.RenderACCConfig(corpus, collective)
+	if err != nil {
+		t.Fatalf("RenderACCConfig error: %v", err)
+	}
+	// bridge_enabled and hub_collective_id should not appear when hub is not set
+	if strings.Contains(yaml, "bridge_enabled") {
+		t.Errorf("edge config without hub collective should not have bridge_enabled\n\nFull output:\n%s", yaml)
+	}
+}
+
 func TestRenderOTelConfig(t *testing.T) {
 	corpus := makeTestCorpus()
 	corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{

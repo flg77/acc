@@ -39,6 +39,12 @@ func (r *PrometheusRulesReconciler) Name() string { return "observability/promet
 
 // Reconcile implements SubReconciler.
 func (r *PrometheusRulesReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.AgentCorpus) (reconcilers.SubResult, error) {
+	// Edge mode: Prometheus Operator is not available at the edge —
+	// PrometheusRules are only rendered for datacenter (rhoai) deployments.
+	if corpus.Spec.DeployMode == accv1alpha1.DeployModeEdge {
+		return reconcilers.SubResult{}, nil
+	}
+
 	if !corpus.Spec.Observability.PrometheusRules {
 		return reconcilers.SubResult{}, nil
 	}

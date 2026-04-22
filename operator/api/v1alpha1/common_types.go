@@ -10,15 +10,20 @@ package v1alpha1
 
 // DeployMode selects the infrastructure profile.
 // Mirrors the Python acc/config.py DeployMode literal.
-// +kubebuilder:validation:Enum=standalone;rhoai
+// +kubebuilder:validation:Enum=standalone;rhoai;edge
 type DeployMode string
 
 const (
-	// DeployModeStandalone provisions NATS + Redis + LanceDB (edge/standalone Podman).
+	// DeployModeStandalone provisions NATS + Redis + LanceDB (local developer / CI / Podman).
 	DeployModeStandalone DeployMode = "standalone"
 	// DeployModeRHOAI provisions NATS + Redis + Milvus and expects
 	// KServe and RHOAI operators to be installed on the cluster.
 	DeployModeRHOAI DeployMode = "rhoai"
+	// DeployModeEdge provisions NATS (leaf node) + Redis (single-node, eviction)
+	// + LanceDB on local NVMe for MicroShift / K3s / production edge deployments.
+	// KEDA, Gatekeeper, OTel Collector, and PrometheusRules are skipped.
+	// Agents connect to a datacenter hub via NATS leaf node when the network is available.
+	DeployModeEdge DeployMode = "edge"
 )
 
 // AgentRole identifies an ACC agent function.
@@ -97,6 +102,10 @@ const (
 	ConditionTypePrerequisitesMet       = "PrerequisitesMet"
 	ConditionTypeKafkaBridgeReady       = "KafkaBridgeReady"
 	ConditionTypeUpgradeApprovalPending = "UpgradeApprovalPending"
+	// ConditionTypeNATSLeafConnected is True when the edge NATS leaf node has
+	// successfully connected to the datacenter hub (deployMode=edge only).
+	// Unknown when hub_url is not configured or connectivity cannot be determined.
+	ConditionTypeNATSLeafConnected = "NATSLeafConnected"
 )
 
 // Annotation keys used by the operator.

@@ -82,6 +82,7 @@ func (r *PrerequisiteReconciler) Reconcile(ctx context.Context, corpus *accv1alp
 	// Emit warning events for missing prerequisites ----------------------------
 
 	allMet := true
+	isEdge := corpus.Spec.DeployMode == accv1alpha1.DeployModeEdge
 
 	if corpus.Spec.Kafka != nil && !kafkaReachable {
 		r.warnEvent(ctx, corpus, "KafkaUnreachable",
@@ -95,14 +96,24 @@ func (r *PrerequisiteReconciler) Reconcile(ctx context.Context, corpus *accv1alp
 		// rhoai without kserve is Error-level — handled in phase.go
 	}
 
-	if !gkOK {
-		r.warnEvent(ctx, corpus, "GatekeeperAbsent",
-			"OPA Gatekeeper (templates.gatekeeper.sh) is not installed; ConstraintTemplates will be skipped, WASM in-process Cat-A still active")
+	// Gatekeeper, KEDA, and RHOAI are intentionally absent in edge mode.
+	// Suppress warnings to keep status conditions clean for edge operators.
+	if !isEdge {
+		if !gkOK {
+			r.warnEvent(ctx, corpus, "GatekeeperAbsent",
+				"OPA Gatekeeper (templates.gatekeeper.sh) is not installed; ConstraintTemplates will be skipped, WASM in-process Cat-A still active")
+		}
+
+		if !kedaOK {
+			r.warnEvent(ctx, corpus, "KEDAAbsent",
+				"KEDA is not installed; ScaledObjects will be skipped and static replicas will be used")
+		}
 	}
 
-	if !kedaOK {
-		r.warnEvent(ctx, corpus, "KEDAAbsent",
-			"KEDA is not installed; ScaledObjects will be skipped and static replicas will be used")
+	// Edge-specific: note when hub URL is not configured (optional but expected).
+	if isEdge && corpus.Spec.Edge != nil && corpus.Spec.Edge.HubNatsUrl == "" {
+		r.warnEvent(ctx, corpus, "EdgeHubUrlNotConfigured",
+			"deployMode=edge but spec.edge.hubNatsUrl is empty; NATS leaf node will not connect to a hub — bridge delegation unavailable until configured")
 	}
 
 	pre.AllMet = allMet

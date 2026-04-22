@@ -17,9 +17,11 @@ import (
 // +kubebuilder:object:generate=true
 type AgentCorpusSpec struct {
 	// DeployMode selects the infrastructure profile.
-	// "standalone" provisions NATS + Redis + LanceDB (edge).
-	// "rhoai" provisions NATS + Redis + Milvus and expects KServe / RHOAI operators.
-	// +kubebuilder:validation:Enum=standalone;rhoai
+	// "standalone" — local dev / CI / Podman Compose.
+	// "edge" — MicroShift / K3s / production edge node; NATS runs as a leaf node
+	//           connecting to a datacenter hub when network is available.
+	// "rhoai" — OpenShift datacenter with RHOAI GPU inference.
+	// +kubebuilder:validation:Enum=standalone;rhoai;edge
 	// +kubebuilder:default=standalone
 	DeployMode DeployMode `json:"deployMode"`
 
@@ -58,6 +60,11 @@ type AgentCorpusSpec struct {
 	// UpgradePolicy controls how the operator handles ACC version upgrades.
 	// +optional
 	UpgradePolicy UpgradePolicySpec `json:"upgradePolicy,omitempty"`
+
+	// Edge configures edge-specific behaviour (deployMode=edge only).
+	// Ignored when deployMode is standalone or rhoai.
+	// +optional
+	Edge *EdgeSpec `json:"edge,omitempty"`
 }
 
 // CollectiveRef references an AgentCollective resource in the same namespace.
@@ -147,6 +154,41 @@ type MilvusSpec struct {
 	// CredentialsSecretRef references a Secret with milvus_user / milvus_password.
 	// +optional
 	CredentialsSecretRef *corev1.SecretReference `json:"credentialsSecretRef,omitempty"`
+}
+
+// EdgeSpec configures edge-specific behaviour (deployMode=edge only).
+type EdgeSpec struct {
+	// HubNatsUrl is the NATS leaf node remote URL of the datacenter hub.
+	// When set, the operator renders a leafnodes block in nats.conf so the
+	// local NATS server connects to the hub and forwards bridge subjects.
+	// Format: nats-leaf://hub.example.com:7422
+	// +optional
+	HubNatsUrl string `json:"hubNatsUrl,omitempty"`
+
+	// HubCollectiveID is the collective ID of the datacenter hub that edge
+	// agents should delegate complex tasks to (ACC-9 bridge protocol).
+	// Rendered as ACC_HUB_COLLECTIVE_ID in agent pod environments.
+	// +optional
+	HubCollectiveID string `json:"hubCollectiveId,omitempty"`
+
+	// HubRegistry is the container image registry to pull from when the
+	// edge node has connectivity to the hub (image pull on reconnect).
+	// Defaults to spec.imageRegistry when empty.
+	// +optional
+	HubRegistry string `json:"hubRegistry,omitempty"`
+
+	// RedisMaxMemoryMB caps Redis working memory (MiB) to prevent OOM on
+	// edge hardware. When > 0, sets Redis maxmemory and maxmemory-policy.
+	// +kubebuilder:validation:Minimum=64
+	// +kubebuilder:default=512
+	// +optional
+	RedisMaxMemoryMB int32 `json:"redisMaxMemoryMb,omitempty"`
+
+	// RedisMaxMemoryPolicy controls Redis eviction when maxmemory is reached.
+	// +kubebuilder:validation:Enum=allkeys-lru;allkeys-lfu;volatile-lru;noeviction
+	// +kubebuilder:default=allkeys-lru
+	// +optional
+	RedisMaxMemoryPolicy string `json:"redisMaxMemoryPolicy,omitempty"`
 }
 
 // GovernanceSpec configures the OPA 3-tier rule system.
@@ -383,6 +425,9 @@ type PrerequisiteStatus struct {
 type InfrastructureStatus struct {
 	NATSReady          bool   `json:"natsReady,omitempty"`
 	NATSVersion        string `json:"natsVersion,omitempty"`
+	// NATSLeafConnected is true when the edge NATS leaf node has established
+	// a connection to the datacenter hub (deployMode=edge only).
+	NATSLeafConnected  bool   `json:"natsLeafConnected,omitempty"`
 	RedisReady         bool   `json:"redisReady,omitempty"`
 	RedisVersion       string `json:"redisVersion,omitempty"`
 	MilvusConnected    bool   `json:"milvusConnected,omitempty"`

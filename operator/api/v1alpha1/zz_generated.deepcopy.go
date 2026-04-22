@@ -94,6 +94,27 @@ func (in *AgentCorpusSpec) DeepCopyInto(out *AgentCorpusSpec) {
 	}
 	in.Observability.DeepCopyInto(&out.Observability)
 	out.UpgradePolicy = in.UpgradePolicy
+	if in.Edge != nil {
+		in, out := &in.Edge, &out.Edge
+		*out = new(EdgeSpec)
+		**out = **in
+	}
+}
+
+// DeepCopyInto copies EdgeSpec (ACC-8).
+// All fields are scalars — a shallow copy suffices.
+func (in *EdgeSpec) DeepCopyInto(out *EdgeSpec) {
+	*out = *in
+}
+
+// DeepCopy returns a deep copy of EdgeSpec.
+func (in *EdgeSpec) DeepCopy() *EdgeSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(EdgeSpec)
+	in.DeepCopyInto(out)
+	return out
 }
 
 // DeepCopyInto copies InfrastructureSpec.

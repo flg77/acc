@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBackend
 
@@ -27,7 +27,7 @@ from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBac
 # Pydantic config model
 # ---------------------------------------------------------------------------
 
-DeployMode = Literal["standalone", "rhoai"]
+DeployMode = Literal["standalone", "rhoai", "edge"]
 AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer"]
 LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack"]
 MetricsBackendChoice = Literal["log", "otel"]
@@ -56,10 +56,50 @@ class AgentConfig(BaseModel):
     collective_id: str = "sol-01"
     heartbeat_interval_s: int = 30
 
+    # Cross-collective bridge (ACC-9)
+    peer_collectives: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Collective IDs that this agent may delegate tasks to (A-010). "
+            "Set via ACC_PEER_COLLECTIVES as a comma-separated list."
+        ),
+    )
+    hub_collective_id: str = Field(
+        default="",
+        description=(
+            "The authoritative hub collective ID (edge mode only). "
+            "When set, this collective is automatically added to peer_collectives."
+        ),
+    )
+    bridge_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable cross-collective task delegation (A-010 gate). "
+            "Must be True for delegation markers from the LLM to be honoured."
+        ),
+    )
+
+    @field_validator("peer_collectives", mode="before")
+    @classmethod
+    def _parse_comma_separated(cls, v: object) -> list[str]:
+        """Accept a comma-separated string (from env var) or a list."""
+        if isinstance(v, str):
+            return [cid.strip() for cid in v.split(",") if cid.strip()]
+        return v  # type: ignore[return-value]
+
 
 class SignalingConfig(BaseModel):
     backend: SignalingBackendChoice = "nats"
     nats_url: str = "nats://localhost:4222"
+    hub_url: str = Field(
+        default="",
+        description=(
+            "NATS leaf node hub URL (edge deployMode only). "
+            "When set, the local NATS server connects to this remote as a leaf node, "
+            "forwarding bridge subjects to the datacenter hub. "
+            "Example: nats-leaf://hub.example.com:7422"
+        ),
+    )
 
 
 class VectorConfig(BaseModel):
@@ -133,7 +173,7 @@ class ACCConfig(BaseModel):
     working_memory: WorkingMemoryConfig = Field(default_factory=WorkingMemoryConfig)
 
     @model_validator(mode="after")
-    def _validate_rhoai_fields(self) -> "ACCConfig":
+    def _validate_deploy_mode_fields(self) -> "ACCConfig":
         if self.deploy_mode == "rhoai":
             if not self.vector_db.milvus_uri:
                 raise ValueError("vector_db.milvus_uri is required in rhoai deploy_mode")
@@ -141,6 +181,8 @@ class ACCConfig(BaseModel):
                 raise ValueError(
                     "llm.vllm_inference_url or llm.llama_stack_url is required in rhoai deploy_mode"
                 )
+        # edge: no required fields — hub_url and peer_collectives are optional
+        # (agent operates locally when disconnected from hub).
         return self
 
 
@@ -153,6 +195,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_AGENT_ROLE":               ("agent", "role"),
     "ACC_COLLECTIVE_ID":            ("agent", "collective_id"),
     "ACC_NATS_URL":                 ("signaling", "nats_url"),
+    "ACC_NATS_HUB_URL":            ("signaling", "hub_url"),
     "ACC_LANCEDB_PATH":             ("vector_db", "lancedb_path"),
     "ACC_MILVUS_URI":               ("vector_db", "milvus_uri"),
     "ACC_MILVUS_COLLECTION_PREFIX": ("vector_db", "milvus_collection_prefix"),
@@ -174,6 +217,10 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     # Working memory / Redis (Phase 0b)
     "ACC_REDIS_URL":                ("working_memory", "url"),
     "ACC_REDIS_PASSWORD":           ("working_memory", "password"),
+    # Cross-collective bridge (ACC-9)
+    "ACC_PEER_COLLECTIVES":         ("agent", "peer_collectives"),
+    "ACC_HUB_COLLECTIVE_ID":        ("agent", "hub_collective_id"),
+    "ACC_BRIDGE_ENABLED":           ("agent", "bridge_enabled"),
 }
 
 
@@ -256,6 +303,8 @@ def build_backends(config: ACCConfig) -> BackendBundle:
         raise ValueError(f"Unknown signaling backend: {config.signaling.backend}")
 
     # --- Vector ---
+    # edge mode: LanceDB on local NVMe (same as standalone — different storage
+    # path / PVC size is an operator concern, not a Python backend concern).
     vector: VectorBackend
     if config.vector_db.backend == "lancedb":
         from acc.backends.vector_lancedb import LanceDBBackend
