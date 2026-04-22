@@ -44,6 +44,13 @@ func (r *OTelCollectorReconciler) Name() string { return "observability/otel-col
 
 // Reconcile implements SubReconciler.
 func (r *OTelCollectorReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.AgentCorpus) (reconcilers.SubResult, error) {
+	// Edge mode: OTel Collector requires a persistent network connection to
+	// the observability stack which may not be available at the edge.
+	// Agents default to the "log" metrics backend in edge mode.
+	if corpus.Spec.DeployMode == accv1alpha1.DeployModeEdge {
+		return reconcilers.SubResult{}, nil
+	}
+
 	if corpus.Spec.Observability.Backend != accv1alpha1.MetricsBackendOTel {
 		return reconcilers.SubResult{}, nil
 	}

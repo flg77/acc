@@ -29,6 +29,10 @@ import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from acc.config import ACCConfig
 
 from acc.config import load_config, build_backends
 from acc.cognitive_core import CognitiveCore, StressIndicators
@@ -38,14 +42,59 @@ from acc.signals import (
     SIG_REGISTER,
     SIG_TASK_COMPLETE,
     SIG_ALERT_ESCALATE,
+    SIG_BRIDGE_DELEGATE,
+    SIG_BRIDGE_RESULT,
     subject_heartbeat,
     subject_register,
     subject_role_update,
     subject_task,
     subject_alert,
+    subject_bridge_delegate,
+    subject_bridge_result,
 )
 
 logger = logging.getLogger("acc.agent")
+
+# Bridge delegation timeout — if the peer collective does not respond within
+# this many seconds, the pending delegation is discarded (ACC-9).
+_BRIDGE_TIMEOUT_S: float = 30.0
+
+
+# ---------------------------------------------------------------------------
+# Redis client factory (Phase 0b)
+# ---------------------------------------------------------------------------
+
+
+def _build_redis_client(config: "ACCConfig") -> "Optional[Any]":
+    """Build a synchronous Redis client from *config*, or return ``None``.
+
+    Returns ``None`` when:
+
+    * ``working_memory.url`` is empty (Redis not configured), or
+    * the ``redis`` package is not installed, or
+    * the connection parameters are invalid.
+
+    The caller (``Agent.__init__``) passes the result straight to
+    ``RoleStore`` and ``CognitiveCore``.  Both treat ``None`` as
+    "no Redis" and fall back to in-process state.
+    """
+    url = config.working_memory.url
+    if not url:
+        logger.debug("agent: working_memory.url not set — Redis client disabled")
+        return None
+    try:
+        import redis as redis_lib  # noqa: PLC0415 — intentional lazy import
+        password: Optional[str] = config.working_memory.password or None
+        client = redis_lib.from_url(url, password=password, decode_responses=False)
+        logger.info("agent: Redis client built (url=%s auth=%s)", url, password is not None)
+        return client
+    except Exception as exc:  # pragma: no cover — import / config error path
+        logger.warning(
+            "agent: failed to build Redis client (url=%s): %s — working memory disabled",
+            url,
+            exc,
+        )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -79,11 +128,14 @@ class Agent:
         self.state = STATE_REGISTERING
         self._stop_event = asyncio.Event()
 
+        # Redis working-memory client (Phase 0b) — None when not configured
+        self._redis = _build_redis_client(self.config)
+
         # Role store — loaded before CognitiveCore is instantiated
         self._role_store = RoleStore(
             config=self.config,
             agent_id=self.agent_id,
-            redis_client=None,    # optional; wire in when Redis backend available
+            redis_client=self._redis,
             vector=self.backends.vector,
         )
         self._active_role = self._role_store.load_at_startup()
@@ -91,14 +143,26 @@ class Agent:
         # CognitiveCore — skipped for observer role (REQ-CORE-008)
         self._cognitive_core: CognitiveCore | None = None
         if self.config.agent.role not in _NO_COGNITIVE_ROLES:
+            # Merge hub_collective_id into peer_collectives when both are set
+            peer_collectives = list(self.config.agent.peer_collectives)
+            hub_cid = self.config.agent.hub_collective_id
+            if hub_cid and hub_cid not in peer_collectives:
+                peer_collectives.append(hub_cid)
+
             self._cognitive_core = CognitiveCore(
                 agent_id=self.agent_id,
                 collective_id=self.config.agent.collective_id,
                 llm=self.backends.llm,
                 vector=self.backends.vector,
-                redis_client=None,
+                redis_client=self._redis,
                 role_label=self.config.agent.role,
+                peer_collectives=peer_collectives,
+                bridge_enabled=self.config.agent.bridge_enabled,
             )
+
+        # Pending bridge delegations: task_id → asyncio.Future (ACC-9)
+        # Keyed by the task_id embedded in the TASK_ASSIGN payload.
+        self._pending_delegations: dict[str, asyncio.Future] = {}
 
         # Cumulative stress (shared across loops)
         self._stress = StressIndicators()
@@ -203,6 +267,22 @@ class Agent:
                 role=self._active_role,
             )
 
+            # Bridge delegation routing (ACC-9 / A-010)
+            if result.delegate_to:
+                task_id = data.get("task_id", str(uuid.uuid4()))
+                logger.info(
+                    "task_loop: delegating task '%s' to collective '%s' — %s",
+                    task_id,
+                    result.delegate_to,
+                    result.delegation_reason,
+                )
+                asyncio.ensure_future(
+                    self._delegate_task(data, task_id, result.delegate_to)
+                )
+                # Do not publish TASK_COMPLETE here — the bridge result handler
+                # will publish it once the peer collective responds.
+                return
+
             # Publish TASK_COMPLETE
             complete_payload = json.dumps({
                 "signal_type": SIG_TASK_COMPLETE,
@@ -241,6 +321,192 @@ class Agent:
             await self._stop_event.wait()
         except Exception as exc:
             logger.error("task_loop: subscription error: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Bridge delegation (ACC-9)
+    # ------------------------------------------------------------------
+
+    async def _delegate_task(
+        self,
+        task_payload: dict,
+        task_id: str,
+        target_cid: str,
+    ) -> None:
+        """Forward a task to a peer collective and await its result.
+
+        Publishes a ``BRIDGE_DELEGATE`` signal on the bridge delegate subject
+        and registers a ``Future`` in ``_pending_delegations`` that will be
+        resolved when the peer collective publishes its result.
+
+        If no result arrives within ``_BRIDGE_TIMEOUT_S`` seconds the Future
+        is cancelled, a timeout ``TASK_COMPLETE`` (blocked) is emitted, and an
+        ``ALERT_ESCALATE`` is published.
+
+        Args:
+            task_payload: Original ``TASK_ASSIGN`` payload dict.
+            task_id:      Stable identifier for this task (used to correlate
+                          the bridge result).
+            target_cid:   Collective ID of the peer collective to delegate to.
+        """
+        collective_id = self.config.agent.collective_id
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future = loop.create_future()
+        self._pending_delegations[task_id] = future
+
+        delegate_payload = json.dumps({
+            "signal_type": SIG_BRIDGE_DELEGATE,
+            "from_collective_id": collective_id,
+            "to_collective_id": target_cid,
+            "originating_agent_id": self.agent_id,
+            "task_id": task_id,
+            "ts": time.time(),
+            "task_payload": task_payload,
+        }).encode()
+
+        try:
+            await self.backends.signaling.publish(
+                subject_bridge_delegate(collective_id, target_cid),
+                delegate_payload,
+            )
+            logger.debug(
+                "bridge: BRIDGE_DELEGATE published (task_id=%s → %s)",
+                task_id,
+                target_cid,
+            )
+        except Exception as exc:
+            logger.error("bridge: failed to publish BRIDGE_DELEGATE: %s", exc)
+            self._pending_delegations.pop(task_id, None)
+            return
+
+        # Await result with timeout
+        try:
+            result_data: dict = await asyncio.wait_for(
+                asyncio.shield(future), timeout=_BRIDGE_TIMEOUT_S
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "bridge: delegation timeout (task_id=%s target=%s timeout=%.0fs)",
+                task_id,
+                target_cid,
+                _BRIDGE_TIMEOUT_S,
+            )
+            self._pending_delegations.pop(task_id, None)
+            # Emit a blocked TASK_COMPLETE + alert on timeout
+            timeout_reason = f"bridge_timeout: no result from {target_cid} in {_BRIDGE_TIMEOUT_S:.0f}s"
+            await self.backends.signaling.publish(
+                subject_task(collective_id),
+                json.dumps({
+                    "signal_type": SIG_TASK_COMPLETE,
+                    "agent_id": self.agent_id,
+                    "collective_id": collective_id,
+                    "ts": time.time(),
+                    "task_id": task_id,
+                    "blocked": True,
+                    "block_reason": timeout_reason,
+                    "output": "",
+                    "latency_ms": _BRIDGE_TIMEOUT_S * 1000,
+                }).encode(),
+            )
+            await self.backends.signaling.publish(
+                subject_alert(collective_id),
+                json.dumps({
+                    "signal_type": SIG_ALERT_ESCALATE,
+                    "agent_id": self.agent_id,
+                    "collective_id": collective_id,
+                    "ts": time.time(),
+                    "reason": timeout_reason,
+                }).encode(),
+            )
+            return
+        else:
+            self._pending_delegations.pop(task_id, None)
+
+        # Forward the peer's result as a TASK_COMPLETE on our local bus
+        complete_payload = json.dumps({
+            "signal_type": SIG_TASK_COMPLETE,
+            "agent_id": self.agent_id,
+            "collective_id": collective_id,
+            "ts": time.time(),
+            "task_id": task_id,
+            "delegated_to": target_cid,
+            "episode_id": result_data.get("episode_id", ""),
+            "blocked": result_data.get("blocked", False),
+            "block_reason": result_data.get("block_reason", ""),
+            "latency_ms": result_data.get("latency_ms", 0.0),
+            "output": (result_data.get("output", "") or "")[:500],
+        }).encode()
+        await self.backends.signaling.publish(
+            subject_task(collective_id), complete_payload
+        )
+        logger.info(
+            "bridge: result forwarded (task_id=%s from=%s blocked=%s)",
+            task_id,
+            target_cid,
+            result_data.get("blocked", False),
+        )
+
+    async def _subscribe_bridge_results(self) -> None:
+        """Subscribe to bridge result subjects for all peer collectives.
+
+        Each ``BRIDGE_RESULT`` message resolves the pending ``Future`` for the
+        corresponding ``task_id``, waking up ``_delegate_task``.
+
+        Only active when ``bridge_enabled=True`` and peer collectives are set.
+        """
+        collective_id = self.config.agent.collective_id
+        peer_collectives = list(self.config.agent.peer_collectives)
+        hub_cid = self.config.agent.hub_collective_id
+        if hub_cid and hub_cid not in peer_collectives:
+            peer_collectives.append(hub_cid)
+
+        if not self.config.agent.bridge_enabled or not peer_collectives:
+            logger.debug(
+                "bridge: result subscription skipped "
+                "(bridge_enabled=%s peers=%s)",
+                self.config.agent.bridge_enabled,
+                peer_collectives,
+            )
+            return
+
+        async def _handle_bridge_result(msg: object) -> None:
+            try:
+                data = json.loads(getattr(msg, "data", b"{}"))
+            except json.JSONDecodeError:
+                logger.warning("bridge: invalid JSON in BRIDGE_RESULT payload")
+                return
+
+            task_id: str = data.get("task_id", "")
+            future = self._pending_delegations.get(task_id)
+            if future is None:
+                logger.debug(
+                    "bridge: received result for unknown task_id=%s (already timed out?)",
+                    task_id,
+                )
+                return
+
+            if not future.done():
+                future.set_result(data)
+
+        # Subscribe to result subjects from each known peer collective
+        for peer_cid in peer_collectives:
+            result_subject = subject_bridge_result(collective_id, peer_cid)
+            try:
+                await self.backends.signaling.subscribe(
+                    result_subject, _handle_bridge_result
+                )
+                logger.info(
+                    "bridge: subscribed to results from '%s' on '%s'",
+                    peer_cid,
+                    result_subject,
+                )
+            except Exception as exc:
+                logger.error(
+                    "bridge: failed to subscribe to results from '%s': %s",
+                    peer_cid,
+                    exc,
+                )
+
+        await self._stop_event.wait()
 
     # ------------------------------------------------------------------
     # Role update subscription (Phase 4c)
@@ -294,11 +560,12 @@ class Agent:
         await self.backends.signaling.connect()
         try:
             await self._register()
-            # Run heartbeat, task, and role-update loops concurrently
+            # Run heartbeat, task, role-update, and bridge-result loops concurrently
             await asyncio.gather(
                 self._heartbeat_loop(),
                 self._task_loop(),
                 self._subscribe_role_updates(),
+                self._subscribe_bridge_results(),
                 return_exceptions=True,
             )
         finally:

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -74,6 +75,18 @@ class CognitiveResult:
     block_reason: str = ""
     """Human-readable reason for a blocked result."""
 
+    delegate_to: str = ""
+    """Collective ID that should handle this task, or empty string for local handling.
+
+    Non-empty when the LLM signals it cannot complete the task locally and a
+    peer collective with greater capability should process it instead (ACC-9).
+    Governance rule A-010 requires ``bridge_enabled=True`` in the agent's
+    config before delegation is honoured.
+    """
+
+    delegation_reason: str = ""
+    """Short human-readable explanation from the LLM for why it chose to delegate."""
+
     stress: StressIndicators = field(default_factory=StressIndicators)
     """Stress indicators at the time this result was produced."""
 
@@ -82,6 +95,29 @@ class CognitiveResult:
 
     latency_ms: float = 0.0
     """Wall-clock latency of the LLM call only (0 if blocked)."""
+
+
+# ---------------------------------------------------------------------------
+# Bridge delegation marker (ACC-9)
+# ---------------------------------------------------------------------------
+
+# LLM signals cross-collective delegation by embedding a marker in its output:
+#   [DELEGATE:sol-02:task requires larger model]
+# The regex captures (collective_id, reason).
+_DELEGATE_RE = re.compile(r"\[DELEGATE:([^:\]]+):([^\]]+)\]")
+
+
+def _parse_delegation(text: str) -> tuple[str, str]:
+    """Extract delegation marker from LLM output text.
+
+    Returns:
+        ``(collective_id, reason)`` if a ``[DELEGATE:...]`` marker is found,
+        or ``("", "")`` when the output should be handled locally.
+    """
+    match = _DELEGATE_RE.search(text)
+    if match:
+        return match.group(1).strip(), match.group(2).strip()
+    return "", ""
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +160,8 @@ class CognitiveCore:
         vector: Any,
         redis_client: Optional[Any] = None,
         role_label: str = "agent",
+        peer_collectives: Optional[list[str]] = None,
+        bridge_enabled: bool = False,
     ) -> None:
         self._agent_id = agent_id
         self._collective_id = collective_id
@@ -131,6 +169,8 @@ class CognitiveCore:
         self._vector = vector
         self._redis = redis_client
         self._role_label = role_label
+        self._peer_collectives: list[str] = peer_collectives or []
+        self._bridge_enabled: bool = bridge_enabled
 
         # In-process stress state
         self._stress = StressIndicators()
@@ -225,9 +265,23 @@ class CognitiveCore:
             token_count,
         )
 
+        # 7 — DELEGATION PARSE (ACC-9)
+        delegate_to, delegation_reason = _parse_delegation(output_text)
+        if delegate_to and not self._bridge_enabled:
+            logger.warning(
+                "cognitive_core: LLM requested delegation to '%s' but bridge_enabled=False "
+                "(A-010 gate); handling locally (agent_id=%s)",
+                delegate_to,
+                self._agent_id,
+            )
+            delegate_to = ""
+            delegation_reason = ""
+
         return CognitiveResult(
             output=output_text,
             blocked=False,
+            delegate_to=delegate_to,
+            delegation_reason=delegation_reason,
             stress=self._snapshot_stress(),
             episode_id=episode_id,
             latency_ms=latency_ms,
@@ -241,6 +295,10 @@ class CognitiveCore:
         """Construct the LLM system prompt from *role*.
 
         Falls back to a generic ACC agent prompt when *purpose* is empty.
+
+        When ``bridge_enabled=True`` and peer collectives are configured, appends
+        a delegation instruction that tells the LLM how to signal that a task
+        should be forwarded to a peer collective (ACC-9 / A-010).
         """
         purpose = role.purpose.strip()
         persona_instruction = _PERSONA_INSTRUCTIONS.get(
@@ -255,6 +313,22 @@ class CognitiveCore:
         parts = [purpose, f"\nPersona: {persona_instruction}"]
         if seed:
             parts.append(f"\n{seed}")
+
+        # Bridge delegation instruction (ACC-9) — only when peers are available
+        if self._bridge_enabled and self._peer_collectives:
+            peers_list = ", ".join(self._peer_collectives)
+            parts.append(
+                f"\n\nTask delegation (cross-collective bridge):\n"
+                f"If you determine that the task requires capabilities beyond your scope "
+                f"or would be better handled by a peer collective, include EXACTLY ONE marker "
+                f"in your response:\n"
+                f"  [DELEGATE:<collective_id>:<short reason>]\n"
+                f"Available peer collectives: {peers_list}\n"
+                f"Example: [DELEGATE:sol-02:requires 70B model for complex reasoning]\n"
+                f"Only delegate when genuinely necessary — prefer local handling. "
+                f"Governance rule A-010 requires an explicit bridge registration; do not "
+                f"delegate to a collective not in the available list."
+            )
 
         return "\n".join(parts)
 

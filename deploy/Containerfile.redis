@@ -1,0 +1,71 @@
+# ACC Redis — local build on UBI9 (no Red Hat subscription required)
+#
+# The registry.access.redhat.com/ubi8/redis-6 image requires a subscription
+# to pull.  This Containerfile builds Redis 7 on top of the freely pullable
+# UBI9 minimal base using the EPEL repository, which is explicitly supported
+# on UBI without a subscription.
+#
+# Build:
+#   podman build -f deploy/Containerfile.redis -t localhost/acc-redis:7 .
+#
+# The image is built automatically by podman-compose when using the
+# `build:` directive in podman-compose.yml.
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+LABEL name="acc-redis" \
+      version="7" \
+      summary="Redis 7 on UBI9 for ACC standalone deployment" \
+      description="Subscription-free Redis built from UBI9 minimal + EPEL."
+
+# Install EPEL release RPM, then redis, then clean up
+# microdnf is the package manager in ubi-minimal
+RUN microdnf install -y \
+        https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+    && microdnf install -y \
+        redis \
+    && microdnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Create data directory with correct ownership for non-root UID 1001
+RUN mkdir -p /var/lib/redis/data \
+    && chown -R 1001:0 /var/lib/redis \
+    && chmod -R g=u /var/lib/redis
+
+# Minimal redis.conf: bind all interfaces, disable protected-mode for
+# container-internal use, persist data to the mounted volume.
+# requirepass is intentionally absent here — it is injected at runtime
+# via the entrypoint script when REDIS_PASSWORD is set.
+RUN printf '\
+bind 0.0.0.0\n\
+protected-mode no\n\
+dir /var/lib/redis/data\n\
+save 900 1\n\
+save 300 10\n\
+save 60 10000\n\
+loglevel notice\n\
+logfile ""\n\
+' > /etc/redis.conf
+
+# Entrypoint: start redis-server, appending --requirepass when REDIS_PASSWORD
+# is set in the environment.  When REDIS_PASSWORD is empty, Redis starts
+# without authentication (backward compatible with non-auth deployments).
+RUN printf '#!/bin/sh\nexec redis-server /etc/redis.conf ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}\n' \
+    > /usr/local/bin/redis-entrypoint.sh \
+    && chmod +x /usr/local/bin/redis-entrypoint.sh
+
+# Healthcheck script: authenticates against Redis using REDIS_PASSWORD when
+# set, or falls back to unauthenticated ping.  Used by podman-compose and the
+# operator readiness probe.
+RUN printf '#!/bin/sh\nexec redis-cli -h 127.0.0.1 ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"} ping\n' \
+    > /usr/local/bin/redis-healthcheck.sh \
+    && chmod +x /usr/local/bin/redis-healthcheck.sh
+
+# Run as non-root (OCP restricted SCC compatible)
+USER 1001
+
+EXPOSE 6379
+
+VOLUME ["/var/lib/redis/data"]
+
+ENTRYPOINT ["/usr/local/bin/redis-entrypoint.sh"]

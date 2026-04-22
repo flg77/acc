@@ -34,10 +34,17 @@ agent:
   corpus_name: {{ .CorpusName }}
   role: ${ACC_AGENT_ROLE}
   heartbeat_interval_s: {{ .HeartbeatIntervalSeconds }}
+{{ if .HubCollectiveID -}}
+  hub_collective_id: {{ .HubCollectiveID }}
+  bridge_enabled: true
+{{ end -}}
 
 signaling:
   backend: nats
   nats_url: nats://{{ .NATSServiceName }}:4222
+{{ if .NATSHubUrl -}}
+  hub_url: {{ .NATSHubUrl }}
+{{ end -}}
 
 vector_db:
   backend: {{ .VectorBackend }}
@@ -97,6 +104,10 @@ type ACCConfigData struct {
 
 	// Signaling
 	NATSServiceName string
+	// NATSHubUrl is the NATS leaf node hub URL (edge mode only).
+	NATSHubUrl string
+	// HubCollectiveID enables ACC-9 bridge delegation to the datacenter hub.
+	HubCollectiveID string
 
 	// Vector DB
 	VectorBackend string
@@ -131,6 +142,12 @@ type ACCConfigData struct {
 // RenderACCConfig produces the acc-config.yaml content for a given
 // AgentCorpus + AgentCollective pair. The rendered YAML is mounted as a
 // ConfigMap into each agent pod.
+//
+// For deployMode=edge the following defaults are applied when the collective
+// spec does not override them:
+//   - LLM backend: ollama with llama3.2:3b (fits in 4 GiB VRAM)
+//   - Metrics backend: log (no OTel Collector at edge)
+//   - hub_url and hub_collective_id are populated from spec.edge when set
 func RenderACCConfig(corpus *accv1alpha1.AgentCorpus, collective *accv1alpha1.AgentCollective) (string, error) {
 	data := ACCConfigData{
 		CorpusName:               corpus.Name,
@@ -145,13 +162,24 @@ func RenderACCConfig(corpus *accv1alpha1.AgentCorpus, collective *accv1alpha1.Ag
 		MetricsBackend:           string(corpus.Spec.Observability.Backend),
 	}
 
+	// Edge mode: populate hub URL and collective ID; force log metrics backend.
+	if corpus.Spec.DeployMode == accv1alpha1.DeployModeEdge && corpus.Spec.Edge != nil {
+		data.NATSHubUrl = corpus.Spec.Edge.HubNatsUrl
+		data.HubCollectiveID = corpus.Spec.Edge.HubCollectiveID
+		// Edge nodes do not have an OTel Collector — override to log.
+		if data.MetricsBackend == string(accv1alpha1.MetricsBackendOTel) {
+			data.MetricsBackend = string(accv1alpha1.MetricsBackendLog)
+		}
+	}
+
 	// Confidence threshold from Category C.
 	if catC := corpus.Spec.Governance.CategoryC; catC != nil {
 		data.ConfidenceThreshold = catC.ConfidenceThreshold
 	}
 
-	// OTel endpoint.
-	if corpus.Spec.Observability.Backend == accv1alpha1.MetricsBackendOTel {
+	// OTel endpoint — use data.MetricsBackend (already adjusted for edge) rather
+	// than corpus.Spec.Observability.Backend so edge mode correctly skips this block.
+	if data.MetricsBackend == string(accv1alpha1.MetricsBackendOTel) {
 		if otel := corpus.Spec.Observability.OTelCollector; otel != nil {
 			data.OTelEndpoint = otel.Endpoint
 			data.OTelServiceName = otel.ServiceName
@@ -162,6 +190,7 @@ func RenderACCConfig(corpus *accv1alpha1.AgentCorpus, collective *accv1alpha1.Ag
 	}
 
 	// Vector DB backend.
+	// edge uses LanceDB on local NVMe (same as standalone).
 	switch corpus.Spec.DeployMode {
 	case accv1alpha1.DeployModeRHOAI:
 		data.VectorBackend = "milvus"
@@ -172,12 +201,23 @@ func RenderACCConfig(corpus *accv1alpha1.AgentCorpus, collective *accv1alpha1.Ag
 				data.MilvusPrefix = "acc_"
 			}
 		}
-	default:
+	default: // standalone, edge
 		data.VectorBackend = "lancedb"
 	}
 
-	// LLM backend.
+	// LLM backend: apply edge defaults when the collective spec uses ollama
+	// without an explicit model override (default 3B for 4 GiB edge hardware).
 	llm := collective.Spec.LLM
+	if corpus.Spec.DeployMode == accv1alpha1.DeployModeEdge &&
+		llm.Backend == accv1alpha1.LLMBackendOllama &&
+		llm.Ollama != nil && llm.Ollama.Model == "" {
+		llm = *(&collective.Spec.LLM) // shallow copy
+		ollama := *llm.Ollama
+		ollama.Model = "llama3.2:3b"
+		llm.Ollama = &ollama
+	}
+
+	// LLM backend.
 	data.LLMBackend = string(llm.Backend)
 	switch llm.Backend {
 	case accv1alpha1.LLMBackendOllama:

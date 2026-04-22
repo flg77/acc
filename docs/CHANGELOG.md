@@ -11,6 +11,95 @@ Versioning scheme: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.8.0] — 2026-04-22
+
+### Added — Documentation: TUI How-to and Security Hardening Guide
+
+**New documentation files:**
+- **`docs/howto-tui.md`** — Full guide to the ACC terminal UI: installation (`pip install -e ".[tui]"`); `acc-tui` entry point; env vars (`ACC_NATS_URL`, `ACC_COLLECTIVE_ID`); NATS connection retry (3 attempts, exponential backoff); Dashboard screen reference (agent cards — drift sparkbar, reprogramming ladder, staleness indicator; governance panel; memory panel; LLM metrics panel); Infuse screen reference (all form fields, Apply/Clear/History actions, ROLE_UPDATE payload schema, arbiter approval status flow); deployment options (workstation, Podman container `Containerfile.tui`, Kubernetes pod via `acc_tui_deployment.yaml`); TUI architecture diagram (NATS → NATSObserver → asyncio.Queue → Textual reactive system); troubleshooting guide; keyboard shortcuts for both screens
+- **`docs/security-hardening.md`** — Complete ACC security architecture document: security gap inventory (G-1 through G-7); governance layer reference (Cat-A rules A-001 to A-010 with descriptions; Cat-B rules B-001 to B-008 with default setpoints; Cat-C adaptive rules C-AUTO-001 to C-AUTO-004 from live Rego files); Phase 0a implementation details (Ed25519 verify, key files); Phase 0b implementation details (Redis auth, key files); Phase 0c planned design (NATS NKeys, per-role permission matrix including bridge subjects); Phase 1 planned design (Cilium NetworkPolicy, edge mode egress port 7422); Phase 2 planned design (SPIFFE/SPIRE, SPIFFE URI format, NATS/Redis TLS with SVIDs, stable agent_id from Deployment label); Phase 3 planned design (Tetragon TracingPolicy targets, observe-only mode, `acc/tetragon_bridge.py`, real WASM Cat-A); Phase 4 planned design (hardened Standalone Podman, self-signed CA, NKeys in compose); security-posture-by-deploy-mode matrix; implementation sequence dependency diagram; planned env vars reference
+
+**Updated:**
+- **`README.md`** — Added TUI section (quick start, two-screen summary, link to howto-tui.md); expanded Security section (phase table with ✅/🔲 status, quick setup commands for Phase 0a/0b, link to security-hardening.md); updated Documentation table (added howto-tui.md and security-hardening.md); updated repository layout (added `acc/tui/` subtree with all 5 modules)
+- **`docs/value-proposition.md`** — Added TUI section (comparison with LangSmith/W&B; purpose-built governance observability); expanded Roadmap Differentiators (Phase 0c NKeys, Phase 1 Cilium, Phase 2 SPIRE, Phase 3 Tetragon + real WASM Cat-A) with implementation notes
+
+---
+
+## [1.7.0] — 2026-04-21
+
+### Added — Documentation: How-to Guides and Value Proposition
+
+**New documentation files:**
+- **`docs/howto-standalone.md`** — Step-by-step Podman Compose setup; annotated `acc-config.yaml` walkthrough; all 24 env vars tabulated; Redis password generation; Ed25519 key pair generation; LLM backend selection (Ollama / Anthropic / vLLM); NATS CLI verification; troubleshooting guide; cross-collective bridge (ACC-9) in standalone mode
+- **`docs/howto-edge.md`** — Edge architecture diagram (local fast path + NATS leaf topology); MicroShift/K3s/Podman prerequisites; `AgentCorpus` edge CR with `spec.edge` fully annotated; `AgentCollective` CR for edge (Ollama 3B default, static replicas); hub connectivity; `NATSLeafConnected` status condition; operator warning events; disconnected operation matrix (what works offline vs requires connectivity); differences-from-standalone table
+- **`docs/howto-rhoai.md`** — RHOAI architecture diagram; operator build/push; Kustomize + OLM install methods; `AgentCorpus` rhoai CR (NATS 3-node cluster, Redis Sentinel, Milvus, OTel, PrometheusRules, Kafka); `AgentCollective` CR (vLLM/Anthropic backends, KEDA autoscaling, 5 roles); hub leaf node Service for edge bridge; OLM upgrade approval workflow
+- **`docs/howto-role-infusion.md`** — Role definition schema (all 7 fields); 4-tier load order (File → Redis → LanceDB → Config); per-tier logging output; three infusion methods (config file, operator ConfigMap, NATS ROLE_UPDATE); Ed25519 key generation and distribution; ROLE_UPDATE payload schema + Python signing example; per-role starter definitions (ingester/analyst/synthesizer/arbiter); edge considerations (role persistence during disconnect); testing with pytest
+- **`docs/value-proposition.md`** — 8-dimension comparison matrix vs LangChain/LlamaIndex/CrewAI/AutoGen/Haystack; deep-dives: governance tiers (Cat-A <1ms in-process, Cat-B hot-reload, Cat-C arbiter-signed), edge-first disconnected operation, role infusion vs system prompts, NATS JetStream over HTTP; "when to choose ACC" decision tree; roadmap differentiators (SPIRE mTLS, Tetragon Cat-A, Cilium L7)
+
+**Updated:**
+- **`README.md`** — Added deploy mode table (standalone/edge/rhoai with hardware targets); updated architecture diagrams for edge and cross-collective bridge; cross-collective bridge section (ACC-9 flow, A-010 gate); security section (Phase 0a Ed25519, Phase 0b Redis auth); complete 24-entry environment variable reference table; updated repository layout with all new Python modules; updated documentation table with all new how-to guides; Contributing: updated to mention three-mode parity (not dual-mode)
+- **`docs/CHANGELOG.md`** — This entry
+
+---
+
+## [1.6.0] — 2026-04-21
+
+### Added — Phase 0a: Real Ed25519 Signature Verification + Phase 0b: Redis Auth
+
+**Modified Python modules:**
+- **`acc/role_store.py`** — `apply_update()` now performs real Ed25519 cryptographic signature verification using `cryptography.hazmat.primitives.asymmetric.ed25519`. Payload bytes are verified against the arbiter's public key (`SecurityConfig.arbiter_verify_key`, Base64-encoded raw 32 bytes). Invalid signature, wrong key, or tampered payload raises `RoleUpdateRejectedError`. When `arbiter_verify_key` is empty, falls back to signature-presence-only check (backward compatible; not production-safe)
+- **`acc/config.py`** — Added `SecurityConfig` model (`arbiter_verify_key: str = ""`); added `WorkingMemoryConfig` model (`url: str`, `password: str`); extended `ACCConfig` with `security` and `working_memory` fields; added `ACC_ARBITER_VERIFY_KEY`, `ACC_REDIS_URL`, `ACC_REDIS_PASSWORD` to `_ENV_MAP`
+- **`acc/backends/working_memory_redis.py`** — `_build_redis_client()` factory: passes `password=config.working_memory.password or None` to `redis.asyncio.from_url()`; empty password disables AUTH (standalone dev mode)
+- **`acc-config.yaml`** — Added `working_memory` and `security` sections with Phase 0a/0b documentation comments
+
+**New tests:**
+- **`tests/test_role_store.py`** — Added `TestRoleStoreEdSig`: 4 tests covering valid signature (accepts), tampered payload (rejects), empty signature (rejects), wrong key (rejects)
+
+---
+
+## [1.5.0] — 2026-04-21
+
+### Added — ACC-8: Edge Deploy Mode
+
+**Modified Python modules:**
+- **`acc/config.py`** — Extended `DeployMode` from `Literal["standalone", "rhoai"]` to `Literal["standalone", "rhoai", "edge"]`; added `SignalingConfig.hub_url: str = Field(default="")` with leaf-node semantics doc; added `"ACC_NATS_HUB_URL": ("signaling", "hub_url")` to `_ENV_MAP`; renamed model validator to `_validate_deploy_mode_fields()`; `rhoai` required-field check is unchanged; `edge` has no required fields (disconnected operation valid)
+
+**New Python tests:**
+- **`tests/test_config_edge.py`** — 16 tests: edge is valid deploy mode; no required fields; does not require milvus_uri; does not require vllm_inference_url; all three modes valid; invalid mode rejected; `SignalingConfig.hub_url` defaults to empty, can be set, appears in ACC config, independent of nats_url; `ACC_NATS_HUB_URL` applied by `_apply_env`; absent env leaves data unchanged; `ACC_NATS_HUB_URL` via `load_config`; `ACC_DEPLOY_MODE=edge` via env; `build_backends()` selects lancedb for edge; unknown backend still raises
+
+**Modified Operator (Go):**
+- **`operator/api/v1alpha1/common_types.go`** — Added `DeployModeEdge DeployMode = "edge"`; updated kubebuilder enum: `standalone;rhoai;edge`; added `ConditionTypeNATSLeafConnected = "NATSLeafConnected"`
+- **`operator/api/v1alpha1/agentcorpus_types.go`** — Added `Edge *EdgeSpec` field to `AgentCorpusSpec`; added `NATSLeafConnected bool` to `InfrastructureStatus`; added `EdgeSpec` struct (5 fields: `HubNatsUrl`, `HubCollectiveID`, `HubRegistry`, `RedisMaxMemoryMB`, `RedisMaxMemoryPolicy`)
+- **`operator/internal/templates/nats_config.go`** — Added `HubUrl string` to `natsConfigData`; edge leafnodes template block: `leafnodes { remotes: [{ url: "...", deny_imports: [...] }] }` rendered when `HubUrl != ""`
+- **`operator/internal/templates/acc_config.go`** — Added `NATSHubUrl`, `HubCollectiveID` to `ACCConfigData`; edge rendering: `hub_url`, `hub_collective_id`, `bridge_enabled: true` when `HubCollectiveID` set; `bridge_enabled`/`hub_collective_id` block gated on `HubCollectiveID != ""`; OTel endpoint check uses `data.MetricsBackend` (not raw spec) so edge override to `log` correctly suppresses OTel block; edge forces `MetricsBackend` to `log` when spec says `otel`; edge default: `ollama_model: llama3.2:3b` when model empty
+- **`operator/internal/reconcilers/collective/keda_scaled_object.go`** — Early return `(SubResult{}, nil)` when `deployMode == edge`
+- **`operator/internal/reconcilers/governance/gatekeeper.go`** — Early return when `deployMode == edge`
+- **`operator/internal/reconcilers/observability/otel_collector.go`** — Early return when `deployMode == edge`
+- **`operator/internal/reconcilers/observability/prometheus_rules.go`** — Early return when `deployMode == edge`
+- **`operator/internal/reconcilers/prerequisites.go`** — Edge mode suppresses KEDA/Gatekeeper Warning events; added `EdgeHubUrlNotConfigured` Warning when hub URL empty
+- **`operator/api/v1alpha1/zz_generated.deepcopy.go`** — Added `EdgeSpec.DeepCopyInto()` and `EdgeSpec.DeepCopy()`; updated `AgentCorpusSpec.DeepCopyInto()` to handle `Edge *EdgeSpec`
+
+**New Operator tests:**
+- **`operator/test/unit/templates_test.go`** — `makeEdgeCorpus()` helper; 7 new tests: `TestRenderNATSConfig_EdgeLeafNode` (leafnodes block + hub URL), `TestRenderNATSConfig_StandaloneNoLeafNode`, `TestRenderNATSConfig_EdgeNoHubUrl` (no leafnodes when URL empty), `TestRenderACCConfig_EdgeMode` (deploy_mode/hub_url/hub_collective_id/bridge_enabled/lancedb/log), `TestRenderACCConfig_EdgeModeDefaultsOllamaModel` (llama3.2:3b default), `TestRenderACCConfig_EdgeModeOTelForcedToLog`, `TestRenderACCConfig_EdgeModeNoHubCollective` (no bridge_enabled)
+
+---
+
+## [1.4.1] — 2026-04-21
+
+### Added — ACC-9: Cross-Collective Bridge Protocol
+
+**Modified Python modules:**
+- **`acc/signals.py`** — Added `SIG_BRIDGE_DELEGATE = "BRIDGE_DELEGATE"` and `SIG_BRIDGE_RESULT = "BRIDGE_RESULT"` constants; added three subject helpers: `subject_bridge_delegate(from_cid, to_cid)` → `acc.bridge.{from}.{to}.delegate`; `subject_bridge_result(from_cid, to_cid)` → `acc.bridge.{to}.{from}.result`; `subject_bridge_pending(collective_id)` → `acc.bridge.{cid}.pending`; updated module docstring
+- **`acc/cognitive_core.py`** — Added `import re`; added `CognitiveResult.delegate_to: str = ""` and `CognitiveResult.delegation_reason: str = ""` fields (ACC-9); added `_DELEGATE_RE = re.compile(r"\[DELEGATE:([^:\]]+):([^\]]+)\]")` module-level constant; added `_parse_delegation(text)` private function; added `peer_collectives: list[str]` and `bridge_enabled: bool` to `CognitiveCore.__init__()`; step 7 in `process_task()`: parses LLM output for delegation marker, populates `CognitiveResult.delegate_to/delegation_reason` when `bridge_enabled=True` and target is a known peer; step 6 (bridge instruction) in `build_system_prompt()`: appended bridge-delegation guidance paragraph when `bridge_enabled=True` and `peer_collectives` non-empty
+- **`acc/config.py`** — Added `peer_collectives: list[str]`, `hub_collective_id: str`, `bridge_enabled: bool` to `AgentConfig`; added `_parse_comma_separated` field validator for `peer_collectives` (accepts comma-separated env var string); added `ACC_PEER_COLLECTIVES`, `ACC_HUB_COLLECTIVE_ID`, `ACC_BRIDGE_ENABLED` to `_ENV_MAP`
+- **`acc/agent.py`** — Added `_BRIDGE_TIMEOUT_S = 30.0`; added `_pending_delegations: dict[str, asyncio.Future]` to `Agent.__init__()`; added `_delegate_task(task, target_cid)` async method (publishes to bridge subject, awaits future with 30s timeout, publishes TASK_COMPLETE on success, handles timeout with local fallback); added `_subscribe_bridge_results(nc)` async method (subscribes to `acc.bridge.{target}.{cid}.result`, resolves pending futures; gated on `bridge_enabled`); bridge routing in `_task_loop()`: calls `_delegate_task()` when `result.delegate_to` is set and `bridge_enabled`; `_subscribe_bridge_results()` added to `asyncio.gather()` in `run()`; fixed `asyncio.get_running_loop()` (Python 3.10+ compatibility)
+
+**New tests:**
+- **`tests/test_signals.py`** — Added `TestBridgeSubjectHelpers` class with 10 new tests: `subject_bridge_delegate` format, asymmetry, no-collision; `subject_bridge_result` symmetry; `subject_bridge_pending` format; constants present; no overlap between bridge and intra-collective subjects
+- **`tests/test_delegation.py`** — New file; 43 tests: `_parse_delegation()` (valid/multiple/no-marker/malformed/wrong-collective/empty); `CognitiveResult` bridge fields (defaults, set independently); `build_system_prompt()` bridge instruction present when enabled, absent when disabled; `process_task()` A-010 gate (bridge_enabled=False suppresses); `AgentConfig` bridge fields (defaults, peer_collectives comma parsing, hub_collective_id, bridge_enabled bool); env var application (`ACC_PEER_COLLECTIVES`, `ACC_HUB_COLLECTIVE_ID`, `ACC_BRIDGE_ENABLED`); `_delegate_task()` (publishes to correct subject, resolves future, cleans up pending dict, handles timeout); `_subscribe_bridge_results()` (gated on bridge_enabled, message routing, wrong collective ignored)
+
+---
+
 ## [1.4.0] — 2026-04-20
 
 ### Added — ACC-6b: TUI + Role Infusion Dashboard (commit [7])

@@ -13,6 +13,7 @@ A successful update notifies CognitiveCore via asyncio.Event (no restart require
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -21,6 +22,8 @@ import uuid
 from typing import Any, Optional
 
 import yaml
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
 from acc.config import ACCConfig, RoleDefinitionConfig
@@ -275,6 +278,18 @@ class RoleStore:
             )
             raise RoleUpdateRejectedError("ROLE_UPDATE rejected: signature is empty")
 
+        # Ed25519 cryptographic verification (Phase 0a)
+        verify_key_b64 = self._config.security.arbiter_verify_key
+        if verify_key_b64:
+            self._verify_ed25519(payload, new_role, approver_id, signature, verify_key_b64)
+        else:
+            logger.warning(
+                "role_store: ACC_ARBITER_VERIFY_KEY not configured — "
+                "signature presence check only; cryptographic verification skipped "
+                "(agent_id=%s)",
+                self._agent_id,
+            )
+
         expected_arbiter = self._get_arbiter_id()
         if expected_arbiter and approver_id != expected_arbiter:
             self._append_audit(
@@ -330,6 +345,96 @@ class RoleStore:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _verify_ed25519(
+        self,
+        payload: dict,
+        new_role: RoleDefinitionConfig,
+        approver_id: str,
+        signature: str,
+        verify_key_b64: str,
+    ) -> None:
+        """Verify an Ed25519 signature over the canonical ROLE_UPDATE payload.
+
+        The signed message is the UTF-8 encoding of the compact JSON object::
+
+            {"approver_id": "<id>", "role_definition": {<role fields>}}
+
+        with keys sorted and no whitespace.  This binds the approver identity
+        to the role definition, preventing a valid signature from one approver
+        being re-used with a different ``approver_id``.
+
+        Args:
+            payload:        The full decoded ROLE_UPDATE dict.
+            new_role:       Already-validated ``RoleDefinitionConfig``.
+            approver_id:    The claimed approver identity string.
+            signature:      Base64-encoded raw 64-byte Ed25519 signature.
+            verify_key_b64: Base64-encoded raw 32-byte Ed25519 public key.
+
+        Raises:
+            RoleUpdateRejectedError: On any verification failure (bad key
+                config, invalid Base64, wrong key, tampered payload).
+        """
+        # Load the public key
+        try:
+            key_bytes = base64.b64decode(verify_key_b64)
+            public_key = Ed25519PublicKey.from_public_bytes(key_bytes)
+        except Exception as exc:
+            self._append_audit(
+                "rejected",
+                self._current.version,
+                new_role.version,
+                f"invalid_verify_key: {exc}",
+                approver_id,
+            )
+            raise RoleUpdateRejectedError(
+                f"ROLE_UPDATE rejected: cannot load arbiter verify key: {exc}"
+            ) from exc
+
+        # Build the canonical signed message
+        signed_message = json.dumps(
+            {
+                "approver_id": approver_id,
+                "role_definition": payload.get("role_definition", {}),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+
+        # Decode and verify the signature
+        try:
+            sig_bytes = base64.b64decode(signature)
+        except Exception as exc:
+            self._append_audit(
+                "rejected",
+                self._current.version,
+                new_role.version,
+                f"signature_decode_error: {exc}",
+                approver_id,
+            )
+            raise RoleUpdateRejectedError(
+                f"ROLE_UPDATE rejected: cannot decode signature: {exc}"
+            ) from exc
+
+        try:
+            public_key.verify(sig_bytes, signed_message)
+        except InvalidSignature:
+            self._append_audit(
+                "rejected",
+                self._current.version,
+                new_role.version,
+                "ed25519_invalid_signature",
+                approver_id,
+            )
+            raise RoleUpdateRejectedError(
+                "ROLE_UPDATE rejected: Ed25519 signature verification failed"
+            )
+
+        logger.debug(
+            "role_store: Ed25519 signature verified (agent_id=%s approver=%s)",
+            self._agent_id,
+            approver_id,
+        )
 
     def _get_arbiter_id(self) -> str:
         """Return the registered arbiter agent_id from Redis, or empty string."""

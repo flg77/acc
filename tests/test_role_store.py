@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import time
@@ -9,6 +10,10 @@ import uuid
 from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 from acc.config import ACCConfig, RoleDefinitionConfig
 from acc.role_store import RoleStore, RoleUpdateRejectedError
@@ -244,3 +249,145 @@ class TestGetHistory:
         store = _make_store(vector=vector)
         result = store.get_history()
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Ed25519 signature validation (Phase 0a — REQ-SEC-004)
+# ---------------------------------------------------------------------------
+
+def _generate_keypair() -> tuple[Ed25519PrivateKey, str]:
+    """Return (private_key, base64_public_key) for a fresh Ed25519 keypair."""
+    private_key = Ed25519PrivateKey.generate()
+    pub_bytes = private_key.public_key().public_bytes_raw()
+    return private_key, base64.b64encode(pub_bytes).decode()
+
+
+def _sign_payload(private_key: Ed25519PrivateKey, approver_id: str, role_def: dict) -> str:
+    """Return the Base64 signature of the canonical ROLE_UPDATE signed message."""
+    message = json.dumps(
+        {"approver_id": approver_id, "role_definition": role_def},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    raw_sig = private_key.sign(message)
+    return base64.b64encode(raw_sig).decode()
+
+
+def _make_store_with_key(verify_key_b64: str, arbiter_id: str = "arbiter-7e3a") -> RoleStore:
+    """Build a RoleStore whose ACCConfig has the given Ed25519 verify key."""
+    registry_json = json.dumps({"arbiter_id": arbiter_id})
+    redis = _mock_redis(registry_json=registry_json)
+    config = ACCConfig.model_validate({
+        "security": {"arbiter_verify_key": verify_key_b64},
+    })
+    return RoleStore(config=config, agent_id=AGENT_ID, redis_client=redis, vector=_mock_vector())
+
+
+class TestEd25519Validation:
+    """Ed25519 signature verification (REQ-SEC-004)."""
+
+    APPROVER_ID = "arbiter-7e3a"
+    ROLE_DEF = {"purpose": "updated purpose", "version": "0.2.0", "persona": "formal"}
+
+    def _make_payload(
+        self,
+        private_key: Ed25519PrivateKey,
+        approver_id: str | None = None,
+        role_def: dict | None = None,
+        signature_override: str | None = None,
+    ) -> dict:
+        aid = approver_id or self.APPROVER_ID
+        rd = role_def or self.ROLE_DEF
+        sig = signature_override if signature_override is not None else _sign_payload(private_key, aid, rd)
+        return {"approver_id": aid, "signature": sig, "role_definition": rd}
+
+    def test_valid_signature_accepted(self):
+        """A correctly signed ROLE_UPDATE must be applied without error."""
+        private_key, pub_b64 = _generate_keypair()
+        store = _make_store_with_key(pub_b64)
+        payload = self._make_payload(private_key)
+
+        store.apply_update(payload)
+
+        assert store._current.version == "0.2.0"
+        assert store._current.purpose == "updated purpose"
+
+    def test_tampered_payload_rejected(self):
+        """Modifying the role_definition after signing must raise RoleUpdateRejectedError."""
+        private_key, pub_b64 = _generate_keypair()
+        store = _make_store_with_key(pub_b64)
+
+        # Sign the original payload, then tamper with the purpose field
+        original_role_def = {"purpose": "original", "version": "0.2.0", "persona": "concise"}
+        sig = _sign_payload(private_key, self.APPROVER_ID, original_role_def)
+        tampered_payload = {
+            "approver_id": self.APPROVER_ID,
+            "signature": sig,
+            "role_definition": {"purpose": "INJECTED", "version": "0.2.0", "persona": "concise"},
+        }
+
+        with pytest.raises(RoleUpdateRejectedError, match="Ed25519"):
+            store.apply_update(tampered_payload)
+
+    def test_wrong_key_rejected(self):
+        """A signature produced by a different key must be rejected."""
+        signing_key, _signing_pub = _generate_keypair()
+        _different_key, verify_pub_b64 = _generate_keypair()
+
+        # Store has the wrong (different) public key
+        store = _make_store_with_key(verify_pub_b64)
+        payload = self._make_payload(signing_key)
+
+        with pytest.raises(RoleUpdateRejectedError, match="Ed25519"):
+            store.apply_update(payload)
+
+    def test_invalid_base64_signature_rejected(self):
+        """A signature that is not valid Base64 must raise RoleUpdateRejectedError."""
+        _private_key, pub_b64 = _generate_keypair()
+        store = _make_store_with_key(pub_b64)
+        private_key, _ = _generate_keypair()
+        payload = self._make_payload(private_key, signature_override="not!!valid==base64@@")
+
+        with pytest.raises(RoleUpdateRejectedError, match="decode"):
+            store.apply_update(payload)
+
+    def test_no_verify_key_configured_skips_crypto(self):
+        """When arbiter_verify_key is empty, a non-empty placeholder signature is accepted."""
+        # No verify key → crypto skipped, only presence check enforced
+        registry_json = json.dumps({"arbiter_id": self.APPROVER_ID})
+        redis = _mock_redis(registry_json=registry_json)
+        store = _make_store(redis_client=redis, vector=_mock_vector())
+
+        payload = {
+            "approver_id": self.APPROVER_ID,
+            "signature": "placeholder-sig-no-crypto-check",
+            "role_definition": self.ROLE_DEF,
+        }
+        store.apply_update(payload)  # must not raise
+
+        assert store._current.version == "0.2.0"
+
+    def test_tampered_payload_audit_row_written(self):
+        """A tampered payload must write a rejection row to the audit log."""
+        private_key, pub_b64 = _generate_keypair()
+        vector = _mock_vector()
+        config = ACCConfig.model_validate({
+            "security": {"arbiter_verify_key": pub_b64},
+        })
+        registry_json = json.dumps({"arbiter_id": self.APPROVER_ID})
+        redis = _mock_redis(registry_json=registry_json)
+        store = RoleStore(config=config, agent_id=AGENT_ID, redis_client=redis, vector=vector)
+
+        original_rd = {"purpose": "original", "version": "0.2.0", "persona": "concise"}
+        sig = _sign_payload(private_key, self.APPROVER_ID, original_rd)
+        tampered = {
+            "approver_id": self.APPROVER_ID,
+            "signature": sig,
+            "role_definition": {"purpose": "evil", "version": "0.2.0", "persona": "concise"},
+        }
+
+        with pytest.raises(RoleUpdateRejectedError):
+            store.apply_update(tampered)
+
+        audit_calls = [str(c) for c in vector.insert.call_args_list]
+        assert any("role_audit" in c for c in audit_calls)

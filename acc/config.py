@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBackend
 
@@ -27,7 +27,7 @@ from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBac
 # Pydantic config model
 # ---------------------------------------------------------------------------
 
-DeployMode = Literal["standalone", "rhoai"]
+DeployMode = Literal["standalone", "rhoai", "edge"]
 AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer"]
 LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack"]
 MetricsBackendChoice = Literal["log", "otel"]
@@ -56,10 +56,50 @@ class AgentConfig(BaseModel):
     collective_id: str = "sol-01"
     heartbeat_interval_s: int = 30
 
+    # Cross-collective bridge (ACC-9)
+    peer_collectives: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Collective IDs that this agent may delegate tasks to (A-010). "
+            "Set via ACC_PEER_COLLECTIVES as a comma-separated list."
+        ),
+    )
+    hub_collective_id: str = Field(
+        default="",
+        description=(
+            "The authoritative hub collective ID (edge mode only). "
+            "When set, this collective is automatically added to peer_collectives."
+        ),
+    )
+    bridge_enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable cross-collective task delegation (A-010 gate). "
+            "Must be True for delegation markers from the LLM to be honoured."
+        ),
+    )
+
+    @field_validator("peer_collectives", mode="before")
+    @classmethod
+    def _parse_comma_separated(cls, v: object) -> list[str]:
+        """Accept a comma-separated string (from env var) or a list."""
+        if isinstance(v, str):
+            return [cid.strip() for cid in v.split(",") if cid.strip()]
+        return v  # type: ignore[return-value]
+
 
 class SignalingConfig(BaseModel):
     backend: SignalingBackendChoice = "nats"
     nats_url: str = "nats://localhost:4222"
+    hub_url: str = Field(
+        default="",
+        description=(
+            "NATS leaf node hub URL (edge deployMode only). "
+            "When set, the local NATS server connects to this remote as a leaf node, "
+            "forwarding bridge subjects to the datacenter hub. "
+            "Example: nats-leaf://hub.example.com:7422"
+        ),
+    )
 
 
 class VectorConfig(BaseModel):
@@ -85,6 +125,42 @@ class ObservabilityConfig(BaseModel):
     otel_service_name: str = "acc-agent"
 
 
+class WorkingMemoryConfig(BaseModel):
+    """Redis working-memory connection settings (Phase 0b).
+
+    ``url`` uses the standard ``redis://[user:password@]host:port[/db]`` scheme.
+    Leave empty to disable Redis working memory — the agent will operate with
+    in-process state only (role centroid, stress indicators, and role history
+    will not be persisted between restarts).
+
+    ``password`` is kept separate from the URL so it can be supplied via an
+    environment variable or a Kubernetes Secret without leaking into log lines
+    that might record the full connection URL.  When non-empty it overrides any
+    password embedded in ``url``.
+    """
+
+    url: str = ""       # e.g. redis://acc-redis:6379
+    password: str = ""  # Redis AUTH password; empty = no authentication
+
+
+class SecurityConfig(BaseModel):
+    """Cryptographic security settings (Phase 0a onwards).
+
+    ``arbiter_verify_key`` is the Base64-encoded raw 32-byte Ed25519 public key
+    belonging to the collective's arbiter.  When non-empty, every incoming
+    ROLE_UPDATE payload must carry a valid Ed25519 signature produced by the
+    corresponding private key before it is applied.
+
+    When empty the signature presence check is still enforced (``signature``
+    field must be non-empty) but no cryptographic verification is performed.
+    This preserves backward compatibility with test fixtures that use
+    placeholder signatures and with environments where the arbiter key has not
+    yet been provisioned.
+    """
+
+    arbiter_verify_key: str = ""
+
+
 class ACCConfig(BaseModel):
     deploy_mode: DeployMode = "standalone"
     agent: AgentConfig = Field(default_factory=AgentConfig)
@@ -93,9 +169,11 @@ class ACCConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     role_definition: RoleDefinitionConfig = Field(default_factory=RoleDefinitionConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    working_memory: WorkingMemoryConfig = Field(default_factory=WorkingMemoryConfig)
 
     @model_validator(mode="after")
-    def _validate_rhoai_fields(self) -> "ACCConfig":
+    def _validate_deploy_mode_fields(self) -> "ACCConfig":
         if self.deploy_mode == "rhoai":
             if not self.vector_db.milvus_uri:
                 raise ValueError("vector_db.milvus_uri is required in rhoai deploy_mode")
@@ -103,6 +181,8 @@ class ACCConfig(BaseModel):
                 raise ValueError(
                     "llm.vllm_inference_url or llm.llama_stack_url is required in rhoai deploy_mode"
                 )
+        # edge: no required fields — hub_url and peer_collectives are optional
+        # (agent operates locally when disconnected from hub).
         return self
 
 
@@ -115,6 +195,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_AGENT_ROLE":               ("agent", "role"),
     "ACC_COLLECTIVE_ID":            ("agent", "collective_id"),
     "ACC_NATS_URL":                 ("signaling", "nats_url"),
+    "ACC_NATS_HUB_URL":            ("signaling", "hub_url"),
     "ACC_LANCEDB_PATH":             ("vector_db", "lancedb_path"),
     "ACC_MILVUS_URI":               ("vector_db", "milvus_uri"),
     "ACC_MILVUS_COLLECTION_PREFIX": ("vector_db", "milvus_collection_prefix"),
@@ -131,6 +212,15 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_ROLE_PERSONA":             ("role_definition", "persona"),
     "ACC_ROLE_VERSION":             ("role_definition", "version"),
     # ACC_ROLE_CONFIG_PATH is consumed by RoleStore.load_at_startup(), not here
+    # Security (Phase 0a)
+    "ACC_ARBITER_VERIFY_KEY":       ("security", "arbiter_verify_key"),
+    # Working memory / Redis (Phase 0b)
+    "ACC_REDIS_URL":                ("working_memory", "url"),
+    "ACC_REDIS_PASSWORD":           ("working_memory", "password"),
+    # Cross-collective bridge (ACC-9)
+    "ACC_PEER_COLLECTIVES":         ("agent", "peer_collectives"),
+    "ACC_HUB_COLLECTIVE_ID":        ("agent", "hub_collective_id"),
+    "ACC_BRIDGE_ENABLED":           ("agent", "bridge_enabled"),
 }
 
 
@@ -213,6 +303,8 @@ def build_backends(config: ACCConfig) -> BackendBundle:
         raise ValueError(f"Unknown signaling backend: {config.signaling.backend}")
 
     # --- Vector ---
+    # edge mode: LanceDB on local NVMe (same as standalone — different storage
+    # path / PVC size is an operator concern, not a Python backend concern).
     vector: VectorBackend
     if config.vector_db.backend == "lancedb":
         from acc.backends.vector_lancedb import LanceDBBackend
