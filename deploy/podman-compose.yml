@@ -2,6 +2,13 @@
 # Run with: podman-compose up -d
 #   First build: podman-compose build   (or up --build)
 # Requires: podman-compose >= 1.0.6
+#
+# If Podman logs show "aardvark-dns runs in a different netns" (stale aardvark):
+#   podman stop -a; killall aardvark-dns 2>/dev/null; rm -rf /run/user/$UID/containers/networks/aardvark-dns; podman-compose up -d
+#
+# Each agent uses a *subdirectory* of the lancedb volume. Embedded LanceDB is not
+# safe with multiple processes opening the *same* DB directory; the last
+# container to start (often arbiter) would exit(1) with a store lock error.
 version: "3.9"
 
 networks:
@@ -86,7 +93,7 @@ services:
       ACC_AGENT_ROLE: ingester
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
-      ACC_LANCEDB_PATH: /app/data/lancedb
+      ACC_LANCEDB_PATH: /app/data/lancedb/ingester
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
@@ -112,7 +119,7 @@ services:
       ACC_AGENT_ROLE: analyst
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
-      ACC_LANCEDB_PATH: /app/data/lancedb
+      ACC_LANCEDB_PATH: /app/data/lancedb/analyst
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
@@ -138,7 +145,7 @@ services:
       ACC_AGENT_ROLE: arbiter
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
-      ACC_LANCEDB_PATH: /app/data/lancedb
+      ACC_LANCEDB_PATH: /app/data/lancedb/arbiter
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:

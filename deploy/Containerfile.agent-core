@@ -34,7 +34,9 @@ RUN pip install --no-cache-dir --upgrade pip \
         opentelemetry-exporter-otlp-proto-grpc \
         pydantic \
         pyyaml \
-        msgpack
+        msgpack \
+        cryptography \
+        redis
 
 # ── Layer 2: Download embedding model at build time ───────────────────────
 # Bake all-MiniLM-L6-v2 into the image so no internet access is needed at runtime
