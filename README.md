@@ -48,6 +48,8 @@ The `deploy_mode` field in `acc-config.yaml` (or `spec.deployMode` in the `Agent
 
 ## Architecture
 
+> **Visual overview:** [`docs/architecture.svg`](docs/architecture.svg) — full 1200×960 diagram showing all five roles, three governance tiers, ACC-9 bridge protocol, edge/RHOAI deployment profiles, and the security roadmap.
+
 ### Standalone / Edge
 
 ```
@@ -402,6 +404,7 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 
 | Document | Description |
 |----------|-------------|
+| [`docs/architecture.svg`](docs/architecture.svg) | Full architecture diagram: 5 roles, Cat-A/B/C, ACC-9 bridge, edge/RHOAI, security roadmap |
 | [`docs/howto-standalone.md`](docs/howto-standalone.md) | Podman Compose setup, env vars, Redis auth, Ed25519 keys |
 | [`docs/howto-edge.md`](docs/howto-edge.md) | Edge node setup, NATS leaf topology, bridge delegation, offline operation |
 | [`docs/howto-rhoai.md`](docs/howto-rhoai.md) | OpenShift operator install, CRD reference, GPU inference, KEDA/Gatekeeper/OTel |

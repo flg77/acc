@@ -1,0 +1,378 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="960" viewBox="0 0 1200 960" font-family="'Segoe UI', Arial, sans-serif">
+  <defs>
+    <linearGradient id="membraneGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a2a1a;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#0d1f0d;stop-opacity:1"/>
+    </linearGradient>
+    <linearGradient id="signalingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3320;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#162618;stop-opacity:1"/>
+    </linearGradient>
+    <linearGradient id="coreGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#243b26;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#1a2e1c;stop-opacity:1"/>
+    </linearGradient>
+    <marker id="arrowBlue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4a9eff"/>
+    </marker>
+    <marker id="arrowGray" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#888"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#4caf50"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#ff9800"/>
+    </marker>
+  </defs>
+
+  <!-- BACKGROUND -->
+  <rect width="1200" height="960" fill="#0a0f0a"/>
+
+  <!-- TITLE + DEPLOY MODE PILLS -->
+  <text x="600" y="28" text-anchor="middle" fill="#c8e6c9" font-size="18" font-weight="bold" letter-spacing="2">AGENTIC CELL CORPUS — Architecture</text>
+  <text x="600" y="46" text-anchor="middle" fill="#81c784" font-size="11">v0.2.x  ·  governance-native  ·  edge-capable  ·  operator-managed</text>
+
+  <!-- standalone pill -->
+  <rect x="122" y="58" width="136" height="26" rx="13" fill="#444" stroke="#888" stroke-width="1"/>
+  <text x="190" y="75" text-anchor="middle" fill="#ccc" font-size="11" font-weight="bold">standalone</text>
+  <text x="190" y="89" text-anchor="middle" fill="#aaa" font-size="9">Podman Compose · Ollama</text>
+
+  <!-- edge pill -->
+  <rect x="464" y="58" width="136" height="26" rx="13" fill="#4a2800" stroke="#ff9800" stroke-width="1.5"/>
+  <text x="532" y="75" text-anchor="middle" fill="#ffb74d" font-size="11" font-weight="bold">edge</text>
+  <text x="532" y="89" text-anchor="middle" fill="#ffa726" font-size="9">MicroShift · NATS Leaf · Ollama 3B</text>
+
+  <!-- rhoai pill -->
+  <rect x="806" y="58" width="136" height="26" rx="13" fill="#003300" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="874" y="75" text-anchor="middle" fill="#81c784" font-size="11" font-weight="bold">rhoai</text>
+  <text x="874" y="89" text-anchor="middle" fill="#66bb6a" font-size="9">OpenShift · RHOAI KServe · vLLM</text>
+
+  <!-- OUTER MEMBRANE ELLIPSE -->
+  <ellipse cx="600" cy="450" rx="380" ry="320" fill="url(#membraneGrad)" stroke="#4caf50" stroke-width="2.5" stroke-dasharray="8,4"/>
+  <text x="600" y="148" text-anchor="middle" fill="#81c784" font-size="12" font-weight="bold">AGENT COLLECTIVE — Cell Membrane</text>
+  <text x="600" y="163" text-anchor="middle" fill="#66bb6a" font-size="10">NATS subject isolation  ·  role-scoped ACLs  ·  Cat-A boundary</text>
+
+  <!-- INNER SIGNALING ELLIPSE -->
+  <ellipse cx="600" cy="450" rx="310" ry="260" fill="url(#signalingGrad)" stroke="#388e3c" stroke-width="1.5"/>
+  <text x="600" y="205" text-anchor="middle" fill="#a5d6a7" font-size="11" font-weight="bold">Signaling Layer</text>
+  <text x="600" y="219" text-anchor="middle" fill="#81c784" font-size="10">NATS JetStream  ·  HEARTBEAT  ·  TASK_COMPLETE  ·  ALERT_ESCALATE  ·  ROLE_UPDATE</text>
+
+  <!-- CORE NUCLEUS ELLIPSE -->
+  <ellipse cx="600" cy="450" rx="220" ry="180" fill="url(#coreGrad)" stroke="#2e7d32" stroke-width="1.5"/>
+  <text x="600" y="289" text-anchor="middle" fill="#c8e6c9" font-size="13" font-weight="bold">CognitiveCore — Nucleus</text>
+  <text x="600" y="305" text-anchor="middle" fill="#a5d6a7" font-size="10">7-Step Reasoning Pipeline</text>
+
+  <!-- FIVE ROLE CHIPS -->
+  <!-- ingester -->
+  <rect x="400" y="318" width="76" height="28" rx="5" fill="#1a3a1a" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="438" y="331" text-anchor="middle" fill="#81c784" font-size="9" font-weight="bold">ingester</text>
+  <text x="438" y="342" text-anchor="middle" fill="#66bb6a" font-size="8">normalize</text>
+
+  <!-- analyst -->
+  <rect x="482" y="318" width="76" height="28" rx="5" fill="#1a3a1a" stroke="#66bb6a" stroke-width="1.5"/>
+  <text x="520" y="331" text-anchor="middle" fill="#a5d6a7" font-size="9" font-weight="bold">analyst</text>
+  <text x="520" y="342" text-anchor="middle" fill="#81c784" font-size="8">reason · plan</text>
+
+  <!-- synthesizer -->
+  <rect x="564" y="318" width="76" height="28" rx="5" fill="#1a3a1a" stroke="#66bb6a" stroke-width="1.5"/>
+  <text x="602" y="331" text-anchor="middle" fill="#a5d6a7" font-size="9" font-weight="bold">synthesizer</text>
+  <text x="602" y="342" text-anchor="middle" fill="#81c784" font-size="8">distill · merge</text>
+
+  <!-- arbiter -->
+  <rect x="646" y="318" width="76" height="28" rx="5" fill="#2a1a0a" stroke="#ff9800" stroke-width="2"/>
+  <text x="684" y="331" text-anchor="middle" fill="#ffb74d" font-size="9" font-weight="bold">arbiter</text>
+  <text x="684" y="342" text-anchor="middle" fill="#ffa726" font-size="8">govern · sign</text>
+
+  <!-- observer -->
+  <rect x="728" y="318" width="76" height="28" rx="5" fill="#0a1a2a" stroke="#4a9eff" stroke-width="1.5"/>
+  <text x="766" y="331" text-anchor="middle" fill="#82b1ff" font-size="9" font-weight="bold">observer</text>
+  <text x="766" y="342" text-anchor="middle" fill="#64b5f6" font-size="8">metrics only</text>
+
+  <!-- core labels -->
+  <text x="600" y="370" text-anchor="middle" fill="#c8e6c9" font-size="11" font-weight="bold">ICL Episodes  ·  Drift Scoring  ·  Embedding Centroid</text>
+  <text x="600" y="386" text-anchor="middle" fill="#a5d6a7" font-size="10">LanceDB / Milvus  ·  Role-Conditioned Prompts</text>
+
+  <!-- ACC-9 bridge note -->
+  <rect x="450" y="396" width="300" height="22" rx="4" fill="#1a2a3a" stroke="#4a9eff" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="600" y="411" text-anchor="middle" fill="#82b1ff" font-size="10">[DELEGATE:cid:reason]  →  ACC-9 bridge  ·  A-010 gate</text>
+
+  <!-- reprogramming ladder -->
+  <text x="600" y="435" text-anchor="middle" fill="#a5d6a7" font-size="10" font-weight="bold">Reprogramming Ladder:</text>
+  <text x="600" y="449" text-anchor="middle" fill="#81c784" font-size="10">L0 Healthy  →  L1 Drift  →  L2 Alert  →  L3 Isolate  →  L4 Reprogram  →  L5 Terminate</text>
+
+  <!-- role infusion load order -->
+  <text x="600" y="470" text-anchor="middle" fill="#a5d6a7" font-size="10">Role Infusion: File  →  Redis  →  LanceDB  →  Config default</text>
+
+  <!-- JetStream bus bar -->
+  <rect x="420" y="482" width="360" height="20" rx="4" fill="#0d2218" stroke="#2e7d32" stroke-width="1"/>
+  <text x="600" y="496" text-anchor="middle" fill="#81c784" font-size="10">NATS JetStream Bus  ·  at-least-once  ·  replay  ·  dead-letter</text>
+
+  <!-- memory stores -->
+  <rect x="420" y="506" width="175" height="18" rx="3" fill="#0a1a10" stroke="#388e3c" stroke-width="1"/>
+  <text x="507" y="519" text-anchor="middle" fill="#a5d6a7" font-size="9">Redis: working memory · roles</text>
+
+  <rect x="600" y="506" width="180" height="18" rx="3" fill="#0a1a10" stroke="#388e3c" stroke-width="1"/>
+  <text x="690" y="519" text-anchor="middle" fill="#a5d6a7" font-size="9">LanceDB/Milvus: ICL · centroids</text>
+
+  <!-- LEFT REGULATORY — Cat-A / Cat-B / Cat-C -->
+
+  <!-- Cat-A -->
+  <rect x="235" y="293" width="150" height="62" rx="6" fill="#1a0a00" stroke="#f44336" stroke-width="2"/>
+  <text x="310" y="311" text-anchor="middle" fill="#ef9a9a" font-size="11" font-weight="bold">Cat-A — Constitutional</text>
+  <text x="310" y="326" text-anchor="middle" fill="#ffcdd2" font-size="9">WASM OPA · in-process · &lt;1ms</text>
+  <text x="310" y="339" text-anchor="middle" fill="#ef9a9a" font-size="9">Immutable · 10 rules (A-001–A-010)</text>
+  <text x="310" y="352" text-anchor="middle" fill="#e57373" font-size="8">No egress · No PII · Rate limits</text>
+
+  <!-- Cat-B -->
+  <rect x="235" y="363" width="150" height="62" rx="6" fill="#1a1400" stroke="#ff9800" stroke-width="1.5"/>
+  <text x="310" y="381" text-anchor="middle" fill="#ffcc80" font-size="11" font-weight="bold">Cat-B — Setpoints</text>
+  <text x="310" y="396" text-anchor="middle" fill="#ffe082" font-size="9">OPA bundle · live hot-reload</text>
+  <text x="310" y="409" text-anchor="middle" fill="#ffcc80" font-size="9">8 rules (B-001–B-008)</text>
+  <text x="310" y="422" text-anchor="middle" fill="#ffa726" font-size="8">token_budget · rate_limit · domains</text>
+
+  <!-- Cat-C -->
+  <rect x="235" y="433" width="150" height="62" rx="6" fill="#001a10" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="310" y="451" text-anchor="middle" fill="#a5d6a7" font-size="11" font-weight="bold">Cat-C — Adaptive</text>
+  <text x="310" y="466" text-anchor="middle" fill="#c8e6c9" font-size="9">Arbiter Ed25519 signed</text>
+  <text x="310" y="479" text-anchor="middle" fill="#a5d6a7" font-size="9">confidence threshold gate</text>
+  <text x="310" y="492" text-anchor="middle" fill="#81c784" font-size="8">Promoted from ICL episode patterns</text>
+
+  <!-- Cat arrows → core -->
+  <line x1="385" y1="324" x2="397" y2="340" stroke="#f44336" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+  <line x1="385" y1="394" x2="397" y2="400" stroke="#ff9800" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+  <line x1="385" y1="462" x2="397" y2="455" stroke="#4caf50" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+
+  <!-- RIGHT HOMEOSTATIC — Drift / Reprogramming / Security -->
+
+  <!-- Drift Detection -->
+  <rect x="815" y="293" width="150" height="62" rx="6" fill="#0a001a" stroke="#9c27b0" stroke-width="1.5"/>
+  <text x="890" y="311" text-anchor="middle" fill="#ce93d8" font-size="11" font-weight="bold">Drift Detection</text>
+  <text x="890" y="326" text-anchor="middle" fill="#e1bee7" font-size="9">Embedding centroid tracking</text>
+  <text x="890" y="339" text-anchor="middle" fill="#ce93d8" font-size="9">cosine distance per role</text>
+  <text x="890" y="352" text-anchor="middle" fill="#ba68c8" font-size="8">Rogue detection · heartbeat absence</text>
+
+  <!-- Reprogramming Ladder -->
+  <rect x="815" y="363" width="150" height="62" rx="6" fill="#001a1a" stroke="#00bcd4" stroke-width="1.5"/>
+  <text x="890" y="381" text-anchor="middle" fill="#80deea" font-size="11" font-weight="bold">Reprogramming</text>
+  <text x="890" y="396" text-anchor="middle" fill="#b2ebf2" font-size="9">L0 → L5 identity-preserving</text>
+  <text x="890" y="409" text-anchor="middle" fill="#80deea" font-size="9">ROLE_UPDATE · arbiter countersign</text>
+  <text x="890" y="422" text-anchor="middle" fill="#4dd0e1" font-size="8">Termination only at L5</text>
+
+  <!-- Security Controls -->
+  <rect x="815" y="433" width="150" height="62" rx="6" fill="#0a1a0a" stroke="#66bb6a" stroke-width="1.5"/>
+  <text x="890" y="451" text-anchor="middle" fill="#a5d6a7" font-size="11" font-weight="bold">Security Controls</text>
+  <text x="890" y="466" text-anchor="middle" fill="#c8e6c9" font-size="9">Phase 0a ✅ Ed25519 verify</text>
+  <text x="890" y="479" text-anchor="middle" fill="#c8e6c9" font-size="9">Phase 0b ✅ Redis requirepass</text>
+  <text x="890" y="492" text-anchor="middle" fill="#81c784" font-size="8">0c NKeys · 1 Cilium · 2 SPIRE →</text>
+
+  <!-- right arrows → core -->
+  <line x1="815" y1="324" x2="803" y2="340" stroke="#9c27b0" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+  <line x1="815" y1="394" x2="803" y2="400" stroke="#00bcd4" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+  <line x1="815" y1="462" x2="803" y2="455" stroke="#4caf50" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+
+  <!-- LEFT EXTERNAL — LLM Backends -->
+  <text x="75" y="198" text-anchor="middle" fill="#aaa" font-size="10" font-weight="bold">LLM Backends</text>
+
+  <!-- Ollama -->
+  <rect x="15" y="207" width="120" height="52" rx="6" fill="#001a00" stroke="#4caf50" stroke-width="2"/>
+  <text x="75" y="224" text-anchor="middle" fill="#81c784" font-size="11" font-weight="bold">Ollama</text>
+  <text x="75" y="238" text-anchor="middle" fill="#a5d6a7" font-size="9">Local · edge-first</text>
+  <text x="75" y="251" text-anchor="middle" fill="#66bb6a" font-size="8">llama3.2:3b (edge) · 8b (std)</text>
+
+  <!-- Anthropic -->
+  <rect x="15" y="267" width="120" height="52" rx="6" fill="#1a1000" stroke="#ff9800" stroke-width="1.5"/>
+  <text x="75" y="284" text-anchor="middle" fill="#ffb74d" font-size="11" font-weight="bold">Anthropic</text>
+  <text x="75" y="298" text-anchor="middle" fill="#ffe082" font-size="9">claude-3-5-sonnet</text>
+  <text x="75" y="311" text-anchor="middle" fill="#ffa726" font-size="8">ACC_ANTHROPIC_API_KEY</text>
+
+  <!-- vLLM / Llama Stack -->
+  <rect x="15" y="327" width="120" height="52" rx="6" fill="#001020" stroke="#4a9eff" stroke-width="1.5"/>
+  <text x="75" y="344" text-anchor="middle" fill="#82b1ff" font-size="11" font-weight="bold">vLLM</text>
+  <text x="75" y="358" text-anchor="middle" fill="#b3d1ff" font-size="9">RHOAI KServe · Llama Stack</text>
+  <text x="75" y="371" text-anchor="middle" fill="#4a9eff" font-size="8">ACC_VLLM_INFERENCE_URL</text>
+
+  <!-- LLM arrows into cell -->
+  <line x1="135" y1="233" x2="219" y2="360" stroke="#4caf50" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowGreen)"/>
+  <line x1="135" y1="293" x2="219" y2="405" stroke="#ff9800" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowOrange)"/>
+  <line x1="135" y1="353" x2="219" y2="445" stroke="#4a9eff" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowBlue)"/>
+
+  <!-- RIGHT EXTERNAL — acc-tui / Operator / NATS Hub -->
+  <text x="1125" y="198" text-anchor="middle" fill="#aaa" font-size="10" font-weight="bold">Ops &amp; Control</text>
+
+  <!-- acc-tui -->
+  <rect x="1065" y="207" width="120" height="52" rx="6" fill="#002020" stroke="#00bcd4" stroke-width="2"/>
+  <text x="1125" y="224" text-anchor="middle" fill="#80deea" font-size="11" font-weight="bold">acc-tui</text>
+  <text x="1125" y="238" text-anchor="middle" fill="#b2ebf2" font-size="9">Textual TUI · Dashboard</text>
+  <text x="1125" y="251" text-anchor="middle" fill="#4dd0e1" font-size="8">Infuse · drift · Cat-A/B/C panels</text>
+
+  <!-- ACC Operator -->
+  <rect x="1065" y="267" width="120" height="52" rx="6" fill="#100a1a" stroke="#9c27b0" stroke-width="1.5"/>
+  <text x="1125" y="284" text-anchor="middle" fill="#ce93d8" font-size="11" font-weight="bold">ACC Operator</text>
+  <text x="1125" y="298" text-anchor="middle" fill="#e1bee7" font-size="9">controller-runtime · OLM</text>
+  <text x="1125" y="311" text-anchor="middle" fill="#ba68c8" font-size="8">11 sub-reconcilers · CRD-driven</text>
+
+  <!-- NATS Hub -->
+  <rect x="1065" y="327" width="120" height="52" rx="6" fill="#001020" stroke="#1565c0" stroke-width="1.5"/>
+  <text x="1125" y="344" text-anchor="middle" fill="#82b1ff" font-size="11" font-weight="bold">NATS Hub</text>
+  <text x="1125" y="358" text-anchor="middle" fill="#b3d1ff" font-size="9">JetStream · 3-node cluster</text>
+  <text x="1125" y="371" text-anchor="middle" fill="#4a9eff" font-size="8">leaf-node port 7422 for edge</text>
+
+  <!-- arrows cell → right -->
+  <line x1="981" y1="355" x2="1063" y2="305" stroke="#00bcd4" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowBlue)"/>
+  <line x1="981" y1="410" x2="1063" y2="380" stroke="#9c27b0" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowGray)"/>
+  <line x1="981" y1="465" x2="1063" y2="435" stroke="#1565c0" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowBlue)"/>
+
+  <!-- BOTTOM SECTION connection lines from cell -->
+  <line x1="450" y1="769" x2="450" y2="617" stroke="#ff9800" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowOrange)"/>
+  <line x1="600" y1="769" x2="600" y2="627" stroke="#4a9eff" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowBlue)"/>
+  <line x1="750" y1="769" x2="750" y2="617" stroke="#4caf50" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowGreen)"/>
+
+  <!-- Edge Node Box -->
+  <rect x="15" y="625" width="275" height="148" rx="8" fill="#0f1a0a" stroke="#ff9800" stroke-width="2"/>
+  <rect x="15" y="625" width="275" height="26" rx="8" fill="#2a1500"/>
+  <rect x="15" y="639" width="275" height="12" rx="0" fill="#2a1500"/>
+  <text x="152" y="642" text-anchor="middle" fill="#ffb74d" font-size="11" font-weight="bold">Edge Node — MicroShift / K3s</text>
+  <text x="152" y="662" text-anchor="middle" fill="#ffe082" font-size="10" font-weight="bold">LOCAL FAST PATH (works OFFLINE)</text>
+  <text x="152" y="677" text-anchor="middle" fill="#ffcc80" font-size="9">ingester → analyst → arbiter → TASK_COMPLETE</text>
+  <rect x="25" y="684" width="255" height="14" rx="3" fill="#1a0f00" stroke="#ff9800" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="152" y="695" text-anchor="middle" fill="#ffa726" font-size="9">NATS Leaf Node · acc.{cid}.&gt; local subjects</text>
+  <text x="152" y="712" text-anchor="middle" fill="#ffcc80" font-size="9">Redis 512MB · allkeys-lru eviction</text>
+  <text x="152" y="726" text-anchor="middle" fill="#ffcc80" font-size="9">LanceDB on NVMe · Ollama 3B local</text>
+  <text x="152" y="740" text-anchor="middle" fill="#ffa726" font-size="9">JetStream buffers → drains on reconnect</text>
+  <text x="152" y="754" text-anchor="middle" fill="#ff7043" font-size="9">Skips: KEDA · Gatekeeper · OTel · Tetragon</text>
+  <text x="152" y="768" text-anchor="middle" fill="#ffe082" font-size="8">Operator: PrerequisiteReconciler detects MicroShift</text>
+
+  <!-- ACC-9 Bridge Center -->
+  <rect x="300" y="625" width="590" height="148" rx="8" fill="#001020" stroke="#4a9eff" stroke-width="2"/>
+  <rect x="300" y="625" width="590" height="26" rx="8" fill="#001a30"/>
+  <rect x="300" y="639" width="590" height="12" rx="0" fill="#001a30"/>
+  <text x="595" y="642" text-anchor="middle" fill="#82b1ff" font-size="12" font-weight="bold">ACC-9 Cross-Collective Bridge Protocol</text>
+
+  <text x="595" y="663" text-anchor="middle" fill="#b3d1ff" font-size="9" font-weight="bold">A-010 Governance Gate: bridge_enabled required  ·  30s timeout  ·  JetStream pending queue</text>
+
+  <!-- bridge flow -->
+  <rect x="315" y="670" width="155" height="20" rx="3" fill="#00152a" stroke="#4a9eff" stroke-width="1"/>
+  <text x="392" y="684" text-anchor="middle" fill="#82b1ff" font-size="9">[DELEGATE:sol-dc-01:reason]</text>
+
+  <line x1="470" y1="680" x2="498" y2="680" stroke="#4a9eff" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+
+  <rect x="498" y="670" width="190" height="20" rx="3" fill="#00152a" stroke="#4a9eff" stroke-width="1"/>
+  <text x="593" y="684" text-anchor="middle" fill="#82b1ff" font-size="9">acc.bridge.{from}.{to}.delegate</text>
+
+  <line x1="688" y1="680" x2="716" y2="680" stroke="#4a9eff" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+
+  <rect x="716" y="670" width="165" height="20" rx="3" fill="#00152a" stroke="#4a9eff" stroke-width="1"/>
+  <text x="798" y="684" text-anchor="middle" fill="#82b1ff" font-size="9">hub analyst · CognitiveResult</text>
+
+  <!-- result return arrow -->
+  <line x1="798" y1="690" x2="798" y2="703" stroke="#4a9eff" stroke-width="1" stroke-dasharray="3,2"/>
+  <line x1="798" y1="703" x2="392" y2="703" stroke="#4a9eff" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#arrowBlue)"/>
+  <text x="595" y="717" text-anchor="middle" fill="#4a9eff" font-size="8">acc.bridge.{to}.{from}.result  ←  hub returns result</text>
+
+  <!-- offline note -->
+  <rect x="315" y="722" width="560" height="18" rx="3" fill="#0d0d00" stroke="#ff9800" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="595" y="735" text-anchor="middle" fill="#ffa726" font-size="9">OFFLINE: queue → acc.bridge.{cid}.pending (JetStream) → retry on leaf reconnect</text>
+
+  <text x="595" y="754" text-anchor="middle" fill="#b3d1ff" font-size="9">Bridge subjects: acc.bridge.*.*.delegate  ·  acc.bridge.*.*.result  ·  acc.bridge.*.pending</text>
+  <text x="595" y="769" text-anchor="middle" fill="#64b5f6" font-size="9">NATS leaf port 7422  ·  Cilium L7 egress rule (Phase 1)  ·  SPIRE SVID collective_id (Phase 2)</text>
+
+  <!-- RHOAI Datacenter Box -->
+  <rect x="900" y="625" width="285" height="148" rx="8" fill="#0a1a00" stroke="#4caf50" stroke-width="2"/>
+  <rect x="900" y="625" width="285" height="26" rx="8" fill="#102000"/>
+  <rect x="900" y="639" width="285" height="12" rx="0" fill="#102000"/>
+  <text x="1042" y="642" text-anchor="middle" fill="#81c784" font-size="11" font-weight="bold">RHOAI Datacenter — OpenShift</text>
+  <text x="1042" y="662" text-anchor="middle" fill="#a5d6a7" font-size="10" font-weight="bold">GPU-Accelerated  ·  Always-On Hub</text>
+  <text x="1042" y="677" text-anchor="middle" fill="#c8e6c9" font-size="9">RHOAI KServe InferenceService · vLLM 70B</text>
+  <text x="1042" y="692" text-anchor="middle" fill="#c8e6c9" font-size="9">Milvus cluster · Redis Sentinel</text>
+  <text x="1042" y="707" text-anchor="middle" fill="#c8e6c9" font-size="9">NATS 3-node JetStream hub cluster</text>
+  <text x="1042" y="722" text-anchor="middle" fill="#c8e6c9" font-size="9">OTel Collector → Prometheus → Grafana</text>
+  <text x="1042" y="737" text-anchor="middle" fill="#c8e6c9" font-size="9">KEDA ScaledObjects per role</text>
+  <text x="1042" y="752" text-anchor="middle" fill="#c8e6c9" font-size="9">Gatekeeper ConstraintTemplates</text>
+  <text x="1042" y="767" text-anchor="middle" fill="#66bb6a" font-size="8">OLM rolling upgrade · webhook defaulting + validation</text>
+
+  <!-- SECURITY PHASE STRIP -->
+  <rect x="15" y="782" width="1170" height="44" rx="6" fill="#0a0f0a" stroke="#444" stroke-width="1"/>
+  <text x="600" y="797" text-anchor="middle" fill="#888" font-size="10" font-weight="bold">SECURITY ROADMAP</text>
+
+  <rect x="25" y="800" width="140" height="20" rx="4" fill="#003300" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="95" y="814" text-anchor="middle" fill="#81c784" font-size="9" font-weight="bold">✅ Phase 0a · Ed25519</text>
+
+  <rect x="172" y="800" width="140" height="20" rx="4" fill="#003300" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="242" y="814" text-anchor="middle" fill="#81c784" font-size="9" font-weight="bold">✅ Phase 0b · Redis Auth</text>
+
+  <rect x="319" y="800" width="140" height="20" rx="4" fill="#1a1a00" stroke="#666" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="389" y="814" text-anchor="middle" fill="#aaa" font-size="9">🔲 Phase 0c · NATS NKeys</text>
+
+  <rect x="466" y="800" width="140" height="20" rx="4" fill="#1a1a00" stroke="#666" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="536" y="814" text-anchor="middle" fill="#aaa" font-size="9">🔲 Phase 1 · Cilium L7</text>
+
+  <rect x="613" y="800" width="140" height="20" rx="4" fill="#1a1a00" stroke="#666" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="683" y="814" text-anchor="middle" fill="#aaa" font-size="9">🔲 Phase 2 · SPIRE mTLS</text>
+
+  <rect x="760" y="800" width="155" height="20" rx="4" fill="#1a1a00" stroke="#666" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="837" y="814" text-anchor="middle" fill="#aaa" font-size="9">🔲 Phase 3 · Tetragon Cat-A</text>
+
+  <rect x="922" y="800" width="175" height="20" rx="4" fill="#1a1a00" stroke="#666" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="1009" y="814" text-anchor="middle" fill="#aaa" font-size="9">🔲 Phase 4 · Hardened Standalone</text>
+
+  <text x="1118" y="808" text-anchor="middle" fill="#555" font-size="8">Phases 1-3:</text>
+  <text x="1118" y="820" text-anchor="middle" fill="#555" font-size="8">K8s only</text>
+
+  <!-- LEGEND -->
+  <rect x="15" y="832" width="1170" height="120" rx="6" fill="#0a0f0a" stroke="#333" stroke-width="1"/>
+  <text x="600" y="849" text-anchor="middle" fill="#888" font-size="10" font-weight="bold">LEGEND</text>
+
+  <!-- Col 1: Ellipses -->
+  <ellipse cx="50" cy="864" rx="18" ry="10" fill="none" stroke="#4caf50" stroke-width="2" stroke-dasharray="4,3"/>
+  <text x="76" y="868" fill="#a5d6a7" font-size="9">Outer membrane — NATS isolation boundary</text>
+
+  <ellipse cx="50" cy="882" rx="14" ry="8" fill="none" stroke="#388e3c" stroke-width="1.5"/>
+  <text x="76" y="886" fill="#a5d6a7" font-size="9">Signaling layer — JetStream bus</text>
+
+  <ellipse cx="50" cy="900" rx="10" ry="6" fill="none" stroke="#2e7d32" stroke-width="1.5"/>
+  <text x="76" y="904" fill="#a5d6a7" font-size="9">Core nucleus — CognitiveCore</text>
+
+  <!-- Col 2: Governance boxes -->
+  <rect x="300" y="857" width="12" height="10" rx="2" fill="#1a0a00" stroke="#f44336" stroke-width="1.5"/>
+  <text x="320" y="867" fill="#ef9a9a" font-size="9">Cat-A Constitutional (immutable WASM OPA)</text>
+
+  <rect x="300" y="874" width="12" height="10" rx="2" fill="#1a1400" stroke="#ff9800" stroke-width="1.5"/>
+  <text x="320" y="884" fill="#ffcc80" font-size="9">Cat-B Setpoints (OPA bundle live-reload)</text>
+
+  <rect x="300" y="891" width="12" height="10" rx="2" fill="#001a10" stroke="#4caf50" stroke-width="1.5"/>
+  <text x="320" y="901" fill="#a5d6a7" font-size="9">Cat-C Adaptive (arbiter Ed25519 signed)</text>
+
+  <rect x="300" y="908" width="12" height="10" rx="2" fill="#0a001a" stroke="#9c27b0" stroke-width="1.5"/>
+  <text x="320" y="918" fill="#ce93d8" font-size="9">Homeostatic (drift, reprogramming, security)</text>
+
+  <!-- Col 3: Arrows -->
+  <line x1="570" y1="863" x2="600" y2="863" stroke="#4caf50" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowGreen)"/>
+  <text x="608" y="867" fill="#a5d6a7" font-size="9">LLM inference signal</text>
+
+  <line x1="570" y1="879" x2="600" y2="879" stroke="#4a9eff" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowBlue)"/>
+  <text x="608" y="883" fill="#82b1ff" font-size="9">ACC-9 bridge delegation</text>
+
+  <line x1="570" y1="895" x2="600" y2="895" stroke="#ff9800" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrowOrange)"/>
+  <text x="608" y="899" fill="#ffcc80" font-size="9">Edge NATS leaf connection</text>
+
+  <line x1="570" y1="911" x2="600" y2="911" stroke="#888" stroke-width="1" stroke-dasharray="3,3"/>
+  <text x="608" y="915" fill="#888" font-size="9">Governance / control signal</text>
+
+  <!-- Col 4: Deploy modes -->
+  <rect x="830" y="857" width="50" height="14" rx="7" fill="#444" stroke="#888" stroke-width="1"/>
+  <text x="855" y="868" text-anchor="middle" fill="#ccc" font-size="8">standalone</text>
+  <text x="892" y="868" fill="#888" font-size="9">Podman Compose · developer / CI</text>
+
+  <rect x="830" y="877" width="36" height="14" rx="7" fill="#4a2800" stroke="#ff9800" stroke-width="1"/>
+  <text x="848" y="888" text-anchor="middle" fill="#ffb74d" font-size="8">edge</text>
+  <text x="892" y="888" fill="#888" font-size="9">MicroShift/K3s · NATS leaf · disconnected</text>
+
+  <rect x="830" y="897" width="36" height="14" rx="7" fill="#003300" stroke="#4caf50" stroke-width="1"/>
+  <text x="848" y="908" text-anchor="middle" fill="#81c784" font-size="8">rhoai</text>
+  <text x="892" y="908" fill="#888" font-size="9">OpenShift · GPU KServe · OLM operator</text>
+
+  <text x="600" y="942" text-anchor="middle" fill="#444" font-size="8">github.com/redhat-ai-dev/agentic-cell-corpus  ·  v0.2.x  ·  2026</text>
+
+</svg>
