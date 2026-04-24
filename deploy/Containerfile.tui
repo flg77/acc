@@ -1,11 +1,11 @@
 # ACC TUI — container image (acc-tui)
-# Base: UBI10 minimal + Python 3.12
+# Base: UBI10 python-312-minimal (there is no ubi10/python-312 on the public registry)
 # Install: agentic-cell-corpus[tui] (Textual + Rich only; no LanceDB/Redis)
 # Usage:
 #   podman build -f deploy/Containerfile.tui -t acc-tui:latest .
 #   podman run -it --rm -e ACC_NATS_URL=nats://nats:4222 -e ACC_COLLECTIVE_ID=sol-01 acc-tui:latest
 
-FROM registry.access.redhat.com/ubi10/python-312:latest
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
 
 LABEL name="acc-tui" \
       version="0.1.0" \
@@ -15,11 +15,11 @@ LABEL name="acc-tui" \
 
 USER 0
 
-# Install build tools needed for some Python packages
-RUN dnf install -y --setopt=install_weak_deps=False \
+# Install build tools needed for some Python packages (image has microdnf, not dnf)
+RUN microdnf install -y --nodocs \
         gcc \
-        python3-devel && \
-    dnf clean all
+        python3-devel \
+    && microdnf clean all
 
 USER 1001
 
