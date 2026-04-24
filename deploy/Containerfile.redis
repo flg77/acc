@@ -18,14 +18,16 @@ LABEL name="acc-redis" \
       summary="Redis 7 on UBI9 for ACC standalone deployment" \
       description="Subscription-free Redis built from UBI9 minimal + EPEL."
 
-# Install EPEL release RPM, then redis, then clean up
-# microdnf is the package manager in ubi-minimal
-RUN microdnf install -y \
+# Install EPEL release RPM, then redis, then clean up.  microdnf does not
+# accept http(s) URLs or local .rpm paths for install — only resolved package
+# names from repos—so fetch the EPEL .rpm with curl and install it with rpm(8).
+RUN curl -fL -o /tmp/epel-release.rpm \
         https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm \
+    && rpm -ivh /tmp/epel-release.rpm \
     && microdnf install -y \
         redis \
     && microdnf clean all \
-    && rm -rf /var/cache/dnf
+    && rm -rf /var/cache/dnf /tmp/epel-release.rpm
 
 # Create data directory with correct ownership for non-root UID 1001
 RUN mkdir -p /var/lib/redis/data \
