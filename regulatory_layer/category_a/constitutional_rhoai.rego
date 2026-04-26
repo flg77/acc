@@ -12,8 +12,8 @@
 # Levin mapping: These are the "hardware" layer of the TAME spectrum —
 # they CANNOT be persuaded, adjusted, or overridden by any signal.
 #
-# Version: 0.2.0
-# Date:    2026-04-03
+# Version: 0.3.0
+# Date:    2026-04-24
 # ==========================================================================
 
 package acc.membrane.constitutional
@@ -121,6 +121,44 @@ deny_audit_deletion if {
 deny_cross_collective if {
     input.signal.collective_id != input.agent.collective_id
     not input.signal.via_bridge == true
+}
+
+# ==========================================================================
+# NEW v0.3.0 RULES (ACC-10: intra-collective communication integrity)
+# ==========================================================================
+
+# A-011: CENTROID_UPDATE may only be published by the arbiter.
+# The role centroid is the authoritative reference for drift scoring.
+# If any non-arbiter agent could overwrite it, a compromised analyst
+# could suppress drift detection for the entire collective.
+# Biological analog: Only the tissue organizer (arbiter) can broadcast
+# updated positional gradients to all cells. Individual cells report
+# their own state but never update the reference centroid.
+deny_centroid_from_non_arbiter if {
+    input.signal.signal_type == "CENTROID_UPDATE"
+    not is_arbiter(input.signal.from_agent)
+}
+
+# A-012: PLAN signals may only be published by the arbiter.
+# Task scheduling and parallel DAG execution is the arbiter's exclusive
+# responsibility. Non-arbiter agents publishing PLAN signals would allow
+# arbitrary work injection into the collective.
+# Biological analog: Only the nucleus (arbiter) dictates the cell's
+# program. Organelles cannot override the genetic instruction set.
+deny_plan_from_non_arbiter if {
+    input.signal.signal_type == "PLAN"
+    not is_arbiter(input.signal.from_agent)
+}
+
+# A-013: BACKPRESSURE agent_id must match the publishing agent.
+# An agent cannot impersonate another agent's backpressure state.
+# This prevents a compromised agent from falsely reporting that a
+# healthy agent is at capacity, causing the ingester to drop work.
+# Biological analog: Only a cell can report its own membrane potential.
+# Another cell cannot broadcast a false reading on behalf of its neighbor.
+deny_impersonated_backpressure if {
+    input.signal.signal_type == "BACKPRESSURE"
+    input.signal.payload.agent_id != input.signal.from_agent
 }
 
 # ==========================================================================

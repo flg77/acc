@@ -1,6 +1,7 @@
-"""ACC RoleStore — three-tier role definition persistence and hot-reload.
+"""ACC RoleStore — four-tier role definition persistence and hot-reload (ACC-10).
 
 Load precedence at startup (first source that succeeds wins):
+    0. roles/{role_name}/role.yaml  (ACC-10: file-system tier via RoleLoader)
     1. File at ACC_ROLE_CONFIG_PATH (default: /app/acc-role.yaml)
     2. Redis key acc:{collective_id}:{agent_id}:role
     3. LanceDB role_definitions table (most recent row for agent_id)
@@ -27,6 +28,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import ValidationError
 
 from acc.config import ACCConfig, RoleDefinitionConfig
+from acc.role_loader import RoleLoader
 from acc.signals import redis_role_key, redis_collective_key
 
 logger = logging.getLogger("acc.role_store")
@@ -63,6 +65,7 @@ class RoleStore:
         agent_id: str,
         redis_client: Optional[Any] = None,
         vector: Optional[Any] = None,
+        roles_root: str = "roles",
     ) -> None:
         self._config = config
         self._agent_id = agent_id
@@ -71,6 +74,11 @@ class RoleStore:
         self._vector = vector
         self._current: RoleDefinitionConfig = RoleDefinitionConfig()
         self._role_updated = asyncio.Event()
+        # ACC-10: tier-0 file-system loader (roles/{role_name}/role.yaml)
+        self._role_loader = RoleLoader(
+            roles_root=roles_root,
+            role_name=config.agent.role,
+        )
 
     # ------------------------------------------------------------------
     # Startup load
@@ -82,6 +90,19 @@ class RoleStore:
         Returns:
             The resolved :class:`RoleDefinitionConfig`.
         """
+        # 0 — roles/{role_name}/role.yaml (ACC-10 tier-0)
+        role = self._role_loader.load()
+        if role is not None:
+            logger.info(
+                "role_store: loaded role from roles/ dir (agent_id=%s role=%s version=%s)",
+                self._agent_id,
+                self._config.agent.role,
+                role.version,
+            )
+            self._current = role
+            self._append_audit("loaded", "", role.version, "source=roles_dir", "")
+            return role
+
         # 1 — ConfigMap / file
         role = self._try_load_from_file()
         if role is not None:

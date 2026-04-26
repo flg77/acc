@@ -1,0 +1,80 @@
+# roles/_base/role.yaml
+# =============================================================================
+# ACC Base Role Schema — all ACC-10 fields with default values.
+#
+# Every role-specific role.yaml deep-merges on top of this base.
+# Child values win; missing child fields fall back to base defaults.
+#
+# Fields marked "ACC-10" are new in v0.3.0.
+# =============================================================================
+
+role_definition:
+  # --- Existing fields (ACC-6a, v0.1.0–0.2.0) ---
+
+  # One sentence describing what this role exists to accomplish.
+  purpose: ""
+
+  # LLM persona style applied to system prompt construction.
+  # Must be one of: concise | formal | exploratory | analytical
+  persona: "concise"
+
+  # List of task type identifiers this role accepts.
+  # Example: ["document_ingest", "signal_normalization"]
+  task_types: []
+
+  # Free-form context injected into the seed of the system prompt.
+  seed_context: ""
+
+  # Actions this role is permitted to invoke.
+  # Example: ["read_vector_db", "write_working_memory"]
+  allowed_actions: []
+
+  # Cat-B setpoint overrides specific to this role.
+  # Any key present here overrides the corresponding setpoint in data_rhoai.json
+  # for this role only.
+  # Example: {token_budget: 2048, rate_limit_rpm: 60}
+  category_b_overrides: {}
+
+  # Semantic version of this role definition.  Bumped on every change.
+  # The RoleLoader uses this to detect hot-reload changes.
+  version: "1.0.0"
+
+  # --- ACC-10 fields (v0.3.0) ---
+
+  # How often (ms) to emit TASK_PROGRESS signals during task execution.
+  # 0 = emit only at step boundaries (never on a timer cadence).
+  # Overrides the global progress_reporting_interval_ms Cat-B setpoint.
+  progress_reporting_interval_ms: 30000
+
+  # Queue depth at which this role emits BACKPRESSURE(state=CLOSED).
+  # The ingester stops submitting new tasks until depth drops below
+  # queue_backpressure_resume_threshold.
+  queue_backpressure_threshold: 10
+
+  # Queue depth at which BACKPRESSURE(state=OPEN) is re-emitted, allowing
+  # the ingester to resume.  Should be <= queue_backpressure_threshold.
+  queue_backpressure_resume_threshold: 8
+
+  # Knowledge tags this role publishes KNOWLEDGE_SHARE signals under.
+  # Consumers subscribe to acc.{cid}.knowledge.{tag}.
+  knowledge_tags: []
+
+  # Path (relative to this file) to the evaluation rubric definition.
+  eval_rubric_ref: "eval_rubric.yaml"
+
+  # Whether this role may nominate ICL episodes for Cat-C promotion.
+  # When true the role emits EPISODE_NOMINATE after high-scoring tasks.
+  can_nominate_episodes: true
+
+  # Whether this role may request spawning a sub-collective corpus.
+  # Gated by Cat-B rule B-011 and requires arbiter PLAN countersign.
+  # Only specialized roles (e.g. coding_agent) should set this to true.
+  can_spawn_sub_collective: false
+
+  # Maximum number of tasks this role may process concurrently.
+  # 1 = serial; >1 requires the role implementation to support async tasks.
+  max_parallel_tasks: 1
+
+  # Whether this role participates in PLAN DAG execution.
+  # When false the role ignores PLAN signals (observer pattern).
+  plan_participant: true

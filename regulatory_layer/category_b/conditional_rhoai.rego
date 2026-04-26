@@ -17,8 +17,8 @@
 # within defined bounds. Like bioelectric voltage setpoints that
 # determine cell behavior thresholds.
 #
-# Version: 0.2.0
-# Date:    2026-04-03
+# Version: 0.3.0
+# Date:    2026-04-24
 # ==========================================================================
 
 package acc.membrane.conditional
@@ -101,4 +101,39 @@ allow_gpu_request if {
 allow_gpu_request if {
     input.deploy_mode == "rhoai"
     input.collective.gpu_hours_used_today <= data.setpoints.max_gpu_hours_per_day
+}
+
+# ==========================================================================
+# NEW v0.3.0 RULES (ACC-10: intra-collective communication)
+# ==========================================================================
+
+# B-009: Episode nomination requires minimum evaluation score.
+# Any role may nominate an ICL episode for Cat-C promotion, but the
+# self-assessed eval_score must meet the Cat-B confidence threshold.
+# This prevents low-quality episodes from flooding the nomination queue.
+# Setpoint: data.setpoints.icl_confidence_threshold (default: 0.80)
+allow_episode_nominate if {
+    input.signal.signal_type == "EPISODE_NOMINATE"
+    input.signal.payload.eval_score >= data.setpoints.icl_confidence_threshold
+}
+
+# B-010: Eval outcome publication gated on task completion.
+# Any role may publish EVAL_OUTCOME for tasks it completed.
+# The publishing agent_id must match the agent that held the task.
+# Biological analog: Only the cell that performed the work can report
+# its own output quality (self-assessment before peer review).
+allow_eval_publish if {
+    input.signal.signal_type == "EVAL_OUTCOME"
+    input.signal.from_agent == input.task.assigned_agent
+}
+
+# B-011: Sub-collective spawn requires arbiter approval.
+# Only roles with can_spawn_sub_collective: true in their role definition
+# may request spawning, and the request must be a PLAN step countersigned
+# by the arbiter (cross-collective delegation via A-010).
+# Setpoint: none (binary allow/deny based on role capability flag)
+allow_sub_collective_spawn if {
+    input.signal.signal_type == "PLAN"
+    input.role_definition.can_spawn_sub_collective == true
+    input.signal.from_agent_role == "arbiter"
 }

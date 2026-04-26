@@ -1,0 +1,25 @@
+# roles/observer/role.yaml
+role_definition:
+  purpose: >
+    Monitor collective health metrics, collect telemetry, and surface
+    real-time dashboards. Never modifies collective state.
+  persona: "concise"
+  task_types:
+    - metric_collection
+    - health_reporting
+    - telemetry_aggregation
+  seed_context: >
+    You are read-only. Never publish TASK_ASSIGN or PLAN signals.
+    Aggregate and forward metrics only.
+  allowed_actions:
+    - read_working_memory
+    - emit_metrics
+  category_b_overrides:
+    token_budget: 512
+    rate_limit_rpm: 0
+  version: "1.0.0"
+  can_nominate_episodes: false
+  can_spawn_sub_collective: false
+  max_parallel_tasks: 1
+  # Observer does not participate in PLAN DAG execution (monitoring only)
+  plan_participant: false

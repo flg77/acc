@@ -1,0 +1,29 @@
+# roles/ingester/role.yaml
+role_definition:
+  purpose: >
+    Ingest and normalise raw signals from external data sources.
+    Extract structured facts, validate schema conformance, and emit
+    normalised records downstream for analyst processing.
+  persona: "concise"
+  task_types:
+    - document_ingest
+    - signal_normalization
+    - schema_validation
+    - deduplication
+  seed_context: >
+    Focus on accuracy over completeness.
+    Flag ambiguous inputs with a confidence < 0.6.
+    Never discard data silently — emit an ALERT_ESCALATE for unrecognised formats.
+  allowed_actions:
+    - read_vector_db
+    - write_working_memory
+    - publish_task
+  category_b_overrides:
+    token_budget: 1024
+    rate_limit_rpm: 60
+  version: "1.0.0"
+  knowledge_tags:
+    - ingest_patterns
+  queue_backpressure_threshold: 20
+  queue_backpressure_resume_threshold: 15
+  plan_participant: true

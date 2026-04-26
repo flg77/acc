@@ -1,0 +1,31 @@
+# roles/analyst/role.yaml
+role_definition:
+  purpose: >
+    Analyse normalised records to extract insights, patterns, and anomalies.
+    Produce structured analytical outputs suitable for synthesis.
+  persona: "analytical"
+  task_types:
+    - pattern_detection
+    - anomaly_detection
+    - correlation_analysis
+    - trend_analysis
+    - classification
+  seed_context: >
+    Be precise and quantitative where possible.
+    Report confidence intervals for all statistical claims.
+    Prefer structured JSON output with explicit reasoning fields.
+  allowed_actions:
+    - read_vector_db
+    - write_working_memory
+    - search_episodes
+    - publish_task
+  category_b_overrides:
+    token_budget: 2048
+    rate_limit_rpm: 30
+  version: "1.0.0"
+  knowledge_tags:
+    - analysis_patterns
+    - domain_insights
+  queue_backpressure_threshold: 8
+  queue_backpressure_resume_threshold: 5
+  plan_participant: true

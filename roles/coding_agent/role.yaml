@@ -1,0 +1,82 @@
+# roles/coding_agent/role.yaml
+# =============================================================================
+# ACC coding_agent Role — Reference implementation for ACC-10 signal types.
+#
+# This role exercises every new ACC-10 signal in its task lifecycle:
+#
+#   TASK_ASSIGN received
+#     → QUEUE_STATUS (+1, task type recorded)
+#     → BACKPRESSURE(THROTTLE or CLOSED) if over threshold
+#   Task executing (every progress_reporting_interval_ms)
+#     → TASK_PROGRESS with ProgressContext
+#     → scratchpad writes for intermediate artefacts
+#   TASK_COMPLETE
+#     → EVAL_OUTCOME (self-scored against eval_rubric.yaml)
+#     → EPISODE_NOMINATE (if overall_score >= icl_confidence_threshold)
+#     → KNOWLEDGE_SHARE (if novel pattern discovered)
+#   PLAN received from arbiter
+#     → Parallel step execution using max_parallel_tasks
+#   CENTROID_UPDATE received from arbiter
+#     → Immediate self-drift recalculation (no arbiter polling needed)
+#
+# Sub-collective spawn (B-011):
+#   coding_agent may request spawning a sub-collective via a PLAN step with
+#   task_description: "SPAWN_SUB_COLLECTIVE:{reason}". The arbiter validates
+#   via A-010 (existing cross-collective gate) and issues a bridge delegate.
+# =============================================================================
+
+role_definition:
+  purpose: >
+    Generate, review, and test code artefacts.
+    Manage the full software development micro-cycle: plan → generate → test →
+    review → document.  Spawn sub-collective corpuses for tasks that exceed
+    local context capacity or require specialised inference.
+  persona: "analytical"
+  task_types:
+    - CODE_GENERATE
+    - CODE_REVIEW
+    - TEST_WRITE
+    - TEST_RUN
+    - REFACTOR
+    - DEPENDENCY_AUDIT
+    - SECURITY_SCAN
+    - DOCUMENTATION_WRITE
+  seed_context: >
+    You are a precise software engineer.
+    Always produce runnable, tested code.
+    Emit structured JSON with fields: language, files (list of {path, content}),
+    tests (list of {path, content}), notes, confidence.
+    For CODE_REVIEW tasks emit: verdict (PASS|FAIL|NEEDS_CHANGES),
+    findings (list of {severity, line, message}), confidence.
+    Flag security issues at severity CRITICAL or HIGH immediately via ALERT_ESCALATE.
+    When a task requires > 4000 tokens or an external specialised model,
+    emit [DELEGATE:hub-collective-id:reason] and explain why.
+  allowed_actions:
+    - read_vector_db
+    - write_working_memory
+    - read_scratchpad
+    - write_scratchpad
+    - publish_task
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 40
+    max_task_duration_ms: 1800000
+  version: "1.0.0"
+
+  # ACC-10 fields
+  progress_reporting_interval_ms: 20000
+  queue_backpressure_threshold: 5
+  queue_backpressure_resume_threshold: 3
+  knowledge_tags:
+    - code_patterns
+    - test_strategies
+    - security_findings
+    - dependency_issues
+  eval_rubric_ref: "eval_rubric.yaml"
+  can_nominate_episodes: true
+  can_spawn_sub_collective: true
+  max_parallel_tasks: 3
+  plan_participant: true

@@ -28,7 +28,7 @@ from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBac
 # ---------------------------------------------------------------------------
 
 DeployMode = Literal["standalone", "rhoai", "edge"]
-AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer"]
+AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer", "coding_agent"]
 LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack"]
 MetricsBackendChoice = Literal["log", "otel"]
 VectorBackendChoice = Literal["lancedb", "milvus"]
@@ -221,6 +221,10 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_PEER_COLLECTIVES":         ("agent", "peer_collectives"),
     "ACC_HUB_COLLECTIVE_ID":        ("agent", "hub_collective_id"),
     "ACC_BRIDGE_ENABLED":           ("agent", "bridge_enabled"),
+    # Intra-collective communication (ACC-10)
+    # ACC_ROLES_ROOT is consumed by RoleStore/RoleLoader, not here
+    # ACC_SCRATCHPAD_TTL_S, ACC_KNOWLEDGE_INDEX_MAX_ITEMS, ACC_EVAL_RETENTION_DAYS
+    # are read from Cat-B setpoints at runtime; no config-layer field needed.
 }
 
 

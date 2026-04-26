@@ -10,10 +10,25 @@
     "max_task_duration_ms": {
       "ingester": 300000,
       "analyst": 600000,
-      "synthesizer": 900000
+      "synthesizer": 900000,
+      "coding_agent": 1800000
     },
     "min_quorum_agents": 2,
-    "max_gpu_hours_per_day": 24
+    "max_gpu_hours_per_day": 24,
+
+    "progress_reporting_interval_ms": 30000,
+    "queue_status_broadcast_interval_s": 10,
+    "queue_status_staleness_warning_ms": 30000,
+    "max_scratchpad_ttl_s": 7200,
+    "token_budget_warning_threshold": 30,
+    "health_score_eval_weight": 0.10,
+    "pattern_min_cluster": 5,
+    "centroid_update_interval_s": 60,
+    "knowledge_index_max_items": 100,
+    "plan_max_steps": 20,
+    "plan_max_parallel_steps": 5,
+    "eval_outcome_retention_days": 7,
+    "backpressure_hysteresis_pct": 0.80
   },
   "constitutional": {
     "max_generation": 10

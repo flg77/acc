@@ -1,0 +1,46 @@
+# roles/coding_agent/eval_rubric.yaml
+# =============================================================================
+# coding_agent Evaluation Rubric
+#
+# Used when computing EVAL_OUTCOME.overall_score after task completion.
+# Weights must sum to 1.0.
+# =============================================================================
+
+criteria:
+  correctness:
+    weight: 0.35
+    description: >
+      Code produces correct output for the given inputs.
+      Score: 1.0 = all test cases pass; 0.7 = minor failures; 0.0 = broken.
+
+  test_coverage:
+    weight: 0.20
+    description: >
+      Test coverage percentage of the generated/modified code.
+      Score: coverage_pct / 100.0 (e.g. 80% coverage → 0.80).
+      For CODE_REVIEW tasks: adequacy of existing tests.
+
+  code_quality:
+    weight: 0.15
+    description: >
+      Linting, readability, cyclomatic complexity.
+      Score: 1.0 = no issues; 0.5 = minor style issues; 0.0 = unreadable.
+
+  security:
+    weight: 0.15
+    description: >
+      No critical/high CVEs introduced; no hardcoded secrets;
+      no obvious injection vectors.
+      Score: 1.0 = clean; 0.5 = low-severity findings; 0.0 = critical finding.
+
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2× budget.
+
+  time_efficiency:
+    weight: 0.05
+    description: >
+      Actual wall-clock duration relative to task deadline.
+      Score: 1.0 = completed by deadline; 0.0 = exceeded deadline by 2×+.

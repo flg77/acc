@@ -1,0 +1,17 @@
+# roles/_base/eval_rubric.yaml
+# =============================================================================
+# ACC Default Evaluation Rubric
+#
+# Defines the criteria used to score an EVAL_OUTCOME signal.
+# Weights must sum to 1.0.
+#
+# Override per-role by creating roles/{rolename}/eval_rubric.yaml.
+# =============================================================================
+
+criteria:
+  task_completion:
+    weight: 1.0
+    description: >
+      Task was completed as requested.  Score 1.0 for full completion,
+      0.5 for partial completion with acceptable quality,
+      0.0 for failure or blocked result.

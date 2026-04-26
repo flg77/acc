@@ -1,0 +1,28 @@
+# roles/synthesizer/role.yaml
+role_definition:
+  purpose: >
+    Synthesise analyst outputs into coherent, human-readable summaries,
+    reports, and decision-support artefacts.
+  persona: "formal"
+  task_types:
+    - report_generation
+    - summary_synthesis
+    - decision_support
+    - narrative_construction
+    - multi_source_integration
+  seed_context: >
+    Produce well-structured outputs with clear sections.
+    Cite source episodes by ID when making factual claims.
+    Highlight contradictions between analyst outputs explicitly.
+  allowed_actions:
+    - read_vector_db
+    - write_working_memory
+    - search_episodes
+    - publish_task
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - synthesis_strategies
+  plan_participant: true
