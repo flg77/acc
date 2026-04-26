@@ -330,7 +330,7 @@ class Agent:
                 logger.warning("task_loop: invalid JSON in TASK_ASSIGN payload")
                 return
 
-            result = self._cognitive_core.process_task(  # type: ignore[union-attr]
+            result = await self._cognitive_core.process_task(  # type: ignore[union-attr]
                 task_payload=data,
                 role=self._active_role,
             )

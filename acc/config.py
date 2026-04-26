@@ -29,7 +29,7 @@ from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBac
 
 DeployMode = Literal["standalone", "rhoai", "edge"]
 AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer", "coding_agent"]
-LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack"]
+LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack", "openai_compat"]
 MetricsBackendChoice = Literal["log", "otel"]
 VectorBackendChoice = Literal["lancedb", "milvus"]
 SignalingBackendChoice = Literal["nats"]
@@ -139,6 +139,7 @@ class VectorConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     backend: LLMBackendChoice = "ollama"
+    # --- Provider-specific fields (legacy; kept for backward compatibility) ---
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"
     anthropic_model: str = "claude-sonnet-4-6"
@@ -146,6 +147,44 @@ class LLMConfig(BaseModel):
     llama_stack_url: str = ""
     embedding_model: str = "all-MiniLM-L6-v2"
     embedding_model_path: str = "/app/models/all-MiniLM-L6-v2"
+    # --- Universal fields (ACC-LLM-Independence) ---
+    model: str = ""
+    """Model identifier for openai_compat and future universal backends.
+
+    Takes precedence over backend-specific model fields when set.
+    Examples: ``'gpt-4o'``, ``'llama-3.3-70b-versatile'`` (Groq),
+    ``'gemini-2.0-flash'``, ``'mistralai/Mixtral-8x7B-Instruct-v0.1'`` (OpenRouter),
+    ``'meta-llama/Llama-3.1-70B-Instruct'`` (HuggingFace TGI).
+    """
+    base_url: str = ""
+    """Base URL for the inference endpoint (openai_compat and vllm).
+
+    Examples:
+    - OpenAI:       ``https://api.openai.com/v1``
+    - Groq:         ``https://api.groq.com/openai/v1``
+    - Gemini:       ``https://generativelanguage.googleapis.com/v1beta/openai``
+    - OpenRouter:   ``https://openrouter.ai/api/v1``
+    - HuggingFace:  ``https://api-inference.huggingface.co/v1``
+    - Together AI:  ``https://api.together.xyz/v1``
+    - Fireworks:    ``https://api.fireworks.ai/inference/v1``
+    - vLLM local:   ``http://localhost:8000/v1``
+    - LM Studio:    ``http://localhost:1234/v1``
+
+    Falls back to ``vllm_inference_url`` when empty and backend is ``vllm``.
+    """
+    api_key_env: str = ""
+    """Name of the environment variable that holds the API key.
+
+    The variable is read at backend instantiation time so that the key itself
+    never appears in config files or logs.  Leave empty for unauthenticated
+    endpoints (e.g. local vLLM without ``--api-key``).
+    Examples: ``'OPENAI_API_KEY'``, ``'GROQ_API_KEY'``, ``'GEMINI_API_KEY'``,
+    ``'OPENROUTER_API_KEY'``, ``'HF_TOKEN'``.
+    """
+    request_timeout_s: int = 120
+    """HTTP request timeout in seconds for inference calls (openai_compat)."""
+    max_retries: int = 3
+    """Maximum retry attempts on retryable errors — 429, 5xx (openai_compat)."""
 
 
 class ObservabilityConfig(BaseModel):
@@ -233,6 +272,12 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_ANTHROPIC_MODEL":          ("llm", "anthropic_model"),
     "ACC_VLLM_INFERENCE_URL":       ("llm", "vllm_inference_url"),
     "ACC_LLAMA_STACK_URL":          ("llm", "llama_stack_url"),
+    # Universal LLM fields (ACC-LLM-Independence)
+    "ACC_LLM_MODEL":                ("llm", "model"),
+    "ACC_LLM_BASE_URL":             ("llm", "base_url"),
+    "ACC_LLM_API_KEY_ENV":          ("llm", "api_key_env"),
+    "ACC_LLM_TIMEOUT_S":            ("llm", "request_timeout_s"),
+    "ACC_LLM_MAX_RETRIES":          ("llm", "max_retries"),
     "ACC_METRICS_BACKEND":          ("observability", "backend"),
     "ACC_OTEL_SERVICE_NAME":        ("observability", "otel_service_name"),
     # Role definition overrides (ACC-6a)
@@ -367,8 +412,19 @@ def build_backends(config: ACCConfig) -> BackendBundle:
     elif config.llm.backend == "vllm":
         from acc.backends.llm_vllm import VLLMBackend
         llm = VLLMBackend(
-            inference_url=config.llm.vllm_inference_url,
-            model=config.llm.ollama_model,
+            # Universal base_url takes precedence over legacy vllm_inference_url
+            inference_url=config.llm.base_url or config.llm.vllm_inference_url,
+            model=config.llm.model or config.llm.ollama_model,
+        )
+    elif config.llm.backend == "openai_compat":
+        from acc.backends.llm_openai_compat import OpenAICompatBackend
+        llm = OpenAICompatBackend(
+            base_url=config.llm.base_url or config.llm.vllm_inference_url,
+            model=config.llm.model or config.llm.ollama_model,
+            api_key_env=config.llm.api_key_env,
+            embedding_model_path=config.llm.embedding_model_path,
+            timeout_s=config.llm.request_timeout_s,
+            max_retries=config.llm.max_retries,
         )
     elif config.llm.backend == "llama_stack":
         from acc.backends.llm_llama_stack import LlamaStackBackend

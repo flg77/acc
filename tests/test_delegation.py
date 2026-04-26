@@ -152,13 +152,15 @@ class TestBuildSystemPromptBridgeSection:
 
 def _make_llm_returning(text: str) -> MagicMock:
     llm = MagicMock()
-    llm.complete.return_value = {"content": text, "usage": {"total_tokens": 10}}
-    llm.embed.return_value = [0.0] * 384
+    # complete() and embed() are async — use AsyncMock so await works correctly
+    llm.complete = AsyncMock(return_value={"content": text, "usage": {"total_tokens": 10}})
+    llm.embed = AsyncMock(return_value=[0.0] * 384)
     return llm
 
 
 class TestProcessTaskDelegation:
-    def test_no_delegation_marker_gives_empty_delegate_to(self):
+    @pytest.mark.asyncio
+    async def test_no_delegation_marker_gives_empty_delegate_to(self):
         from acc.config import RoleDefinitionConfig
         llm = _make_llm_returning("Here is a normal response.")
         vector = MagicMock()
@@ -171,11 +173,12 @@ class TestProcessTaskDelegation:
             bridge_enabled=True,
             peer_collectives=["sol-02"],
         )
-        result = core.process_task({"content": "analyze this"}, RoleDefinitionConfig())
+        result = await core.process_task({"content": "analyze this"}, RoleDefinitionConfig())
         assert result.delegate_to == ""
         assert result.delegation_reason == ""
 
-    def test_delegation_marker_parsed_when_bridge_enabled(self):
+    @pytest.mark.asyncio
+    async def test_delegation_marker_parsed_when_bridge_enabled(self):
         from acc.config import RoleDefinitionConfig
         text = "I need a bigger model. [DELEGATE:sol-02:requires 70B for complex reasoning]"
         llm = _make_llm_returning(text)
@@ -189,11 +192,12 @@ class TestProcessTaskDelegation:
             bridge_enabled=True,
             peer_collectives=["sol-02"],
         )
-        result = core.process_task({"content": "hard task"}, RoleDefinitionConfig())
+        result = await core.process_task({"content": "hard task"}, RoleDefinitionConfig())
         assert result.delegate_to == "sol-02"
         assert result.delegation_reason == "requires 70B for complex reasoning"
 
-    def test_delegation_marker_suppressed_when_bridge_disabled(self):
+    @pytest.mark.asyncio
+    async def test_delegation_marker_suppressed_when_bridge_disabled(self):
         """A-010 gate: delegation is silently suppressed when bridge_enabled=False."""
         from acc.config import RoleDefinitionConfig
         text = "I need help. [DELEGATE:sol-02:too complex]"
@@ -207,7 +211,7 @@ class TestProcessTaskDelegation:
             vector=vector,
             bridge_enabled=False,
         )
-        result = core.process_task({"content": "task"}, RoleDefinitionConfig())
+        result = await core.process_task({"content": "task"}, RoleDefinitionConfig())
         assert result.delegate_to == ""
         assert result.delegation_reason == ""
 

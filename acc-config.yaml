@@ -20,14 +20,85 @@ vector_db:
   milvus_collection_prefix: acc_
 
 llm:
-  backend: ollama          # ollama | anthropic | vllm | llama_stack
+  # ── Select a backend ─────────────────────────────────────────────────────
+  # Supported: ollama | anthropic | vllm | llama_stack | openai_compat
+  #
+  # openai_compat is the recommended backend for all OpenAI-compatible
+  # providers: OpenAI, Groq, Gemini, OpenRouter, HuggingFace TGI, Together,
+  # Fireworks, LM Studio, Anyscale, and local vLLM endpoints.
+  #
+  # Use environment variables for secrets: ACC_LLM_API_KEY_ENV=GROQ_API_KEY
+  # (points to the env var that holds the key — the key itself is never in config).
+  # ─────────────────────────────────────────────────────────────────────────
+
+  # ── Option A: Ollama (default — local, no auth) ──────────────────────────
+  backend: ollama
   ollama_base_url: http://localhost:11434
   ollama_model: llama3.2:3b
-  anthropic_model: claude-sonnet-4-6
-  vllm_inference_url: ""
-  llama_stack_url: ""
+
+  # ── Option B: vLLM / KServe (RHOAI, first-class) ─────────────────────────
+  # backend: vllm
+  # vllm_inference_url: http://vllm-service:8000/v1     # or ACC_VLLM_INFERENCE_URL
+  # ollama_model: meta-llama/Llama-3.1-8B-Instruct      # model name as served by vLLM
+  # # Universal fields (preferred for vllm too — take precedence when set):
+  # base_url: http://vllm-service:8000/v1               # ACC_LLM_BASE_URL
+  # model: meta-llama/Llama-3.1-8B-Instruct             # ACC_LLM_MODEL
+
+  # ── Option C: OpenAI ─────────────────────────────────────────────────────
+  # backend: openai_compat
+  # base_url: https://api.openai.com/v1
+  # model: gpt-4o
+  # api_key_env: OPENAI_API_KEY         # env var name; set OPENAI_API_KEY in .env
+
+  # ── Option D: Groq (ultra-fast inference) ────────────────────────────────
+  # backend: openai_compat
+  # base_url: https://api.groq.com/openai/v1
+  # model: llama-3.3-70b-versatile
+  # api_key_env: GROQ_API_KEY
+
+  # ── Option E: Gemini (Google OpenAI-compat proxy) ─────────────────────────
+  # backend: openai_compat
+  # base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  # model: gemini-2.0-flash
+  # api_key_env: GEMINI_API_KEY
+
+  # ── Option F: OpenRouter (300+ models, single API key) ───────────────────
+  # backend: openai_compat
+  # base_url: https://openrouter.ai/api/v1
+  # model: mistralai/mixtral-8x7b-instruct
+  # api_key_env: OPENROUTER_API_KEY
+
+  # ── Option G: HuggingFace Inference API ──────────────────────────────────
+  # backend: openai_compat
+  # base_url: https://api-inference.huggingface.co/v1
+  # model: meta-llama/Llama-3.1-70B-Instruct
+  # api_key_env: HF_TOKEN
+
+  # ── Option H: Together AI ─────────────────────────────────────────────────
+  # backend: openai_compat
+  # base_url: https://api.together.xyz/v1
+  # model: mistralai/Mixtral-8x7B-Instruct-v0.1
+  # api_key_env: TOGETHER_API_KEY
+
+  # ── Option I: Anthropic (native SDK, not OpenAI-compat) ──────────────────
+  # backend: anthropic
+  # anthropic_model: claude-sonnet-4-6
+
+  # ── Option J: LM Studio (local, no auth) ──────────────────────────────────
+  # backend: openai_compat
+  # base_url: http://localhost:1234/v1
+  # model: llama-3.2-3b-instruct     # matches model loaded in LM Studio
+  # api_key_env: ""                  # empty = no Authorization header
+
+  # ── Shared fields ─────────────────────────────────────────────────────────
+  anthropic_model: claude-sonnet-4-6       # used when backend=anthropic
+  llama_stack_url: ""                      # used when backend=llama_stack
   embedding_model: all-MiniLM-L6-v2
   embedding_model_path: /app/models/all-MiniLM-L6-v2
+
+  # ── openai_compat tuning ─────────────────────────────────────────────────
+  # request_timeout_s: 120   # HTTP timeout per inference call (ACC_LLM_TIMEOUT_S)
+  # max_retries: 3           # retries on 429/5xx with exponential back-off (ACC_LLM_MAX_RETRIES)
 
 observability:
   backend: log             # log | otel

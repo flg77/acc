@@ -208,12 +208,15 @@ class CognitiveCore:
         """
         self._domain_centroid = list(centroid)
 
-    def process_task(
+    async def process_task(
         self,
         task_payload: dict,
         role: Optional[RoleDefinitionConfig] = None,
     ) -> CognitiveResult:
         """Run the full reasoning pipeline for one task.
+
+        This method is **async** — all LLM calls (``complete``, ``embed``) are
+        awaited so that the agent's async event loop is never blocked.
 
         Args:
             task_payload: TASK_ASSIGN signal payload dict.
@@ -247,8 +250,8 @@ class CognitiveCore:
         system_prompt = self.build_system_prompt(role)
         user_content: str = task_payload.get("content", "")
 
-        # 3 — LLM CALL
-        response, latency_ms, token_count = self._call_llm(system_prompt, user_content)
+        # 3 — LLM CALL (async)
+        response, latency_ms, token_count = await self._call_llm(system_prompt, user_content)
         output_text: str = response.get("content", "")
 
         # Update token utilisation
@@ -262,12 +265,12 @@ class CognitiveCore:
         deviation_score = self._post_reasoning_governance(response, role)
         self._stress.cat_b_deviation_score += deviation_score
 
-        # 5 — PERSIST episode
+        # 5 — PERSIST episode (async embed)
         episode_id = ""
         output_embedding: list[float] = [0.0] * 384
         if output_text:
             try:
-                output_embedding = self._llm.embed(output_text)
+                output_embedding = await self._llm.embed(output_text)
                 episode_id = self._persist_episode(
                     output_embedding,
                     task_payload,
@@ -277,7 +280,7 @@ class CognitiveCore:
                 logger.warning("cognitive_core: episode persist failed: %s", exc)
 
         # 6 — DRIFT (role centroid + domain centroid, ACC-11)
-        drift = self._compute_drift(
+        drift = await self._compute_drift(
             output_embedding, role,
             domain_centroid=self._domain_centroid or None,
         )
@@ -396,16 +399,16 @@ class CognitiveCore:
 
         return False, ""
 
-    def _call_llm(
+    async def _call_llm(
         self, system: str, user: str
     ) -> tuple[dict, float, int]:
-        """Call the LLM backend and measure latency.
+        """Async call to the LLM backend with latency measurement.
 
         Returns:
-            (response_dict, latency_ms, token_count)
+            ``(response_dict, latency_ms, token_count)``
         """
         t0 = time.monotonic()
-        response = self._llm.complete(system, user)
+        response = await self._llm.complete(system, user)
         latency_ms = (time.monotonic() - t0) * 1000.0
         token_count: int = response.get("usage", {}).get("total_tokens", 0)
         return response, latency_ms, token_count
@@ -458,7 +461,7 @@ class CognitiveCore:
         }])
         return episode_id
 
-    def _compute_drift(
+    async def _compute_drift(
         self,
         output_embedding: list[float],
         role: RoleDefinitionConfig,
@@ -499,7 +502,7 @@ class CognitiveCore:
             self.stress.domain_drift_score = max(0.0, min(1.0, domain_drift))
 
         # --- Per-agent role drift (existing) ---
-        centroid = self._load_centroid(role)
+        centroid = await self._load_centroid(role)
         # When centroid is the zero vector (not yet seeded), return 0.0 per design spec.
         if all(v == 0.0 for v in centroid):
             return 0.0
@@ -521,8 +524,8 @@ class CognitiveCore:
     # Centroid persistence
     # ------------------------------------------------------------------
 
-    def _load_centroid(self, role: RoleDefinitionConfig) -> list[float]:
-        """Load the role centroid from Redis, or seed it from purpose embedding."""
+    async def _load_centroid(self, role: RoleDefinitionConfig) -> list[float]:
+        """Load the role centroid from Redis, or seed it from purpose embedding (async)."""
         if self._redis is not None:
             key = redis_centroid_key(self._collective_id, self._agent_id)
             try:
@@ -535,7 +538,7 @@ class CognitiveCore:
         # Seed from purpose embedding on first task
         if role.purpose:
             try:
-                centroid = self._llm.embed(role.purpose)
+                centroid = await self._llm.embed(role.purpose)
                 self._save_centroid(centroid)
                 return centroid
             except Exception as exc:

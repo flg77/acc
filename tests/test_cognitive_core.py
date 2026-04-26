@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -38,11 +38,12 @@ def _mock_llm(
     embedding: list[float] | None = None,
 ) -> MagicMock:
     llm = MagicMock()
-    llm.complete.return_value = {
+    # complete() and embed() are async — use AsyncMock so await works correctly
+    llm.complete = AsyncMock(return_value={
         "content": content,
         "usage": {"total_tokens": total_tokens},
-    }
-    llm.embed.return_value = embedding if embedding is not None else _unit_vector()
+    })
+    llm.embed = AsyncMock(return_value=embedding if embedding is not None else _unit_vector())
     return llm
 
 
@@ -166,30 +167,33 @@ class TestPreReasoningGate:
 # ---------------------------------------------------------------------------
 
 class TestProcessTaskBlocked:
-    def test_blocked_result_has_blocked_true(self):
+    @pytest.mark.asyncio
+    async def test_blocked_result_has_blocked_true(self):
         core = _make_core()
         role = _make_role(category_b_overrides={"rate_limit_rpm": 0.01})
         # Force block by filling the window
         core._task_timestamps = [time.time()] * 1000
-        result = core.process_task({"content": "hello"}, role=role)
+        result = await core.process_task({"content": "hello"}, role=role)
         assert result.blocked is True
         assert result.block_reason != ""
         assert result.output == ""
 
-    def test_blocked_increments_cat_b_trigger(self):
+    @pytest.mark.asyncio
+    async def test_blocked_increments_cat_b_trigger(self):
         core = _make_core()
         role = _make_role(category_b_overrides={"rate_limit_rpm": 0.01})
         core._task_timestamps = [time.time()] * 1000
         initial = core._stress.cat_b_trigger_count
-        core.process_task({"content": "x"}, role=role)
+        await core.process_task({"content": "x"}, role=role)
         assert core._stress.cat_b_trigger_count == initial + 1
 
-    def test_blocked_does_not_call_llm(self):
+    @pytest.mark.asyncio
+    async def test_blocked_does_not_call_llm(self):
         llm = _mock_llm()
         core = _make_core(llm=llm)
         role = _make_role(category_b_overrides={"rate_limit_rpm": 0.01})
         core._task_timestamps = [time.time()] * 1000
-        core.process_task({"content": "x"}, role=role)
+        await core.process_task({"content": "x"}, role=role)
         llm.complete.assert_not_called()
 
 
@@ -198,15 +202,17 @@ class TestProcessTaskBlocked:
 # ---------------------------------------------------------------------------
 
 class TestProcessTaskHappy:
-    def test_returns_non_blocked_result(self):
+    @pytest.mark.asyncio
+    async def test_returns_non_blocked_result(self):
         core = _make_core()
-        result = core.process_task({"content": "analyse this"}, role=_make_role())
+        result = await core.process_task({"content": "analyse this"}, role=_make_role())
         assert not result.blocked
         assert result.output == "output text"
 
-    def test_populates_all_stress_indicator_fields(self):
+    @pytest.mark.asyncio
+    async def test_populates_all_stress_indicator_fields(self):
         core = _make_core()
-        result = core.process_task({"content": "hello"}, role=_make_role())
+        result = await core.process_task({"content": "hello"}, role=_make_role())
         stress = result.stress
         assert isinstance(stress.drift_score, float)
         assert isinstance(stress.cat_b_deviation_score, float)
@@ -215,17 +221,19 @@ class TestProcessTaskHappy:
         assert stress.task_count == 1
         assert stress.last_task_latency_ms >= 0.0
 
-    def test_task_count_increments(self):
+    @pytest.mark.asyncio
+    async def test_task_count_increments(self):
         core = _make_core()
         role = _make_role()
-        core.process_task({"content": "a"}, role=role)
-        core.process_task({"content": "b"}, role=role)
+        await core.process_task({"content": "a"}, role=role)
+        await core.process_task({"content": "b"}, role=role)
         assert core._stress.task_count == 2
 
-    def test_episode_persisted_to_lancedb(self):
+    @pytest.mark.asyncio
+    async def test_episode_persisted_to_lancedb(self):
         vector = _mock_vector()
         core = _make_core(vector=vector)
-        result = core.process_task({"content": "x"}, role=_make_role())
+        result = await core.process_task({"content": "x"}, role=_make_role())
         assert result.episode_id != ""
         vector.insert.assert_called()
         # First insert call should be to 'episodes'
@@ -233,9 +241,10 @@ class TestProcessTaskHappy:
         tables = [call[0][0] for call in call_args]
         assert "episodes" in tables
 
-    def test_drift_score_in_range(self):
+    @pytest.mark.asyncio
+    async def test_drift_score_in_range(self):
         core = _make_core()
-        result = core.process_task({"content": "analyse"}, role=_make_role())
+        result = await core.process_task({"content": "analyse"}, role=_make_role())
         assert 0.0 <= result.stress.drift_score <= 1.0
 
 
@@ -244,32 +253,36 @@ class TestProcessTaskHappy:
 # ---------------------------------------------------------------------------
 
 class TestComputeDrift:
-    def test_drift_is_zero_when_embedding_is_zero(self):
+    @pytest.mark.asyncio
+    async def test_drift_is_zero_when_embedding_is_zero(self):
         core = _make_core()
-        drift = core._compute_drift(_zero_vector(), _make_role())
+        drift = await core._compute_drift(_zero_vector(), _make_role())
         assert drift == 0.0
 
-    def test_drift_zero_when_centroid_not_seeded_and_purpose_empty(self):
+    @pytest.mark.asyncio
+    async def test_drift_zero_when_centroid_not_seeded_and_purpose_empty(self):
         llm = _mock_llm(embedding=_zero_vector())
         core = _make_core(llm=llm)
         role = _make_role(purpose="")
-        drift = core._compute_drift(_unit_vector(), role)
+        drift = await core._compute_drift(_unit_vector(), role)
         assert drift == 0.0
 
-    def test_drift_low_when_same_vector(self):
+    @pytest.mark.asyncio
+    async def test_drift_low_when_same_vector(self):
         v = _unit_vector()
         llm = _mock_llm(embedding=v)
         core = _make_core(llm=llm)
         # Seed centroid
-        core._load_centroid(_make_role())
-        drift = core._compute_drift(v, _make_role())
+        await core._load_centroid(_make_role())
+        drift = await core._compute_drift(v, _make_role())
         assert drift < 0.1  # same direction → near-zero drift
 
-    def test_centroid_saved_to_redis(self):
+    @pytest.mark.asyncio
+    async def test_centroid_saved_to_redis(self):
         redis = MagicMock()
         redis.get.return_value = None
         core = _make_core(redis_client=redis)
-        core._compute_drift(_unit_vector(), _make_role())
+        await core._compute_drift(_unit_vector(), _make_role())
         redis.set.assert_called()
 
 
@@ -294,10 +307,11 @@ class TestReprogrammingLevel:
         core.update_reprogramming_level(-1)
         assert core.stress.reprogramming_level == 0
 
-    def test_process_task_does_not_change_reprogramming_level(self):
+    @pytest.mark.asyncio
+    async def test_process_task_does_not_change_reprogramming_level(self):
         core = _make_core()
         core.update_reprogramming_level(2)
-        core.process_task({"content": "x"}, role=_make_role())
+        await core.process_task({"content": "x"}, role=_make_role())
         assert core.stress.reprogramming_level == 2
 
 
