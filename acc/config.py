@@ -50,6 +50,34 @@ class RoleDefinitionConfig(BaseModel):
     category_b_overrides: dict[str, float] = Field(default_factory=dict)
     version: str = "0.1.0"
 
+    # ACC-11: Grandmother cell domain identity
+    domain_id: str = ""
+    """Knowledge domain this role inhabits.
+
+    Example: ``'software_engineering'``, ``'data_analysis'``, ``'security_audit'``.
+    Empty string = uncategorised (receives all paracrine domain_tags; no domain centroid
+    tracking until a domain_id is assigned via DOMAIN_DIFFERENTIATION)."""
+
+    domain_receptors: list[str] = Field(default_factory=list)
+    """Domain tags this role will respond to in PARACRINE signals.
+
+    Empty list = universal receptor (responds to all domain_tags).
+    A role with ``domain_receptors=['software_engineering']`` silently drops
+    KNOWLEDGE_SHARE signals tagged ``'data_analysis'``.
+
+    Biological analog: the membrane receptor set of a specialised cell — only
+    cells with the matching receptor can detect and respond to a ligand."""
+
+    eval_rubric_hash: str = ""
+    """SHA-256 hex digest of the canonical eval_rubric.yaml for this role.
+
+    Computed by RoleLoader at load time from the canonical YAML serialisation
+    (PyYAML dump with sort_keys=True). EVAL_OUTCOME payloads whose rubric
+    criteria are not in the registered set for this domain are rejected by
+    Cat-A rule A-015.
+
+    Empty string = no rubric file present (role accepts any criteria)."""
+
 
 class AgentConfig(BaseModel):
     role: AgentRole = "ingester"

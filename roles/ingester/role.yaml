@@ -21,9 +21,15 @@ role_definition:
   category_b_overrides:
     token_budget: 1024
     rate_limit_rpm: 60
-  version: "1.0.0"
+  version: "1.1.0"
   knowledge_tags:
     - ingest_patterns
   queue_backpressure_threshold: 20
   queue_backpressure_resume_threshold: 15
   plan_participant: true
+
+  # ACC-11: Grandmother cell domain identity
+  # Ingester uses universal receptors (empty list) — it is the data gateway
+  # and must receive signals from all domains before routing.
+  domain_id: "data_ingestion"
+  domain_receptors: []

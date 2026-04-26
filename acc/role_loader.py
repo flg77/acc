@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -57,6 +58,32 @@ from acc.config import RoleDefinitionConfig
 logger = logging.getLogger("acc.role_loader")
 
 _BASE_ROLE_NAME = "_base"
+
+
+def _compute_rubric_hash(rubric_path: Path) -> str:
+    """Compute the SHA-256 hash of a canonical eval_rubric.yaml file.
+
+    The hash is computed over the **canonical** YAML representation produced
+    by ``yaml.dump(..., sort_keys=True, default_flow_style=False)`` so that
+    semantically equivalent YAML with different key orderings or whitespace
+    produces the same hash.
+
+    Returns:
+        64-character lowercase hex digest string, or ``""`` if the file does
+        not exist or cannot be parsed.
+    """
+    if not rubric_path.exists():
+        return ""
+    try:
+        with rubric_path.open(encoding="utf-8") as fh:
+            raw_data = yaml.safe_load(fh)
+        if raw_data is None:
+            return ""
+        canonical = yaml.dump(raw_data, sort_keys=True, default_flow_style=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("RoleLoader: failed to hash rubric at %s: %s", rubric_path, exc)
+        return ""
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -221,12 +248,21 @@ class RoleLoader:
         merged = _deep_merge(base_data, role_data)
 
         try:
-            return RoleDefinitionConfig.model_validate(merged)
+            role_def = RoleDefinitionConfig.model_validate(merged)
         except ValidationError as exc:
             logger.error(
                 "RoleLoader: validation failed for '%s': %s", self._role_name, exc
             )
             return None
+
+        # ACC-11: compute eval_rubric_hash from the canonical rubric YAML.
+        # The rubric file is located next to role.yaml in the role directory.
+        if not role_def.eval_rubric_hash:
+            rubric_ref = role_def.eval_rubric_ref if hasattr(role_def, "eval_rubric_ref") else "eval_rubric.yaml"
+            rubric_path = role_path.parent / rubric_ref
+            role_def.eval_rubric_hash = _compute_rubric_hash(rubric_path)
+
+        return role_def
 
     async def _poll_loop(self) -> None:
         """Async polling loop — checks mtime every poll_interval_s seconds."""

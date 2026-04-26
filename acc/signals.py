@@ -18,6 +18,15 @@ Intra-collective subjects (ACC-10) follow the pattern:
   ``acc.{collective_id}.centroid``                — centroid push broadcast (CENTROID_UPDATE)
   ``acc.{collective_id}.episode.nominate``        — Cat-C promotion candidates (EPISODE_NOMINATE)
 
+Domain-aware role subjects (ACC-11) follow the pattern:
+  ``acc.{collective_id}.domain.{agent_id}``       — domain onboarding (DOMAIN_DIFFERENTIATION)
+
+Signal communication modes (ACC-11) classify all signals into four biological analogues:
+  ``SYNAPTIC``   — addressed to one specific agent_id (REGISTER, TASK_ASSIGN, etc.)
+  ``PARACRINE``  — broadcast; only agents with matching domain_receptors respond
+  ``AUTOCRINE``  — emitted and received by the same agent (EVAL_OUTCOME, EPISODE_NOMINATE)
+  ``ENDOCRINE``  — corpus-wide; crosses collective boundaries; no receptor filter
+
 Usage::
 
     from acc.signals import SIG_HEARTBEAT, subject_heartbeat, redis_role_key
@@ -80,6 +89,66 @@ SIG_CENTROID_UPDATE = "CENTROID_UPDATE"
 SIG_EPISODE_NOMINATE = "EPISODE_NOMINATE"
 """Work-queue nomination for Cat-C rule promotion; arbiter clusters episodes
 and promotes to Cat-C when cluster size >= pattern_min_cluster setpoint."""
+
+# Domain-aware role signals (ACC-11)
+SIG_DOMAIN_DIFFERENTIATION = "DOMAIN_DIFFERENTIATION"
+"""Endocrine signal sent by the arbiter to a newly registered agent.
+Carries the agent's domain identity, initial domain centroid vector, and
+the authoritative eval_rubric_hash for its domain. Analogous to the
+morphogen gradient that differentiates a stem cell into a specialised
+cell type before it performs any work.
+(A-016: only the arbiter may publish this signal.)"""
+
+# ---------------------------------------------------------------------------
+# Signal communication mode constants (ACC-11)
+# ---------------------------------------------------------------------------
+
+SIGNAL_MODE_SYNAPTIC = "SYNAPTIC"
+"""Point-to-point: addressed to one specific agent_id; no other agent processes it.
+Biological analog: neurotransmitter crossing a synapse to one target cell."""
+
+SIGNAL_MODE_PARACRINE = "PARACRINE"
+"""Broadcast within the collective; only agents with matching domain_receptors respond.
+Biological analog: ligand diffusing into extracellular space; receptor-specificity filters
+which nearby cells react. Silent drop when receptor does not match — no error signal."""
+
+SIGNAL_MODE_AUTOCRINE = "AUTOCRINE"
+"""Emitted and received by the same agent (self-feedback).
+Biological analog: a cell binding to its own released signalling molecule."""
+
+SIGNAL_MODE_ENDOCRINE = "ENDOCRINE"
+"""Corpus-wide; crosses collective boundaries; no receptor filtering.
+Biological analog: hormone entering the bloodstream and reaching the entire organism."""
+
+SIGNAL_MODES: dict[str, str] = {
+    # Synaptic — addressed to one specific agent
+    SIG_REGISTER:               SIGNAL_MODE_SYNAPTIC,
+    SIG_TASK_ASSIGN:            SIGNAL_MODE_SYNAPTIC,
+    SIG_TASK_COMPLETE:          SIGNAL_MODE_SYNAPTIC,
+    SIG_ROLE_UPDATE:            SIGNAL_MODE_SYNAPTIC,
+    SIG_ROLE_APPROVAL:          SIGNAL_MODE_SYNAPTIC,
+    # Paracrine — broadcast within collective; receptor-filtered
+    SIG_HEARTBEAT:              SIGNAL_MODE_PARACRINE,
+    SIG_TASK_PROGRESS:          SIGNAL_MODE_PARACRINE,
+    SIG_QUEUE_STATUS:           SIGNAL_MODE_PARACRINE,
+    SIG_BACKPRESSURE:           SIGNAL_MODE_PARACRINE,
+    SIG_KNOWLEDGE_SHARE:        SIGNAL_MODE_PARACRINE,
+    # Autocrine — self-feedback
+    SIG_EVAL_OUTCOME:           SIGNAL_MODE_AUTOCRINE,
+    SIG_EPISODE_NOMINATE:       SIGNAL_MODE_AUTOCRINE,
+    # Endocrine — corpus-wide; no receptor filter
+    SIG_ALERT_ESCALATE:         SIGNAL_MODE_ENDOCRINE,
+    SIG_CENTROID_UPDATE:        SIGNAL_MODE_ENDOCRINE,
+    SIG_PLAN:                   SIGNAL_MODE_ENDOCRINE,
+    SIG_BRIDGE_DELEGATE:        SIGNAL_MODE_ENDOCRINE,
+    SIG_BRIDGE_RESULT:          SIGNAL_MODE_ENDOCRINE,
+    SIG_DOMAIN_DIFFERENTIATION: SIGNAL_MODE_ENDOCRINE,
+}
+"""Authoritative mapping from signal type constant to its communication mode.
+
+Used by the agent membrane layer (_receptor_allows) and by tests to verify
+that every signal type has an assigned mode (ACC-11 REQ-DOM-001).
+"""
 
 # ---------------------------------------------------------------------------
 # NATS subject helpers
@@ -412,3 +481,61 @@ def redis_queue_status_key(collective_id: str, agent_id: str) -> str:
         # → "acc:sol-01:queue_status:analyst-9c1d"
     """
     return f"acc:{collective_id}:queue_status:{agent_id}"
+
+
+# ---------------------------------------------------------------------------
+# ACC-11 domain subject helpers
+# ---------------------------------------------------------------------------
+
+
+def subject_domain_differentiation(collective_id: str, agent_id: str) -> str:
+    """Return the NATS subject for DOMAIN_DIFFERENTIATION signals.
+
+    Endocrine in reach (arbiter publishes); targeted by agent_id so that the
+    JetStream consumer for the specific agent receives its onboarding signal.
+
+    Subject pattern: ``acc.{collective_id}.domain.{agent_id}``
+
+    Example::
+
+        subject_domain_differentiation("sol-01", "coding-agent-9c1d")
+        # → "acc.sol-01.domain.coding-agent-9c1d"
+    """
+    return f"acc.{collective_id}.domain.{agent_id}"
+
+
+# ---------------------------------------------------------------------------
+# ACC-11 domain Redis key helpers
+# ---------------------------------------------------------------------------
+
+
+def redis_domain_centroid_key(collective_id: str, domain_id: str) -> str:
+    """Return the Redis key for the shared domain centroid vector.
+
+    Maintained by the arbiter's DomainRegistry; consumed by agents receiving
+    CENTROID_UPDATE to compute domain_drift_score.
+
+    Key pattern: ``acc:{collective_id}:domain_centroid:{domain_id}``
+
+    Example::
+
+        redis_domain_centroid_key("sol-01", "software_engineering")
+        # → "acc:sol-01:domain_centroid:software_engineering"
+    """
+    return f"acc:{collective_id}:domain_centroid:{domain_id}"
+
+
+def redis_domain_rubric_key(collective_id: str, domain_id: str) -> str:
+    """Return the Redis key for the domain rubric schema (criteria list + hash).
+
+    Stored as JSON: ``{"hash": "sha256:...", "criteria": ["correctness", ...]}``.
+    Registered by the arbiter when it issues DOMAIN_DIFFERENTIATION.
+
+    Key pattern: ``acc:{collective_id}:domain_rubric:{domain_id}``
+
+    Example::
+
+        redis_domain_rubric_key("sol-01", "software_engineering")
+        # → "acc:sol-01:domain_rubric:software_engineering"
+    """
+    return f"acc:{collective_id}:domain_rubric:{domain_id}"

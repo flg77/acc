@@ -22,10 +22,15 @@ role_definition:
   category_b_overrides:
     token_budget: 2048
     rate_limit_rpm: 30
-  version: "1.0.0"
+  version: "1.1.0"
   knowledge_tags:
     - analysis_patterns
     - domain_insights
   queue_backpressure_threshold: 8
   queue_backpressure_resume_threshold: 5
   plan_participant: true
+
+  # ACC-11: Grandmother cell domain identity
+  domain_id: "data_analysis"
+  domain_receptors:
+    - "data_analysis"

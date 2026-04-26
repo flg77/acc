@@ -64,7 +64,7 @@ role_definition:
     token_budget: 4096
     rate_limit_rpm: 40
     max_task_duration_ms: 1800000
-  version: "1.0.0"
+  version: "1.1.0"
 
   # ACC-10 fields
   progress_reporting_interval_ms: 20000
@@ -80,3 +80,12 @@ role_definition:
   can_spawn_sub_collective: true
   max_parallel_tasks: 3
   plan_participant: true
+
+  # ACC-11: Grandmother cell domain identity
+  # coding_agent inhabits software_engineering and also responds to security
+  # knowledge signals (security_audit domain_tag) — a security analyst's
+  # findings are directly relevant to code generation.
+  domain_id: "software_engineering"
+  domain_receptors:
+    - "software_engineering"
+    - "security_audit"

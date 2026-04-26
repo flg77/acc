@@ -26,7 +26,12 @@ role_definition:
   category_b_overrides:
     token_budget: 2048
     rate_limit_rpm: 30
-  version: "1.0.0"
+  version: "1.1.0"
   # Arbiter is the governance node — it does not nominate its own episodes
   can_nominate_episodes: false
   plan_participant: false
+
+  # ACC-11: Grandmother cell domain identity
+  # Arbiter uses universal receptors — governance authority must see all domains.
+  domain_id: "governance"
+  domain_receptors: []

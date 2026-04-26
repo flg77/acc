@@ -110,6 +110,66 @@ _NO_COGNITIVE_ROLES = {"observer"}
 
 
 # ---------------------------------------------------------------------------
+# ACC-11: Membrane receptor model
+# ---------------------------------------------------------------------------
+
+
+def _receptor_allows(
+    signal_type: str,
+    domain_tag: str,
+    domain_receptors: list[str],
+) -> bool:
+    """Return True when the agent should process the signal (ACC-11 receptor model).
+
+    Implements the biological paracrine receptor filter: a signal is broadcast
+    to the collective, but only agents with a matching receptor respond.  Agents
+    without a matching receptor silently ignore the signal — there is no error,
+    just no effect (analogous to a ligand having no effect on a cell that lacks
+    the corresponding membrane receptor).
+
+    Decision logic::
+
+        Signal published (broadcast)
+                │
+        [Is it PARACRINE?] ──No──► always process (SYNAPTIC/AUTOCRINE/ENDOCRINE pass through)
+                │
+               Yes
+                │
+        [domain_receptors empty?] ──Yes──► process (universal receptor)
+                │
+               No
+                │
+        [domain_tag empty?] ──Yes──► process (universal ligand)
+                │
+               No
+                │
+        [domain_tag in domain_receptors?] ──Yes──► process
+                │
+               No
+                │
+             SILENT DROP (DEBUG log only — no ALERT_ESCALATE)
+
+    Args:
+        signal_type: The ``signal_type`` field from the incoming signal payload.
+        domain_tag: The ``domain_tag`` field from the payload (may be empty).
+        domain_receptors: The receiving agent's ``domain_receptors`` list from its
+            :class:`~acc.config.RoleDefinitionConfig`.
+
+    Returns:
+        ``True`` when the signal should be processed; ``False`` for silent drop.
+    """
+    from acc.signals import SIGNAL_MODES, SIGNAL_MODE_PARACRINE  # noqa: PLC0415
+    mode = SIGNAL_MODES.get(signal_type, SIGNAL_MODE_PARACRINE)
+    if mode != SIGNAL_MODE_PARACRINE:
+        return True          # only PARACRINE signals are receptor-filtered
+    if not domain_receptors:
+        return True          # universal receptor — responds to all
+    if not domain_tag:
+        return True          # universal ligand — processed by all
+    return domain_tag in domain_receptors
+
+
+# ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
 
@@ -166,6 +226,11 @@ class Agent:
 
         # Cumulative stress (shared across loops)
         self._stress = StressIndicators()
+
+        # ACC-11: cached domain centroid from the most recent CENTROID_UPDATE
+        # that carried a domain_centroid_vector.  Passed to CognitiveCore on
+        # each task so that domain_drift_score is always current.
+        self._domain_centroid: list[float] = []
 
     # ------------------------------------------------------------------
     # Registration
@@ -224,6 +289,9 @@ class Agent:
                 "last_task_latency_ms": stress.last_task_latency_ms,
                 "cat_a_trigger_count": stress.cat_a_trigger_count,
                 "cat_b_trigger_count": stress.cat_b_trigger_count,
+                # ACC-11: domain alignment health signal
+                "domain_drift_score": stress.domain_drift_score,
+                "domain_id": self._active_role.domain_id,
             }).encode()
             subject = subject_heartbeat(self.config.agent.collective_id)
             await self.backends.signaling.publish(subject, payload)
@@ -548,6 +616,51 @@ class Agent:
             logger.error("role_update: subscription error: %s", exc)
 
     # ------------------------------------------------------------------
+    # CENTROID_UPDATE subscription (ACC-11)
+    # ------------------------------------------------------------------
+
+    async def _subscribe_centroid_updates(self) -> None:
+        """Subscribe to CENTROID_UPDATE and cache the domain centroid (ACC-11).
+
+        When the arbiter broadcasts a ``CENTROID_UPDATE`` that includes a
+        ``domain_centroid_vector``, the agent caches it locally and updates the
+        ``CognitiveCore`` so the next task uses the fresh domain centroid for
+        ``domain_drift_score`` computation.
+
+        Non-PARACRINE signal — no receptor filtering needed (ENDOCRINE mode).
+        """
+        from acc.signals import subject_centroid_update  # noqa: PLC0415
+        collective_id = self.config.agent.collective_id
+
+        async def _handle_centroid_update(msg: object) -> None:
+            try:
+                payload = json.loads(getattr(msg, "data", b"{}"))
+            except json.JSONDecodeError:
+                logger.warning("centroid_update: invalid JSON payload")
+                return
+
+            domain_vector = payload.get("domain_centroid_vector")
+            if domain_vector and isinstance(domain_vector, list):
+                self._domain_centroid = domain_vector
+                if self._cognitive_core is not None:
+                    self._cognitive_core.set_domain_centroid(domain_vector)
+                logger.debug(
+                    "centroid_update: cached domain_centroid for domain='%s' "
+                    "(agent_id=%s dim=%d)",
+                    payload.get("domain_id", ""),
+                    self.agent_id,
+                    len(domain_vector),
+                )
+
+        try:
+            await self.backends.signaling.subscribe(
+                subject_centroid_update(collective_id), _handle_centroid_update
+            )
+            await self._stop_event.wait()
+        except Exception as exc:
+            logger.error("centroid_update: subscription error: %s", exc)
+
+    # ------------------------------------------------------------------
     # Main lifecycle (Phase 4e)
     # ------------------------------------------------------------------
 
@@ -560,12 +673,13 @@ class Agent:
         await self.backends.signaling.connect()
         try:
             await self._register()
-            # Run heartbeat, task, role-update, and bridge-result loops concurrently
+            # Run heartbeat, task, role-update, bridge-result, and centroid loops concurrently
             await asyncio.gather(
                 self._heartbeat_loop(),
                 self._task_loop(),
                 self._subscribe_role_updates(),
                 self._subscribe_bridge_results(),
+                self._subscribe_centroid_updates(),
                 return_exceptions=True,
             )
         finally:

@@ -22,7 +22,15 @@ role_definition:
   category_b_overrides:
     token_budget: 4096
     rate_limit_rpm: 20
-  version: "1.0.0"
+  version: "1.1.0"
   knowledge_tags:
     - synthesis_strategies
   plan_participant: true
+
+  # ACC-11: Grandmother cell domain identity
+  # synthesizer also receives data_analysis knowledge — analyst outputs are
+  # the primary input to synthesis tasks.
+  domain_id: "knowledge_synthesis"
+  domain_receptors:
+    - "knowledge_synthesis"
+    - "data_analysis"

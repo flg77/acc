@@ -12,8 +12,8 @@
 # Levin mapping: These are the "hardware" layer of the TAME spectrum —
 # they CANNOT be persuaded, adjusted, or overridden by any signal.
 #
-# Version: 0.3.0
-# Date:    2026-04-24
+# Version: 0.4.0
+# Date:    2026-04-26
 # ==========================================================================
 
 package acc.membrane.constitutional
@@ -159,6 +159,53 @@ deny_plan_from_non_arbiter if {
 deny_impersonated_backpressure if {
     input.signal.signal_type == "BACKPRESSURE"
     input.signal.payload.agent_id != input.signal.from_agent
+}
+
+# A-014: PARACRINE signals are silently dropped if the receiving agent has
+# non-empty domain_receptors and the signal's domain_tag is not in that list.
+# This is the membrane receptor model (ACC-11): the ligand is broadcast but
+# only cells with the matching receptor respond.
+#
+# Note: empty domain_receptors = universal receptor (responds to all tags).
+# Note: empty signal.domain_tag = universal ligand (all agents process it).
+#
+# Biological analog: A cell lacking the receptor for a ligand is not
+# "damaged" or "rejecting" the signal — the ligand simply has no effect.
+# There is no error. The ACC equivalent is a DEBUG log and no action.
+deny_mismatched_paracrine if {
+    input.signal.signal_mode == "PARACRINE"
+    count(input.agent.domain_receptors) > 0
+    input.signal.domain_tag != ""
+    not input.signal.domain_tag in input.agent.domain_receptors
+}
+
+# A-015: EVAL_OUTCOME rubric_scores must only contain criteria registered
+# in the emitting agent's domain rubric. Unknown criteria indicate either a
+# misconfigured role or an attempt to inject cross-domain evaluation scores.
+#
+# "Good" is defined domain-locally — an analyst cannot be scored on coding
+# criteria, and a coding_agent cannot be scored on narrative coherence.
+# The eval_rubric IS the semantic meaning of the role (grandmother cell model).
+#
+# A-015 is enforced only when data.domain_rubrics[domain_id] is non-empty.
+# Domains with no registered rubric (empty list or missing key) are exempt
+# until the arbiter issues their DOMAIN_DIFFERENTIATION signal.
+deny_rubric_mismatch if {
+    input.signal.signal_type == "EVAL_OUTCOME"
+    some criterion in object.keys(input.signal.payload.rubric_scores)
+    not criterion in data.domain_rubrics[input.agent.domain_id]
+}
+
+# A-016: Only the arbiter may publish DOMAIN_DIFFERENTIATION signals.
+# Domain identity is set by the governance authority, not self-declared.
+# An agent that could assign its own domain_id would bypass rubric
+# enforcement and could claim a more permissive scoring domain.
+#
+# Biological analog: A cell's identity is determined by the morphogen
+# gradient from surrounding tissue, not by the cell itself.
+deny_domain_differentiation_from_non_arbiter if {
+    input.signal.signal_type == "DOMAIN_DIFFERENTIATION"
+    not is_arbiter(input.signal.from_agent)
 }
 
 # ==========================================================================

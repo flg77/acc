@@ -61,6 +61,18 @@ class StressIndicators:
     cat_b_trigger_count: int = 0
     """Count of Cat-B budget block events."""
 
+    domain_drift_score: float = 0.0
+    """Cosine distance from the shared domain centroid (ACC-11).
+
+    High ``domain_drift_score`` with low ``drift_score`` is the key early-warning
+    signal: the agent is self-consistent but its outputs no longer resemble what
+    the domain collectively considers good — analogous to a grandmother cell that
+    still fires reliably but has drifted to recognising the wrong concept.
+
+    0.0 = perfectly aligned with domain standard; 1.0 = maximally drifted.
+    Remains 0.0 until the agent receives a ``CENTROID_UPDATE`` carrying a
+    ``domain_centroid_vector``."""
+
 
 @dataclass
 class CognitiveResult:
@@ -176,10 +188,25 @@ class CognitiveCore:
         self._stress = StressIndicators()
         # Sliding window: list of timestamps for RPM tracking
         self._task_timestamps: list[float] = []
+        # ACC-11: shared domain centroid vector (updated by CENTROID_UPDATE signal)
+        self._domain_centroid: list[float] = []
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_domain_centroid(self, centroid: list[float]) -> None:
+        """Update the cached domain centroid vector (ACC-11).
+
+        Called by the agent when a ``CENTROID_UPDATE`` signal carrying a
+        ``domain_centroid_vector`` is received.  The new value is used by the
+        next call to :meth:`process_task` when computing ``domain_drift_score``.
+
+        Args:
+            centroid: Domain centroid vector from the arbiter.  Pass ``[]`` to
+                clear the cached value (reverts ``domain_drift_score`` to 0.0).
+        """
+        self._domain_centroid = list(centroid)
 
     def process_task(
         self,
@@ -249,8 +276,11 @@ class CognitiveCore:
             except Exception as exc:
                 logger.warning("cognitive_core: episode persist failed: %s", exc)
 
-        # 6 — DRIFT
-        drift = self._compute_drift(output_embedding, role)
+        # 6 — DRIFT (role centroid + domain centroid, ACC-11)
+        drift = self._compute_drift(
+            output_embedding, role,
+            domain_centroid=self._domain_centroid or None,
+        )
         self._stress.drift_score = drift
 
         # Update stress counters
@@ -429,20 +459,46 @@ class CognitiveCore:
         return episode_id
 
     def _compute_drift(
-        self, output_embedding: list[float], role: RoleDefinitionConfig
+        self,
+        output_embedding: list[float],
+        role: RoleDefinitionConfig,
+        domain_centroid: list[float] | None = None,
     ) -> float:
         """Compute drift as cosine distance between *output_embedding* and the role centroid.
 
-        Updates the centroid in Redis using a rolling mean (alpha=0.1).
-        On the first task (no prior centroid), seeds the centroid from the
-        purpose embedding.
+        Also updates ``self.stress.domain_drift_score`` when *domain_centroid* is
+        provided (ACC-11).  The per-agent role centroid update (EMA) is unchanged.
+
+        Two orthogonal drift dimensions (ACC-11):
+
+        * **role_drift_score** (returned): distance from this agent's own centroid —
+          measures task-to-task consistency.
+        * **domain_drift_score** (stored in ``stress``): distance from the shared
+          domain centroid — measures alignment with the domain's collective standard.
+
+        A high ``domain_drift_score`` with low ``role_drift_score`` is the critical
+        failure mode: the agent is internally consistent but has drifted away from
+        what the domain considers good.
+
+        Args:
+            output_embedding: The embedding of the task output.
+            role: The active role definition (used to seed the centroid).
+            domain_centroid: Optional shared domain centroid from the most recent
+                ``CENTROID_UPDATE`` signal.  When provided and non-zero,
+                ``stress.domain_drift_score`` is updated.
 
         Returns:
-            drift_score in [0.0, 1.0].
+            role_drift_score in [0.0, 1.0].
         """
         if all(v == 0.0 for v in output_embedding):
             return 0.0
 
+        # --- Domain drift (ACC-11) ---
+        if domain_centroid and not all(v == 0.0 for v in domain_centroid):
+            domain_drift = 1.0 - _cosine_similarity(output_embedding, domain_centroid)
+            self.stress.domain_drift_score = max(0.0, min(1.0, domain_drift))
+
+        # --- Per-agent role drift (existing) ---
         centroid = self._load_centroid(role)
         # When centroid is the zero vector (not yet seeded), return 0.0 per design spec.
         if all(v == 0.0 for v in centroid):

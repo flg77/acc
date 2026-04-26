@@ -17,9 +17,14 @@ role_definition:
   category_b_overrides:
     token_budget: 512
     rate_limit_rpm: 0
-  version: "1.0.0"
+  version: "1.1.0"
   can_nominate_episodes: false
   can_spawn_sub_collective: false
   max_parallel_tasks: 1
   # Observer does not participate in PLAN DAG execution (monitoring only)
   plan_participant: false
+
+  # ACC-11: Grandmother cell domain identity
+  # Observer uses universal receptors — monitoring must cover all domains.
+  domain_id: "governance"
+  domain_receptors: []

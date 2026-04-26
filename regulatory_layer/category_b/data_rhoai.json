@@ -32,5 +32,35 @@
   },
   "constitutional": {
     "max_generation": 10
+  },
+  "domain_rubrics": {
+    "software_engineering": [
+      "correctness",
+      "test_coverage",
+      "code_quality",
+      "security",
+      "token_efficiency",
+      "time_efficiency"
+    ],
+    "data_analysis": [
+      "accuracy",
+      "confidence_calibration",
+      "pattern_coverage",
+      "recall",
+      "precision"
+    ],
+    "knowledge_synthesis": [
+      "coherence",
+      "coverage",
+      "citation_accuracy",
+      "conciseness"
+    ],
+    "data_ingestion": [
+      "throughput",
+      "schema_validity",
+      "deduplication_rate",
+      "error_rate"
+    ],
+    "governance": []
   }
 }

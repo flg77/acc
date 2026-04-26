@@ -31,8 +31,14 @@ def _make_store(
     redis_client=None,
     vector=None,
     role_def: dict | None = None,
+    roles_root: str = "/nonexistent/roles",
 ) -> RoleStore:
-    """Build a RoleStore with an in-config role definition."""
+    """Build a RoleStore with an in-config role definition.
+
+    Pass ``roles_root="/nonexistent/roles"`` (default) to skip tier-0
+    (file-system role directory) so tests can verify tiers 1–4 in isolation.
+    Pass a real path to include tier-0 in the test.
+    """
     config_data: dict = {}
     if role_def:
         config_data["role_definition"] = role_def
@@ -42,6 +48,7 @@ def _make_store(
         agent_id=AGENT_ID,
         redis_client=redis_client,
         vector=vector,
+        roles_root=roles_root,
     )
 
 

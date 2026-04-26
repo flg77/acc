@@ -78,3 +78,16 @@ role_definition:
   # Whether this role participates in PLAN DAG execution.
   # When false the role ignores PLAN signals (observer pattern).
   plan_participant: true
+
+  # --- ACC-11 fields (v0.4.0) ---
+
+  # Knowledge domain this role inhabits.
+  # Example: "software_engineering", "data_analysis", "security_audit"
+  # Empty = uncategorised (receives all paracrine domain_tags).
+  domain_id: ""
+
+  # Domain tags this role will respond to in PARACRINE signals.
+  # Empty list = universal receptor (responds to all domain_tags).
+  # A role with domain_receptors: [software_engineering] silently drops
+  # KNOWLEDGE_SHARE signals tagged data_analysis.
+  domain_receptors: []
