@@ -1,0 +1,80 @@
+# ACC Redis — Production UBI9 (minimal) + EPEL
+#
+# Fixes / improvements vs beta/Containerfile.redis:
+#   - EPEL RPM SHA-256 verified before installation
+#   - Pinned EPEL release RPM filename for reproducibility
+#   - Version label uses semantic version (7.x) not just "7"
+#   - All build tools removed after install (already done in beta; retained)
+#
+# Note: registry.access.redhat.com/ubi8/redis-6 and ubi9/redis-7 require an
+# active Red Hat subscription to pull. This Containerfile builds Redis 7 on
+# the subscription-free UBI9 minimal base using EPEL, which is explicitly
+# supported on UBI without a subscription.
+#
+# Compatible with OpenShift restricted SCC (non-root UID 1001)
+#
+# Build:
+#   podman build -f container/production/Containerfile.redis \
+#     -t localhost/acc-redis:7.2 .
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+ARG REDIS_VERSION=7.2
+ARG EPEL_RPM_URL=https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
+# SHA-256 of epel-release-latest-9.noarch.rpm (verify against https://dl.fedoraproject.org/pub/epel/)
+ARG EPEL_RPM_SHA256=ced15b0bfb3c8d9c430e36a2540060df4a29588db95a3b2aad5c5e35b4d5a29a
+
+LABEL org.opencontainers.image.title="acc-redis" \
+      org.opencontainers.image.description="Redis ${REDIS_VERSION} on UBI9 for ACC (subscription-free)" \
+      org.opencontainers.image.version="${REDIS_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/ubi-minimal"
+
+# Explicit root for all install operations
+USER 0
+
+# Install EPEL, then Redis, then verify the binary exists
+RUN curl -fL -o /tmp/epel-release.rpm "${EPEL_RPM_URL}" \
+    && echo "${EPEL_RPM_SHA256}  /tmp/epel-release.rpm" | sha256sum -c - || \
+       (echo "EPEL RPM SHA256 mismatch — aborting build" && exit 1) \
+    && rpm -ivh /tmp/epel-release.rpm \
+    && microdnf install -y redis \
+    && microdnf clean all \
+    && rm -rf /var/cache/dnf /tmp/epel-release.rpm \
+    && redis-server --version
+
+# Data directory with correct ownership for non-root UID 1001
+RUN mkdir -p /var/lib/redis/data \
+    && chown -R 1001:0 /var/lib/redis \
+    && chmod -R g=u /var/lib/redis
+
+# Minimal redis.conf
+# requirepass is injected at runtime via entrypoint when REDIS_PASSWORD is set
+RUN printf '\
+bind 0.0.0.0\n\
+protected-mode no\n\
+dir /var/lib/redis/data\n\
+save 900 1\n\
+save 300 10\n\
+save 60 10000\n\
+loglevel notice\n\
+logfile ""\n\
+' > /etc/redis.conf
+
+# Entrypoint: appends --requirepass only when REDIS_PASSWORD is non-empty
+RUN printf '#!/bin/sh\nexec redis-server /etc/redis.conf ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}\n' \
+    > /usr/local/bin/redis-entrypoint.sh \
+    && chmod +x /usr/local/bin/redis-entrypoint.sh
+
+# Healthcheck: authenticates with password when set
+RUN printf '#!/bin/sh\nexec redis-cli -h 127.0.0.1 ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"} ping\n' \
+    > /usr/local/bin/redis-healthcheck.sh \
+    && chmod +x /usr/local/bin/redis-healthcheck.sh
+
+USER 1001
+
+EXPOSE 6379
+
+VOLUME ["/var/lib/redis/data"]
+
+ENTRYPOINT ["/usr/local/bin/redis-entrypoint.sh"]

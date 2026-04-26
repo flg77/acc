@@ -1,0 +1,156 @@
+# ACC standalone deployment (Podman)
+# Run with: podman-compose up -d
+#   First build: podman-compose build   (or up --build)
+# Requires: podman-compose >= 1.0.6
+#
+# If Podman logs show "aardvark-dns runs in a different netns" (stale aardvark):
+#   podman stop -a; killall aardvark-dns 2>/dev/null; rm -rf /run/user/$UID/containers/networks/aardvark-dns; podman-compose up -d
+#
+# Each agent uses a *subdirectory* of the lancedb volume. Embedded LanceDB is not
+# safe with multiple processes opening the *same* DB directory; the last
+# container to start (often arbiter) would exit(1) with a store lock error.
+version: "3.9"
+
+networks:
+  acc-net:
+    driver: bridge
+
+volumes:
+  lancedb-data:
+  redis-data:
+
+services:
+
+  # ── NATS JetStream ────────────────────────────────────────────────────
+  # NATS Inc. does not publish UBI images; nats:alpine is acceptable for
+  # the internal signaling bus (not internet-facing)
+  nats:
+    image: nats:2.10-alpine
+    container_name: acc-nats
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"   # client
+      - "8222:8222"   # monitoring
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (working memory) ────────────────────────────────────────────
+  # Built locally from deploy/Containerfile.redis (UBI9 + EPEL).
+  # registry.access.redhat.com/ubi8/redis-6 requires a subscription to pull
+  # and is therefore replaced by a local build that is subscription-free.
+  #
+  # Authentication (Phase 0b):
+  #   Set REDIS_PASSWORD in .env (see .env.example).  When empty, Redis
+  #   starts without authentication (suitable for isolated dev networks only).
+  acc-redis:
+    build:
+      context: ..
+      dockerfile: deploy/Containerfile.redis
+    image: localhost/acc-redis:7
+    container_name: acc-redis
+    env_file:
+      - path: .env
+        required: false   # tolerate absent .env in CI / first-run scenarios
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/var/lib/redis/data
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/redis-healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Agent: Ingester ───────────────────────────────────────────────────
+  # One build: same image tag is used for analyst/arbiter below.
+  acc-agent-ingester:
+    build:
+      context: ..
+      dockerfile: deploy/Containerfile.agent-core
+    image: localhost/acc-agent-core:0.1.0
+    container_name: acc-agent-ingester
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: ingester
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/ingester
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb
+      - ../acc-config.yaml:/app/acc-config.yaml:ro
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  # ── Agent: Analyst ────────────────────────────────────────────────────
+  acc-agent-analyst:
+    image: localhost/acc-agent-core:0.1.0
+    container_name: acc-agent-analyst
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: analyst
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/analyst
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb
+      - ../acc-config.yaml:/app/acc-config.yaml:ro
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  # ── Agent: Arbiter ────────────────────────────────────────────────────
+  acc-agent-arbiter:
+    image: localhost/acc-agent-core:0.1.0
+    container_name: acc-agent-arbiter
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: arbiter
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/arbiter
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb
+      - ../acc-config.yaml:/app/acc-config.yaml:ro
+    networks:
+      - acc-net
+    restart: unless-stopped

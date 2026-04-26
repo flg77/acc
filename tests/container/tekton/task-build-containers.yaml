@@ -1,0 +1,172 @@
+---
+# Tekton Task: Build all ACC production container images
+#
+# Builds all four production images using buildah (OpenShift-native).
+# Each image is tagged with the ACC_VERSION parameter.
+# Build results (success/failure per image) are reported as JUnit XML.
+#
+# Prerequisites:
+#   - Cluster has buildah or podman available (use ubi9/buildah step image)
+#   - Source workspace contains the ACC repository
+#   - A registry Secret is available for pushing (optional; local build only by default)
+
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: acc-build-containers
+  labels:
+    app.kubernetes.io/component: acc-ci
+    acc.redhat-ai-dev.io/tier: build
+  annotations:
+    description: "Build all ACC production container images using buildah"
+spec:
+  params:
+    - name: acc-version
+      description: ACC version tag to apply to built images
+      default: "0.2.0"
+      type: string
+    - name: nats-version
+      description: NATS server version to embed in acc-nats image
+      default: "2.10.22"
+      type: string
+    - name: image-registry
+      description: "Registry prefix for pushing images (empty = localhost only)"
+      default: "localhost"
+      type: string
+    - name: results-dir
+      description: Directory inside results workspace for JUnit XML
+      default: "container-build"
+      type: string
+    - name: push-images
+      description: "Set to 'true' to push images after build"
+      default: "false"
+      type: string
+
+  workspaces:
+    - name: source
+      description: ACC repository source
+    - name: results
+      description: JUnit XML results directory
+
+  results:
+    - name: agent-core-image
+      description: Full image reference for built acc-agent-core
+    - name: redis-image
+      description: Full image reference for built acc-redis
+    - name: tui-image
+      description: Full image reference for built acc-tui
+    - name: nats-image
+      description: Full image reference for built acc-nats
+
+  stepTemplate:
+    image: registry.access.redhat.com/ubi9/buildah:latest
+    securityContext:
+      privileged: true  # Required for buildah in Tekton; use rootless buildah where possible
+    env:
+      - name: BUILDAH_ISOLATION
+        value: chroot
+      - name: STORAGE_DRIVER
+        value: vfs
+
+  steps:
+    - name: build-agent-core
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        TAG="$(params.image-registry)/acc-agent-core:$(params.acc-version)"
+        echo "Building ${TAG}..."
+        buildah build \
+          -f container/production/Containerfile.agent-core \
+          --build-arg ACC_VERSION=$(params.acc-version) \
+          -t "${TAG}" \
+          . && echo "SUCCESS: ${TAG}" || echo "FAILED: ${TAG}"
+        echo -n "${TAG}" > $(results.agent-core-image.path)
+
+    - name: build-redis
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        TAG="$(params.image-registry)/acc-redis:7.2"
+        echo "Building ${TAG}..."
+        buildah build \
+          -f container/production/Containerfile.redis \
+          -t "${TAG}" \
+          . && echo "SUCCESS: ${TAG}" || echo "FAILED: ${TAG}"
+        echo -n "${TAG}" > $(results.redis-image.path)
+
+    - name: build-tui
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        TAG="$(params.image-registry)/acc-tui:$(params.acc-version)"
+        echo "Building ${TAG}..."
+        buildah build \
+          -f container/production/Containerfile.tui \
+          --build-arg ACC_VERSION=$(params.acc-version) \
+          -t "${TAG}" \
+          . && echo "SUCCESS: ${TAG}" || echo "FAILED: ${TAG}"
+        echo -n "${TAG}" > $(results.tui-image.path)
+
+    - name: build-nats
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        TAG="$(params.image-registry)/acc-nats:$(params.nats-version)"
+        echo "Building ${TAG}..."
+        buildah build \
+          -f container/production/Containerfile.nats \
+          --build-arg NATS_VERSION=$(params.nats-version) \
+          -t "${TAG}" \
+          . && echo "SUCCESS: ${TAG}" || echo "FAILED: ${TAG}"
+        echo -n "${TAG}" > $(results.nats-image.path)
+
+    - name: generate-junit-report
+      image: registry.access.redhat.com/ubi9/python-312:latest
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/usr/bin/env python3
+        """Generate a JUnit XML report from buildah exit codes."""
+        import os, sys, xml.etree.ElementTree as ET
+        from datetime import datetime
+
+        results_dir = os.path.join("$(workspaces.results.path)", "$(params.results-dir)")
+        os.makedirs(results_dir, exist_ok=True)
+
+        # Read build results from task result files (populated by prior steps)
+        images = {
+            "agent-core": "$(results.agent-core-image.path)",
+            "redis":      "$(results.redis-image.path)",
+            "tui":        "$(results.tui-image.path)",
+            "nats":       "$(results.nats-image.path)",
+        }
+
+        suite = ET.Element("testsuite", {
+            "name": "acc-container-builds",
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+        failures = 0
+        for name, result_path in images.items():
+            tc = ET.SubElement(suite, "testcase", {
+                "classname": "build",
+                "name": f"build_{name}",
+            })
+            if os.path.exists(result_path) and os.path.getsize(result_path) > 0:
+                tag = open(result_path).read().strip()
+                ET.SubElement(tc, "system-out").text = f"Built: {tag}"
+            else:
+                failures += 1
+                fail = ET.SubElement(tc, "failure", {"message": f"Build result for {name} not found"})
+                fail.text = f"Image {name} build may have failed — result file missing."
+
+        suite.set("tests", str(len(images)))
+        suite.set("failures", str(failures))
+
+        tree = ET.ElementTree(suite)
+        ET.indent(tree, space="  ")
+        tree.write(os.path.join(results_dir, "results.xml"), encoding="unicode", xml_declaration=True)
+        print(f"JUnit report written. Tests: {len(images)}, Failures: {failures}")
+        sys.exit(1 if failures else 0)

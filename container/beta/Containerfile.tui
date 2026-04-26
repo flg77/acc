@@ -1,0 +1,46 @@
+# ACC TUI — container image (acc-tui)
+# Base: UBI10 python-312-minimal (there is no ubi10/python-312 on the public registry)
+# Install: agentic-cell-corpus[tui] (Textual + Rich only; no LanceDB/Redis)
+# Usage:
+#   podman build -f deploy/Containerfile.tui -t acc-tui:latest .
+#   podman run -it --rm -e ACC_NATS_URL=nats://nats:4222 -e ACC_COLLECTIVE_ID=sol-01 acc-tui:latest
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+LABEL name="acc-tui" \
+      version="0.1.0" \
+      summary="ACC terminal dashboard and role infusion UI" \
+      description="Textual TUI that observes a running ACC collective via NATS and provides role infusion input." \
+      maintainer="ACC Authors"
+
+USER 0
+
+# Install build tools needed for some Python packages (image has microdnf, not dnf)
+RUN microdnf install -y --nodocs \
+        gcc \
+        python3-devel \
+    && microdnf clean all
+
+USER 1001
+
+WORKDIR /app
+
+# Copy package metadata only first for layer caching
+COPY pyproject.toml README.md ./
+
+# Copy package source
+COPY acc/ ./acc/
+
+# Install the package with [tui] extras only
+# This deliberately excludes LanceDB, Milvus, and Redis dependencies
+RUN pip install --no-cache-dir ".[tui]"
+
+# Runtime configuration — override via env vars or K8s ConfigMap
+ENV ACC_NATS_URL=nats://nats:4222 \
+    ACC_COLLECTIVE_ID=sol-01 \
+    PYTHONUNBUFFERED=1
+
+# Non-root UID 1001 (OCP restricted SCC compatible)
+USER 1001
+
+CMD ["acc-tui"]

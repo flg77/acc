@@ -1,0 +1,57 @@
+# .containerignore — excludes files from the podman/buildah build context
+# This file applies to all production Containerfiles in this directory.
+# A small build context reduces upload time and avoids accidentally baking
+# in secrets or test fixtures.
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python cache / bytecode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.coverage
+htmlcov/
+*.egg-info
+*.egg
+dist/
+build/
+
+# Development / test artefacts
+tests/
+docs/
+openspec/
+
+# Container source (the production/ dir itself — avoid recursive context)
+container/
+
+# Secrets and local config overrides
+.env
+.env.*
+*.key
+*.pem
+*.crt
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS artefacts
+.DS_Store
+Thumbs.db
+
+# CI
+.github/
+.gitlab-ci.yml
+Jenkinsfile
+
+# Large model cache (provided at runtime via volume mount or pre-built layer)
+# Uncomment to exclude if you do NOT want models baked into the image:
+# acc/models/

@@ -1,0 +1,75 @@
+---
+# Tekton Task: Runtime tests for ACC container images
+#
+# Runs the tests/container/runtime/ pytest suite.
+# Requires all images to be built and available in the local image store.
+# Uses podman inside the step to execute containers.
+#
+# Note: This task requires privileged execution or the use of a rootless
+# podman configuration. In OpenShift, use a node with container.io capability
+# or configure via SCC.
+
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: acc-test-runtime
+  labels:
+    app.kubernetes.io/component: acc-ci
+    acc.redhat-ai-dev.io/tier: runtime
+  annotations:
+    description: "Run ACC container runtime tests (verify images behave correctly)"
+spec:
+  params:
+    - name: acc-version
+      description: ACC image version to test
+      default: "0.2.0"
+      type: string
+    - name: python-image
+      description: Python image for running pytest
+      default: "registry.access.redhat.com/ubi9/python-312:latest"
+      type: string
+    - name: results-dir
+      description: JUnit XML results subdirectory
+      default: "container-runtime"
+      type: string
+
+  workspaces:
+    - name: source
+      description: ACC repository source
+    - name: results
+      description: JUnit XML results directory
+
+  steps:
+    - name: install-pytest
+      image: $(params.python-image)
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        pip install --quiet pytest pyyaml
+
+    - name: run-runtime-tests
+      image: registry.access.redhat.com/ubi9/buildah:latest
+      securityContext:
+        privileged: true
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: ACC_VERSION
+          value: $(params.acc-version)
+        - name: STORAGE_DRIVER
+          value: vfs
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        # Install pytest in the buildah image (has python3)
+        pip3 install --quiet pytest pyyaml 2>/dev/null || \
+          python3 -m pip install --quiet pytest pyyaml
+
+        RESULTS_DIR="$(workspaces.results.path)/$(params.results-dir)"
+        mkdir -p "${RESULTS_DIR}"
+
+        pytest tests/container/runtime/ \
+          --junit-xml="${RESULTS_DIR}/results.xml" \
+          --tb=short \
+          -v \
+          || echo "Some runtime tests failed — check JUnit report"

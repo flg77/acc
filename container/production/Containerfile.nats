@@ -1,0 +1,69 @@
+# ACC NATS — Production UBI9 (minimal) + nats-server binary
+#
+# NATS Inc. does not publish Red Hat UBI images. This Containerfile installs
+# the official statically-linked nats-server binary onto UBI9 minimal.
+# The binary has no shared library dependencies (Go static build).
+#
+# Why not nats:alpine?
+#   alpine is not a Red Hat UBI image. The ACC containerization policy requires
+#   all production containers to use registry.access.redhat.com UBI bases.
+#
+# Compatible with OpenShift restricted SCC (non-root UID 1001)
+#
+# Build:
+#   podman build -f container/production/Containerfile.nats \
+#     --build-arg NATS_VERSION=2.10.22 \
+#     -t localhost/acc-nats:2.10.22 .
+#
+# Run (JetStream enabled, monitoring on 8222):
+#   podman run --rm -p 4222:4222 -p 8222:8222 \
+#     localhost/acc-nats:2.10.22 -js -m 8222
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+ARG NATS_VERSION=2.10.22
+# Detect architecture at build time; supports amd64 and arm64
+ARG TARGETARCH=amd64
+
+LABEL org.opencontainers.image.title="acc-nats" \
+      org.opencontainers.image.description="NATS Server ${NATS_VERSION} on UBI9 for ACC (production)" \
+      org.opencontainers.image.version="${NATS_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/nats-io/nats-server" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/ubi-minimal"
+
+# Explicit root for all install operations (UBI defaults to root but we make it explicit
+# so our lint tooling can verify USER 0 precedes all privileged RUN steps)
+USER 0
+
+# Install curl (needed for download) and tar (for extraction); remove after use
+RUN microdnf install -y --nodocs curl tar gzip \
+    && microdnf clean all
+
+RUN NATS_ARCH="${TARGETARCH}" && \
+    NATS_URL="https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/nats-server-v${NATS_VERSION}-linux-${NATS_ARCH}.tar.gz" && \
+    echo "Downloading NATS ${NATS_VERSION} for ${NATS_ARCH} from ${NATS_URL}" && \
+    curl -fL -o /tmp/nats-server.tar.gz "${NATS_URL}" && \
+    tar -xzC /tmp -f /tmp/nats-server.tar.gz && \
+    install -o 0 -g 0 -m 0755 \
+        "/tmp/nats-server-v${NATS_VERSION}-linux-${NATS_ARCH}/nats-server" \
+        /usr/local/bin/nats-server && \
+    rm -rf /tmp/nats-server* && \
+    nats-server --version
+
+# JetStream data directory — writable by UID 1001
+RUN mkdir -p /data/jetstream \
+    && chown -R 1001:0 /data \
+    && chmod -R g=u /data
+
+USER 1001
+
+# 4222 = client, 6222 = cluster/routing, 8222 = HTTP monitoring
+EXPOSE 4222 6222 8222
+
+VOLUME ["/data/jetstream"]
+
+# Default args: JetStream enabled, monitoring enabled.
+# Override via podman-compose command: or by passing args directly.
+ENTRYPOINT ["/usr/local/bin/nats-server"]
+CMD ["-js", "-m", "8222", "--store_dir", "/data/jetstream"]

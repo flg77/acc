@@ -1,0 +1,120 @@
+---
+# Tekton Pipeline: ACC Container CI
+#
+# Runs all container test tiers in order:
+#   1. lint      — unit tests, no runtime (fastest; fail-fast)
+#   2. build     — build all 4 production images with buildah
+#   3. runtime   — verify each image behaves correctly
+#
+# Usage:
+#   oc apply -f tests/container/tekton/
+#   tkn pipeline start acc-container-ci \
+#     --workspace name=source,claimName=acc-source-pvc \
+#     --workspace name=results,claimName=acc-results-pvc \
+#     --param acc-version=0.2.0
+#
+# Or with a Git source workspace (populate via git-clone task before this pipeline):
+#   tkn pipeline start acc-container-ci ...
+
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: acc-container-ci
+  labels:
+    app.kubernetes.io/component: acc-ci
+  annotations:
+    description: "Full ACC container CI: lint → build → runtime tests"
+spec:
+  params:
+    - name: acc-version
+      description: ACC version to build and test
+      default: "0.2.0"
+      type: string
+    - name: nats-version
+      description: NATS server version
+      default: "2.10.22"
+      type: string
+    - name: image-registry
+      description: "Registry prefix for built images (empty = localhost)"
+      default: "localhost"
+      type: string
+    - name: push-images
+      description: "Push images to registry after build"
+      default: "false"
+      type: string
+
+  workspaces:
+    - name: source
+      description: ACC repository source (populated by caller, e.g. git-clone task)
+    - name: results
+      description: Shared workspace for JUnit XML results across all tasks
+
+  tasks:
+
+    # ── Tier 1: Lint / Unit Tests ──────────────────────────────────────────
+    - name: lint
+      taskRef:
+        name: acc-lint-containers
+      workspaces:
+        - name: source
+          workspace: source
+        - name: results
+          workspace: results
+      params:
+        - name: results-dir
+          value: "container-unit"
+
+    # ── Tier 2: Build ─────────────────────────────────────────────────────
+    - name: build
+      runAfter:
+        - lint
+      taskRef:
+        name: acc-build-containers
+      workspaces:
+        - name: source
+          workspace: source
+        - name: results
+          workspace: results
+      params:
+        - name: acc-version
+          value: $(params.acc-version)
+        - name: nats-version
+          value: $(params.nats-version)
+        - name: image-registry
+          value: $(params.image-registry)
+        - name: push-images
+          value: $(params.push-images)
+        - name: results-dir
+          value: "container-build"
+
+    # ── Tier 3: Runtime Tests ─────────────────────────────────────────────
+    - name: runtime-tests
+      runAfter:
+        - build
+      taskRef:
+        name: acc-test-runtime
+      workspaces:
+        - name: source
+          workspace: source
+        - name: results
+          workspace: results
+      params:
+        - name: acc-version
+          value: $(params.acc-version)
+        - name: results-dir
+          value: "container-runtime"
+
+  # ── Results collected for Tekton Dashboard / external consumers ──────────
+  results:
+    - name: agent-core-image
+      description: Built acc-agent-core image reference
+      value: $(tasks.build.results.agent-core-image)
+    - name: redis-image
+      description: Built acc-redis image reference
+      value: $(tasks.build.results.redis-image)
+    - name: tui-image
+      description: Built acc-tui image reference
+      value: $(tasks.build.results.tui-image)
+    - name: nats-image
+      description: Built acc-nats image reference
+      value: $(tasks.build.results.nats-image)

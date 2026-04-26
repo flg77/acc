@@ -1,0 +1,202 @@
+# ACC production deployment (Podman)
+#
+# All images use Red Hat UBI bases (registry.access.redhat.com).
+# This file references the production/ Containerfiles with all known bugs fixed.
+#
+# Differences from container/beta/podman-compose.yml:
+#   - NATS uses a UBI9-based custom build (Containerfile.nats) instead of nats:alpine
+#   - All build: blocks reference container/production/ Containerfiles
+#   - Image tags are pinned to ACC_VERSION (not :latest)
+#   - TUI service added (disabled by default; enable with --profile tui)
+#   - OpenShift operator uses this compose as fallback reference
+#
+# Run:
+#   cd <repo root>
+#   podman-compose -f container/production/podman-compose.yml up -d
+#
+# First build:
+#   podman-compose -f container/production/podman-compose.yml build
+#
+# With TUI:
+#   podman-compose -f container/production/podman-compose.yml --profile tui up -d
+#
+# If Podman logs show "aardvark-dns runs in a different netns" (stale aardvark):
+#   podman stop -a; killall aardvark-dns 2>/dev/null
+#   rm -rf /run/user/$UID/containers/networks/aardvark-dns
+#   podman-compose -f container/production/podman-compose.yml up -d
+
+version: "3.9"
+
+x-acc-version: &acc-version "0.2.0"
+
+networks:
+  acc-net:
+    driver: bridge
+
+volumes:
+  lancedb-data:
+  redis-data:
+  nats-data:
+
+services:
+
+  # ── NATS JetStream (UBI9-based production build) ──────────────────────────
+  # Custom build: nats-server binary on UBI9 minimal.
+  # See container/production/Containerfile.nats for details.
+  nats:
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.nats
+      args:
+        NATS_VERSION: "2.10.22"
+    image: localhost/acc-nats:2.10.22
+    container_name: acc-nats
+    command: ["-js", "-m", "8222", "--store_dir", "/data/jetstream"]
+    ports:
+      - "4222:4222"   # client connections
+      - "8222:8222"   # HTTP monitoring
+    volumes:
+      - nats-data:/data/jetstream
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nats-server", "--version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ── Redis (working memory, UBI9 + EPEL) ──────────────────────────────────
+  # Set REDIS_PASSWORD in .env to enable authentication.
+  # When empty, Redis starts without auth (dev/CI only).
+  acc-redis:
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.redis
+    image: localhost/acc-redis:7.2
+    container_name: acc-redis
+    env_file:
+      - path: ../../deploy/.env
+        required: false
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/var/lib/redis/data
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/redis-healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ── Agent: Ingester ───────────────────────────────────────────────────────
+  acc-agent-ingester:
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.agent-core
+      args:
+        ACC_VERSION: *acc-version
+    image: localhost/acc-agent-core:0.2.0
+    container_name: acc-agent-ingester
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../deploy/.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: ingester
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/ingester
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  # ── Agent: Analyst ────────────────────────────────────────────────────────
+  acc-agent-analyst:
+    image: localhost/acc-agent-core:0.2.0
+    container_name: acc-agent-analyst
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../deploy/.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: analyst
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/analyst
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  # ── Agent: Arbiter ────────────────────────────────────────────────────────
+  acc-agent-arbiter:
+    image: localhost/acc-agent-core:0.2.0
+    container_name: acc-agent-arbiter
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../deploy/.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: arbiter
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/arbiter
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  # ── TUI (optional, disabled by default) ──────────────────────────────────
+  # Enable with: podman-compose --profile tui up -d
+  acc-tui:
+    profiles:
+      - tui
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.tui
+      args:
+        ACC_VERSION: *acc-version
+    image: localhost/acc-tui:0.2.0
+    container_name: acc-tui
+    depends_on:
+      nats:
+        condition: service_healthy
+    environment:
+      ACC_NATS_URL: nats://nats:4222
+      ACC_COLLECTIVE_ID: sol-01
+    networks:
+      - acc-net
+    stdin_open: true
+    tty: true

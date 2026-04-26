@@ -1,0 +1,116 @@
+# ACC Agent Core — Production UBI10 Python 3.12 (minimal)
+#
+# Fixes vs beta/Containerfile.agent-core:
+#   - Layer caching: deps installed from pyproject.toml directly (no hardcoded list)
+#   - Correct pip pattern: deps layer → source layer (no --no-deps + manual list)
+#   - USER 0 held for all installs; switch to 1001 only at the end
+#   - HuggingFace download with 3-attempt retry for CI resilience
+#   - Config is NOT baked in (always provided via volume mount or ConfigMap)
+#   - RPM packages preferred for pyyaml, cryptography, gcc, python3-devel
+#   - .containerignore must exist alongside this file to keep context small
+#
+# Compatible with OpenShift restricted SCC (non-root UID 1001, g=u permissions)
+#
+# Build:
+#   podman build -f container/production/Containerfile.agent-core \
+#     --build-arg ACC_VERSION=0.2.0 \
+#     -t localhost/acc-agent-core:0.2.0 .
+#
+# Runtime (requires acc-config.yaml volume mount or ACC_* env overrides):
+#   podman run --rm -e ACC_AGENT_ROLE=ingester -e ACC_NATS_URL=nats://nats:4222 \
+#     -v ./acc-config.yaml:/app/acc-config.yaml:ro \
+#     localhost/acc-agent-core:0.2.0
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.2.0
+
+LABEL org.opencontainers.image.title="acc-agent-core" \
+      org.opencontainers.image.description="Agentic Cell Corpus agent core (production UBI10)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+# Stay root for all install operations
+USER 0
+
+# ── Layer 1: OS-level build tools + RPM-packaged Python libs ─────────────────
+# pyyaml, cryptography: Red Hat ships these; prefer RPM over pip for provenance.
+# gcc + python3-devel: required to build any C-extension pip packages.
+RUN microdnf install -y --nodocs \
+        gcc \
+        python3-devel \
+        python3-pyyaml \
+        python3-cryptography \
+    && microdnf clean all \
+    && rm -rf /var/cache/dnf
+
+# ── Layer 2: Python dependency install (cache-friendly) ───────────────────────
+# Copy ONLY pyproject.toml first. This layer is rebuilt only when
+# pyproject.toml changes — not when acc/ source changes. The deps are
+# extracted via tomllib (Python 3.11+ stdlib) and installed in one pass.
+# pyyaml and cryptography are excluded because they were installed via RPM above.
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+RUN python3 -c "
+import tomllib, subprocess, sys
+
+with open('/app/pyproject.toml', 'rb') as fh:
+    data = tomllib.load(fh)
+
+# Get all declared deps; strip version markers (pip handles them) but keep specs
+deps = data['project']['dependencies']
+
+# Skip packages already installed via RPM to avoid conflicts
+rpm_installed = {'pyyaml', 'cryptography'}
+pip_deps = [
+    d for d in deps
+    if not any(skip in d.lower() for skip in rpm_installed)
+]
+
+print('Installing pip dependencies:', pip_deps)
+subprocess.run(
+    [sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + pip_deps,
+    check=True,
+)
+"
+
+# ── Layer 3: Bake embedding model (avoids runtime internet dependency) ─────────
+# Uses all-MiniLM-L6-v2 (22MB, 384-dim). Retries 3 times for CI environments
+# where the first attempt may hit rate-limiting.
+# Override at runtime with ACC_EMBEDDING_MODEL env var + pre-mounted model cache.
+ENV SENTENCE_TRANSFORMERS_HOME=/app/models \
+    TRANSFORMERS_CACHE=/app/models
+RUN for attempt in 1 2 3; do \
+        python3 -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-v2')" \
+        && echo "Model download succeeded on attempt ${attempt}" && break; \
+        echo "Attempt ${attempt} failed — waiting before retry..."; \
+        sleep 10; \
+    done
+
+# ── Layer 4: Application source ──────────────────────────────────────────────
+# Copied last so source changes do not invalidate the dep or model layers.
+# Install the package itself without re-installing already-present deps.
+COPY acc/ /app/acc/
+RUN pip install --no-cache-dir --no-deps .
+
+# ── Layer 5: Permissions for OpenShift restricted SCC ─────────────────────────
+RUN chown -R 1001:0 /app && chmod -R g=u /app
+
+USER 1001
+
+ENV ACC_CONFIG_PATH=/app/acc-config.yaml \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+# Config must be provided via:
+#   - Volume mount: -v ./acc-config.yaml:/app/acc-config.yaml:ro
+#   - ConfigMap mount (OpenShift): mountPath: /app/acc-config.yaml
+#   - Environment variables: ACC_NATS_URL, ACC_REDIS_URL, etc.
+# No default config is baked in — intentional.
+
+CMD ["python", "-m", "acc.agent"]

@@ -19,3 +19,6 @@ docs/__pycache__/
 .lancedb/
 data/
 *.wasm
+
+# Internal documents — not for public distribution
+docs/competitive-analysis.md

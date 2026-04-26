@@ -1,0 +1,92 @@
+# ACC TUI — Production UBI10 Python 3.12 (minimal)
+#
+# Fixes vs beta/Containerfile.tui:
+#   - USER 0 held through pip install; non-root enforced only at the end
+#   - COPY no longer requires README.md (which may not exist)
+#   - Single USER 1001 instruction at the end (no duplicate)
+#   - chown + chmod for OpenShift restricted SCC compliance
+#   - .containerignore required alongside this file
+#
+# Compatible with OpenShift restricted SCC (non-root UID 1001)
+#
+# Build:
+#   podman build -f container/production/Containerfile.tui \
+#     --build-arg ACC_VERSION=0.2.0 \
+#     -t localhost/acc-tui:0.2.0 .
+#
+# Run:
+#   podman run -it --rm \
+#     -e ACC_NATS_URL=nats://nats:4222 \
+#     -e ACC_COLLECTIVE_ID=sol-01 \
+#     localhost/acc-tui:0.2.0
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.2.0
+
+LABEL org.opencontainers.image.title="acc-tui" \
+      org.opencontainers.image.description="ACC terminal dashboard and role infusion UI (production UBI10)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+# Hold root for all install operations
+USER 0
+
+# ── Layer 1: Build tools (gcc needed by some Textual/Rich transitive deps) ───
+RUN microdnf install -y --nodocs \
+        gcc \
+        python3-devel \
+    && microdnf clean all \
+    && rm -rf /var/cache/dnf
+
+# ── Layer 2: Dependency install (no source yet — maximises layer caching) ────
+# Copy pyproject.toml only; do NOT copy README.md (may not exist in all branches)
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+
+# Install [tui] extras: textual + rich only.
+# Explicitly excludes LanceDB, Milvus, Redis, sentence-transformers, and other
+# heavy dependencies that the TUI does not need.
+RUN python3 -c "
+import tomllib, subprocess, sys
+
+with open('/app/pyproject.toml', 'rb') as fh:
+    data = tomllib.load(fh)
+
+# [tui] optional deps: textual, rich
+tui_deps = data['project']['optional-dependencies'].get('tui', [])
+print('Installing TUI dependencies:', tui_deps)
+subprocess.run(
+    [sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + tui_deps,
+    check=True,
+)
+
+# Also install nats-py (required for TUI to connect to NATS) from core deps
+core_deps = data['project']['dependencies']
+nats_deps = [d for d in core_deps if d.lower().startswith('nats')]
+if nats_deps:
+    print('Installing NATS dependency:', nats_deps)
+    subprocess.run(
+        [sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + nats_deps,
+        check=True,
+    )
+"
+
+# ── Layer 3: Application source ──────────────────────────────────────────────
+COPY acc/ /app/acc/
+RUN pip install --no-cache-dir --no-deps . \
+ && chown -R 1001:0 /app \
+ && chmod -R g=u /app
+
+# Switch to non-root only here — after all installs and chown are complete
+USER 1001
+
+ENV ACC_NATS_URL=nats://nats:4222 \
+    ACC_COLLECTIVE_ID=sol-01 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+CMD ["acc-tui"]

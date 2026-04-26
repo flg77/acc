@@ -1,0 +1,99 @@
+---
+# Tekton Task: Lint + Unit Tests (no container runtime required)
+#
+# Runs the tests/container/unit/ test suite which validates:
+#   - Containerfile compliance rules (UBI base, USER ordering, labels)
+#   - podman-compose.yml schema correctness
+#   - .containerignore completeness
+#   - package-analysis.md coverage
+#
+# No container runtime (podman/buildah) needed — pure Python/file parsing.
+# Results are written as JUnit XML for Tekton to collect.
+#
+# Usage in a Pipeline:
+#   - name: lint-containers
+#     taskRef:
+#       name: acc-lint-containers
+#     workspaces:
+#       - name: source
+#         workspace: pipeline-source
+#       - name: results
+#         workspace: pipeline-results
+
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: acc-lint-containers
+  labels:
+    app.kubernetes.io/component: acc-ci
+    acc.redhat-ai-dev.io/tier: unit
+  annotations:
+    description: "Lint ACC production Containerfiles and compose YAML (no runtime required)"
+spec:
+  params:
+    - name: python-image
+      description: Python image to use for running tests
+      default: "registry.access.redhat.com/ubi9/python-312:latest"
+      type: string
+    - name: results-dir
+      description: Directory inside the results workspace to write JUnit XML
+      default: "container-unit"
+      type: string
+
+  workspaces:
+    - name: source
+      description: ACC repository source
+    - name: results
+      description: Directory for JUnit XML test results
+
+  results:
+    - name: tests-passed
+      description: Number of tests that passed
+    - name: tests-failed
+      description: Number of tests that failed
+
+  steps:
+    - name: install-deps
+      image: $(params.python-image)
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        pip install --quiet pytest pytest-cov pyyaml
+
+    - name: run-unit-tests
+      image: $(params.python-image)
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+        RESULTS_DIR="$(workspaces.results.path)/$(params.results-dir)"
+        mkdir -p "${RESULTS_DIR}"
+
+        pytest tests/container/unit/ \
+          --junit-xml="${RESULTS_DIR}/results.xml" \
+          --tb=short \
+          -v \
+          --no-header \
+          2>&1 | tee "${RESULTS_DIR}/pytest.log"
+
+        EXIT_CODE=${PIPESTATUS[0]}
+
+        # Extract pass/fail counts from JUnit XML for Tekton results
+        python3 - <<'PYEOF'
+        import xml.etree.ElementTree as ET, os, sys
+        results_dir = os.environ.get('RESULTS_DIR', '.')
+        xml_path = os.path.join(results_dir, 'results.xml')
+        if os.path.exists(xml_path):
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            suite = root if root.tag == 'testsuite' else root.find('testsuite')
+            if suite is not None:
+                passed = int(suite.get('tests', 0)) - int(suite.get('failures', 0)) - int(suite.get('errors', 0))
+                failed = int(suite.get('failures', 0)) + int(suite.get('errors', 0))
+                print(f'PASSED={passed}', flush=True)
+                print(f'FAILED={failed}', flush=True)
+        PYEOF
+      env:
+        - name: RESULTS_DIR
+          value: "$(workspaces.results.path)/$(params.results-dir)"

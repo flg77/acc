@@ -1,0 +1,63 @@
+# ACC Agent Core — UBI10 Python 3.12 (minimal)
+# (There is no ubi10/python-312; use ubi10/python-312-minimal from
+#  registry.access.redhat.com — see Red Hat Ecosystem Catalog.)
+# Compatible with OpenShift restricted SCC (non-root, UID 1001)
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+LABEL org.opencontainers.image.title="acc-agent-core" \
+      org.opencontainers.image.description="Agentic Cell Corpus agent core" \
+      org.opencontainers.image.version="0.1.0" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+# Base image defaults to User=1001; need root for OS packages, pip, and chown.
+USER 0
+RUN microdnf install -y --nodocs \
+        gcc \
+        python3-devel \
+    && microdnf clean all
+
+# ── Layer 1: Install Python dependencies (no dev extras) ──────────────────
+COPY pyproject.toml /app/pyproject.toml
+WORKDIR /app
+
+# Install build tools and package dependencies
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir ".[dev]" --no-deps \
+ && pip install --no-cache-dir \
+        nats-py \
+        lancedb \
+        pymilvus \
+        anthropic \
+        httpx \
+        sentence-transformers \
+        opentelemetry-sdk \
+        opentelemetry-exporter-otlp-proto-grpc \
+        pydantic \
+        pyyaml \
+        msgpack \
+        cryptography \
+        redis
+
+# ── Layer 2: Download embedding model at build time ───────────────────────
+# Bake all-MiniLM-L6-v2 into the image so no internet access is needed at runtime
+ENV TRANSFORMERS_CACHE=/app/models
+RUN python -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-v2')"
+
+# ── Layer 3: Copy application package ────────────────────────────────────
+COPY acc/ /app/acc/
+
+# ── Layer 4: Default config (overridable via volume mount or env vars) ────
+COPY acc-config.yaml /app/acc-config.yaml
+
+# ── Layer 5: Non-root user for OpenShift restricted SCC ──────────────────
+RUN chown -R 1001:0 /app && chmod -R g=u /app
+USER 1001
+
+ENV ACC_CONFIG_PATH=/app/acc-config.yaml \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+CMD ["python", "-m", "acc.agent"]
