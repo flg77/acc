@@ -3,9 +3,10 @@
 # Fixes vs beta/Containerfile.agent-core:
 #   - Layer caching: deps installed from pyproject.toml directly (no hardcoded list)
 #   - Correct pip pattern: deps layer → source layer (no --no-deps + manual list)
-#   - USER 0 for installs; final USER 0 + ENTRYPOINT so a root-owned Docker/Podman
-#     named volume at /app/data/lancedb can be chowned and subdirs created (see
-#     deploy/entrypoint-agent.sh); the process runs as UID 1001 after startup.
+#   - USER 1001 as the final user; no privilege-drop entrypoint needed.
+#     The compose file mounts lancedb-data with :U so Podman chowns the
+#     volume root to UID 1001 automatically.  The entrypoint only creates
+#     per-role subdirectories, then execs the agent.
 #   - HuggingFace download with 3-attempt retry for CI resilience
 #   - Config is NOT baked in (always provided via volume mount or ConfigMap)
 #   - RPM packages preferred for pyyaml, cryptography, gcc, python3-devel
@@ -44,7 +45,6 @@ RUN microdnf install -y --nodocs \
         python3-devel \
         python3-pyyaml \
         python3-cryptography \
-        util-linux \
     && microdnf clean all \
     && rm -rf /var/cache/dnf
 
@@ -82,18 +82,23 @@ SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-
         sleep 10; \
     done
 
-# Runtime: make Docker/Podman named volume under /app/data/lancedb writable for UID 1001
-COPY deploy/entrypoint-agent.sh /app/entrypoint.sh
-RUN chmod 755 /app/entrypoint.sh
-
 # ── Layer 4: Application source ──────────────────────────────────────────────
 # Copied last so source changes do not invalidate the dep or model layers.
 # Install the package itself without re-installing already-present deps.
 COPY acc/ /app/acc/
 RUN pip install --no-cache-dir --no-deps .
 
-# ── Layer 5: Permissions (OpenShift-style g=u); app runs as 1001 after entrypoint
-RUN chown -R 1001:0 /app && chmod -R g=u /app
+# ── Layer 5: Entrypoint, data dirs, permissions ───────────────────────────────
+# Entrypoint is a simple shell script (no privilege-drop logic).
+# The final USER is 1001; the compose :U volume flag handles volume ownership.
+COPY container/production/entrypoint.sh /app/entrypoint.sh
+RUN mkdir -p \
+        /app/data/lancedb/ingester \
+        /app/data/lancedb/analyst \
+        /app/data/lancedb/arbiter \
+    && chown -R 1001:0 /app \
+    && chmod -R g=u /app \
+    && chmod 755 /app/entrypoint.sh
 
 ENV ACC_CONFIG_PATH=/app/acc-config.yaml \
     PYTHONUNBUFFERED=1 \
@@ -107,6 +112,6 @@ WORKDIR /app
 #   - Environment variables: ACC_NATS_URL, ACC_REDIS_URL, etc.
 # No default config is baked in — intentional.
 
-USER 0
+USER 1001
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python3", "-m", "acc.agent"]

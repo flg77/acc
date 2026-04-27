@@ -120,7 +120,7 @@ services:
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
-      - lancedb-data:/app/data/lancedb
+      - lancedb-data:/app/data/lancedb:U,z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
@@ -146,7 +146,7 @@ services:
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
-      - lancedb-data:/app/data/lancedb
+      - lancedb-data:/app/data/lancedb:U,z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
@@ -172,7 +172,7 @@ services:
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
-      - lancedb-data:/app/data/lancedb
+      - lancedb-data:/app/data/lancedb:U,z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
