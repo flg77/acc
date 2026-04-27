@@ -65,33 +65,35 @@ RUN microdnf install -y --nodocs \
 WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
 
-# Install [tui] extras (textual, rich) + lightweight core deps needed by the
-# TUI import chain.  The chain is:
-#   acc.tui.screens.infuse → acc.role_loader → acc.config → pydantic + pyyaml
-#   acc.tui.client         → nats-py
-#   acc.signals            → (stdlib only)
+# Install [tui] extras + lightweight core deps needed by the TUI import chain.
+#
+# IMPORTANT: use 'pip' directly — NOT 'python3 -c "subprocess.run([sys.executable,
+# -m pip, ...])"'.  On UBI10 python-312-minimal the RUN-time python3 and the S2I
+# application python live at different paths.  sys.executable resolves to whichever
+# python3 is first on PATH during RUN, which may differ from the pip used by
+# 'pip install --no-deps .' below and the shebang in the acc-tui entry point.
+# Using 'pip' directly guarantees all packages land in the same site-packages tree.
+#
+# TUI import chain (module level — must resolve before Textual initialises):
+#   acc.tui.app → screens/{infuse,ecosystem} → acc.role_loader → acc.config
+#                                               ↳ import yaml        (pyyaml)
+#                                               ↳ from pydantic import BaseModel
+#   acc.tui.client → nats  (deferred import inside connect(), but pip-present)
+#   acc.tui.web_bridge → stdlib only
 #
 # Heavy ML/DB packages (lancedb, pymilvus, sentence-transformers, anthropic,
-# opentelemetry-*) are NOT needed by any TUI code path and are excluded to
-# keep the image small and the build fast.
-#
-# Uses \ line-continuation so the Containerfile parser joins all lines into
-# one logical RUN argument before passing to /bin/sh — avoids the
-# "unexpected EOF while looking for matching quote" build error.
-RUN python3 -c "\
-import tomllib, subprocess, sys;\
-fh = open('/app/pyproject.toml', 'rb');\
-data = tomllib.load(fh);\
-fh.close();\
-tui_deps = data['project']['optional-dependencies'].get('tui', []);\
-print('Installing TUI dependencies:', tui_deps);\
-subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + tui_deps, check=True);\
-core_deps = data['project']['dependencies'];\
-HEAVY = ('lancedb', 'pymilvus', 'sentence-transformers', 'sentence_transformers', 'anthropic', 'opentelemetry');\
-light_deps = [d for d in core_deps if not any(d.lower().startswith(h) for h in HEAVY)];\
-print('Installing lightweight core dependencies:', light_deps);\
-subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + light_deps, check=True)\
-"
+# opentelemetry-*) are NOT needed by any TUI code path — excluded to keep the
+# image small and the build fast.
+RUN pip install --no-cache-dir \
+    "textual>=0.80,<1.0" \
+    "rich>=13,<15" \
+    "nats-py>=2.7,<3.0" \
+    "httpx>=0.27,<1.0" \
+    "pydantic>=2.8,<3.0" \
+    "pyyaml>=6.0,<7.0" \
+    "cryptography>=42,<45" \
+    "redis>=5.0,<6.0" \
+    "msgpack>=1.1,<2.0"
 
 # ── Layer 3: Application source ──────────────────────────────────────────────
 COPY acc/ /app/acc/
