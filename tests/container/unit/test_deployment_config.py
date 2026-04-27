@@ -214,15 +214,20 @@ def test_deploy_008_production_no_non_ubi_images(prod_compose: dict) -> None:
 # ── DEPLOY-009: Beta references 0.1.x image tags ─────────────────────────────
 
 def test_deploy_009_beta_references_v01_tags(beta_compose: dict) -> None:
-    """DEPLOY-009: Beta compose must reference 0.1.x image tags for ACC agent images."""
+    """DEPLOY-009: Beta compose must reference 0.1.x image tags for ACC agent-core images.
+
+    Only acc-agent-* and acc-tui* images are checked — Redis and NATS use
+    their own versioning schemes that are independent of the ACC version.
+    """
     services = beta_compose.get("services", {})
     for svc_name, svc in services.items():
         image = svc.get("image", "")
-        if not image or not image.startswith("localhost/acc-"):
+        # Only check ACC agent-core images, not Redis/NATS which version independently
+        if not image or not image.startswith("localhost/acc-agent-"):
             continue
         assert ":0.1." in image, (
             f"Beta service '{svc_name}' image='{image}' does not use a 0.1.x tag. "
-            "Beta images must use 0.1.x to avoid overwriting production 0.2.x images."
+            "Beta agent images must use 0.1.x to avoid overwriting production 0.2.x images."
         )
 
 
