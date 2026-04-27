@@ -55,27 +55,16 @@ RUN microdnf install -y --nodocs \
 # pyyaml and cryptography are excluded because they were installed via RPM above.
 WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
-RUN python3 -c "
-import tomllib, subprocess, sys
-
-with open('/app/pyproject.toml', 'rb') as fh:
-    data = tomllib.load(fh)
-
-# Get all declared deps; strip version markers (pip handles them) but keep specs
-deps = data['project']['dependencies']
-
-# Skip packages already installed via RPM to avoid conflicts
-rpm_installed = {'pyyaml', 'cryptography'}
-pip_deps = [
-    d for d in deps
-    if not any(skip in d.lower() for skip in rpm_installed)
-]
-
-print('Installing pip dependencies:', pip_deps)
-subprocess.run(
-    [sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + pip_deps,
-    check=True,
-)
+RUN python3 -c "\
+import tomllib, subprocess, sys;\
+fh = open('/app/pyproject.toml', 'rb');\
+data = tomllib.load(fh);\
+fh.close();\
+deps = data['project']['dependencies'];\
+skip = {'pyyaml', 'cryptography'};\
+pip_deps = [d for d in deps if not any(s in d.lower() for s in skip)];\
+print('Installing pip dependencies:', pip_deps);\
+subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + pip_deps, check=True)\
 "
 
 # ── Layer 3: Bake embedding model (avoids runtime internet dependency) ─────────

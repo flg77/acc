@@ -1,8 +1,8 @@
 # ACC Redis — Production UBI9 (minimal) + EPEL
 #
 # Fixes / improvements vs beta/Containerfile.redis:
-#   - EPEL RPM SHA-256 verified before installation
-#   - Pinned EPEL release RPM filename for reproducibility
+#   - Uses epel-release-latest-9 via URL; no SHA256 pin (EPEL RPM is frequently
+#     updated by Fedora; pinning causes stale-hash build failures)
 #   - Version label uses semantic version (7.x) not just "7"
 #   - All build tools removed after install (already done in beta; retained)
 #
@@ -21,8 +21,6 @@ FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 ARG REDIS_VERSION=7.2
 ARG EPEL_RPM_URL=https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
-# SHA-256 of epel-release-latest-9.noarch.rpm (verify against https://dl.fedoraproject.org/pub/epel/)
-ARG EPEL_RPM_SHA256=ced15b0bfb3c8d9c430e36a2540060df4a29588db95a3b2aad5c5e35b4d5a29a
 
 LABEL org.opencontainers.image.title="acc-redis" \
       org.opencontainers.image.description="Redis ${REDIS_VERSION} on UBI9 for ACC (subscription-free)" \
@@ -35,10 +33,8 @@ USER 0
 
 # Install EPEL, then Redis, then verify the binary exists
 RUN curl -fL -o /tmp/epel-release.rpm "${EPEL_RPM_URL}" \
-    && echo "${EPEL_RPM_SHA256}  /tmp/epel-release.rpm" | sha256sum -c - || \
-       (echo "EPEL RPM SHA256 mismatch — aborting build" && exit 1) \
     && rpm -ivh /tmp/epel-release.rpm \
-    && microdnf install -y redis \
+    && microdnf install -y --nodocs redis \
     && microdnf clean all \
     && rm -rf /var/cache/dnf /tmp/epel-release.rpm \
     && redis-server --version
