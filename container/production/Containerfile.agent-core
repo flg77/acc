@@ -9,7 +9,8 @@
 #     per-role subdirectories, then execs the agent.
 #   - HuggingFace download with 3-attempt retry for CI resilience
 #   - Config is NOT baked in (always provided via volume mount or ConfigMap)
-#   - RPM packages preferred for pyyaml, cryptography, gcc, python3-devel
+#   - gcc + python3-devel via RPM (build tools only); all Python deps via pip
+#     (RPM Python packages install to system path, invisible to S2I python)
 #   - .containerignore must exist alongside this file to keep context small
 #
 # Compatible with OpenShift restricted SCC (non-root UID 1001, g=u permissions)
@@ -37,14 +38,18 @@ LABEL org.opencontainers.image.title="acc-agent-core" \
 # Stay root for all install operations
 USER 0
 
-# ── Layer 1: OS-level build tools + RPM-packaged Python libs ─────────────────
-# pyyaml, cryptography: Red Hat ships these; prefer RPM over pip for provenance.
-# gcc + python3-devel: required to build any C-extension pip packages.
+# ── Layer 1: OS-level build tools ────────────────────────────────────────────
+# gcc + python3-devel: required to build C-extension pip packages (e.g. lancedb).
+#
+# Note: python3-pyyaml and python3-cryptography are NOT installed via RPM.
+# UBI10 python-312-minimal is an S2I image; its application Python lives under
+# /opt/app-root/ with its own site-packages.  RPM packages install to the system
+# Python path (/usr/lib64/python3.12/) which is invisible to the S2I Python.
+# All Python deps — including pyyaml and cryptography — are pip-installed below
+# so they land in the same site-packages tree as every other ACC dependency.
 RUN microdnf install -y --nodocs \
         gcc \
         python3-devel \
-        python3-pyyaml \
-        python3-cryptography \
     && microdnf clean all \
     && rm -rf /var/cache/dnf
 
@@ -61,10 +66,8 @@ fh = open('/app/pyproject.toml', 'rb');\
 data = tomllib.load(fh);\
 fh.close();\
 deps = data['project']['dependencies'];\
-skip = {'pyyaml', 'cryptography'};\
-pip_deps = [d for d in deps if not any(s in d.lower() for s in skip)];\
-print('Installing pip dependencies:', pip_deps);\
-subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + pip_deps, check=True)\
+print('Installing pip dependencies:', deps);\
+subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + deps, check=True)\
 "
 
 # ── Layer 3: Bake embedding model (avoids runtime internet dependency) ─────────
