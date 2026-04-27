@@ -44,7 +44,7 @@ RUN microdnf install -y --nodocs \
         python3-devel \
         python3-pyyaml \
         python3-cryptography \
-        util-linux-core \
+        util-linux \
     && microdnf clean all \
     && rm -rf /var/cache/dnf
 
@@ -109,4 +109,4 @@ WORKDIR /app
 
 USER 0
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["python", "-m", "acc.agent"]
+CMD ["python3", "-m", "acc.agent"]
