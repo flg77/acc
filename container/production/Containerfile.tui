@@ -8,6 +8,10 @@
 #   - Single USER 1001 instruction at the end (no duplicate)
 #   - chown + chmod for OpenShift restricted SCC compliance (REQ-TUI-046)
 #   - .containerignore required alongside this file
+#   - Install lightweight core deps (pydantic, pyyaml, etc.) in addition to
+#     textual+nats; without them acc.role_loader import fails silently (exit 1)
+#   - pyproject.toml package-data includes *.tcss so pip install copies
+#     app.tcss to site-packages (fixes silent FileNotFoundError in Textual)
 #
 # New in ACC-TUI-Evolution:
 #   - ACC_COLLECTIVE_IDS env var (comma-separated, multi-collective — REQ-TUI-006)
@@ -61,7 +65,16 @@ RUN microdnf install -y --nodocs \
 WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
 
-# Install [tui] extras (textual, rich) + nats-py from core deps.
+# Install [tui] extras (textual, rich) + lightweight core deps needed by the
+# TUI import chain.  The chain is:
+#   acc.tui.screens.infuse → acc.role_loader → acc.config → pydantic + pyyaml
+#   acc.tui.client         → nats-py
+#   acc.signals            → (stdlib only)
+#
+# Heavy ML/DB packages (lancedb, pymilvus, sentence-transformers, anthropic,
+# opentelemetry-*) are NOT needed by any TUI code path and are excluded to
+# keep the image small and the build fast.
+#
 # Uses \ line-continuation so the Containerfile parser joins all lines into
 # one logical RUN argument before passing to /bin/sh — avoids the
 # "unexpected EOF while looking for matching quote" build error.
@@ -74,9 +87,10 @@ tui_deps = data['project']['optional-dependencies'].get('tui', []);\
 print('Installing TUI dependencies:', tui_deps);\
 subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + tui_deps, check=True);\
 core_deps = data['project']['dependencies'];\
-nats_deps = [d for d in core_deps if d.lower().startswith('nats')];\
-print('Installing NATS dependency:', nats_deps);\
-subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + nats_deps, check=True)\
+HEAVY = ('lancedb', 'pymilvus', 'sentence-transformers', 'sentence_transformers', 'anthropic', 'opentelemetry');\
+light_deps = [d for d in core_deps if not any(d.lower().startswith(h) for h in HEAVY)];\
+print('Installing lightweight core dependencies:', light_deps);\
+subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + light_deps, check=True)\
 "
 
 # ── Layer 3: Application source ──────────────────────────────────────────────
