@@ -88,11 +88,16 @@ SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-
 COPY acc/ /app/acc/
 RUN pip install --no-cache-dir --no-deps .
 
-# ── Layer 5: Entrypoint, data dirs, permissions ───────────────────────────────
+# ── Layer 5: Entrypoint, data dirs, passwd entry, permissions ─────────────────
 # Entrypoint is a simple shell script (no privilege-drop logic).
 # The final USER is 1001; the compose :U volume flag handles volume ownership.
+#
+# We add UID 1001 to /etc/passwd so tools that call getpwuid() (runuser, id -un,
+# Python's pwd module) work correctly. This is the standard OpenShift pattern;
+# GID 0 (root group) satisfies the restricted SCC without requiring real root.
 COPY container/production/entrypoint.sh /app/entrypoint.sh
-RUN mkdir -p \
+RUN echo "acc:x:1001:0:ACC Agent:/app:/bin/sh" >> /etc/passwd \
+    && mkdir -p \
         /app/data/lancedb/ingester \
         /app/data/lancedb/analyst \
         /app/data/lancedb/arbiter \
