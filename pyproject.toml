@@ -64,6 +64,14 @@ acc-tui = "acc.tui.app:main"
 where = ["."]
 include = ["acc*"]
 
+[tool.setuptools.package-data]
+# Include Textual stylesheet so it is present in the installed package.
+# Without this entry, pip install only copies .py files; CSS_PATH lookup
+# in acc/tui/app.py would point to site-packages where app.tcss is absent,
+# causing a silent FileNotFoundError exit (code 1) inside the alternate-
+# screen buffer — invisible to podman logs.
+"acc.tui" = ["*.tcss"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
