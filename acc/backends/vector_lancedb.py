@@ -86,7 +86,16 @@ class LanceDBBackend:
 
     def __init__(self, path: str) -> None:
         self._path = path
-        self._db = lancedb.connect(path)
+        try:
+            self._db = lancedb.connect(path)
+        except PermissionError as e:
+            raise RuntimeError(
+                f"Cannot open LanceDB at {path!r} ({e}). "
+                "A named Docker/Podman volume is often root-only: use an image that "
+                "includes deploy/entrypoint-agent.sh (prepares /app/data/lancedb, "
+                "then runs the app as UID 1001), or set ACC_LANCEDB_PATH to a "
+                "writable directory."
+            ) from e
         # Auto-create standard tables
         for table_name in _STANDARD_TABLES:
             self.create_table_if_absent(table_name, _SCHEMAS[table_name])

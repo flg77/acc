@@ -5,7 +5,8 @@ No container runtime required — tests parse Containerfiles as text.
 Rules enforced:
   LINT-001  FROM must be a registry.access.redhat.com UBI image
   LINT-002  USER 0 must appear before any RUN microdnf / pip install
-  LINT-003  Final USER instruction must be non-root (1001, not 0)
+  LINT-003  Final USER instruction must be non-root (1001, not 0), except
+            Containerfile.agent-core with ENTRYPOINT+entrypoint-agent.sh
   LINT-004  LABEL must include org.opencontainers.image.title
   LINT-005  LABEL must include org.opencontainers.image.version
   LINT-006  No FROM :latest tag in production builds (use pinned or ARG)
@@ -145,6 +146,13 @@ def test_lint_003_final_user_is_nonroot(name: str) -> None:
     user_instructions = [(i, v.strip()) for i, v in instructions if i == "USER"]
     assert user_instructions, f"{name}: no USER instruction found"
     final_user = user_instructions[-1][1]
+    if final_user in ("0", "root") and name == "Containerfile.agent-core":
+        content = (PRODUCTION_DIR / name).read_text(encoding="utf-8")
+        assert "ENTRYPOINT" in content and "entrypoint-agent.sh" in content, (
+            f"{name}: final USER is root but must pair with deploy/entrypoint-agent.sh "
+            "and ENTRYPOINT so the process still runs as UID 1001 at runtime"
+        )
+        return
     assert final_user not in ("0", "root"), (
         f"{name}: final USER is '{final_user}' (root). "
         "Production containers must run as non-root for OpenShift restricted SCC compliance."
