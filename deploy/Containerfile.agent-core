@@ -1,7 +1,10 @@
 # ACC Agent Core — UBI10 Python 3.12 (minimal)
 # (There is no ubi10/python-312; use ubi10/python-312-minimal from
 #  registry.access.redhat.com — see Red Hat Ecosystem Catalog.)
-# Compatible with OpenShift restricted SCC (non-root, UID 1001)
+# After entrypoint, the app always runs as UID 1001. The image user is 0 so the
+# entrypoint can chown a root-owned named volume. On Kubernetes, set
+# securityContext.runAsUser: 1001 and an fsGroup for the volume, or keep the
+# default image user; the entrypoint only chowns when started as root.
 FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
 
 LABEL org.opencontainers.image.title="acc-agent-core" \
@@ -14,6 +17,7 @@ USER 0
 RUN microdnf install -y --nodocs \
         gcc \
         python3-devel \
+        util-linux-core \
     && microdnf clean all
 
 # ── Layer 1: Install Python dependencies (no dev extras) ──────────────────
@@ -45,19 +49,25 @@ RUN python -c "\
 from sentence_transformers import SentenceTransformer; \
 SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-v2')"
 
+# Runtime: fix named-volume ownership for /app/data/lancedb (root-owned by default)
+COPY deploy/entrypoint-agent.sh /app/entrypoint.sh
+RUN chmod 755 /app/entrypoint.sh
+
 # ── Layer 3: Copy application package ────────────────────────────────────
 COPY acc/ /app/acc/
 
 # ── Layer 4: Default config (overridable via volume mount or env vars) ────
 COPY acc-config.yaml /app/acc-config.yaml
 
-# ── Layer 5: Non-root user for OpenShift restricted SCC ──────────────────
+# ── Layer 5: App tree owned by 1001; start as root so entrypoint can chown
+#     the mounted volume, then runuser(1) to UID 1001.
 RUN chown -R 1001:0 /app && chmod -R g=u /app
-USER 1001
 
 ENV ACC_CONFIG_PATH=/app/acc-config.yaml \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 WORKDIR /app
+USER 0
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["python", "-m", "acc.agent"]
