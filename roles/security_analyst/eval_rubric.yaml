@@ -1,0 +1,22 @@
+criteria:
+  detection_accuracy:
+    weight: 0.35
+    description: >
+      Alert triage verdicts correctly classify true positives and minimise false positives.
+      Score: 1.0 = accurate with low FP rate; 0.5 = mostly accurate; 0.0 = significant misclassification.
+  investigation_depth:
+    weight: 0.30
+    description: >
+      Incident investigations cover full attack timeline, lateral movement, and impact scope.
+      Score: 1.0 = comprehensive; 0.5 = partial scope; 0.0 = superficial.
+  false_positive_rate:
+    weight: 0.20
+    description: >
+      Triage minimises analyst time wasted on benign alerts; context is used to differentiate.
+      Score: 1.0 = low FP rate; 0.5 = moderate; 0.0 = high FP rate.
+  documentation_quality:
+    weight: 0.15
+    description: >
+      Security reports and incident timelines are accurate, timestamped, and chain-of-custody compliant.
+      Score: 1.0 = audit-ready; 0.5 = adequate; 0.0 = incomplete.
+# Total: 0.35+0.30+0.20+0.15 = 1.00

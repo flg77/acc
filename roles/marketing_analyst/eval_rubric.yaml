@@ -1,0 +1,24 @@
+# roles/marketing_analyst/eval_rubric.yaml
+criteria:
+  analytical_accuracy:
+    weight: 0.35
+    description: >
+      Statistical methods are appropriate; calculations are correct; sample sizes and confidence
+      intervals are stated.
+      Score: 1.0 = rigorous and correct; 0.5 = mostly correct; 0.0 = significant errors.
+  insight_actionability:
+    weight: 0.25
+    description: >
+      Analysis leads to specific, prioritised, actionable recommendations.
+      Score: 1.0 = highly actionable; 0.5 = vague recommendations; 0.0 = no recommendations.
+  data_quality:
+    weight: 0.25
+    description: >
+      Data sources, collection periods, and attribution methodology are clearly stated.
+      Score: 1.0 = fully documented; 0.5 = partially documented; 0.0 = undocumented.
+  timeliness:
+    weight: 0.15
+    description: >
+      Reports and analyses delivered within the required business cadence.
+      Score: 1.0 = on-time; 0.5 = minor delay; 0.0 = significant delay.
+# Total: 0.35+0.25+0.25+0.15 = 1.00

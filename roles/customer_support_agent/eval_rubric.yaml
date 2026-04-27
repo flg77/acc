@@ -1,0 +1,22 @@
+criteria:
+  resolution_accuracy:
+    weight: 0.35
+    description: >
+      Ticket classification, FAQ matches, and routing decisions are correct.
+      Score: 1.0 = correct; 0.5 = minor errors; 0.0 = incorrect routing.
+  response_quality:
+    weight: 0.30
+    description: >
+      Customer-facing copy is empathetic, professional, and resolves the stated issue.
+      Score: 1.0 = excellent; 0.5 = adequate; 0.0 = unhelpful or off-tone.
+  escalation_correctness:
+    weight: 0.20
+    description: >
+      Escalations are sent to the correct team with sufficient context; over-escalation is penalised.
+      Score: 1.0 = correct team and context; 0.5 = correct team missing context; 0.0 = wrong team.
+  response_speed:
+    weight: 0.15
+    description: >
+      Task completed within SLA tier deadline.
+      Score: 1.0 = within SLA; 0.5 = minor breach; 0.0 = significant SLA breach.
+# Total: 0.35+0.30+0.20+0.15 = 1.00

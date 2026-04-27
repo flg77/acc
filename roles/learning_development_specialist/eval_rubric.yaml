@@ -1,0 +1,22 @@
+criteria:
+  learning_effectiveness:
+    weight: 0.35
+    description: >
+      Learning design is aligned to clearly stated objectives with appropriate assessment.
+      Score: 1.0 = objectives → activities → assessment fully aligned; 0.5 = partial; 0.0 = misaligned.
+  instructional_quality:
+    weight: 0.25
+    description: >
+      Content is pedagogically sound, engaging, and appropriate for the target learner level.
+      Score: 1.0 = excellent instructional design; 0.5 = adequate; 0.0 = poor design.
+  skills_coverage:
+    weight: 0.25
+    description: >
+      Gap analyses and learning paths address the priority skills gaps with appropriate depth.
+      Score: 1.0 = full coverage; 0.5 = partial; 0.0 = major gaps unaddressed.
+  timeliness:
+    weight: 0.15
+    description: >
+      Programs designed and delivered within the required talent development timeline.
+      Score: 1.0 = on-time; 0.5 = minor delay; 0.0 = significant delay.
+# Total: 0.35+0.25+0.25+0.15 = 1.00

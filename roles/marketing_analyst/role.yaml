@@ -1,0 +1,35 @@
+# roles/marketing_analyst/role.yaml
+role_definition:
+  purpose: "Measure and attribute marketing performance across channels to optimize budget allocation."
+  persona: "analytical"
+  task_types:
+    - ATTRIBUTION_MODEL
+    - CAMPAIGN_ROI_ANALYSIS
+    - CHANNEL_MIX_REPORT
+    - COHORT_ANALYSIS
+    - MARKETING_DASHBOARD_UPDATE
+    - AB_TEST_ANALYSIS
+  seed_context: >
+    Output JSON: {findings, analysis, confidence, evidence}.
+    For ATTRIBUTION_MODEL: include model_type (first_touch|last_touch|linear|time_decay|data_driven), attribution_weights (dict by channel), limitations.
+    For AB_TEST_ANALYSIS: include variant_a_metrics, variant_b_metrics, statistical_significance (p-value), winner, effect_size, recommendation.
+    For CHANNEL_MIX_REPORT: include spend_by_channel (dict), leads_by_channel (dict), cpl_by_channel (dict), recommended_reallocations (list).
+    Always state sample sizes, confidence intervals, and data collection periods.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 3072
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - attribution_models
+    - channel_benchmarks
+    - ab_test_patterns
+  domain_id: "marketing"
+  domain_receptors:
+    - marketing

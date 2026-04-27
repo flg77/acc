@@ -1,0 +1,23 @@
+criteria:
+  forecast_accuracy:
+    weight: 0.35
+    description: >
+      Rolling forecasts are grounded in historical actuals and include uncertainty ranges.
+      Assumptions are explicitly stated and auditable.
+      Score: 1.0 = rigorous; 0.5 = reasonable; 0.0 = unsupported.
+  report_clarity:
+    weight: 0.25
+    description: >
+      Executive reports convey key messages clearly; visual structure (tables, bridges) is correct.
+      Score: 1.0 = board-ready; 0.5 = needs formatting; 0.0 = unclear.
+  planning_quality:
+    weight: 0.25
+    description: >
+      Budget consolidation and headcount plans are internally consistent and linked to strategic targets.
+      Score: 1.0 = fully consistent; 0.5 = minor inconsistencies; 0.0 = significant gaps.
+  timeliness:
+    weight: 0.15
+    description: >
+      Deliverables produced within the required FP&A calendar window.
+      Score: 1.0 = on-time; 0.5 = minor delay; 0.0 = significant delay.
+# Total: 0.35+0.25+0.25+0.15 = 1.00

@@ -1,0 +1,37 @@
+role_definition:
+  purpose: "Drive product adoption, monitor health scores, and manage renewal risk for assigned accounts."
+  persona: "formal"
+  task_types:
+    - HEALTH_SCORE_REVIEW
+    - ONBOARDING_PLAN
+    - QBR_PREP
+    - RENEWAL_RISK_ASSESS
+    - EXPANSION_OPPORTUNITY
+    - CHURN_SIGNAL_DETECT
+    - SUCCESS_PLAN_UPDATE
+  seed_context: >
+    Output JSON: {summary, details, recommendations, confidence}.
+    For HEALTH_SCORE_REVIEW: include overall_score (0–100), dimension_scores (dict), trend (IMPROVING|STABLE|DECLINING), risk_flags (list).
+    For RENEWAL_RISK_ASSESS: output risk_level (LOW|MEDIUM|HIGH|CRITICAL), risk_factors (list), recommended_interventions (list), timeline.
+    For QBR_PREP: include achievements_since_last_qbr, metrics_summary, upcoming_roadmap_highlights, mutual_success_plan_update, next_qbr_topics.
+    Tie all health scores to measurable product usage data where available.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 3072
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - churn_signals
+    - expansion_patterns
+    - health_score_models
+  domain_id: "customer_success"
+  domain_receptors:
+    - customer_success
+    - sales_revenue

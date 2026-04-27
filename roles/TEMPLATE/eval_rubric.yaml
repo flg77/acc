@@ -1,0 +1,46 @@
+# roles/TEMPLATE/eval_rubric.yaml
+# =============================================================================
+# ACC Evaluation Rubric Template
+#
+# Used when computing EVAL_OUTCOME.overall_score after task completion.
+#
+# CONSTRAINT: Weights MUST sum to exactly 1.0.
+#             Verify: sum(c["weight"] for c in criteria.values()) == 1.0
+#
+# Scoring guide per criterion:
+#   1.0 = excellent / fully meets standard
+#   0.5 = acceptable / partially meets standard
+#   0.0 = failure / does not meet standard
+# =============================================================================
+
+criteria:
+  # Replace these example criteria with criteria appropriate for your role.
+  # Each criterion needs a unique snake_case key, a weight (float), and a description.
+
+  output_quality:
+    weight: 0.40
+    description: >
+      The primary output meets the stated requirements and is accurate.
+      Score: 1.0 = fully correct and complete; 0.5 = partially correct;
+      0.0 = incorrect or missing.
+
+  process_adherence:
+    weight: 0.30
+    description: >
+      The role followed defined procedures and policies for the task type.
+      Score: 1.0 = fully compliant; 0.5 = minor deviations; 0.0 = significant deviation.
+
+  communication_quality:
+    weight: 0.20
+    description: >
+      Output is clear, well-structured, and appropriate for the audience.
+      Score: 1.0 = clear and professional; 0.5 = understandable but needs polish;
+      0.0 = unclear or inappropriate.
+
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; decreases linearly to 0.0 at 2× budget.
+
+# Total weight: 0.40 + 0.30 + 0.20 + 0.10 = 1.00 ✓

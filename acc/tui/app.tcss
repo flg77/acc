@@ -1,0 +1,206 @@
+/* ACC TUI — Global stylesheet (REQ-TUI-005)
+ * Externalised from the inline CSS = block in acc/tui/app.py.
+ * Screen-specific rules live in screens/{name}.tcss (future).
+ */
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+
+Screen {
+    background: $surface;
+}
+
+/* ── Screen titles ─────────────────────────────────────────────────────────── */
+
+#screen-title,
+#dashboard-title,
+#compliance-title,
+#performance-title,
+#comms-title,
+#ecosystem-title {
+    text-align: center;
+    text-style: bold;
+    color: $accent;
+    padding: 0 1;
+}
+
+/* ── Form widgets (InfuseScreen) ───────────────────────────────────────────── */
+
+.field-label {
+    width: auto;
+    padding: 0 1 0 0;
+}
+
+.section-label {
+    color: $text-muted;
+    margin-top: 1;
+}
+
+.input-short {
+    width: 16;
+}
+
+.textarea-tall {
+    height: 6;
+}
+
+.textarea-medium {
+    height: 4;
+}
+
+.status-bar {
+    color: $warning;
+    padding: 0 1;
+}
+
+/* ── Shared panel chrome ───────────────────────────────────────────────────── */
+
+.panel-label {
+    text-style: bold;
+    color: $accent;
+}
+
+.info-panel {
+    border: solid $primary;
+    padding: 0 1;
+    margin: 0 0 1 0;
+    min-height: 6;
+}
+
+/* ── Dashboard layout ──────────────────────────────────────────────────────── */
+
+#agents-panel {
+    width: 50%;
+    min-width: 30;
+}
+
+#right-panels {
+    width: 50%;
+    padding: 0 1;
+}
+
+#last-update {
+    color: $text-muted;
+    padding: 0 1;
+}
+
+.footer-bar {
+    color: $text-muted;
+}
+
+/* ── Compliance screen ─────────────────────────────────────────────────────── */
+
+/* OWASP grade colours — A through F */
+.compliance-grade-a { color: $success; }
+.compliance-grade-b { color: $success; }
+.compliance-grade-c { color: $warning; }
+.compliance-grade-d { color: $warning; }
+.compliance-grade-f { color: $error; }
+
+/* ── Backpressure state colours ────────────────────────────────────────────── */
+
+.backpressure-open    { color: $success; }
+.backpressure-throttle { color: $warning; }
+.backpressure-closed  { color: $error; }
+
+/* ── Domain + compliance health badges ────────────────────────────────────── */
+
+.domain-badge {
+    color: $accent;
+    text-style: italic;
+}
+
+.health-score-green { color: $success; }
+.health-score-amber { color: $warning; }
+.health-score-red   { color: $error; }
+
+/* ── Collective tab strip ──────────────────────────────────────────────────── */
+
+#collective-tabs {
+    height: 3;
+    background: $surface-darken-1;
+    layout: horizontal;
+    align: left middle;
+    padding: 0 1;
+}
+
+#collective-tabs Button {
+    min-width: 12;
+    margin: 0 1 0 0;
+    background: $surface;
+    border: none;
+    color: $text-muted;
+}
+
+#collective-tabs Button.active-collective {
+    background: $secondary;
+    color: $text;
+    text-style: bold;
+}
+
+#collective-tabs Button.disconnected-collective {
+    color: $error;
+}
+
+/* ── Key hints ─────────────────────────────────────────────────────────────── */
+
+.key-hint {
+    color: $text-muted;
+    padding: 0 1;
+}
+
+/* ── Roadmap placeholders (EcosystemScreen) ────────────────────────────────── */
+
+.roadmap-label {
+    text-style: bold;
+    color: $text-muted;
+    margin-top: 1;
+    padding: 0 1;
+}
+
+.roadmap-content {
+    padding: 0 1 1 1;
+}
+
+/* ── Ecosystem layout ──────────────────────────────────────────────────────── */
+
+#ecosystem-left {
+    width: 45%;
+}
+
+#ecosystem-right {
+    width: 55%;
+    padding: 0 0 0 1;
+}
+
+/* ── Compliance layout ─────────────────────────────────────────────────────── */
+
+#compliance-left {
+    width: 45%;
+}
+
+#compliance-right {
+    width: 55%;
+    padding: 0 0 0 1;
+}
+
+/* ── Performance layout ────────────────────────────────────────────────────── */
+
+#performance-left {
+    width: 55%;
+}
+
+#performance-right {
+    width: 45%;
+    padding: 0 0 0 1;
+}
+
+/* ── Comms layout ──────────────────────────────────────────────────────────── */
+
+#comms-left {
+    width: 50%;
+}
+
+#comms-right {
+    width: 50%;
+    padding: 0 0 0 1;
+}

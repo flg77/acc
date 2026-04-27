@@ -179,7 +179,11 @@ services:
     restart: unless-stopped
 
   # ── TUI (optional, disabled by default) ──────────────────────────────────
-  # Enable with: podman-compose --profile tui up -d
+  # Multi-screen operator console (ACC-TUI-Evolution).
+  # Enable with: podman-compose --profile tui up -d                (REQ-TUI-045)
+  #
+  # Multi-collective:  set ACC_COLLECTIVE_IDS=sol-01,sol-02
+  # WebBridge:         set ACC_TUI_WEB_PORT=8765 + uncomment port mapping below
   acc-tui:
     profiles:
       - tui
@@ -195,8 +199,16 @@ services:
         condition: service_healthy
     environment:
       ACC_NATS_URL: nats://nats:4222
-      ACC_COLLECTIVE_ID: sol-01
+      # Multi-collective: comma-separated list of collective IDs (REQ-TUI-006)
+      ACC_COLLECTIVE_IDS: sol-01
+      # WebBridge HTTP port — 0 = disabled; set to 8765 and enable port below (REQ-TUI-041)
+      ACC_TUI_WEB_PORT: "0"
+      ACC_ROLES_ROOT: /app/roles
+    # Uncomment when WebBridge is enabled (ACC_TUI_WEB_PORT=8765):
+    # ports:
+    #   - "8765:8765"
     networks:
       - acc-net
+    # stdin_open + tty required for interactive terminal access (REQ-TUI-049)
     stdin_open: true
     tty: true

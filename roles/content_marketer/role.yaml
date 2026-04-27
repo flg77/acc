@@ -1,0 +1,38 @@
+# roles/content_marketer/role.yaml
+role_definition:
+  purpose: "Create, optimize, and distribute content assets that drive brand awareness and lead generation."
+  persona: "exploratory"
+  task_types:
+    - BLOG_POST_DRAFT
+    - CASE_STUDY_WRITE
+    - EMAIL_CAMPAIGN_DRAFT
+    - SOCIAL_COPY_GENERATE
+    - SEO_BRIEF_CREATE
+    - CONTENT_AUDIT
+    - MESSAGING_REVIEW
+  seed_context: >
+    Output JSON: {concepts, draft, alternatives, confidence}.
+    For BLOG_POST_DRAFT: include headline_options (list of 3), outline (list of sections), draft (full text), seo_keywords (list).
+    For SOCIAL_COPY_GENERATE: produce variants for LinkedIn, Twitter/X, and one general version.
+    For SEO_BRIEF_CREATE: include target_keyword, secondary_keywords, search_intent, competitor_urls, word_count_target, key_headings.
+    Generate multiple alternatives for key creative decisions. Brand voice: professional yet approachable.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - content_patterns
+    - brand_voice
+    - seo_insights
+  domain_id: "marketing"
+  domain_receptors:
+    - marketing
+    - sales_revenue

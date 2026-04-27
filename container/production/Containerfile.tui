@@ -1,23 +1,39 @@
 # ACC TUI — Production UBI10 Python 3.12 (minimal)
 #
+# Multi-screen operator console (ACC-TUI-Evolution).
+#
 # Fixes vs beta/Containerfile.tui:
 #   - USER 0 held through pip install; non-root enforced only at the end
 #   - COPY no longer requires README.md (which may not exist)
 #   - Single USER 1001 instruction at the end (no duplicate)
-#   - chown + chmod for OpenShift restricted SCC compliance
+#   - chown + chmod for OpenShift restricted SCC compliance (REQ-TUI-046)
 #   - .containerignore required alongside this file
 #
-# Compatible with OpenShift restricted SCC (non-root UID 1001)
+# New in ACC-TUI-Evolution:
+#   - ACC_COLLECTIVE_IDS env var (comma-separated, multi-collective — REQ-TUI-006)
+#   - ACC_TUI_WEB_PORT env var (0 = disabled; non-zero = WebBridge — REQ-TUI-041)
+#   - EXPOSE 8765 for WebBridge HTTP endpoint
+#   - roles/ directory copied for dynamic role discovery (REQ-TUI-020, REQ-TUI-037)
+#
+# Compatible with OpenShift restricted SCC (non-root UID 1001 — REQ-TUI-046)
 #
 # Build:
 #   podman build -f container/production/Containerfile.tui \
 #     --build-arg ACC_VERSION=0.2.0 \
 #     -t localhost/acc-tui:0.2.0 .
 #
-# Run:
+# Run standalone:
 #   podman run -it --rm \
 #     -e ACC_NATS_URL=nats://nats:4222 \
-#     -e ACC_COLLECTIVE_ID=sol-01 \
+#     -e ACC_COLLECTIVE_IDS=sol-01 \
+#     localhost/acc-tui:0.2.0
+#
+# Run with WebBridge:
+#   podman run -it --rm \
+#     -e ACC_NATS_URL=nats://nats:4222 \
+#     -e ACC_COLLECTIVE_IDS=sol-01 \
+#     -e ACC_TUI_WEB_PORT=8765 \
+#     -p 8765:8765 \
 #     localhost/acc-tui:0.2.0
 
 FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
@@ -75,15 +91,23 @@ if nats_deps:
 
 # ── Layer 3: Application source ──────────────────────────────────────────────
 COPY acc/ /app/acc/
+# Copy roles/ directory for dynamic role discovery (REQ-TUI-020, REQ-TUI-037)
+COPY roles/ /app/roles/
 RUN pip install --no-cache-dir --no-deps . \
  && chown -R 1001:0 /app \
  && chmod -R g=u /app
 
 # Switch to non-root only here — after all installs and chown are complete
+# UID 1001 satisfies OpenShift restricted SCC (REQ-TUI-046)
 USER 1001
 
+# WebBridge HTTP port (only active when ACC_TUI_WEB_PORT is set — REQ-TUI-041)
+EXPOSE 8765
+
 ENV ACC_NATS_URL=nats://nats:4222 \
-    ACC_COLLECTIVE_ID=sol-01 \
+    ACC_COLLECTIVE_IDS=sol-01 \
+    ACC_TUI_WEB_PORT=0 \
+    ACC_ROLES_ROOT=/app/roles \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 

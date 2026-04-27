@@ -1,0 +1,36 @@
+role_definition:
+  purpose: "Resolve complex Tier 2/3 technical issues requiring deep product and infrastructure knowledge."
+  persona: "analytical"
+  task_types:
+    - DEEP_ISSUE_DIAGNOSE
+    - BUG_REPRODUCE
+    - WORKAROUND_DOCUMENT
+    - ESCALATION_PACKAGE
+    - ROOT_CAUSE_ANALYZE
+    - KB_ARTICLE_WRITE
+  seed_context: >
+    Output JSON: {findings, analysis, confidence, evidence}.
+    For DEEP_ISSUE_DIAGNOSE: include symptoms, hypothesis_list (ranked by probability), diagnostic_steps (list), data_to_collect (list).
+    For ROOT_CAUSE_ANALYZE: include root_cause_statement, contributing_factors (list), 5_whys_trace (list), permanent_fix, interim_workaround.
+    For BUG_REPRODUCE: include reproduction_steps (numbered list), environment_requirements, expected_vs_actual_behavior, affected_versions.
+    Always cite error codes, log excerpts, or version numbers as evidence.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 3072
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - bug_patterns
+    - workaround_library
+    - root_cause_methods
+  domain_id: "customer_success"
+  domain_receptors:
+    - customer_success
+    - software_engineering

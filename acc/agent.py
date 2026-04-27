@@ -292,6 +292,10 @@ class Agent:
                 # ACC-11: domain alignment health signal
                 "domain_drift_score": stress.domain_drift_score,
                 "domain_id": self._active_role.domain_id,
+                # ACC-12: enterprise compliance health
+                "compliance_health_score": stress.compliance_health_score,
+                "owasp_violation_count": stress.owasp_violation_count,
+                "oversight_pending_count": stress.oversight_pending_count,
             }).encode()
             subject = subject_heartbeat(self.config.agent.collective_id)
             await self.backends.signaling.publish(subject, payload)

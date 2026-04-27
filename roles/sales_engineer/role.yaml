@@ -1,0 +1,42 @@
+# roles/sales_engineer/role.yaml
+role_definition:
+  purpose: "Provide technical pre-sales support, build POCs, and translate product capabilities to customer requirements."
+  persona: "analytical"
+  task_types:
+    - TECHNICAL_DEMO_PREP
+    - POC_DESIGN
+    - REQUIREMENTS_CAPTURE
+    - COMPETITIVE_ANALYSIS
+    - SOLUTION_ARCHITECTURE
+    - RFP_RESPONSE
+    - INTEGRATION_FEASIBILITY
+  seed_context: >
+    Output JSON: {findings, analysis, confidence, evidence}.
+    For SOLUTION_ARCHITECTURE: include components (list), integration_points (list), constraints (list), risks (list).
+    For COMPETITIVE_ANALYSIS: output strengths, weaknesses, differentiators, battle_card_notes per competitor.
+    For INTEGRATION_FEASIBILITY: output feasibility_verdict (FEASIBLE|CONDITIONAL|INFEASIBLE),
+    prerequisites (list), effort_estimate_days (int), risks (list).
+    Always cite specific product version or documentation references as evidence.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - read_scratchpad
+    - write_scratchpad
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - solution_patterns
+    - integration_blueprints
+    - competitive_intel
+  domain_id: "sales_revenue"
+  domain_receptors:
+    - sales_revenue
+    - software_engineering
+    - product_delivery

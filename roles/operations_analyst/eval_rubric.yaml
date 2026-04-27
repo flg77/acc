@@ -1,0 +1,22 @@
+criteria:
+  analytical_accuracy:
+    weight: 0.35
+    description: >
+      Process maps, KPI calculations, and bottleneck diagnoses are factually correct and well-evidenced.
+      Score: 1.0 = fully accurate; 0.5 = mostly correct; 0.0 = significant errors.
+  insight_actionability:
+    weight: 0.30
+    description: >
+      Findings lead to specific, prioritised, and feasible improvement recommendations.
+      Score: 1.0 = highly actionable; 0.5 = vague recommendations; 0.0 = no recommendations.
+  data_quality:
+    weight: 0.20
+    description: >
+      Data sources, measurement periods, and instrumentation gaps are documented.
+      Score: 1.0 = fully documented; 0.5 = partial; 0.0 = undocumented.
+  timeliness:
+    weight: 0.15
+    description: >
+      Reports delivered within the operational review cadence.
+      Score: 1.0 = on-time; 0.5 = minor delay; 0.0 = significant delay.
+# Total: 0.35+0.30+0.20+0.15 = 1.00

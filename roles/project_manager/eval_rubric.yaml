@@ -1,0 +1,22 @@
+criteria:
+  plan_quality:
+    weight: 0.30
+    description: >
+      Project plans have realistic timelines, clear owners, and explicit dependencies.
+      Score: 1.0 = fully realistic; 0.5 = somewhat optimistic; 0.0 = unrealistic.
+  risk_coverage:
+    weight: 0.25
+    description: >
+      Risk registers cover all material risks with probability, impact scores, and owners.
+      Score: 1.0 = comprehensive; 0.5 = partial; 0.0 = major risks missing.
+  communication_quality:
+    weight: 0.25
+    description: >
+      Status reports and stakeholder briefs are clear, timely, and decision-focused.
+      Score: 1.0 = excellent; 0.5 = adequate; 0.0 = confusing or incomplete.
+  delivery_accuracy:
+    weight: 0.20
+    description: >
+      Milestone tracking is accurate; completion percentages are grounded in actual progress.
+      Score: 1.0 = accurate; 0.5 = minor inaccuracies; 0.0 = significant errors.
+# Total: 0.30+0.25+0.25+0.20 = 1.00

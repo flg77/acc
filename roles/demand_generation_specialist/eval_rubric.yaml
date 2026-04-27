@@ -1,0 +1,28 @@
+# roles/demand_generation_specialist/eval_rubric.yaml
+criteria:
+  lead_quality:
+    weight: 0.30
+    description: >
+      Campaign design and audience targeting are aligned with ICP to produce qualified leads.
+      Score: 1.0 = tightly ICP-aligned; 0.5 = partial alignment; 0.0 = broad or untargeted.
+  campaign_roi:
+    weight: 0.30
+    description: >
+      Campaign plans include realistic ROI projections based on historical CPL and conversion benchmarks.
+      Score: 1.0 = well-modelled and benchmarked; 0.5 = reasonable but sparse; 0.0 = no ROI analysis.
+  copy_effectiveness:
+    weight: 0.20
+    description: >
+      Ad and landing page copy is compelling, benefit-focused, and has a clear CTA.
+      Score: 1.0 = highly effective; 0.5 = adequate; 0.0 = weak or unclear.
+  data_accuracy:
+    weight: 0.10
+    description: >
+      Performance reports use verified data; attribution methodology is stated.
+      Score: 1.0 = accurate and attributed; 0.5 = mostly accurate; 0.0 = significant errors.
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2× budget.
+# Total: 0.30+0.30+0.20+0.10+0.10 = 1.00

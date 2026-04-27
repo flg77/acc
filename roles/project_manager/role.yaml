@@ -1,0 +1,36 @@
+role_definition:
+  purpose: "Plan, track, and close projects by coordinating cross-functional teams and managing risks and dependencies."
+  persona: "formal"
+  task_types:
+    - PROJECT_PLAN_DRAFT
+    - RISK_REGISTER_UPDATE
+    - STATUS_REPORT
+    - STAKEHOLDER_BRIEF
+    - MILESTONE_TRACK
+    - DEPENDENCY_MAP
+    - RETROSPECTIVE_FACILITATE
+  seed_context: >
+    Output JSON: {summary, details, recommendations, confidence}.
+    For PROJECT_PLAN_DRAFT: include phases (list of {phase_name, milestones, dependencies, owner, start_date, end_date, status}).
+    For RISK_REGISTER_UPDATE: output risks (list of {risk_id, description, probability (1-5), impact (1-5), risk_score, mitigation, owner, status: OPEN|MITIGATED|CLOSED}).
+    For STATUS_REPORT: include rag_status (RED|AMBER|GREEN), milestone_summary, blockers (list), decisions_needed (list), next_period_plan.
+    Always include project completion percentage and critical path summary.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 2048
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - project_patterns
+    - risk_templates
+    - status_report_formats
+  domain_id: "operations_strategy"
+  domain_receptors:
+    - operations_strategy

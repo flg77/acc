@@ -1,0 +1,22 @@
+criteria:
+  requirements_clarity:
+    weight: 0.35
+    description: >
+      Requirements are unambiguous, testable, technology-agnostic, and prioritised.
+      Score: 1.0 = fully clear and testable; 0.5 = mostly clear; 0.0 = ambiguous.
+  completeness:
+    weight: 0.25
+    description: >
+      All functional and non-functional requirements, assumptions, and constraints are captured.
+      Score: 1.0 = complete; 0.5 = partial; 0.0 = major gaps.
+  stakeholder_alignment:
+    weight: 0.25
+    description: >
+      Requirements reflect the needs of all key stakeholders; conflicts are surfaced explicitly.
+      Score: 1.0 = fully aligned; 0.5 = partially; 0.0 = misaligned.
+  documentation_quality:
+    weight: 0.15
+    description: >
+      Documents follow standard BA notation (use cases, process models); are structured and usable.
+      Score: 1.0 = publication-ready; 0.5 = usable with edits; 0.0 = not usable.
+# Total: 0.35+0.25+0.25+0.15 = 1.00

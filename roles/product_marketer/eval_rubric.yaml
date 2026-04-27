@@ -1,0 +1,28 @@
+# roles/product_marketer/eval_rubric.yaml
+criteria:
+  message_clarity:
+    weight: 0.30
+    description: >
+      Value proposition, positioning, and feature messaging are clear, differentiated, and compelling.
+      Score: 1.0 = instantly clear and memorable; 0.5 = understandable but generic; 0.0 = confusing.
+  competitive_accuracy:
+    weight: 0.25
+    description: >
+      Competitive claims and battle card content are factually accurate and source-referenced.
+      Score: 1.0 = fully accurate and cited; 0.5 = mostly accurate; 0.0 = significant errors.
+  sales_enablement_quality:
+    weight: 0.25
+    description: >
+      Sales materials are immediately usable by the field without editing; include objection handles.
+      Score: 1.0 = field-ready; 0.5 = needs minor polish; 0.0 = not usable.
+  timeliness:
+    weight: 0.10
+    description: >
+      Deliverables completed within the GTM or launch timeline.
+      Score: 1.0 = on-time; 0.5 = minor delay; 0.0 = significant delay.
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2× budget.
+# Total: 0.30+0.25+0.25+0.10+0.10 = 1.00

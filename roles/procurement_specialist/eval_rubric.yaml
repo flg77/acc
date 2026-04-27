@@ -1,0 +1,22 @@
+criteria:
+  vendor_assessment_quality:
+    weight: 0.30
+    description: >
+      Vendor evaluations use consistent scoring criteria and TCO methodology; recommendations are well-reasoned.
+      Score: 1.0 = rigorous and objective; 0.5 = adequate; 0.0 = inconsistent or biased.
+  rfp_completeness:
+    weight: 0.25
+    description: >
+      RFP documents include all required technical, commercial, and compliance requirements.
+      Score: 1.0 = comprehensive; 0.5 = partial; 0.0 = significant omissions.
+  cost_savings_accuracy:
+    weight: 0.25
+    description: >
+      Cost savings estimates are based on TCO analysis with stated assumptions.
+      Score: 1.0 = rigorous TCO analysis; 0.5 = quoted price only; 0.0 = no cost analysis.
+  risk_identification:
+    weight: 0.20
+    description: >
+      Supplier risk assessments cover financial, concentration, geopolitical, and ESG dimensions.
+      Score: 1.0 = comprehensive risk coverage; 0.5 = partial; 0.0 = risk not assessed.
+# Total: 0.30+0.25+0.25+0.20 = 1.00

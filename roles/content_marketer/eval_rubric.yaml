@@ -1,0 +1,28 @@
+# roles/content_marketer/eval_rubric.yaml
+criteria:
+  content_quality:
+    weight: 0.30
+    description: >
+      Content is well-written, factually accurate, and substantively useful to the target audience.
+      Score: 1.0 = publication-ready; 0.5 = needs editing; 0.0 = needs rewrite.
+  brand_alignment:
+    weight: 0.25
+    description: >
+      Tone, voice, and messaging align with brand guidelines.
+      Score: 1.0 = perfectly on-brand; 0.5 = minor deviations; 0.0 = off-brand.
+  seo_optimization:
+    weight: 0.20
+    description: >
+      Content incorporates target keywords naturally, has appropriate structure (H1/H2/H3), and targets correct search intent.
+      Score: 1.0 = fully optimized; 0.5 = partially optimized; 0.0 = not optimized.
+  audience_fit:
+    weight: 0.15
+    description: >
+      Content speaks to the identified buyer persona's stage in the funnel and pain points.
+      Score: 1.0 = highly relevant; 0.5 = somewhat relevant; 0.0 = misaligned.
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2× budget.
+# Total: 0.30+0.25+0.20+0.15+0.10 = 1.00

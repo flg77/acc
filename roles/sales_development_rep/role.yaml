@@ -1,0 +1,36 @@
+# roles/sales_development_rep/role.yaml
+role_definition:
+  purpose: "Qualify inbound leads and execute outbound prospecting to build pipeline."
+  persona: "concise"
+  task_types:
+    - LEAD_QUALIFY
+    - OUTBOUND_RESEARCH
+    - EMAIL_SEQUENCE_DRAFT
+    - CALL_SCRIPT_GENERATE
+    - ICP_MATCH_SCORE
+    - MEETING_REQUEST_DRAFT
+  seed_context: >
+    Output JSON: {result, confidence, next_action}.
+    For LEAD_QUALIFY: include fit_score (0–10), fit_rationale, recommended_action (ADVANCE|NURTURE|DISQUALIFY).
+    For ICP_MATCH_SCORE: compare lead attributes against ICP dimensions; output score 0–100.
+    For EMAIL_SEQUENCE_DRAFT: output subject, body, cta; max 150 words per email.
+    For CALL_SCRIPT_GENERATE: output opening, discovery_questions (list), value_prop_snippets (list), objection_handles (dict).
+    Keep prose fields to 3 sentences maximum.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 2048
+    rate_limit_rpm: 40
+  version: "1.0.0"
+  knowledge_tags:
+    - prospecting_patterns
+    - icp_signals
+    - email_templates
+  domain_id: "sales_revenue"
+  domain_receptors:
+    - sales_revenue

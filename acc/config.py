@@ -228,6 +228,69 @@ class SecurityConfig(BaseModel):
     arbiter_verify_key: str = ""
 
 
+class ComplianceConfig(BaseModel):
+    """Enterprise compliance settings (ACC-12).
+
+    All enforcement defaults to **observe mode** (log but do not block) to allow
+    safe rollout.  Set ``ACC_CAT_A_ENFORCE=true`` and ``ACC_OWASP_ENFORCE=true``
+    to activate blocking enforcement.
+    """
+
+    enabled: bool = True
+    """Master switch.  False disables all compliance controls (not recommended for production)."""
+
+    frameworks: list[str] = Field(
+        default_factory=lambda: ["EU_AI_ACT"],
+        description="Active compliance frameworks: EU_AI_ACT | HIPAA | SOC2 | OWASP_LLM_TOP10",
+    )
+
+    hipaa_mode: bool = False
+    """When True: PHI entities are redacted from LanceDB episodes; HIPAA §164.312 controls
+    are applied to every task; Presidio analyzer must be installed."""
+
+    owasp_enforce: bool = False
+    """When True: OWASP guardrail violations block task processing (CRITICAL violations always
+    block regardless of this flag).  False = observe mode (log but don't block)."""
+
+    cat_a_enforce: bool = False
+    """When True: Cat-A rule violations block task processing and emit ALERT_ESCALATE.
+    False = observe mode."""
+
+    cat_a_wasm_path: str = "/app/regulatory_layer/category_a/constitutional_rhoai.wasm"
+    """Path to the compiled OPA WASM artifact for Cat-A evaluation."""
+
+    audit_backend: Literal["file", "kafka", "multi"] = "file"
+    """Audit record backend.  ``file`` = rotating JSONL (edge-default).
+    ``kafka`` = AMQ Streams / Confluent Kafka.  ``multi`` = both simultaneously."""
+
+    audit_file_path: str = "/app/data/audit"
+    """Directory for rotating JSONL audit files (file backend)."""
+
+    audit_kafka_topic: str = "acc-audit"
+    """Kafka topic prefix; agent appends ``-{collective_id}``."""
+
+    audit_kafka_bootstrap: str = ""
+    """Kafka bootstrap servers (comma-separated host:port pairs)."""
+
+    audit_retention_days: int = 7
+    """Days to retain audit log files before deletion."""
+
+    oversight_timeout_s: int = 300
+    """Seconds to wait for human approval before proceeding (EU AI Act Art. 14)."""
+
+    oversight_risk_threshold: str = "HIGH"
+    """Minimum EU AI Act risk level that triggers human oversight queue submission."""
+
+    injection_distance_threshold: float = 0.85
+    """Cosine distance threshold above which a prompt is flagged as injection attempt (LLM01)."""
+
+    evidence_signing_key_env: str = ""
+    """Environment variable name holding the HMAC signing key for audit chain."""
+
+    disabled_guardrails: list[str] = Field(default_factory=list)
+    """List of guardrail codes to disable entirely, e.g. ``['LLM02', 'LLM04']``."""
+
+
 class ACCConfig(BaseModel):
     deploy_mode: DeployMode = "standalone"
     agent: AgentConfig = Field(default_factory=AgentConfig)
@@ -238,6 +301,7 @@ class ACCConfig(BaseModel):
     role_definition: RoleDefinitionConfig = Field(default_factory=RoleDefinitionConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     working_memory: WorkingMemoryConfig = Field(default_factory=WorkingMemoryConfig)
+    compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
 
     @model_validator(mode="after")
     def _validate_deploy_mode_fields(self) -> "ACCConfig":
@@ -298,6 +362,16 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     # ACC_ROLES_ROOT is consumed by RoleStore/RoleLoader, not here
     # ACC_SCRATCHPAD_TTL_S, ACC_KNOWLEDGE_INDEX_MAX_ITEMS, ACC_EVAL_RETENTION_DAYS
     # are read from Cat-B setpoints at runtime; no config-layer field needed.
+    # Compliance / governance (ACC-12)
+    "ACC_COMPLIANCE_ENABLED":    ("compliance", "enabled"),
+    "ACC_HIPAA_MODE":            ("compliance", "hipaa_mode"),
+    "ACC_OWASP_ENFORCE":         ("compliance", "owasp_enforce"),
+    "ACC_CAT_A_ENFORCE":         ("compliance", "cat_a_enforce"),
+    "ACC_CAT_A_WASM_PATH":       ("compliance", "cat_a_wasm_path"),
+    "ACC_AUDIT_BACKEND":         ("compliance", "audit_backend"),
+    "ACC_AUDIT_FILE_PATH":       ("compliance", "audit_file_path"),
+    "ACC_AUDIT_KAFKA_BOOTSTRAP": ("compliance", "audit_kafka_bootstrap"),
+    "ACC_OVERSIGHT_TIMEOUT_S":   ("compliance", "oversight_timeout_s"),
 }
 
 

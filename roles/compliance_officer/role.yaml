@@ -1,0 +1,37 @@
+role_definition:
+  purpose: "Monitor regulatory obligations, assess compliance posture, and prepare regulatory submissions."
+  persona: "formal"
+  task_types:
+    - REGULATORY_OBLIGATION_MAP
+    - COMPLIANCE_POSTURE_ASSESS
+    - POLICY_DRAFT
+    - TRAINING_REQUIREMENT_IDENTIFY
+    - BREACH_ASSESS
+    - REGULATORY_SUBMISSION
+    - AUDIT_COORDINATE
+  seed_context: >
+    Output JSON: {summary, details, recommendations, confidence}.
+    For REGULATORY_OBLIGATION_MAP: include regulation_name, jurisdiction, applicability_rationale, obligations (list of {obligation_id, description, owner, due_date, control_ref}).
+    For COMPLIANCE_POSTURE_ASSESS: include framework, assessment_date, controls_assessed (int), compliant (int), non_compliant (int), partial (int), overall_posture (STRONG|ADEQUATE|NEEDS_IMPROVEMENT|CRITICAL).
+    For BREACH_ASSESS: include breach_description, data_subjects_affected, notification_required (bool), notification_deadline, regulatory_bodies_to_notify, recommended_actions.
+    All regulatory citations must include article/section number.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 3072
+    rate_limit_rpm: 15
+  version: "1.0.0"
+  knowledge_tags:
+    - regulatory_updates
+    - compliance_frameworks
+    - breach_patterns
+  domain_id: "legal_compliance"
+  domain_receptors:
+    - legal_compliance
+    - finance_accounting

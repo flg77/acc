@@ -1,0 +1,22 @@
+criteria:
+  accuracy:
+    weight: 0.40
+    description: >
+      Financial calculations are mathematically correct; assumptions are stated and reasonable.
+      Score: 1.0 = fully accurate; 0.5 = minor errors; 0.0 = significant errors.
+  analytical_depth:
+    weight: 0.25
+    description: >
+      Analysis identifies root causes and business drivers, not just surface-level variances.
+      Score: 1.0 = deep causal analysis; 0.5 = descriptive; 0.0 = superficial.
+  narrative_clarity:
+    weight: 0.20
+    description: >
+      Financial narrative is clear, non-technical where appropriate, and connects numbers to business outcomes.
+      Score: 1.0 = executive-ready; 0.5 = understandable; 0.0 = confusing.
+  timeliness:
+    weight: 0.15
+    description: >
+      Deliverables produced within the required financial reporting cycle.
+      Score: 1.0 = on-time; 0.5 = minor delay; 0.0 = significant delay.
+# Total: 0.40+0.25+0.20+0.15 = 1.00

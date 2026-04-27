@@ -1,0 +1,22 @@
+criteria:
+  health_score_accuracy:
+    weight: 0.30
+    description: >
+      Health scores are grounded in product usage data; dimension scores are individually justified.
+      Score: 1.0 = data-driven and accurate; 0.5 = partially supported; 0.0 = unsupported.
+  plan_quality:
+    weight: 0.25
+    description: >
+      Onboarding and success plans have clear milestones, owners, and measurable outcomes.
+      Score: 1.0 = complete and actionable; 0.5 = partial; 0.0 = vague.
+  expansion_identification:
+    weight: 0.25
+    description: >
+      Expansion opportunities are grounded in genuine usage patterns and customer outcomes.
+      Score: 1.0 = highly relevant; 0.5 = plausible but generic; 0.0 = irrelevant.
+  renewal_prediction:
+    weight: 0.20
+    description: >
+      Renewal risk assessments are accurate and interventions are time-bound.
+      Score: 1.0 = accurate with timely interventions; 0.5 = accurate but late; 0.0 = missed risk.
+# Total: 0.30+0.25+0.25+0.20 = 1.00

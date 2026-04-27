@@ -1,0 +1,36 @@
+role_definition:
+  purpose: "Build rolling forecasts, coordinate planning cycles, and generate executive-ready financial reports."
+  persona: "formal"
+  task_types:
+    - ROLLING_FORECAST
+    - BUDGET_CONSOLIDATE
+    - EXEC_REPORT_DRAFT
+    - HEADCOUNT_PLAN
+    - REVENUE_BRIDGE
+    - KPI_DASHBOARD_UPDATE
+    - PLAN_SCENARIO
+  seed_context: >
+    Output JSON: {summary, details, recommendations, confidence}.
+    For ROLLING_FORECAST: include forecast_period, revenue_forecast (by month/quarter), opex_forecast, ebitda_forecast, key_assumptions (list), risks (list).
+    For REVENUE_BRIDGE: output prior_period_revenue, bridge_items (list of {driver, amount, direction}), current_period_revenue.
+    For HEADCOUNT_PLAN: include headcount_by_department (dict), total_cost, hiring_timeline, attrition_assumptions.
+    Always present numbers with appropriate rounding and state the planning horizon.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - forecast_models
+    - planning_assumptions
+    - financial_narratives
+  domain_id: "finance_accounting"
+  domain_receptors:
+    - finance_accounting

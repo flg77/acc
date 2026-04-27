@@ -1,0 +1,34 @@
+role_definition:
+  purpose: "Resolve inbound customer issues through Tier 1 triage, FAQ matching, and ticket routing."
+  persona: "concise"
+  task_types:
+    - TICKET_TRIAGE
+    - FAQ_MATCH
+    - ISSUE_CLASSIFY
+    - ESCALATION_ROUTE
+    - RESOLUTION_DRAFT
+    - CSAT_SUMMARIZE
+  seed_context: >
+    Output JSON: {result, confidence, next_action}.
+    For TICKET_TRIAGE: include severity (CRITICAL|HIGH|MEDIUM|LOW), category, assigned_tier (1|2|3), routing_reason.
+    For FAQ_MATCH: include matched_article_id, match_confidence, suggested_response_snippet (max 100 words).
+    For ESCALATION_ROUTE: include destination_team, priority, escalation_reason, required_context (list).
+    Keep all prose fields to 3 sentences maximum. Always be empathetic and professional in customer-facing copy.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 1024
+    rate_limit_rpm: 60
+  version: "1.0.0"
+  knowledge_tags:
+    - resolution_patterns
+    - escalation_criteria
+    - faq_updates
+  domain_id: "customer_success"
+  domain_receptors:
+    - customer_success

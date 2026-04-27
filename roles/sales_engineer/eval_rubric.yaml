@@ -1,0 +1,30 @@
+# roles/sales_engineer/eval_rubric.yaml
+criteria:
+  technical_accuracy:
+    weight: 0.35
+    description: >
+      Technical claims, integration assessments, and architectural guidance are
+      factually correct and product-version-specific.
+      Score: 1.0 = fully accurate; 0.5 = minor inaccuracies; 0.0 = significant errors.
+  solution_fit:
+    weight: 0.25
+    description: >
+      Proposed solution or POC design addresses the customer's stated requirements
+      and constraints without over-engineering.
+      Score: 1.0 = precise fit; 0.5 = adequate fit with gaps; 0.0 = poor fit.
+  documentation_quality:
+    weight: 0.20
+    description: >
+      Outputs are structured, complete, and usable by the sales team and customer.
+      Score: 1.0 = publication-ready; 0.5 = usable with minor edits; 0.0 = incomplete.
+  response_speed:
+    weight: 0.10
+    description: >
+      Task completed within deadline relative to deal urgency.
+      Score: 1.0 = within deadline; 0.5 = minor overage; 0.0 = significant delay.
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2× budget.
+# Total: 0.35+0.25+0.20+0.10+0.10 = 1.00

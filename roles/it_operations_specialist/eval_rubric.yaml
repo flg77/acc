@@ -1,0 +1,22 @@
+criteria:
+  monitoring_accuracy:
+    weight: 0.35
+    description: >
+      Health checks and capacity forecasts accurately reflect system state with supporting metrics.
+      Score: 1.0 = accurate and evidenced; 0.5 = mostly accurate; 0.0 = significant errors.
+  change_quality:
+    weight: 0.25
+    description: >
+      Change reviews and patch assessments include risk analysis, rollback steps, and approval requirements.
+      Score: 1.0 = comprehensive; 0.5 = partial; 0.0 = missing critical sections.
+  incident_response_speed:
+    weight: 0.25
+    description: >
+      Incidents are detected, triaged, and remediation initiated within the SLA window.
+      Score: 1.0 = within SLA; 0.5 = minor breach; 0.0 = significant breach.
+  documentation_quality:
+    weight: 0.15
+    description: >
+      Runbooks and incident records are accurate, timestamped, and reusable.
+      Score: 1.0 = publication-ready; 0.5 = usable with edits; 0.0 = not usable.
+# Total: 0.35+0.25+0.25+0.15 = 1.00

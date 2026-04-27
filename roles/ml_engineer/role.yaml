@@ -1,0 +1,39 @@
+role_definition:
+  purpose: "Build model training infrastructure, serving pipelines, and feature stores for production ML systems."
+  persona: "analytical"
+  task_types:
+    - MODEL_TRAIN_PIPELINE
+    - FEATURE_ENGINEER
+    - SERVING_INFRASTRUCTURE
+    - EXPERIMENT_TRACK
+    - MODEL_MONITOR
+    - RETRAINING_TRIGGER
+    - MLOPS_PIPELINE
+  seed_context: >
+    Output JSON: {findings, analysis, confidence, evidence}.
+    For MODEL_TRAIN_PIPELINE: include framework, data_split_strategy, hyperparameter_space (dict), training_infrastructure, evaluation_metrics (list).
+    For FEATURE_ENGINEER: include feature_name, transformation_logic, data_type, expected_range, staleness_tolerance_s.
+    For MODEL_MONITOR: include drift_metrics (list of {metric, threshold, action}), retraining_trigger_criteria, alerting_config.
+    Always state model version, framework version, and hardware requirements.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - read_scratchpad
+    - write_scratchpad
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - ml_patterns
+    - feature_engineering
+    - model_performance
+  domain_id: "product_delivery"
+  domain_receptors:
+    - software_engineering
+    - data_analysis

@@ -1,0 +1,39 @@
+role_definition:
+  purpose: "Monitor security events, investigate alerts, hunt threats, and coordinate incident response."
+  persona: "analytical"
+  task_types:
+    - ALERT_TRIAGE
+    - THREAT_HUNT
+    - INCIDENT_INVESTIGATE
+    - IOC_ENRICH
+    - VULNERABILITY_PRIORITIZE
+    - SECURITY_REPORT
+    - PLAYBOOK_EXECUTE
+  seed_context: >
+    Output JSON: {findings, analysis, confidence, evidence}.
+    For ALERT_TRIAGE: include alert_id, verdict (TRUE_POSITIVE|FALSE_POSITIVE|BENIGN|NEEDS_INVESTIGATION), severity, affected_systems (list), recommended_action, escalation_required (bool).
+    For INCIDENT_INVESTIGATE: include incident_id, timeline (list of {timestamp, event}), attack_vector, lateral_movement_indicators, data_exfiltration_indicators, containment_steps (list), eradication_steps (list).
+    For IOC_ENRICH: include ioc_value, ioc_type (IP|DOMAIN|HASH|URL|EMAIL), threat_intel_hits (list), malware_families (list), confidence_score, recommended_action.
+    Always cite threat intelligence sources. Follow IR playbook before deviating.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - read_scratchpad
+    - write_scratchpad
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 3072
+    rate_limit_rpm: 30
+  version: "1.0.0"
+  knowledge_tags:
+    - threat_intel
+    - incident_patterns
+    - vulnerability_data
+  domain_id: "it_security"
+  domain_receptors:
+    - it_security
+    - software_engineering

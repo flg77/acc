@@ -21,7 +21,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from acc.config import RoleDefinitionConfig
+from acc.config import ComplianceConfig, RoleDefinitionConfig
 from acc.signals import redis_centroid_key, redis_stress_key
 
 logger = logging.getLogger("acc.cognitive_core")
@@ -72,6 +72,19 @@ class StressIndicators:
     0.0 = perfectly aligned with domain standard; 1.0 = maximally drifted.
     Remains 0.0 until the agent receives a ``CENTROID_UPDATE`` carrying a
     ``domain_centroid_vector``."""
+
+    # ACC-12: Enterprise compliance
+    compliance_health_score: float = 1.0
+    """Aggregate compliance health (1.0 = fully compliant, 0.0 = critical violations).
+
+    Computed as: ``(cat_a_pass_rate × 0.4) + (owasp_clean_rate × 0.4) + (audit_completeness × 0.2)``.
+    Falls below 0.5 → ALERT_ESCALATE with ``compliance_degraded=True``."""
+
+    owasp_violation_count: int = 0
+    """Running count of OWASP LLM Top 10 violations detected (not just blocked)."""
+
+    oversight_pending_count: int = 0
+    """Current items in the human oversight queue awaiting approval."""
 
 
 @dataclass
@@ -172,6 +185,7 @@ class CognitiveCore:
         vector: Any,
         redis_client: Optional[Any] = None,
         role_label: str = "agent",
+        compliance_config: Optional[ComplianceConfig] = None,
         peer_collectives: Optional[list[str]] = None,
         bridge_enabled: bool = False,
     ) -> None:
@@ -191,9 +205,52 @@ class CognitiveCore:
         # ACC-11: shared domain centroid vector (updated by CENTROID_UPDATE signal)
         self._domain_centroid: list[float] = []
 
+        # ACC-12: Compliance components (lazily wired; disabled by default)
+        self._compliance_cfg: ComplianceConfig = compliance_config or ComplianceConfig()
+        self._guardrail_engine: Optional[Any] = None
+        self._cat_a_evaluator: Optional[Any] = None
+        self._audit_broker: Optional[Any] = None
+        self._owasp_grader: Optional[Any] = None
+        if self._compliance_cfg.enabled:
+            self._init_compliance()
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def _init_compliance(self) -> None:
+        """Lazily instantiate compliance components."""
+        try:
+            from acc.guardrails.engine import GuardrailEngine
+            self._guardrail_engine = GuardrailEngine(self._compliance_cfg)
+        except Exception as exc:
+            logger.warning("cognitive_core: guardrail engine init failed: %s", exc)
+
+        try:
+            from acc.governance import CatAEvaluator
+            self._cat_a_evaluator = CatAEvaluator(
+                wasm_path=self._compliance_cfg.cat_a_wasm_path,
+                enforce=self._compliance_cfg.cat_a_enforce,
+            )
+        except Exception as exc:
+            logger.warning("cognitive_core: Cat-A evaluator init failed: %s", exc)
+
+        try:
+            from acc.audit import AuditBroker
+            self._audit_broker = AuditBroker.from_config(
+                self._compliance_cfg,
+                agent_id=self._agent_id,
+                collective_id=self._collective_id,
+                redis_client=self._redis,
+            )
+        except Exception as exc:
+            logger.warning("cognitive_core: audit broker init failed: %s", exc)
+
+        try:
+            from acc.compliance.owasp import OWASPGrader
+            self._owasp_grader = OWASPGrader()
+        except Exception as exc:
+            logger.warning("cognitive_core: OWASP grader init failed: %s", exc)
 
     def set_domain_centroid(self, centroid: list[float]) -> None:
         """Update the cached domain centroid vector (ACC-11).
@@ -250,6 +307,59 @@ class CognitiveCore:
         system_prompt = self.build_system_prompt(role)
         user_content: str = task_payload.get("content", "")
 
+        # ACC-12 — PRE-GUARDRAIL (OWASP LLM01/04/06/08)
+        pre_guard_result = None
+        if self._guardrail_engine is not None:
+            try:
+                pre_guard_result = await self._guardrail_engine.pre_llm(user_content, role)
+                if self._owasp_grader is not None:
+                    self._owasp_grader.record_check(["LLM01", "LLM04", "LLM06"])
+                if pre_guard_result.violations:
+                    self._stress.owasp_violation_count += len(pre_guard_result.violations)
+                    if self._owasp_grader is not None:
+                        self._owasp_grader.record_violations(pre_guard_result.violations)
+                if not pre_guard_result.passed:
+                    self._stress.cat_b_trigger_count += 1
+                    reason = f"guardrail:{','.join(pre_guard_result.violations)}"
+                    self._stress.task_count += 1
+                    self._update_compliance_health()
+                    return CognitiveResult(
+                        blocked=True,
+                        block_reason=reason,
+                        stress=self._snapshot_stress(),
+                    )
+            except Exception as exc:
+                logger.warning("cognitive_core: pre-guardrail error: %s", exc)
+
+        # ACC-12 — CAT-A EVALUATION
+        cat_a_result = "PASS"
+        if self._cat_a_evaluator is not None:
+            try:
+                input_doc = self._cat_a_evaluator.build_input(
+                    signal_type=task_payload.get("signal_type", "TASK_ASSIGN"),
+                    collective_id=self._collective_id,
+                    from_agent=task_payload.get("from_agent", ""),
+                    agent_id=self._agent_id,
+                    agent_role=self._role_label,
+                    domain_receptors=list(role.domain_receptors),
+                )
+                allowed, reason = self._cat_a_evaluator.evaluate(input_doc)
+                if reason.startswith("observed:"):
+                    cat_a_result = f"OBSERVED:{reason[9:]}"
+                elif not allowed:
+                    cat_a_result = f"BLOCK:{reason}"
+                    self._stress.cat_a_trigger_count += 1
+                    self._stress.task_count += 1
+                    self._emit_alert_escalate(f"cat_a:{reason}")
+                    self._update_compliance_health()
+                    return CognitiveResult(
+                        blocked=True,
+                        block_reason=f"cat_a:{reason}",
+                        stress=self._snapshot_stress(),
+                    )
+            except Exception as exc:
+                logger.warning("cognitive_core: Cat-A evaluation error: %s", exc)
+
         # 3 — LLM CALL (async)
         response, latency_ms, token_count = await self._call_llm(system_prompt, user_content)
         output_text: str = response.get("content", "")
@@ -279,12 +389,56 @@ class CognitiveCore:
             except Exception as exc:
                 logger.warning("cognitive_core: episode persist failed: %s", exc)
 
+        # ACC-12 — POST-GUARDRAIL (OWASP LLM02/06/08)
+        post_guard_result = None
+        stored_output = output_text
+        if self._guardrail_engine is not None and output_text:
+            try:
+                post_guard_result = await self._guardrail_engine.post_llm(output_text, role)
+                if self._owasp_grader is not None:
+                    self._owasp_grader.record_check(["LLM02", "LLM06", "LLM08"])
+                if post_guard_result.violations:
+                    self._stress.owasp_violation_count += len(post_guard_result.violations)
+                    if self._owasp_grader is not None:
+                        self._owasp_grader.record_violations(post_guard_result.violations)
+                # Use redacted content for storage if HIPAA mode applied redaction
+                if post_guard_result.redacted_content is not None:
+                    stored_output = post_guard_result.redacted_content
+            except Exception as exc:
+                logger.warning("cognitive_core: post-guardrail error: %s", exc)
+
+        # ACC-12 — EU AI Act risk classification
+        risk_level = "MINIMAL"
+        try:
+            from acc.compliance.eu_ai_act import EUAIActClassifier
+            risk_level = EUAIActClassifier().classify(
+                self._role_label,
+                task_payload.get("task_type", task_payload.get("signal_type", "TASK_ASSIGN")),
+            )
+        except Exception as exc:
+            logger.debug("cognitive_core: risk classification error: %s", exc)
+
+        # ACC-12 — Audit record
+        task_id = task_payload.get("task_id", episode_id or "")
+        await self._write_audit_record(
+            task_id=task_id,
+            signal_type=task_payload.get("signal_type", "TASK_ASSIGN"),
+            pre_result=pre_guard_result,
+            post_result=post_guard_result,
+            cat_a_result=cat_a_result,
+            risk_level=risk_level,
+            outcome="PROCESSED",
+        )
+
         # 6 — DRIFT (role centroid + domain centroid, ACC-11)
         drift = await self._compute_drift(
             output_embedding, role,
             domain_centroid=self._domain_centroid or None,
         )
         self._stress.drift_score = drift
+
+        # Update compliance health score
+        self._update_compliance_health()
 
         # Update stress counters
         self._stress.task_count += 1
@@ -319,6 +473,79 @@ class CognitiveCore:
             episode_id=episode_id,
             latency_ms=latency_ms,
         )
+
+    # ------------------------------------------------------------------
+    # ACC-12 Compliance helpers
+    # ------------------------------------------------------------------
+
+    async def _write_audit_record(
+        self,
+        *,
+        task_id: str,
+        signal_type: str,
+        pre_result: Optional[Any],
+        post_result: Optional[Any],
+        cat_a_result: str,
+        risk_level: str,
+        outcome: str,
+    ) -> None:
+        """Write a compliance audit record (best-effort; never blocks task)."""
+        if self._audit_broker is None:
+            return
+        try:
+            from acc.audit import AuditRecord
+            from acc.compliance.hipaa import HIPAAControls
+            from acc.compliance.soc2 import SOC2Mapper
+
+            violations: list[str] = []
+            if pre_result:
+                violations.extend(pre_result.violations)
+            if post_result:
+                violations.extend(post_result.violations)
+
+            hipaa = HIPAAControls()
+            soc2 = SOC2Mapper()
+            control_ids = (
+                hipaa.map_event(signal_type, self._agent_id)
+                + soc2.map_event(signal_type)
+            )
+
+            rec = AuditRecord(
+                agent_id=self._agent_id,
+                collective_id=self._collective_id,
+                task_id=task_id,
+                signal_type=signal_type,
+                guardrail_results=list(set(violations)),
+                cat_a_result=cat_a_result,
+                compliance_frameworks=list(self._compliance_cfg.frameworks),
+                control_ids=list(set(control_ids)),
+                outcome=outcome,
+                risk_level=risk_level,
+            )
+            await self._audit_broker.record(rec)
+        except Exception as exc:
+            logger.error("cognitive_core: audit write failed: %s", exc)
+
+    def _update_compliance_health(self) -> None:
+        """Recompute compliance_health_score from current stress counters."""
+        task_count = max(self._stress.task_count, 1)
+
+        cat_a_pass_rate = 1.0 - (
+            min(self._stress.cat_a_trigger_count, task_count) / task_count
+        )
+        owasp_clean_rate = 1.0 - (
+            min(self._stress.owasp_violation_count, task_count * 2) / (task_count * 2)
+        )
+        # Audit completeness: 1.0 if broker is available, 0.5 if not
+        audit_completeness = 1.0 if self._audit_broker is not None else 0.5
+
+        score = (cat_a_pass_rate * 0.4) + (owasp_clean_rate * 0.4) + (audit_completeness * 0.2)
+        self._stress.compliance_health_score = round(max(0.0, min(1.0, score)), 4)
+
+        if self._stress.compliance_health_score < 0.5:
+            self._emit_alert_escalate(
+                f"compliance_degraded: health_score={self._stress.compliance_health_score:.3f}"
+            )
 
     # ------------------------------------------------------------------
     # Prompt construction

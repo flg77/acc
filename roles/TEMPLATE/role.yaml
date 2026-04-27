@@ -1,0 +1,112 @@
+# roles/TEMPLATE/role.yaml
+# =============================================================================
+# ACC Role Template — copy this file to roles/your_role_name/role.yaml
+# and fill in each field.
+#
+# Fields marked REQUIRED must be set — the role will fail to load without them.
+# Fields marked OPTIONAL fall back to _base defaults when omitted.
+#
+# DO NOT set eval_rubric_hash — it is auto-computed by RoleLoader at load time.
+# =============================================================================
+
+role_definition:
+
+  # REQUIRED — One sentence describing what this role exists to accomplish.
+  # The LLM uses this verbatim for role self-identification.
+  purpose: ""
+
+  # REQUIRED — LLM persona style applied to system prompt construction.
+  # Must be exactly one of: concise | formal | exploratory | analytical
+  # concise     → short, direct outputs; JSON {result, confidence, next_action}
+  # formal      → structured sections; JSON {summary, details, recommendations, confidence}
+  # analytical  → data-driven; JSON {findings, analysis, confidence, evidence}
+  # exploratory → creative; JSON {concepts, draft, alternatives, confidence}
+  persona: "concise"
+
+  # REQUIRED — Task type identifiers this role accepts (UPPER_SNAKE_CASE).
+  # Used by arbiter to route TASK_ASSIGN signals to the correct role.
+  # Recommendation: 4–10 task types per role.
+  task_types: []
+  # Example:
+  #   - TICKET_TRIAGE
+  #   - ISSUE_CLASSIFY
+  #   - ESCALATION_ROUTE
+
+  # REQUIRED — Free-form context injected into the seed of the system prompt.
+  # Describe the expected output format (JSON schema), scoring guidance, and
+  # any domain-specific instructions. See persona table in README.md.
+  seed_context: ""
+
+  # REQUIRED — Actions this role is permitted to invoke.
+  # See README.md for the full valid actions list and forbidden arbiter-only actions.
+  allowed_actions: []
+  # Typical non-arbiter roles use some subset of:
+  #   - read_vector_db
+  #   - read_working_memory
+  #   - read_scratchpad
+  #   - write_working_memory
+  #   - write_scratchpad
+  #   - search_episodes
+  #   - publish_task
+  #   - publish_eval_outcome
+  #   - publish_episode_nominate
+  #   - publish_knowledge_share
+
+  # OPTIONAL — Cat-B setpoint overrides for this role only.
+  # token_budget:         max estimated input tokens before DoS shield blocks (default: 2048)
+  # rate_limit_rpm:       max LLM calls per minute (default: 60)
+  # max_task_duration_ms: hard deadline for task processing (default: 300000)
+  category_b_overrides: {}
+  # Example:
+  #   token_budget: 3072
+  #   rate_limit_rpm: 20
+  #   max_task_duration_ms: 600000
+
+  # OPTIONAL — SemVer. Bump on every change; RoleLoader hot-reloads on version change.
+  version: "1.0.0"
+
+  # OPTIONAL — How often (ms) to emit TASK_PROGRESS during task execution.
+  # Default: 30000 (30 seconds). Set to 0 to emit only at step boundaries.
+  progress_reporting_interval_ms: 30000
+
+  # OPTIONAL — Queue depth at which BACKPRESSURE(CLOSED) is emitted.
+  queue_backpressure_threshold: 10
+
+  # OPTIONAL — Queue depth at which BACKPRESSURE(OPEN) is re-emitted.
+  # Must be <= queue_backpressure_threshold.
+  queue_backpressure_resume_threshold: 8
+
+  # OPTIONAL — KNOWLEDGE_SHARE signal tags this role publishes under.
+  # Use snake_case. Subscribe via: acc.{cid}.knowledge.{tag}
+  knowledge_tags: []
+  # Example:
+  #   - resolution_patterns
+  #   - escalation_criteria
+
+  # OPTIONAL — Path to evaluation rubric (relative to this file). Do not change.
+  eval_rubric_ref: "eval_rubric.yaml"
+
+  # OPTIONAL — Whether this role nominates high-quality episodes for ICL (Cat-C).
+  can_nominate_episodes: true
+
+  # OPTIONAL — Whether this role may request spawning a sub-collective corpus.
+  # Gated by Cat-B rule B-011. Only specialized roles need true.
+  can_spawn_sub_collective: false
+
+  # OPTIONAL — Maximum number of tasks to process concurrently.
+  max_parallel_tasks: 1
+
+  # OPTIONAL — Whether this role participates in PLAN DAG execution.
+  plan_participant: true
+
+  # OPTIONAL — Knowledge domain this role inhabits.
+  # See README.md for predefined domain IDs or define your own (snake_case).
+  domain_id: ""
+
+  # OPTIONAL — Domain tags this role responds to in PARACRINE signals.
+  # Empty = universal receptor (responds to all domain signals).
+  # Non-empty = silently drops signals with domain_tag not in this list.
+  domain_receptors: []
+  # Example:
+  #   - customer_success
+  #   - software_engineering

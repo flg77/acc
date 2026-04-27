@@ -1,0 +1,27 @@
+criteria:
+  requirements_clarity:
+    weight: 0.35
+    description: >
+      Requirements are unambiguous, testable, and free from implementation prescriptions.
+      Score: 1.0 = fully clear and testable; 0.5 = mostly clear; 0.0 = ambiguous.
+  stakeholder_alignment:
+    weight: 0.25
+    description: >
+      Output addresses the perspectives of all key stakeholders and surfaces conflicts explicitly.
+      Score: 1.0 = fully aligned; 0.5 = partially aligned; 0.0 = misaligned.
+  delivery_accuracy:
+    weight: 0.20
+    description: >
+      Sprint plans and prioritisation are realistic given team capacity and existing commitments.
+      Score: 1.0 = realistic; 0.5 = somewhat optimistic; 0.0 = unrealistic.
+  scope_quality:
+    weight: 0.10
+    description: >
+      Out-of-scope items are explicitly listed; scope creep is proactively flagged.
+      Score: 1.0 = clear scope boundary; 0.5 = partial; 0.0 = undefined scope.
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2x budget.
+# Total: 0.35+0.25+0.20+0.10+0.10 = 1.00

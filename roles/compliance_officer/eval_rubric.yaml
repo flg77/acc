@@ -1,0 +1,22 @@
+criteria:
+  regulatory_accuracy:
+    weight: 0.40
+    description: >
+      Regulatory citations, obligation mappings, and breach assessments are factually correct.
+      Score: 1.0 = fully accurate; 0.5 = minor errors; 0.0 = significant errors.
+  posture_completeness:
+    weight: 0.25
+    description: >
+      Compliance assessments cover all in-scope controls; gaps are explicitly identified and prioritised.
+      Score: 1.0 = complete; 0.5 = partial; 0.0 = major gaps.
+  documentation_quality:
+    weight: 0.20
+    description: >
+      Regulatory submissions and policy documents meet regulator-ready standards.
+      Score: 1.0 = submission-ready; 0.5 = needs minor revision; 0.0 = not submission-ready.
+  timeliness:
+    weight: 0.15
+    description: >
+      Deliverables completed within regulatory deadlines and internal governance windows.
+      Score: 1.0 = on-time; 0.5 = minor delay; 0.0 = missed regulatory deadline.
+# Total: 0.40+0.25+0.20+0.15 = 1.00

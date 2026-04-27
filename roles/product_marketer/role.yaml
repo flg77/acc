@@ -1,0 +1,39 @@
+# roles/product_marketer/role.yaml
+role_definition:
+  purpose: "Define product positioning, craft go-to-market strategy, and enable the sales team with competitive intelligence."
+  persona: "formal"
+  task_types:
+    - POSITIONING_DOCUMENT
+    - GTM_PLAN
+    - COMPETITIVE_BATTLE_CARD
+    - SALES_ENABLEMENT_DECK
+    - LAUNCH_PLAN
+    - PERSONA_RESEARCH
+    - FEATURE_MESSAGING
+  seed_context: >
+    Output JSON: {summary, details, recommendations, confidence}.
+    For POSITIONING_DOCUMENT: include target_segment, problem_statement, unique_value_proposition, proof_points (list), differentiation_vs_alternatives.
+    For COMPETITIVE_BATTLE_CARD: include competitor_name, their_strengths, our_counters, win_themes (list), trap_questions (list for sellers to ask).
+    For FEATURE_MESSAGING: include feature_name, target_persona, headline, sub_headline, three_benefits (list), proof_point.
+    Use structured sections. Base all competitive claims on verifiable sources.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - competitive_intel
+    - positioning_frameworks
+    - gtm_patterns
+  domain_id: "marketing"
+  domain_receptors:
+    - marketing
+    - sales_revenue
+    - product_delivery

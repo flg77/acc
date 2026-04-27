@@ -1,0 +1,23 @@
+# roles/sales_development_rep/eval_rubric.yaml
+criteria:
+  qualification_accuracy:
+    weight: 0.35
+    description: >
+      Lead qualification assessments correctly identify ICP fit and recommended action.
+      Score: 1.0 = accurate and well-reasoned; 0.5 = mostly correct; 0.0 = incorrect routing.
+  outreach_quality:
+    weight: 0.25
+    description: >
+      Emails and call scripts are personalised, concise, and drive a clear CTA.
+      Score: 1.0 = highly personalised and compelling; 0.5 = adequate; 0.0 = generic or unclear.
+  meeting_conversion:
+    weight: 0.25
+    description: >
+      Output is optimised to book qualified meetings (strong value prop, easy CTA).
+      Score: 1.0 = highly conversion-optimised; 0.5 = moderate; 0.0 = unlikely to convert.
+  token_efficiency:
+    weight: 0.15
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2× budget.
+# Total: 0.35+0.25+0.25+0.15 = 1.00

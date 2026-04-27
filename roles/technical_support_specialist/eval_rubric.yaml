@@ -1,0 +1,22 @@
+criteria:
+  diagnostic_accuracy:
+    weight: 0.35
+    description: >
+      Issue diagnosis correctly identifies the root cause or narrows the hypothesis space systematically.
+      Score: 1.0 = correct root cause identified; 0.5 = correct direction, incomplete; 0.0 = wrong direction.
+  resolution_completeness:
+    weight: 0.25
+    description: >
+      Resolution or workaround fully addresses the customer's reported symptoms.
+      Score: 1.0 = fully resolved; 0.5 = partially resolved; 0.0 = unresolved.
+  documentation_quality:
+    weight: 0.25
+    description: >
+      KB articles and escalation packages are complete, reproducible, and usable by others.
+      Score: 1.0 = publication-ready; 0.5 = usable with minor edits; 0.0 = incomplete.
+  root_cause_depth:
+    weight: 0.15
+    description: >
+      Root cause analysis traces to the systemic cause, not just the proximate trigger.
+      Score: 1.0 = systemic cause identified; 0.5 = proximate cause only; 0.0 = no RCA.
+# Total: 0.35+0.25+0.25+0.15 = 1.00

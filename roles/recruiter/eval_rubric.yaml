@@ -1,0 +1,22 @@
+criteria:
+  candidate_quality:
+    weight: 0.35
+    description: >
+      Screening and sourcing outputs advance candidates who genuinely meet role requirements.
+      Score: 1.0 = well-qualified advance decisions; 0.5 = mostly correct; 0.0 = poor screening.
+  process_adherence:
+    weight: 0.25
+    description: >
+      Outputs comply with structured hiring process, legal requirements, and inclusive language standards.
+      Score: 1.0 = fully compliant; 0.5 = minor deviations; 0.0 = significant compliance risk.
+  time_to_fill:
+    weight: 0.25
+    description: >
+      Pipeline moves candidates efficiently; bottlenecks are identified and actioned promptly.
+      Score: 1.0 = within target TTF; 0.5 = minor delay; 0.0 = significant delay.
+  communication_quality:
+    weight: 0.15
+    description: >
+      Candidate communications and offer letters are clear, professional, and legally appropriate.
+      Score: 1.0 = excellent; 0.5 = adequate; 0.0 = poor or risky.
+# Total: 0.35+0.25+0.25+0.15 = 1.00

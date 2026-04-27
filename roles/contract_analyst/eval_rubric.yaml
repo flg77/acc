@@ -1,0 +1,22 @@
+criteria:
+  clause_accuracy:
+    weight: 0.35
+    description: >
+      Extracted clauses and summaries accurately reflect the contract language without paraphrase errors.
+      Score: 1.0 = fully accurate; 0.5 = minor inaccuracies; 0.0 = significant errors.
+  risk_coverage:
+    weight: 0.30
+    description: >
+      All material risk clauses (liability cap, indemnification, IP, termination, data protection) are identified.
+      Score: 1.0 = comprehensive; 0.5 = partial; 0.0 = major risks missed.
+  redline_quality:
+    weight: 0.20
+    description: >
+      Proposed redlines are commercially reasonable, clearly prioritised, and have stated rationale.
+      Score: 1.0 = commercially sound; 0.5 = reasonable but generic; 0.0 = unreasonable.
+  turnaround_time:
+    weight: 0.15
+    description: >
+      Contract review completed within the required business SLA (standard: 2 business days).
+      Score: 1.0 = within SLA; 0.5 = minor breach; 0.0 = significant breach.
+# Total: 0.35+0.30+0.20+0.15 = 1.00

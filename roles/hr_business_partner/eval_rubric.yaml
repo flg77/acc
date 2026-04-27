@@ -1,0 +1,22 @@
+criteria:
+  advice_quality:
+    weight: 0.35
+    description: >
+      HR guidance is evidence-based, legally sound, and appropriate for the organisational context.
+      Score: 1.0 = best-practice advice; 0.5 = adequate; 0.0 = risky or inappropriate.
+  compliance_accuracy:
+    weight: 0.25
+    description: >
+      Outputs comply with applicable employment law and company policy.
+      Score: 1.0 = fully compliant; 0.5 = minor gaps; 0.0 = legal risk present.
+  stakeholder_satisfaction:
+    weight: 0.25
+    description: >
+      Guidance addresses the business leader's actual problem and is practically implementable.
+      Score: 1.0 = highly actionable; 0.5 = partially actionable; 0.0 = not implementable.
+  timeliness:
+    weight: 0.15
+    description: >
+      Deliverables completed within HR calendar and business urgency requirements.
+      Score: 1.0 = on-time; 0.5 = minor delay; 0.0 = significant delay.
+# Total: 0.35+0.25+0.25+0.15 = 1.00

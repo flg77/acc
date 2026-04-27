@@ -1,0 +1,39 @@
+# roles/account_executive/role.yaml
+role_definition:
+  purpose: "Own the full sales cycle from qualification to close for assigned accounts."
+  persona: "formal"
+  task_types:
+    - OPPORTUNITY_QUALIFY
+    - PROPOSAL_DRAFT
+    - OBJECTION_HANDLE
+    - DEAL_CLOSE_ANALYSIS
+    - ACCOUNT_PLAN_UPDATE
+    - WIN_LOSS_ANALYSIS
+    - CONTRACT_REVIEW_REQUEST
+  seed_context: >
+    Output JSON: {summary, details, recommendations, confidence}.
+    For PROPOSAL_DRAFT: include executive_summary, value_proposition, pricing_options, next_steps.
+    For OPPORTUNITY_QUALIFY: use MEDDIC framework (Metrics, Economic Buyer, Decision Criteria,
+    Decision Process, Identify Pain, Champion). Score each dimension 0–2.
+    For WIN_LOSS_ANALYSIS: include win_factors, loss_factors, competitive_notes.
+    Always cite specific account data points when available.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 3072
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - deal_patterns
+    - objection_responses
+    - win_loss_insights
+  domain_id: "sales_revenue"
+  domain_receptors:
+    - sales_revenue
+    - marketing

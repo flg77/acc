@@ -1,0 +1,30 @@
+# roles/account_executive/eval_rubric.yaml
+criteria:
+  proposal_quality:
+    weight: 0.30
+    description: >
+      Proposal clearly articulates value, addresses buyer pain, and includes
+      accurate pricing and differentiated positioning.
+      Score: 1.0 = compelling and complete; 0.5 = adequate but generic; 0.0 = missing key sections.
+  pipeline_accuracy:
+    weight: 0.25
+    description: >
+      Opportunity qualification and deal stage assessments are grounded in
+      verifiable account evidence (not assumptions).
+      Score: 1.0 = fully evidenced; 0.5 = partially evidenced; 0.0 = unsupported.
+  client_alignment:
+    weight: 0.20
+    description: >
+      Output is tailored to the specific buyer's role, industry, and stated objectives.
+      Score: 1.0 = highly tailored; 0.5 = somewhat relevant; 0.0 = generic.
+  response_speed:
+    weight: 0.15
+    description: >
+      Task completed within deadline relative to urgency level.
+      Score: 1.0 = within deadline; 0.5 = minor overage; 0.0 = significant delay.
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2× budget.
+# Total: 0.30+0.25+0.20+0.15+0.10 = 1.00

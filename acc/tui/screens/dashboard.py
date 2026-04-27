@@ -1,7 +1,12 @@
-"""ACC TUI — DashboardScreen: live collective metrics view.
+"""ACC TUI — DashboardScreen (Soma): live collective metrics view.
 
 All data is sourced exclusively from NATS payloads via NATSObserver.
 Updates are driven by incoming messages — no polling timer required (REQ-DASH-005).
+
+ACC-TUI-Evolution updates:
+  - NavigationBar widget mounted at top (REQ-TUI-003)
+  - Uses shared AgentCard from acc.tui.widgets (REQ-TUI-018)
+  - Compliance health score bar below governance panel (REQ-TUI-019)
 """
 
 from __future__ import annotations
@@ -13,69 +18,34 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Footer, Header, Label, Static
+from textual.widgets import Footer, Label, ProgressBar, Static
+
+from acc.tui.widgets.agent_card import AgentCard
+from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
 if TYPE_CHECKING:
-    from acc.tui.models import CollectiveSnapshot, AgentSnapshot
-
-# State indicator symbols
-_ACTIVE_DOT = "●"
-_STALE_DOT = "○"
-
-
-class AgentCard(Static):
-    """Widget rendering a single agent's live state."""
-
-    DEFAULT_CSS = """
-    AgentCard {
-        border: solid $primary;
-        padding: 0 1;
-        margin: 0 1 1 0;
-        min-width: 26;
-        max-width: 30;
-        height: auto;
-    }
-    AgentCard .stale {
-        color: $text-muted;
-    }
-    """
-
-    def __init__(self, agent_id: str, **kwargs) -> None:  # type: ignore[override]
-        super().__init__(**kwargs)
-        self._agent_id = agent_id
-        self._content = ""
-
-    def refresh_from_snapshot(self, snap: "AgentSnapshot") -> None:
-        """Re-render card content from *snap*."""
-        state = snap.display_state
-        dot = _ACTIVE_DOT if state == "ACTIVE" else _STALE_DOT
-        color_class = "" if state == "ACTIVE" else " stale"
-
-        lines = [
-            f"[bold]{snap.agent_id[:20]}[/bold]",
-            f"{dot} {state}",
-            f"drift  {snap.drift_score:.2f} {snap.drift_sparkbar}",
-            f"ladder {snap.ladder_label}",
-            f"lat    {snap.last_task_latency_ms:.0f}ms",
-        ]
-        self.update("\n".join(lines))
+    from acc.tui.models import CollectiveSnapshot
 
 
 class DashboardScreen(Screen):
-    """Live ACC collective dashboard — agent grid + governance + memory + LLM panels."""
+    """Soma — live ACC collective dashboard: agent grid + governance + memory."""
 
     BINDINGS = [
-        ("tab", "switch_to_infuse", "Infuse"),
         ("r", "refresh_subscription", "Refresh"),
         ("q", "app.quit", "Quit"),
+        ("1", "navigate('soma')", "Soma"),
+        ("2", "navigate('nucleus')", "Nucleus"),
+        ("3", "navigate('compliance')", "Compliance"),
+        ("4", "navigate('comms')", "Comms"),
+        ("5", "navigate('performance')", "Performance"),
+        ("6", "navigate('ecosystem')", "Ecosystem"),
     ]
 
-    # Reactive snapshot — watch_snapshot re-renders all panels (REQ-DASH-005)
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        yield Label("ACC Collective Dashboard", id="dashboard-title")
+        yield NavigationBar(active_screen="soma", id="nav")
+        yield Label("ACC Soma — Collective Health Dashboard", id="dashboard-title")
 
         with Horizontal(id="main-row"):
             # Left: agent cards
@@ -83,14 +53,20 @@ class DashboardScreen(Screen):
                 yield Label("AGENTS", classes="panel-label")
                 yield Vertical(id="agent-grid")
 
-            # Right: governance + memory + LLM panels
+            # Right: governance + compliance health + memory + LLM metrics
             with Vertical(id="right-panels"):
-                # Governance
+                # Governance counters
                 with Vertical(id="governance-panel", classes="info-panel"):
                     yield Label("GOVERNANCE", classes="panel-label")
                     yield Static(id="gov-cat-a")
                     yield Static(id="gov-cat-b")
                     yield Static(id="gov-cat-c")
+                    # Compliance health score bar (REQ-TUI-019)
+                    yield Label("COMPLIANCE HEALTH", classes="panel-label")
+                    yield Static(id="compliance-health-value")
+                    yield ProgressBar(
+                        id="compliance-health-bar", total=100, show_eta=False
+                    )
 
                 # Memory
                 with Vertical(id="memory-panel", classes="info-panel"):
@@ -109,6 +85,9 @@ class DashboardScreen(Screen):
         yield Static(id="last-update", classes="footer-bar")
         yield Footer()
 
+    def on_navigate_to(self, event: NavigateTo) -> None:
+        self.app.switch_screen(event.screen_name)
+
     # ------------------------------------------------------------------
     # Reactive watcher
     # ------------------------------------------------------------------
@@ -120,6 +99,7 @@ class DashboardScreen(Screen):
 
         self._render_agent_grid(snap)
         self._render_governance(snap)
+        self._render_compliance_health(snap)
         self._render_memory(snap)
         self._render_llm_metrics(snap)
 
@@ -134,29 +114,24 @@ class DashboardScreen(Screen):
     # ------------------------------------------------------------------
 
     def _render_agent_grid(self, snap: "CollectiveSnapshot") -> None:
-        """Rebuild the agent card grid from *snap* (REQ-DASH-001)."""
+        """Rebuild the agent card grid using the shared AgentCard widget (REQ-TUI-018)."""
         grid = self.query_one("#agent-grid", Vertical)
-        # Update or create cards
         existing_ids = {w._agent_id for w in grid.query(AgentCard)}
         incoming_ids = set(snap.agents.keys())
 
-        # Remove cards for agents no longer in snapshot
         for card in grid.query(AgentCard):
             if card._agent_id not in incoming_ids:
                 card.remove()
 
-        # Add cards for new agents
         for agent_id in incoming_ids - existing_ids:
             grid.mount(AgentCard(agent_id=agent_id, id=f"card-{_safe_id(agent_id)}"))
 
-        # Update all existing cards
         for card in grid.query(AgentCard):
             agent_snap = snap.agents.get(card._agent_id)
             if agent_snap:
                 card.refresh_from_snapshot(agent_snap)
 
     def _render_governance(self, snap: "CollectiveSnapshot") -> None:
-        """Update governance panel (REQ-DASH-002)."""
         self.query_one("#gov-cat-a", Static).update(
             f"Cat-A triggers   {snap.total_cat_a_triggers:>4}"
         )
@@ -167,8 +142,17 @@ class DashboardScreen(Screen):
             f"Cat-C rules      {snap.total_cat_c_rules:>4}"
         )
 
+    def _render_compliance_health(self, snap: "CollectiveSnapshot") -> None:
+        """Render compliance health score bar (REQ-TUI-019)."""
+        score = snap.compliance_health_score
+        pct = score * 100
+        colour = "green" if score >= 0.80 else "yellow" if score >= 0.50 else "red"
+        self.query_one("#compliance-health-value", Static).update(
+            f"[{colour}]{score:.2f}[/{colour}]  [dim]({pct:.0f}%)[/dim]"
+        )
+        self.query_one("#compliance-health-bar", ProgressBar).progress = pct
+
     def _render_memory(self, snap: "CollectiveSnapshot") -> None:
-        """Update memory panel (REQ-DASH-003)."""
         self.query_one("#mem-icl", Static).update(
             f"ICL episodes  {snap.icl_episode_count:>6}"
         )
@@ -180,7 +164,6 @@ class DashboardScreen(Screen):
         )
 
     def _render_llm_metrics(self, snap: "CollectiveSnapshot") -> None:
-        """Update LLM metrics panel (REQ-DASH-004)."""
         self.query_one("#llm-p95", Static).update(
             f"p95 latency   {snap.p95_latency_ms:>6.0f}ms"
         )
@@ -192,15 +175,14 @@ class DashboardScreen(Screen):
         )
 
     # ------------------------------------------------------------------
-    # Actions (REQ-DASH-007)
+    # Actions
     # ------------------------------------------------------------------
 
-    def action_switch_to_infuse(self) -> None:
-        self.app.switch_screen("infuse")
-
     def action_refresh_subscription(self) -> None:
-        """Request the app to re-subscribe to NATS."""
         self.app.post_message(_RefreshMessage())
+
+    def action_navigate(self, screen_name: str) -> None:
+        self.app.switch_screen(screen_name)
 
 
 # ---------------------------------------------------------------------------

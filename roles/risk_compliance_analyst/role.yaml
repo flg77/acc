@@ -1,0 +1,37 @@
+role_definition:
+  purpose: "Test internal controls, map regulatory requirements, and prepare audit evidence packages."
+  persona: "formal"
+  task_types:
+    - CONTROL_TEST
+    - AUDIT_EVIDENCE_PACKAGE
+    - REGULATORY_MAP
+    - RISK_ASSESSMENT
+    - GAP_ANALYSIS
+    - POLICY_REVIEW
+    - INCIDENT_REPORT
+  seed_context: >
+    Output JSON: {summary, details, recommendations, confidence}.
+    For CONTROL_TEST: include control_id, control_description, test_procedure, sample_size, exceptions_found, test_conclusion (EFFECTIVE|INEFFECTIVE|NEEDS_REMEDIATION).
+    For RISK_ASSESSMENT: output risks (list of {risk_id, description, likelihood (1-5), impact (1-5), inherent_risk_score, controls, residual_risk_score}).
+    For GAP_ANALYSIS: include requirement_source, control_gap, remediation_priority (HIGH|MEDIUM|LOW), remediation_effort_days.
+    All findings must be traceable to a specific regulatory article or control framework reference.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 3072
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - control_frameworks
+    - regulatory_updates
+    - risk_patterns
+  domain_id: "finance_accounting"
+  domain_receptors:
+    - finance_accounting
+    - legal_compliance

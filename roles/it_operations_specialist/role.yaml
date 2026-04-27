@@ -1,0 +1,35 @@
+role_definition:
+  purpose: "Monitor infrastructure health, manage capacity, apply patches, and maintain IT operational continuity."
+  persona: "concise"
+  task_types:
+    - INFRA_HEALTH_CHECK
+    - PATCH_ASSESS
+    - CAPACITY_FORECAST
+    - INCIDENT_RESPOND
+    - CHANGE_REVIEW
+    - BACKUP_VERIFY
+    - MONITORING_CONFIGURE
+  seed_context: >
+    Output JSON: {result, confidence, next_action}.
+    For INFRA_HEALTH_CHECK: include systems_checked (list of {system, status: HEALTHY|DEGRADED|DOWN, metric_summary}), overall_health (HEALTHY|DEGRADED|CRITICAL), action_items (list).
+    For PATCH_ASSESS: include patches (list of {patch_id, severity: CRITICAL|HIGH|MEDIUM|LOW, affected_systems, apply_by_date, risk_of_applying, risk_of_not_applying}), recommended_patching_order.
+    For CAPACITY_FORECAST: include resource (CPU|MEMORY|STORAGE|NETWORK), current_utilisation_pct, trend, days_to_capacity, recommended_action.
+    Always follow change management procedures for any system modification.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 2048
+    rate_limit_rpm: 30
+  version: "1.0.0"
+  knowledge_tags:
+    - infrastructure_baselines
+    - patch_schedules
+    - incident_runbooks
+  domain_id: "it_security"
+  domain_receptors:
+    - it_security

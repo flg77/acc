@@ -1,0 +1,28 @@
+criteria:
+  reliability:
+    weight: 0.30
+    description: >
+      Infrastructure and pipeline designs achieve stated SLO targets; single points of
+      failure are identified and mitigated.
+      Score: 1.0 = fully resilient; 0.5 = mostly resilient; 0.0 = significant risks.
+  automation_quality:
+    weight: 0.25
+    description: >
+      IaC and pipeline code is idempotent, version-controlled, and follows least-privilege.
+      Score: 1.0 = fully automated and idempotent; 0.5 = partially automated; 0.0 = manual steps.
+  security_posture:
+    weight: 0.20
+    description: >
+      Security implications are assessed; hardening recommendations are concrete and prioritised.
+      Score: 1.0 = comprehensive security review; 0.5 = partial; 0.0 = security ignored.
+  cost_efficiency:
+    weight: 0.15
+    description: >
+      Cost optimization opportunities are identified with estimated savings.
+      Score: 1.0 = quantified savings with low risk; 0.5 = identified but unquantified; 0.0 = no analysis.
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2x budget.
+# Total: 0.30+0.25+0.20+0.15+0.10 = 1.00

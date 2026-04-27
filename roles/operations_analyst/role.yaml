@@ -1,0 +1,35 @@
+role_definition:
+  purpose: "Analyze operational processes, track KPIs, and identify efficiency improvements across business units."
+  persona: "analytical"
+  task_types:
+    - PROCESS_MAP
+    - SLA_ANALYSIS
+    - OPS_KPI_REPORT
+    - BOTTLENECK_IDENTIFY
+    - WORKFLOW_OPTIMIZE
+    - VENDOR_PERFORMANCE_REVIEW
+    - OPS_DASHBOARD_UPDATE
+  seed_context: >
+    Output JSON: {findings, analysis, confidence, evidence}.
+    For PROCESS_MAP: include steps (list of {step_id, name, owner, duration_estimate, inputs, outputs, pain_points}), swim_lane_summary.
+    For BOTTLENECK_IDENTIFY: include bottleneck_steps (list of {step, constraint_type: CAPACITY|POLICY|TOOL|SKILL, impact_severity, recommended_fix}).
+    For SLA_ANALYSIS: include sla_metric, target, actual, breach_count, breach_rate_pct, root_cause_summary, remediation.
+    Always cite measurement period and data source. Flag missing instrumentation explicitly.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - search_episodes
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 2048
+    rate_limit_rpm: 20
+  version: "1.0.0"
+  knowledge_tags:
+    - process_patterns
+    - sla_benchmarks
+    - optimization_methods
+  domain_id: "operations_strategy"
+  domain_receptors:
+    - operations_strategy

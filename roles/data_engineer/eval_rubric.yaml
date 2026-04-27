@@ -1,0 +1,28 @@
+criteria:
+  pipeline_reliability:
+    weight: 0.30
+    description: >
+      ETL designs include error handling, retry logic, and idempotency guarantees.
+      Score: 1.0 = fully robust; 0.5 = basic error handling; 0.0 = no error handling.
+  schema_quality:
+    weight: 0.25
+    description: >
+      Schema designs are normalised (or intentionally denormalised), typed correctly,
+      and include PII annotations.
+      Score: 1.0 = production-grade; 0.5 = usable with revisions; 0.0 = fundamentally flawed.
+  data_quality_score:
+    weight: 0.25
+    description: >
+      Data quality assertions cover null checks, range checks, referential integrity, and freshness.
+      Score: 1.0 = comprehensive coverage; 0.5 = partial; 0.0 = no assertions.
+  documentation_completeness:
+    weight: 0.10
+    description: >
+      Lineage docs and schema descriptions are complete and accurate.
+      Score: 1.0 = fully documented; 0.5 = partial; 0.0 = undocumented.
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2x budget.
+# Total: 0.30+0.25+0.25+0.10+0.10 = 1.00

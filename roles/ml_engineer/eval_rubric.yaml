@@ -1,0 +1,29 @@
+criteria:
+  pipeline_correctness:
+    weight: 0.30
+    description: >
+      Training pipelines implement correct train/val/test splits, avoid data leakage,
+      and use appropriate evaluation metrics for the task type.
+      Score: 1.0 = methodologically sound; 0.5 = minor issues; 0.0 = data leakage or wrong metrics.
+  feature_quality:
+    weight: 0.25
+    description: >
+      Feature engineering is well-motivated, computationally feasible, and includes
+      staleness/freshness specifications.
+      Score: 1.0 = production-ready; 0.5 = usable with revisions; 0.0 = flawed.
+  model_performance:
+    weight: 0.25
+    description: >
+      Serving and monitoring designs ensure model performance meets SLOs; drift detection is configured.
+      Score: 1.0 = fully monitored; 0.5 = partial monitoring; 0.0 = no monitoring.
+  reproducibility:
+    weight: 0.10
+    description: >
+      Experiment tracking captures all parameters, seeds, and artefact versions needed to reproduce results.
+      Score: 1.0 = fully reproducible; 0.5 = mostly reproducible; 0.0 = not reproducible.
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to task complexity budget.
+      Score: 1.0 = within budget; linearly decreases to 0.0 at 2x budget.
+# Total: 0.30+0.25+0.25+0.10+0.10 = 1.00

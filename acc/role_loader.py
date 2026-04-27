@@ -58,6 +58,44 @@ from acc.config import RoleDefinitionConfig
 logger = logging.getLogger("acc.role_loader")
 
 _BASE_ROLE_NAME = "_base"
+_EXCLUDED_ROLE_NAMES = {"_base", "TEMPLATE"}
+
+
+def list_roles(base_dir: str | Path = "roles") -> list[str]:
+    """Return alphabetically sorted role names found in *base_dir* (REQ-TUI-050).
+
+    Scans ``{base_dir}/*/role.yaml`` and returns the parent directory name for
+    each matching file, excluding ``_base`` and ``TEMPLATE`` directories.
+
+    Args:
+        base_dir: Path to the ``roles/`` directory.  Defaults to ``"roles"``
+            relative to the current working directory.
+
+    Returns:
+        Alphabetically sorted list of role name strings.  Empty list if
+        *base_dir* does not exist or contains no valid role directories.
+
+    Example::
+
+        >>> from acc.role_loader import list_roles
+        >>> list_roles("roles")
+        ['account_executive', 'analyst', 'arbiter', 'coding_agent', ...]
+    """
+    root = Path(base_dir)
+    if not root.is_dir():
+        logger.debug("list_roles: directory not found: %s", root)
+        return []
+
+    names: list[str] = []
+    for candidate in root.iterdir():
+        if not candidate.is_dir():
+            continue
+        if candidate.name in _EXCLUDED_ROLE_NAMES:
+            continue
+        if (candidate / "role.yaml").exists():
+            names.append(candidate.name)
+
+    return sorted(names)
 
 
 def _compute_rubric_hash(rubric_path: Path) -> str:

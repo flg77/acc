@@ -3,6 +3,20 @@
 Subscribes to ``acc.{collective_id}.>`` as a read-mostly observer.
 All dashboard state is derived from NATS payloads — no Redis or LanceDB access.
 
+Signal handler registry
+-----------------------
+Each handler method is decorated with ``@handles(*signal_types)`` which populates
+the module-level ``_HANDLERS`` dict at class-definition time.  ``_handle_message``
+performs a single O(1) dict lookup — no if/elif chain (REQ-TUI-010).
+
+All 11 ACC signal types are handled (REQ-TUI-009):
+  HEARTBEAT, TASK_COMPLETE, ALERT_ESCALATE          (ACC-6a)
+  TASK_PROGRESS, QUEUE_STATUS, BACKPRESSURE, PLAN,  (ACC-10)
+  KNOWLEDGE_SHARE, EVAL_OUTCOME, CENTROID_UPDATE,
+  EPISODE_NOMINATE
+
+Unknown signal types are silently ignored (REQ-TUI-011).
+
 Usage::
 
     queue: asyncio.Queue[CollectiveSnapshot] = asyncio.Queue(maxsize=50)
@@ -26,14 +40,31 @@ import time
 from copy import deepcopy
 from typing import Any
 
-from acc.tui.models import AgentSnapshot, CollectiveSnapshot
+from acc.tui.models import AgentSnapshot, CollectiveSnapshot, PlanSnapshot
 
 logger = logging.getLogger("acc.tui.client")
 
-# Signal types routed by this observer
-_SIG_HEARTBEAT = "HEARTBEAT"
-_SIG_TASK_COMPLETE = "TASK_COMPLETE"
-_SIG_ALERT_ESCALATE = "ALERT_ESCALATE"
+# ---------------------------------------------------------------------------
+# Signal handler registry
+# ---------------------------------------------------------------------------
+# Populated by the @handles() decorator at class-definition time.
+# Maps signal_type string → method name on NATSObserver.
+_HANDLERS: dict[str, str] = {}
+
+
+def handles(*signal_types: str):
+    """Class-method decorator that registers the method in _HANDLERS.
+
+    Usage::
+
+        @handles("HEARTBEAT")
+        def _route_heartbeat(self, agent_id: str, data: dict) -> None: ...
+    """
+    def decorator(fn):
+        for st in signal_types:
+            _HANDLERS[st] = fn.__name__
+        return fn
+    return decorator
 
 
 class NATSObserver:
@@ -92,37 +123,66 @@ class NATSObserver:
         await self._nc.publish(subject, json.dumps(payload).encode())
 
     # ------------------------------------------------------------------
-    # Message routing
+    # Message routing — registry pattern (REQ-TUI-010)
     # ------------------------------------------------------------------
 
     async def _handle_message(self, msg: Any) -> None:
-        """Route an incoming NATS message into the CollectiveSnapshot."""
+        """Route an incoming NATS message into the CollectiveSnapshot.
+
+        Uses ``_HANDLERS`` dict for O(1) signal_type dispatch.
+        Unknown signal types are silently ignored (REQ-TUI-011).
+        """
         try:
             data = json.loads(msg.data)
         except (json.JSONDecodeError, AttributeError):
-            logger.debug("nats_observer: could not decode message on %s", getattr(msg, "subject", "?"))
+            logger.debug(
+                "nats_observer: could not decode message on %s",
+                getattr(msg, "subject", "?"),
+            )
             return
 
         signal_type: str = data.get("signal_type", "")
         agent_id: str = data.get("agent_id", "")
 
-        try:
-            if signal_type == _SIG_HEARTBEAT:
-                self._route_heartbeat(agent_id, data)
-            elif signal_type == _SIG_TASK_COMPLETE:
-                self._route_task_complete(data)
-            elif signal_type == _SIG_ALERT_ESCALATE:
-                self._route_alert_escalate(agent_id, data)
-            # Unknown signal types are silently ignored (REQ-OBS-006)
-        except Exception as exc:
-            logger.warning("nats_observer: routing error (signal=%s): %s", signal_type, exc)
+        handler_name = _HANDLERS.get(signal_type)
+        if handler_name is None:
+            # Unknown signal — silently ignore (REQ-TUI-011)
             return
+
+        try:
+            getattr(self, handler_name)(agent_id, data)
+        except Exception as exc:
+            logger.warning(
+                "nats_observer: routing error (signal=%s): %s", signal_type, exc
+            )
+            return
+
+        # Log to signal flow (for CommunicationsScreen — REQ-TUI-035)
+        self._snapshot.append_signal_log({
+            "ts": time.time(),
+            "signal_type": signal_type,
+            "agent_id": agent_id,
+            "key_field": _signal_key_field(signal_type, data),
+        })
 
         self._snapshot.last_updated_ts = time.time()
         self._push_snapshot()
 
+    # ------------------------------------------------------------------
+    # Signal handlers — ACC-6a
+    # ------------------------------------------------------------------
+
+    @handles("HEARTBEAT")
     def _route_heartbeat(self, agent_id: str, data: dict) -> None:
-        """Update AgentSnapshot from a HEARTBEAT payload (REQ-OBS-003)."""
+        """Update AgentSnapshot from a HEARTBEAT payload (REQ-TUI-012).
+
+        Extracts:
+        - ACC-6a StressIndicators
+        - ACC-11: domain_id, domain_drift_score
+        - ACC-12: compliance_health_score, owasp_violation_count,
+                  oversight_pending_count
+        - LLM backend info (REQ-TUI-040)
+        """
         if not agent_id:
             return
         snap = self._snapshot.agents.get(agent_id) or AgentSnapshot(agent_id=agent_id)
@@ -130,35 +190,248 @@ class NATSObserver:
         snap.state = data.get("state", snap.state)
         snap.last_heartbeat_ts = data.get("ts", time.time())
         snap.role_version = data.get("role_version", snap.role_version)
-        # StressIndicators (ACC-6a REQ-STRESS-002)
+
+        # ACC-6a StressIndicators
         snap.drift_score = float(data.get("drift_score", snap.drift_score))
-        snap.cat_b_deviation_score = float(data.get("cat_b_deviation_score", snap.cat_b_deviation_score))
-        snap.token_budget_utilization = float(data.get("token_budget_utilization", snap.token_budget_utilization))
-        snap.reprogramming_level = int(data.get("reprogramming_level", snap.reprogramming_level))
+        snap.cat_b_deviation_score = float(
+            data.get("cat_b_deviation_score", snap.cat_b_deviation_score)
+        )
+        snap.token_budget_utilization = float(
+            data.get("token_budget_utilization", snap.token_budget_utilization)
+        )
+        snap.reprogramming_level = int(
+            data.get("reprogramming_level", snap.reprogramming_level)
+        )
         snap.task_count = int(data.get("task_count", snap.task_count))
-        snap.last_task_latency_ms = float(data.get("last_task_latency_ms", snap.last_task_latency_ms))
-        snap.cat_a_trigger_count = int(data.get("cat_a_trigger_count", snap.cat_a_trigger_count))
-        snap.cat_b_trigger_count = int(data.get("cat_b_trigger_count", snap.cat_b_trigger_count))
+        snap.last_task_latency_ms = float(
+            data.get("last_task_latency_ms", snap.last_task_latency_ms)
+        )
+        snap.cat_a_trigger_count = int(
+            data.get("cat_a_trigger_count", snap.cat_a_trigger_count)
+        )
+        snap.cat_b_trigger_count = int(
+            data.get("cat_b_trigger_count", snap.cat_b_trigger_count)
+        )
+
+        # ACC-11: domain identity (REQ-TUI-012)
+        snap.domain_id = data.get("domain_id", snap.domain_id)
+        snap.domain_drift_score = float(
+            data.get("domain_drift_score", snap.domain_drift_score)
+        )
+
+        # ACC-12: compliance fields (REQ-TUI-012)
+        snap.compliance_health_score = float(
+            data.get("compliance_health_score", snap.compliance_health_score)
+        )
+        snap.owasp_violation_count = int(
+            data.get("owasp_violation_count", snap.owasp_violation_count)
+        )
+        snap.oversight_pending_count = int(
+            data.get("oversight_pending_count", snap.oversight_pending_count)
+        )
+
+        # LLM backend metadata (REQ-TUI-040)
+        llm_info: dict = data.get("llm_backend", {})
+        if llm_info:
+            snap.llm_backend = llm_info.get("backend", snap.llm_backend)
+            snap.llm_model = llm_info.get("model", snap.llm_model)
+            snap.llm_base_url = llm_info.get("base_url", snap.llm_base_url)
+            snap.llm_health = llm_info.get("health", snap.llm_health)
+            snap.llm_p50_latency_ms = float(
+                llm_info.get("p50_latency_ms", snap.llm_p50_latency_ms)
+            )
+
         self._snapshot.agents[agent_id] = snap
 
-    def _route_task_complete(self, data: dict) -> None:
-        """Increment icl_episode_count on TASK_COMPLETE (REQ-OBS-004)."""
+        # Update collective-level compliance (worst-agent score)
+        active = [a for a in self._snapshot.agents.values() if not a.is_stale()]
+        if active:
+            self._snapshot.compliance_health_score = min(
+                a.compliance_health_score for a in active
+            )
+
+    @handles("TASK_COMPLETE")
+    def _route_task_complete(self, agent_id: str, data: dict) -> None:
+        """Increment icl_episode_count on TASK_COMPLETE."""
         if not data.get("blocked", False):
             self._snapshot.icl_episode_count += 1
 
+        # Clear task progress for this agent when task is done
+        if agent_id and agent_id in self._snapshot.agents:
+            snap = self._snapshot.agents[agent_id]
+            snap.current_task_step = 0
+            snap.total_task_steps = 0
+            snap.task_progress_label = ""
+
+    @handles("ALERT_ESCALATE")
     def _route_alert_escalate(self, agent_id: str, data: dict) -> None:
-        """Increment trigger counters on ALERT_ESCALATE (REQ-OBS-005)."""
+        """Increment trigger counters on ALERT_ESCALATE."""
         if not agent_id:
             return
         snap = self._snapshot.agents.get(agent_id) or AgentSnapshot(agent_id=agent_id)
-        # Determine category from payload reason
         reason: str = data.get("reason", "")
         if "cat_a" in reason.lower() or "cat-a" in reason.lower():
             snap.cat_a_trigger_count += 1
         else:
-            # Default Cat-B (most common alert source from CognitiveCore)
             snap.cat_b_trigger_count += 1
         self._snapshot.agents[agent_id] = snap
+
+    # ------------------------------------------------------------------
+    # Signal handlers — ACC-10
+    # ------------------------------------------------------------------
+
+    @handles("TASK_PROGRESS")
+    def _route_task_progress(self, agent_id: str, data: dict) -> None:
+        """Update per-agent task progress from a TASK_PROGRESS payload (REQ-TUI-030).
+
+        Extracts current_step, total_steps, step_label from the nested
+        ``progress`` object published by CognitiveCore.
+        """
+        if not agent_id:
+            return
+        snap = self._snapshot.agents.get(agent_id) or AgentSnapshot(agent_id=agent_id)
+        progress: dict = data.get("progress", {})
+        snap.current_task_step = int(
+            progress.get("current_step", data.get("current_step", snap.current_task_step))
+        )
+        snap.total_task_steps = int(
+            progress.get("total_steps_estimated", data.get("total_steps", snap.total_task_steps))
+        )
+        snap.task_progress_label = progress.get(
+            "step_label", data.get("step_label", snap.task_progress_label)
+        )
+        self._snapshot.agents[agent_id] = snap
+
+    @handles("QUEUE_STATUS")
+    def _route_queue_status(self, agent_id: str, data: dict) -> None:
+        """Update per-agent queue depth from a QUEUE_STATUS payload (REQ-TUI-028)."""
+        if not agent_id:
+            return
+        snap = self._snapshot.agents.get(agent_id) or AgentSnapshot(agent_id=agent_id)
+        snap.queue_depth = int(data.get("queue_depth", snap.queue_depth))
+        self._snapshot.agents[agent_id] = snap
+
+    @handles("BACKPRESSURE")
+    def _route_backpressure(self, agent_id: str, data: dict) -> None:
+        """Update per-agent backpressure state from a BACKPRESSURE payload (REQ-TUI-029).
+
+        Valid states: OPEN | THROTTLE | CLOSED.
+        """
+        if not agent_id:
+            return
+        snap = self._snapshot.agents.get(agent_id) or AgentSnapshot(agent_id=agent_id)
+        new_state = data.get("state", snap.backpressure_state)
+        if new_state in ("OPEN", "THROTTLE", "CLOSED"):
+            snap.backpressure_state = new_state
+        snap.queue_depth = int(data.get("queue_depth", snap.queue_depth))
+        self._snapshot.agents[agent_id] = snap
+
+    @handles("PLAN")
+    def _route_plan(self, agent_id: str, data: dict) -> None:
+        """Store or update a PlanSnapshot from a PLAN payload (REQ-TUI-033).
+
+        Uses plan_id as the key.  Step progress starts as PENDING for all steps.
+        """
+        plan_id: str = data.get("plan_id", "")
+        if not plan_id:
+            return
+
+        steps: list[dict] = data.get("steps", [])
+        existing = self._snapshot.active_plans.get(plan_id)
+
+        if existing is None:
+            # New plan — initialise all steps as PENDING
+            step_progress = {
+                s.get("step_id", str(i)): "PENDING"
+                for i, s in enumerate(steps)
+            }
+            self._snapshot.active_plans[plan_id] = PlanSnapshot(
+                plan_id=plan_id,
+                collective_id=data.get("collective_id", self._collective_id),
+                steps=steps,
+                step_progress=step_progress,
+            )
+        else:
+            # Re-broadcast — update steps but preserve progress
+            existing.steps = steps
+
+        # Keep only the 5 most recently received plans to avoid unbounded growth
+        if len(self._snapshot.active_plans) > 5:
+            oldest_key = next(iter(self._snapshot.active_plans))
+            del self._snapshot.active_plans[oldest_key]
+
+    @handles("KNOWLEDGE_SHARE")
+    def _route_knowledge_share(self, agent_id: str, data: dict) -> None:
+        """Append to the collective knowledge feed (REQ-TUI-034).
+
+        Feed is FIFO-capped at 20 entries by CollectiveSnapshot.append_knowledge().
+        """
+        entry = {
+            "ts": time.time(),
+            "tag": data.get("tag", ""),
+            "knowledge_type": data.get("knowledge_type", ""),
+            "content": data.get("content", ""),
+            "source_agent": agent_id,
+            "confidence": float(data.get("confidence", 0.0)),
+        }
+        self._snapshot.append_knowledge(entry)
+
+    @handles("EVAL_OUTCOME")
+    def _route_eval_outcome(self, agent_id: str, data: dict) -> None:
+        """Process EVAL_OUTCOME — update pattern count and log (REQ-TUI-034).
+
+        EVAL_OUTCOME with nominate_for_icl=True indicates a good outcome.
+        """
+        if data.get("outcome") == "GOOD":
+            self._snapshot.pattern_count += 1
+
+        # Store OWASP-tagged violations if present in eval payload
+        violations: list[dict] = data.get("owasp_violations", [])
+        for v in violations:
+            self._snapshot.append_owasp_violation({
+                "ts": time.time(),
+                "code": v.get("code", ""),
+                "agent_id": agent_id,
+                "risk_level": v.get("risk_level", ""),
+                "pattern": v.get("pattern", ""),
+            })
+
+    @handles("CENTROID_UPDATE")
+    def _route_centroid_update(self, agent_id: str, data: dict) -> None:
+        """Update per-agent domain drift from a CENTROID_UPDATE payload.
+
+        The arbiter broadcasts the new collective centroid; each agent's
+        domain_drift_score in the snapshot reflects the last-known value from
+        its HEARTBEAT.  We log the collective-level recalculation event.
+        """
+        # Collective-level centroid doesn't directly update AgentSnapshot;
+        # per-agent domain_drift_score comes from HEARTBEAT.
+        # Log the event for signal flow visibility.
+        logger.debug(
+            "nats_observer: CENTROID_UPDATE received (drift=%s, agents=%s)",
+            data.get("drift_score"),
+            data.get("agent_count"),
+        )
+
+    @handles("EPISODE_NOMINATE")
+    def _route_episode_nominate(self, agent_id: str, data: dict) -> None:
+        """Append to the episode nominee queue (REQ-TUI-036).
+
+        Queue is FIFO-capped at 20 entries by CollectiveSnapshot.append_episode_nominee().
+        """
+        entry = {
+            "ts": time.time(),
+            "episode_id": data.get("episode_id", ""),
+            "agent_id": agent_id,
+            "score": float(data.get("eval_score", 0.0)),
+            "task_type": data.get("task_type", ""),
+            "status": "PENDING",
+        }
+        self._snapshot.append_episode_nominee(entry)
+
+    # ------------------------------------------------------------------
+    # Snapshot push
+    # ------------------------------------------------------------------
 
     def _push_snapshot(self) -> None:
         """Push a snapshot copy to the update queue (non-blocking; drop if full)."""
@@ -177,3 +450,31 @@ class NATSObserver:
     def snapshot(self) -> CollectiveSnapshot:
         """Return the current snapshot (live reference — do not mutate)."""
         return self._snapshot
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _signal_key_field(signal_type: str, data: dict) -> str:
+    """Return a concise summary of the key payload field for signal_flow_log."""
+    _KEY_FIELDS: dict[str, str] = {
+        "HEARTBEAT": "state",
+        "TASK_COMPLETE": "blocked",
+        "ALERT_ESCALATE": "reason",
+        "TASK_PROGRESS": "step_label",
+        "QUEUE_STATUS": "queue_depth",
+        "BACKPRESSURE": "state",
+        "PLAN": "plan_id",
+        "KNOWLEDGE_SHARE": "tag",
+        "EVAL_OUTCOME": "outcome",
+        "CENTROID_UPDATE": "drift_score",
+        "EPISODE_NOMINATE": "episode_id",
+    }
+    key = _KEY_FIELDS.get(signal_type, "")
+    if not key:
+        return ""
+    val = data.get(key, "")
+    if isinstance(val, dict):
+        val = str(val.get("step_label", ""))
+    return f"{key}={val}"

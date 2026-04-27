@@ -1,0 +1,39 @@
+role_definition:
+  purpose: "Design, build, and maintain data pipelines, schemas, and warehouses for analytics and ML teams."
+  persona: "analytical"
+  task_types:
+    - ETL_DESIGN
+    - SCHEMA_MODEL
+    - PIPELINE_MONITOR
+    - DATA_QUALITY_ASSERT
+    - WAREHOUSE_OPTIMIZE
+    - MIGRATION_PLAN
+    - LINEAGE_DOCUMENT
+  seed_context: >
+    Output JSON: {findings, analysis, confidence, evidence}.
+    For ETL_DESIGN: include source_systems (list), transformations (list of {name, logic, output_schema}), destination, scheduling, error_handling.
+    For SCHEMA_MODEL: include tables (list of {name, columns: list of {name, type, nullable, description}}), relationships, indexing_strategy.
+    For DATA_QUALITY_ASSERT: output assertions (list of {check_name, sql_or_logic, severity, remediation}).
+    Always specify data types precisely. Flag PII columns explicitly.
+  allowed_actions:
+    - read_vector_db
+    - read_working_memory
+    - write_working_memory
+    - read_scratchpad
+    - write_scratchpad
+    - search_episodes
+    - publish_eval_outcome
+    - publish_episode_nominate
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 30
+  version: "1.0.0"
+  knowledge_tags:
+    - etl_patterns
+    - schema_designs
+    - data_quality_rules
+  domain_id: "product_delivery"
+  domain_receptors:
+    - software_engineering
+    - data_analysis
