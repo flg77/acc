@@ -22,8 +22,11 @@ ACC (Agentic Cell Corpus) is the only open-source agent framework that:
 | **Cross-collective delegation** | ACC-9 bridge protocol; A-010 governance gate; JetStream queuing | None | None | Role handoffs | GroupChat | None |
 | **Operator-native lifecycle** | Kubernetes operator (controller-runtime); CRD-driven; OLM-ready | None | None | None | None | Helm chart only |
 | **Signed role updates** | Ed25519 arbiter countersign; cryptographic rejection of tampered updates | None | None | None | None | None |
-| **LLM backend agnostic** | Ollama / Anthropic / vLLM / Llama Stack; one-line switch, no code change | Partial | Partial | OpenAI-first | OpenAI-first | Partial |
-| **NATS-native signaling** | JetStream at-least-once delivery; replay; dead-letter streams | HTTP polling | HTTP polling | Shared memory | HTTP | HTTP |
+| **LLM backend agnostic** | Ollama / Anthropic / vLLM / Llama Stack / **any OpenAI-compat** (Groq, Gemini, OpenRouter, HuggingFace, Together, Fireworks, 11+ providers); one env var switch | Partial | Partial | OpenAI-first | OpenAI-first | Partial |
+| **NATS-native signaling** | JetStream at-least-once delivery; replay; dead-letter streams; 11 intra-collective signal types (TASK_PROGRESS, BACKPRESSURE, PLAN, KNOWLEDGE_SHARE, EVAL_OUTCOME, CENTROID_UPDATE, EPISODE_NOMINATE, …) | HTTP polling | HTTP polling | Shared memory | HTTP | HTTP |
+| **Enterprise role library** | 30 pre-built roles across 9 business domains (sales, marketing, finance, HR, legal, IT, ops, etc.) + `roles/TEMPLATE/` for custom roles | None | None | None | None | None |
+| **OWASP LLM Top 10 guardrails** | LLM01–LLM08 (prompt injection, output validation, DoS shield, PII/PHI detection, excessive agency) with observe/enforce modes | None | None | None | None | None |
+| **Built-in compliance framework** | EU AI Act risk classification, HIPAA PHI redaction, SOC2 control mapping, tamper-evident HMAC audit chain | None | None | None | None | None |
 
 ---
 
@@ -189,22 +192,49 @@ This means an operator upgrade (OLM rolling) automatically re-renders all Config
 
 ## Terminal UI — Built-In Collective Observability
 
-ACC ships a Textual terminal dashboard (`acc-tui`) that no other agent framework provides as a first-class component:
+ACC ships a Textual terminal dashboard (`acc-tui`) that no other agent framework provides as a first-class component. The TUI follows the same biological architecture as ACC itself — each screen corresponds to a layer of the cell model:
 
 ```
-Dashboard screen:                        Infuse screen:
-  Agent cards (drift sparkbar)             Role definition form
-  Reprogramming ladder level               Purpose / Persona / Task types
-  Governance panel (Cat-A/B/C triggers)    Seed context / Cat-B overrides
-  Memory panel (ICL episodes, patterns)    ROLE_UPDATE → NATS → arbiter approval
-  LLM metrics (p95 latency, token util)    History panel (version audit trail)
+╔══ Soma (Dashboard) ══════════════════╗  ╔══ Nucleus (Role Infusion) ═══════════╗
+║  Agent cards (drift sparkbar)         ║  ║  Role definition form                ║
+║  Reprogramming ladder level           ║  ║  Purpose / Persona / Task types      ║
+║  Governance panel (Cat-A/B/C events)  ║  ║  Seed context / Cat-B overrides      ║
+║  Memory panel (ICL episodes)          ║  ║  ROLE_UPDATE → NATS → approval       ║
+╚══════════════════════════════════════╝  ╚══════════════════════════════════════╝
+
+╔══ Compliance ════════════════════════╗  ╔══ Performance ════════════════════════╗
+║  OWASP LLM01–LLM08 guardrail status  ║  ║  LLM latency + token budgets          ║
+║  Audit trail (HMAC chain)            ║  ║  Cat-B setpoints live view            ║
+║  EU AI Act risk classification       ║  ║  Task queue depth + drain estimate    ║
+║  Human oversight queue               ║  ║  Stress indicators + compliance score ║
+╚══════════════════════════════════════╝  ╚══════════════════════════════════════╝
+
+╔══ Comms (Signal Monitor) ════════════╗  ╔══ Ecosystem ══════════════════════════╗
+║  All 11 NATS signal types live        ║  ║  Collective topology map              ║
+║  TASK_PROGRESS, BACKPRESSURE, PLAN   ║  ║  Domain registry + centroids         ║
+║  KNOWLEDGE_SHARE, EVAL_OUTCOME       ║  ║  ICL episode nominations             ║
+║  CENTROID_UPDATE, EPISODE_NOMINATE   ║  ║  Cross-collective bridge status      ║
+╚══════════════════════════════════════╝  ╚══════════════════════════════════════╝
 ```
 
-The TUI connects to NATS as a read-only observer — no Redis or LanceDB access. It derives all display state from `HEARTBEAT`, `TASK_COMPLETE`, and `ALERT_ESCALATE` signals, making it deployable anywhere that can reach port 4222.
+The TUI connects to NATS as a read-only observer — no Redis or LanceDB access. It derives all display state from the full set of 11 ACC signal types (`HEARTBEAT`, `TASK_COMPLETE`, `ALERT_ESCALATE`, `TASK_PROGRESS`, `QUEUE_STATUS`, `BACKPRESSURE`, `PLAN`, `KNOWLEDGE_SHARE`, `EVAL_OUTCOME`, `CENTROID_UPDATE`, `EPISODE_NOMINATE`), making it deployable anywhere that can reach port 4222.
 
-Other agent frameworks offer third-party observability plugins (LangSmith, Weights & Biases). ACC's TUI is part of the core package, purpose-built for the governance model — it shows Cat-A trigger counts, reprogramming ladder escalation, and role version drift, none of which exist in LangChain or CrewAI's mental model.
+**Multi-collective:** A `CollectiveTabStrip` at the top of the TUI shows one tab per collective. Set `ACC_COLLECTIVE_IDS=sol-01,sol-02` to monitor multiple collectives simultaneously. Switch tabs with `Tab` / `Shift-Tab`.
+
+**WebBridge:** Set `ACC_TUI_WEB_PORT=8765` to expose collective snapshots over HTTP (`GET /api/snapshot`), enabling CI pipelines and external dashboards to poll collective state without running a terminal.
+
+Other agent frameworks offer third-party observability plugins (LangSmith, Weights & Biases). ACC's TUI is part of the core package, purpose-built for the governance model — it shows Cat-A trigger counts, reprogramming ladder escalation, role version drift, OWASP compliance scores, and the human oversight queue, none of which exist in any other agent framework's mental model.
 
 ---
+
+## Recently Shipped (v0.2.0)
+
+- **ACC TUI Evolution** (52 requirements): 6 biological screens (Soma / Nucleus / Compliance / Performance / Comms / Ecosystem), multi-collective `CollectiveTabStrip`, HTTP WebBridge (`ACC_TUI_WEB_PORT`), dynamic enterprise role loading.
+- **Enterprise Role Library**: 30 pre-built roles across 9 business domains (sales, marketing, product, customer success, finance, HR, legal, operations, IT/security). Each role ships with `role.yaml`, `eval_rubric.yaml`, and `system_prompt.md`. A `roles/TEMPLATE/` directory enables custom role authoring.
+- **Compliance Framework** (25 requirements): OWASP LLM01–LLM08 guardrails, Cat-A `CatAEvaluator` with WASM/subprocess/passthrough modes, `AuditBroker` with HMAC tamper-evident chain (file and Kafka backends), `HumanOversightQueue` for EU AI Act Art. 14, `compliance_health_score` in `StressIndicators`.
+- **LLM Independence** (`openai_compat` backend): Single backend covering 11+ providers via the OpenAI Chat Completions API. Universal `ACC_LLM_MODEL`, `ACC_LLM_BASE_URL`, `ACC_LLM_API_KEY_ENV` env vars require no code changes to switch providers.
+- **ACC-11 Domain-Aware Roles**: `domain_id`, `domain_receptors`, and `eval_rubric_hash` on every role; PARACRINE signal receptor filtering at the agent membrane; `DomainRegistry` EMA centroid update.
+- **ACC-10 Intra-Collective Protocol**: 8 new signal types (TASK_PROGRESS, QUEUE_STATUS, BACKPRESSURE, PLAN, KNOWLEDGE_SHARE, EVAL_OUTCOME, CENTROID_UPDATE, EPISODE_NOMINATE); `ProgressContext`; Redis scratchpad for parallel plan steps; `roles/` directory convention.
 
 ## Roadmap Differentiators (in development)
 

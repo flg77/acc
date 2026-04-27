@@ -90,6 +90,24 @@ llm:
   vllm_inference_url: http://localhost:8000
 ```
 
+**OpenAI-compatible (any provider — Groq, OpenAI, Gemini, OpenRouter, HuggingFace, Together, etc.):**
+```yaml
+llm:
+  backend: openai_compat
+  base_url: https://api.groq.com/openai/v1
+  model: llama-3.3-70b-versatile
+  api_key_env: GROQ_API_KEY       # name of the env var holding the key
+```
+Set via environment variables:
+```bash
+export ACC_LLM_BACKEND=openai_compat
+export ACC_LLM_BASE_URL=https://api.groq.com/openai/v1
+export ACC_LLM_MODEL=llama-3.3-70b-versatile
+export ACC_LLM_API_KEY_ENV=GROQ_API_KEY
+export GROQ_API_KEY=gsk_...
+```
+Supported base URLs: OpenAI (`https://api.openai.com/v1`), Groq, Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`), OpenRouter (`https://openrouter.ai/api/v1`), HuggingFace TGI (`https://api-inference.huggingface.co/v1`), local vLLM (`http://localhost:8000/v1`), LM Studio (`http://localhost:1234/v1`).
+
 ---
 
 ## Step 3 — Security Configuration (Phase 0a/0b)
@@ -151,13 +169,17 @@ All config fields can be overridden via environment variables. The full referenc
 |---|---|---|---|
 | `ACC_DEPLOY_MODE` | `deploy_mode` | `standalone` | Deployment profile |
 | `ACC_AGENT_ROLE` | `agent.role` | `ingester` | Role for this agent pod |
-| `ACC_COLLECTIVE_ID` | `agent.collective_id` | `sol-01` | Collective identifier |
+| `ACC_COLLECTIVE_ID` | `agent.collective_id` | `sol-01` | Collective identifier (agent pods) |
+| `ACC_COLLECTIVE_IDS` | _(TUI only)_ | `sol-01` | Comma-separated IDs for TUI multi-collective tab strip |
 | `ACC_NATS_URL` | `signaling.nats_url` | `nats://localhost:4222` | NATS server URL |
 | `ACC_NATS_HUB_URL` | `signaling.hub_url` | _(empty)_ | NATS leaf hub URL (edge only) |
 | `ACC_LANCEDB_PATH` | `vector_db.lancedb_path` | `/app/data/lancedb` | LanceDB data directory |
 | `ACC_MILVUS_URI` | `vector_db.milvus_uri` | _(empty)_ | Milvus URI (rhoai mode) |
 | `ACC_MILVUS_COLLECTION_PREFIX` | `vector_db.milvus_collection_prefix` | `acc_` | Milvus collection prefix |
-| `ACC_LLM_BACKEND` | `llm.backend` | `ollama` | LLM backend selection |
+| `ACC_LLM_BACKEND` | `llm.backend` | `ollama` | LLM backend (`ollama` / `anthropic` / `vllm` / `openai_compat`) |
+| `ACC_LLM_MODEL` | `llm.model` | _(empty)_ | Universal model ID — overrides backend-specific model fields |
+| `ACC_LLM_BASE_URL` | `llm.base_url` | _(empty)_ | Universal inference base URL (openai_compat) |
+| `ACC_LLM_API_KEY_ENV` | `llm.api_key_env` | _(empty)_ | Name of env var holding the API key |
 | `ACC_OLLAMA_BASE_URL` | `llm.ollama_base_url` | `http://localhost:11434` | Ollama server URL |
 | `ACC_OLLAMA_MODEL` | `llm.ollama_model` | `llama3.2:3b` | Ollama model name |
 | `ACC_ANTHROPIC_MODEL` | `llm.anthropic_model` | `claude-sonnet-4-6` | Anthropic model name |
@@ -174,17 +196,47 @@ All config fields can be overridden via environment variables. The full referenc
 | `ACC_PEER_COLLECTIVES` | `agent.peer_collectives` | _(empty list)_ | Comma-separated delegation targets |
 | `ACC_HUB_COLLECTIVE_ID` | `agent.hub_collective_id` | _(empty)_ | Hub collective (edge mode) |
 | `ACC_BRIDGE_ENABLED` | `agent.bridge_enabled` | `false` | Enable cross-collective delegation |
+| `ACC_TUI_WEB_PORT` | _(TUI only)_ | `0` | HTTP port for TUI WebBridge (0 = disabled) |
+| `ACC_ROLES_ROOT` | _(TUI/agent)_ | `/app/roles` | Path to enterprise role definitions directory |
+| `ACC_COMPLIANCE_ENABLED` | `compliance.enabled` | `true` | Enable compliance framework |
+| `ACC_OWASP_ENFORCE` | `compliance.owasp_enforce` | `false` | Block on OWASP violations (false = observe only) |
+| `ACC_CAT_A_ENFORCE` | `compliance.cat_a_enforce` | `false` | Block on Cat-A violations (false = observe only) |
+| `ACC_HIPAA_MODE` | `compliance.hipaa_mode` | `false` | PHI redaction before LanceDB storage |
+| `ACC_AUDIT_BACKEND` | `compliance.audit_backend` | `file` | Audit backend (`file` / `kafka` / `multi`) |
+| `ACC_AUDIT_KAFKA_BOOTSTRAP` | `compliance.audit_kafka_bootstrap` | _(empty)_ | Kafka bootstrap servers (RHOAI) |
 
 ---
 
 ## Step 5 — Start the Stack
 
+ACC ships two compose stacks. Use the `acc-deploy.sh` helper to select between them:
+
 ```bash
-# Start NATS + Redis + three agent roles
-podman-compose -f deploy/podman-compose.yml up -d
+# Build images first (one-time, ~5–10 min)
+./acc-deploy.sh build
+
+# Start production stack (UBI10-based, recommended)
+./acc-deploy.sh
+
+# Start beta stack (alpine NATS, 0.1.x images)
+STACK=beta ./acc-deploy.sh
+
+# Start production stack + TUI operator console
+TUI=true ./acc-deploy.sh
+```
+
+Or use podman-compose directly:
+```bash
+# Production (0.2.x, UBI10, recommended)
+podman-compose -f container/production/podman-compose.yml up -d
+
+# Beta (0.1.x, nats:alpine)
+podman-compose -f container/beta/podman-compose.yml up -d
 ```
 
 The compose file starts: NATS JetStream, Redis, `acc-agent-ingester`, `acc-agent-analyst`, `acc-agent-arbiter`.
+
+For a comprehensive step-by-step guide including TUI, multi-collective, LLM provider selection, compliance configuration, and troubleshooting, see [`docs/howto-deploy.md`](howto-deploy.md).
 
 ### Verify agent startup
 

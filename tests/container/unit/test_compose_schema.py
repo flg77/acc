@@ -1,6 +1,6 @@
-"""Unit tests for production podman-compose.yml schema and correctness.
+"""Unit tests for podman-compose.yml schema and correctness.
 
-No container runtime required.
+No container runtime required. Tests cover both beta and production compose files.
 
 Rules enforced:
   COMPOSE-001  compose file is valid YAML
@@ -10,6 +10,9 @@ Rules enforced:
   COMPOSE-005  No image uses :latest or alpine base (non-UBI)
   COMPOSE-006  All ACC agents have ACC_AGENT_ROLE environment set
   COMPOSE-007  LanceDB volume path per-agent (no shared LanceDB root)
+  COMPOSE-008  TUI service (production) has required ACC env vars
+  COMPOSE-009  TUI service (production) has interactive terminal settings
+  COMPOSE-010  Beta compose does not reference production 0.2.x image tags
 """
 
 from __future__ import annotations
@@ -21,13 +24,22 @@ import yaml
 
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
 PRODUCTION_DIR = REPO_ROOT / "container" / "production"
+BETA_DIR = REPO_ROOT / "container" / "beta"
 COMPOSE_FILE = PRODUCTION_DIR / "podman-compose.yml"
+BETA_COMPOSE_FILE = BETA_DIR / "podman-compose.yml"
 
 
 @pytest.fixture(scope="module")
 def compose_data() -> dict:
     assert COMPOSE_FILE.exists(), f"podman-compose.yml not found at {COMPOSE_FILE}"
     with COMPOSE_FILE.open(encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+@pytest.fixture(scope="module")
+def beta_compose_data() -> dict:
+    assert BETA_COMPOSE_FILE.exists(), f"beta podman-compose.yml not found at {BETA_COMPOSE_FILE}"
+    with BETA_COMPOSE_FILE.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
 
 
@@ -169,3 +181,77 @@ def test_compose_007_per_agent_lancedb_paths(compose_data: dict) -> None:
             f"conflicts with another agent's path. Each agent needs a unique LanceDB directory."
         )
         lancedb_paths[svc_name] = lancedb_path
+
+
+# ── COMPOSE-008: TUI service has required ACC env vars ────────────────────────
+
+def test_compose_008_tui_service_env_vars(compose_data: dict) -> None:
+    """COMPOSE-008: Production TUI service must declare required environment variables."""
+    services = compose_data.get("services", {})
+    if "acc-tui" not in services:
+        pytest.skip("acc-tui service not present in compose — skipping TUI env var check")
+
+    tui = services["acc-tui"]
+    environment = tui.get("environment", {})
+
+    required_tui_vars = ["ACC_NATS_URL", "ACC_COLLECTIVE_IDS"]
+    for var in required_tui_vars:
+        assert var in environment, (
+            f"TUI service missing required env var '{var}'. "
+            "The TUI requires ACC_NATS_URL to connect and ACC_COLLECTIVE_IDS to scope."
+        )
+
+    # ACC_TUI_WEB_PORT should be present (even if 0 = disabled)
+    assert "ACC_TUI_WEB_PORT" in environment, (
+        "TUI service missing ACC_TUI_WEB_PORT. "
+        "Should be set to '0' when WebBridge is disabled, or '8765' when enabled."
+    )
+
+    # ACC_ROLES_ROOT should be present for enterprise role loading
+    assert "ACC_ROLES_ROOT" in environment, (
+        "TUI service missing ACC_ROLES_ROOT. "
+        "Required for enterprise role library loading."
+    )
+
+
+# ── COMPOSE-009: TUI service has stdin_open and tty ──────────────────────────
+
+def test_compose_009_tui_service_interactive_terminal(compose_data: dict) -> None:
+    """COMPOSE-009: TUI service must have stdin_open: true and tty: true.
+
+    Textual requires a real terminal to render. Without these settings,
+    'podman attach acc-tui' will not show the UI (REQ-TUI-049).
+    """
+    services = compose_data.get("services", {})
+    if "acc-tui" not in services:
+        pytest.skip("acc-tui service not present — skipping interactive terminal check")
+
+    tui = services["acc-tui"]
+    assert tui.get("stdin_open") is True, (
+        "acc-tui missing 'stdin_open: true'. "
+        "Required for 'podman attach acc-tui' interactive terminal."
+    )
+    assert tui.get("tty") is True, (
+        "acc-tui missing 'tty: true'. "
+        "Required for Textual CSS/rendering to work inside the container."
+    )
+
+
+# ── COMPOSE-010: Beta compose stays on 0.1.x tags ────────────────────────────
+
+def test_compose_010_beta_compose_no_production_tags(beta_compose_data: dict) -> None:
+    """COMPOSE-010: Beta compose must not reference production 0.2.x image tags.
+
+    Beta uses 0.1.x; production uses 0.2.x. Cross-contamination causes builds
+    to overwrite each other silently.
+    """
+    services = beta_compose_data.get("services", {})
+    for svc_name, svc in services.items():
+        image = svc.get("image", "")
+        if not image or not image.startswith("localhost/acc-"):
+            continue
+        assert ":0.2." not in image, (
+            f"Beta service '{svc_name}' image='{image}' references a 0.2.x tag. "
+            "Beta images must use 0.1.x tags. "
+            "Run './acc-deploy.sh build' and 'STACK=beta ./acc-deploy.sh build' separately."
+        )

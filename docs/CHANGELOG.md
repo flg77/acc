@@ -11,6 +11,79 @@ Versioning scheme: `MAJOR.MINOR.PATCH`
 
 ---
 
+## [1.9.0] — 2026-04-27
+
+### Added — ACC TUI Evolution + Enterprise Role Library + Compliance Framework + LLM Independence + Domain-Aware Roles
+
+**ACC TUI Evolution (52 requirements: REQ-TUI-001 to REQ-TUI-052):**
+- **`acc/tui/app.py`** — Full 6-screen biological TUI: Soma (dashboard), Nucleus (role infusion), Compliance, Performance, Comms (signal monitor), Ecosystem; `CollectiveTabStrip` widget with multi-collective tab navigation (`ACC_COLLECTIVE_IDS` comma-separated); one `asyncio.Queue` + `NATSObserver` per collective; `_drain_queue()` gated on `active_collective_id`; HTTP `WebBridge` server (`ACC_TUI_WEB_PORT`, 0 = disabled); `GET /api/snapshot` endpoint; `CollectiveSnapshot` FIFO-capped at 500 events per signal type; `NATSObserver` handler registry for all 11 signal types
+- **`acc/tui/widgets/collective_tabs.py`** — `CollectiveTabStrip` Textual widget; `SwitchCollective` Message; CSS active-tab styling; `set_active(idx)` method
+- **`container/production/Containerfile.tui`** — TUI container image on UBI10
+- **`container/production/podman-compose.yml`** — `acc-tui` service under `profiles: [tui]` with `stdin_open: true`, `tty: true`, `ACC_COLLECTIVE_IDS`, `ACC_TUI_WEB_PORT`, `ACC_ROLES_ROOT`
+- **`docs/howto-tui.md`** — Comprehensive TUI guide: all 6 screens, key bindings, multi-collective setup, WebBridge HTTP API, RHOAI TUISpec CRD, architecture diagram, 11-signal type reference
+
+**Enterprise Role Library (30 roles × 3 files = 90 files):**
+- **`roles/TEMPLATE/`** — Copy-and-customize template: `README.md`, `role.yaml` (all 18 fields annotated), `eval_rubric.yaml`, `system_prompt.md`
+- **`roles/{role_name}/`** — 30 enterprise roles across 9 domains:
+  - `sales_revenue`: account_executive, sales_development_rep, sales_engineer, revenue_operations_analyst
+  - `marketing`: content_marketer, demand_generation_specialist, product_marketer, marketing_analyst
+  - `product_delivery`: product_manager, devops_engineer, data_engineer, ml_engineer
+  - `customer_success`: customer_support_agent, customer_success_manager, technical_support_specialist
+  - `finance_accounting`: financial_analyst, fpa_analyst, risk_compliance_analyst
+  - `people_hr`: recruiter, hr_business_partner, learning_development_specialist
+  - `legal_compliance`: contract_analyst, compliance_officer
+  - `operations_strategy`: operations_analyst, procurement_specialist, project_manager, business_analyst
+  - `it_security`: it_support_specialist, security_analyst, it_operations_specialist
+- All roles comply with constitutional action constraints; eval rubric weights sum to 1.0; `domain_id` and `domain_receptors` set per ACC-11
+
+**Compliance Framework (25 requirements: REQ-COMP-001 to REQ-COMP-025):**
+- **`acc/governance.py`** — `CatAEvaluator`: WASM mode (wasmtime), subprocess fallback, passthrough observe mode; replaces `_cat_a_allow = True` stub
+- **`acc/guardrails/__init__.py`**, **`acc/guardrails/engine.py`** — `GuardrailEngine` async parallel execution; `GuardrailResult` dataclass with `passed`, `violations`, `redacted_content`, `risk_level`
+- **`acc/guardrails/prompt_injection.py`** — LLM01: regex + embedding cosine distance detection
+- **`acc/guardrails/output_handler.py`** — LLM02: schema enforcement + hallucinated action detection
+- **`acc/guardrails/dos_shield.py`** — LLM04: token count pre-check + recursive expansion patterns
+- **`acc/guardrails/pii_detector.py`** — LLM06: Presidio-based PII/PHI detection and redaction (HIPAA mode)
+- **`acc/guardrails/agency_limiter.py`** — LLM08: `allowed_actions` whitelist enforcement
+- **`acc/audit.py`** — `AuditBroker`, `FileAuditBackend` (rotating JSONL), `KafkaAuditBackend`, `MultiAuditBackend`; per-record `evidence_hash` SHA-256; daily HMAC chain
+- **`acc/oversight.py`** — `HumanOversightQueue` (Redis + NATS approval signals); EU AI Act Art. 14 HIGH/UNACCEPTABLE risk gating
+- **`acc/compliance/eu_ai_act.py`** — Risk classifier (MINIMAL / LIMITED / HIGH / UNACCEPTABLE)
+- **`acc/compliance/hipaa.py`** — HIPAA §164.312 control mapping
+- **`acc/compliance/soc2.py`** — SOC2 TSC mapping (CC6, CC7, CC8, A1, PI1)
+- **`acc/compliance/evidence.py`** — `EvidenceCollector` JSON + Markdown artifact generator
+- **`acc/config.py`** — `ComplianceConfig` model (10 fields); `_ENV_MAP` entries for all compliance vars
+- **`acc/cognitive_core.py`** — `compliance_health_score`, `owasp_violation_count`, `oversight_pending_count` added to `StressIndicators`
+
+**LLM Independence (openai_compat backend):**
+- **`acc/backends/llm_openai_compat.py`** — `OpenAICompatBackend`: universal backend covering OpenAI, Groq, Gemini, Azure, OpenRouter, HuggingFace TGI, Together, Fireworks, vLLM, LM Studio, Anyscale; exponential retry on 429/5xx; `response_format` JSON schema support
+- **`acc/config.py`** — `LLMConfig` extended with `model`, `base_url`, `api_key_env`, `request_timeout_s`, `max_retries` universal fields; `ACC_LLM_MODEL`, `ACC_LLM_BASE_URL`, `ACC_LLM_API_KEY_ENV` in `_ENV_MAP`; `openai_compat` added to `LLMBackendChoice`
+- **`acc-config.yaml`** — Added commented examples for all 8 LLM backend options
+
+**ACC-11 Grandmother Cell Architecture:**
+- **`acc/signals.py`** — Signal mode taxonomy (`SYNAPTIC`, `PARACRINE`, `AUTOCRINE`, `ENDOCRINE`); `SIGNAL_MODES` dict for all 18 signals; `SIG_DOMAIN_DIFFERENTIATION`; `subject_domain_differentiation()`; Redis key helpers
+- **`acc/config.py`** — `domain_id`, `domain_receptors`, `eval_rubric_hash` added to `RoleDefinitionConfig`
+- **`acc/domain.py`** — `DomainRegistry` (EMA centroid, Redis persistence); `RubricValidator`
+- **`acc/role_loader.py`** — SHA-256 rubric hash computed and injected into `eval_rubric_hash` at load time
+- **`acc/cognitive_core.py`** — `domain_drift_score` in `StressIndicators`; `_compute_drift()` extended with optional `domain_centroid`
+- **`acc/agent.py`** — `_receptor_allows()` PARACRINE receptor filter; `CENTROID_UPDATE` subscription updates `_domain_centroid`; `domain_drift_score` in HEARTBEAT
+- **`roles/_base/role.yaml`**, all system roles — `domain_id` and `domain_receptors` added
+- **`regulatory_layer/category_a/constitutional_rhoai.rego`** — A-014 (`deny_mismatched_paracrine`), A-015 (`deny_rubric_mismatch`), A-016 (`deny_domain_differentiation_from_non_arbiter`); version bumped 0.3.0 → 0.4.0
+- **`regulatory_layer/category_b/data_rhoai.json`** — `domain_rubrics` skeleton for 5 domains
+
+**Deployment Infrastructure:**
+- **`acc-deploy.sh`** — Stack deployment helper: `STACK=beta|production` switch, `TUI=true` profile flag, `build` / `up` / `down` / `logs` / `status` commands
+- **`docs/howto-deploy.md`** — Comprehensive step-by-step deployment guide: pre-flight checklist, beta vs production switch, first build, env configuration, TUI activation, multi-collective, enterprise roles, all LLM backends, compliance setup, upgrading, troubleshooting, full env var reference
+- **`docs/howto-standalone.md`** — Updated: added `acc-deploy.sh` usage in Step 5; expanded env var table with all new vars (`ACC_COLLECTIVE_IDS`, `ACC_TUI_WEB_PORT`, `ACC_ROLES_ROOT`, `ACC_LLM_MODEL`, `ACC_LLM_BASE_URL`, `ACC_LLM_API_KEY_ENV`, compliance vars); added `openai_compat` LLM backend example
+
+**Tests:**
+- **`tests/container/runtime/test_runtime_tui.py`** — 6 runtime tests for `localhost/acc-tui:0.2.0`: image exists, non-root UID, `acc.tui` importable, OCI labels present, graceful NATS failure handling, Textual installed
+- **`tests/container/unit/test_deployment_config.py`** — 10 deployment config unit tests: both compose files valid YAML, different image tags, TUI service under profile, TUI env vars, deploy script exists and correct, howto-deploy.md exists and documents switch, all 11 new env vars documented, production no alpine images, beta uses 0.1.x tags, TUI has `stdin_open`/`tty`
+
+**Updated:**
+- **`docs/value-proposition.md`** — Updated TUI section (6 biological screens, multi-collective, WebBridge); expanded comparison matrix (+enterprise roles, +OWASP guardrails, +compliance framework, +openai_compat 11 providers, +11 intra-collective signal types); added "Recently Shipped (v0.2.0)" section; updated roadmap to reflect shipped Cat-A evaluator
+- **`docs/CHANGELOG.md`** — This entry
+
+---
+
 ## [1.8.0] — 2026-04-22
 
 ### Added — Documentation: TUI How-to and Security Hardening Guide
