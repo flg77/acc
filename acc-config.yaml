@@ -31,60 +31,65 @@ llm:
   # (points to the env var that holds the key — the key itself is never in config).
   # ─────────────────────────────────────────────────────────────────────────
 
-  # ── Option A: Ollama (default — local, no auth) ──────────────────────────
-  backend: ollama
-  ollama_base_url: http://localhost:11434
-  ollama_model: llama3.2:3b
+  # ── Option A: Ollama (local, no auth) ────────────────────────────────────
+  # backend: ollama
+  # ollama_base_url: http://localhost:11434
+  # ollama_model: llama3.2:3b
 
-  # ── Option B: vLLM / KServe (RHOAI, first-class) ─────────────────────────
+  # ── Option B: vLLM local (active — RedHatAI/Llama-3.2-1B-Instruct-FP8) ───
+  # vLLM started with: podman run ... -p 8001:8000 --model RedHatAI/Llama-3.2-1B-Instruct-FP8
+  # From inside Podman containers, the host is reachable at host.containers.internal.
+  backend: openai_compat
+  base_url: http://host.containers.internal:8001/v1
+  model: RedHatAI/Llama-3.2-1B-Instruct-FP8
+
+  # ── Option C: vLLM / KServe (RHOAI, first-class) ─────────────────────────
   # backend: vllm
   # vllm_inference_url: http://vllm-service:8000/v1     # or ACC_VLLM_INFERENCE_URL
-  # ollama_model: meta-llama/Llama-3.1-8B-Instruct      # model name as served by vLLM
-  # # Universal fields (preferred for vllm too — take precedence when set):
   # base_url: http://vllm-service:8000/v1               # ACC_LLM_BASE_URL
   # model: meta-llama/Llama-3.1-8B-Instruct             # ACC_LLM_MODEL
 
-  # ── Option C: OpenAI ─────────────────────────────────────────────────────
+  # ── Option D: OpenAI ─────────────────────────────────────────────────────
   # backend: openai_compat
   # base_url: https://api.openai.com/v1
   # model: gpt-4o
   # api_key_env: OPENAI_API_KEY         # env var name; set OPENAI_API_KEY in .env
 
-  # ── Option D: Groq (ultra-fast inference) ────────────────────────────────
+  # ── Option E: Groq (ultra-fast inference) ────────────────────────────────
   # backend: openai_compat
   # base_url: https://api.groq.com/openai/v1
   # model: llama-3.3-70b-versatile
   # api_key_env: GROQ_API_KEY
 
-  # ── Option E: Gemini (Google OpenAI-compat proxy) ─────────────────────────
+  # ── Option F: Gemini (Google OpenAI-compat proxy) ─────────────────────────
   # backend: openai_compat
   # base_url: https://generativelanguage.googleapis.com/v1beta/openai
   # model: gemini-2.0-flash
   # api_key_env: GEMINI_API_KEY
 
-  # ── Option F: OpenRouter (300+ models, single API key) ───────────────────
+  # ── Option G: OpenRouter (300+ models, single API key) ───────────────────
   # backend: openai_compat
   # base_url: https://openrouter.ai/api/v1
   # model: mistralai/mixtral-8x7b-instruct
   # api_key_env: OPENROUTER_API_KEY
 
-  # ── Option G: HuggingFace Inference API ──────────────────────────────────
+  # ── Option H: HuggingFace Inference API ──────────────────────────────────
   # backend: openai_compat
   # base_url: https://api-inference.huggingface.co/v1
   # model: meta-llama/Llama-3.1-70B-Instruct
   # api_key_env: HF_TOKEN
 
-  # ── Option H: Together AI ─────────────────────────────────────────────────
+  # ── Option I: Together AI ─────────────────────────────────────────────────
   # backend: openai_compat
   # base_url: https://api.together.xyz/v1
   # model: mistralai/Mixtral-8x7B-Instruct-v0.1
   # api_key_env: TOGETHER_API_KEY
 
-  # ── Option I: Anthropic (native SDK, not OpenAI-compat) ──────────────────
+  # ── Option J: Anthropic (native SDK, not OpenAI-compat) ──────────────────
   # backend: anthropic
   # anthropic_model: claude-sonnet-4-6
 
-  # ── Option J: LM Studio (local, no auth) ──────────────────────────────────
+  # ── Option K: LM Studio (local, no auth) ──────────────────────────────────
   # backend: openai_compat
   # base_url: http://localhost:1234/v1
   # model: llama-3.2-3b-instruct     # matches model loaded in LM Studio
