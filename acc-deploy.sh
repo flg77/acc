@@ -17,15 +17,15 @@
 #
 # Options (set as env vars or flags):
 #   STACK=beta|production    Which compose file to use (default: production)
-#   TUI=true                 Also start the TUI container (production only, --profile tui)
+#   TUI=true|false           Include TUI container (production only; default: true)
 #   DETACH=false             Run in foreground instead of detached (default: true)
 #
 # Examples:
-#   ./acc-deploy.sh                          # Start production stack (detached)
+#   ./acc-deploy.sh                          # Start production stack + TUI (detached)
+#   TUI=false ./acc-deploy.sh                # Start production stack without TUI
 #   STACK=beta ./acc-deploy.sh               # Start beta stack
 #   ./acc-deploy.sh build                    # Build production images
 #   STACK=beta ./acc-deploy.sh build         # Build beta images
-#   TUI=true ./acc-deploy.sh                 # Start production stack + TUI
 #   ./acc-deploy.sh down                     # Stop production stack
 #   ./acc-deploy.sh down -v                  # Stop and remove volumes
 #   ./acc-deploy.sh logs acc-agent-ingester  # Tail ingester logs
@@ -42,7 +42,7 @@ COMMAND="${1:-up}"
 shift 2>/dev/null || true   # remaining args passed directly to podman-compose
 
 STACK="${STACK:-production}"
-TUI="${TUI:-false}"
+TUI="${TUI:-true}"
 DETACH="${DETACH:-true}"
 
 # ── Validate ───────────────────────────────────────────────────────────────────
