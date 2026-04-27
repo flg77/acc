@@ -121,7 +121,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -147,7 +147,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -173,7 +173,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped

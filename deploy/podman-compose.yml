@@ -6,6 +6,9 @@
 # If Podman logs show "aardvark-dns runs in a different netns" (stale aardvark):
 #   podman stop -a; killall aardvark-dns 2>/dev/null; rm -rf /run/user/$UID/containers/networks/aardvark-dns; podman-compose up -d
 #
+# Agent bind-mount of acc-config.yaml uses :z so confined containers (UID 1001) can
+# read it on SELinux-enforcing hosts; keep the file o+r on the host ( chmod 644 ).
+#
 # Each agent uses a *subdirectory* of the lancedb volume. Embedded LanceDB is not
 # safe with multiple processes opening the *same* DB directory; the last
 # container to start (often arbiter) would exit(1) with a store lock error.
@@ -98,7 +101,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb
-      - ../acc-config.yaml:/app/acc-config.yaml:ro
+      - ../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -124,7 +127,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb
-      - ../acc-config.yaml:/app/acc-config.yaml:ro
+      - ../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -150,7 +153,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb
-      - ../acc-config.yaml:/app/acc-config.yaml:ro
+      - ../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
