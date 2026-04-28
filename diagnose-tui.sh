@@ -16,3 +16,9 @@ except Exception:
 print('--- All OK ---', flush=True)
 " 2>&1
 
+podman run --rm localhost/acc-tui:0.2.0 python3 -c "
+import inspect, acc.tui.client as c
+src = inspect.getsource(c.NATSObserver._handle_message)
+print('msgpack in handler:', 'msgpack.unpackb' in src)
+print('try/except in handler:', 'try:' in src)
+" 2>&1
