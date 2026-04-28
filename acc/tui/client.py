@@ -40,6 +40,8 @@ import time
 from copy import deepcopy
 from typing import Any
 
+import msgpack
+
 from acc.tui.models import AgentSnapshot, CollectiveSnapshot, PlanSnapshot
 
 logger = logging.getLogger("acc.tui.client")
@@ -114,13 +116,19 @@ class NATSObserver:
     async def publish(self, subject: str, payload: dict) -> None:
         """Publish a message to NATS (used by InfuseScreen for ROLE_UPDATE).
 
+        Wire format mirrors NATSBackend.publish() in acc/backends/signaling_nats.py:
+        the payload dict is serialised to UTF-8 JSON bytes, then wrapped with
+        MessagePack (use_bin_type=True) so the receiving agent's signaling backend
+        can unpack it with msgpack.unpackb() and then json.loads() the inner bytes.
+
         Args:
             subject: NATS subject string.
-            payload: Dict to serialise as JSON and publish.
+            payload: Dict to serialise and publish.
         """
         if self._nc is None:
             raise RuntimeError("NATSObserver.publish() called before connect()")
-        await self._nc.publish(subject, json.dumps(payload).encode())
+        json_bytes = json.dumps(payload).encode()
+        await self._nc.publish(subject, msgpack.packb(json_bytes, use_bin_type=True))
 
     # ------------------------------------------------------------------
     # Message routing — registry pattern (REQ-TUI-010)
@@ -132,9 +140,15 @@ class NATSObserver:
         Uses ``_HANDLERS`` dict for O(1) signal_type dispatch.
         Unknown signal types are silently ignored (REQ-TUI-011).
         """
+        # Wire format: msgpack(utf-8 JSON bytes) — matches NATSBackend.publish()
+        # in acc/backends/signaling_nats.py which does:
+        #   packed = msgpack.packb(json.dumps({...}).encode(), use_bin_type=True)
+        # Step 1: unpack msgpack → get the UTF-8 JSON bytes back
+        # Step 2: json.loads the bytes → dict
         try:
-            data = json.loads(msg.data)
-        except (json.JSONDecodeError, AttributeError):
+            raw = msgpack.unpackb(msg.data, raw=False)
+            data = json.loads(raw)
+        except Exception:
             logger.debug(
                 "nats_observer: could not decode message on %s",
                 getattr(msg, "subject", "?"),
