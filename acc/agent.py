@@ -242,6 +242,20 @@ class Agent:
         else:
             self._oversight_queue = None
 
+        # ACC-10 PLAN: arbiter-side DAG executor.  Same role-gated pattern
+        # as the oversight queue — non-arbiter agents carry a None pointer
+        # so the run() gather can reference the subscriber methods without
+        # a role-specific branch.
+        from acc.plan import PlanExecutor  # noqa: PLC0415
+        if self.config.agent.role == "arbiter":
+            self._plan_executor: PlanExecutor | None = PlanExecutor(
+                collective_id=self.config.agent.collective_id,
+                publish=self.backends.signaling.publish,
+                arbiter_id=self.agent_id,
+            )
+        else:
+            self._plan_executor = None
+
         # ACC-11: cached domain centroid from the most recent CENTROID_UPDATE
         # that carried a domain_centroid_vector.  Passed to CognitiveCore on
         # each task so that domain_drift_score is always current.
@@ -800,6 +814,80 @@ class Agent:
             logger.error("oversight: subscription error: %s", exc)
 
     # ------------------------------------------------------------------
+    # ACC-10 PLAN subscriptions (arbiter only)
+    # ------------------------------------------------------------------
+
+    async def _subscribe_plan_submit(self) -> None:
+        """Receive PLAN submissions and hand them to the executor.
+
+        Subject: ``acc.{cid}.plan.submit``.  The CLI / TUI / external
+        orchestrator publishes a PLAN payload here; the arbiter calls
+        :meth:`acc.plan.PlanExecutor.register_plan` which dispatches
+        the first batch of TASK_ASSIGNs and re-broadcasts the PLAN
+        with ``step_progress`` filled in.
+
+        Non-arbiter roles return immediately — their ``_plan_executor``
+        is ``None``.
+        """
+        if self._plan_executor is None:
+            return
+        from acc.signals import subject_plan_submit  # noqa: PLC0415
+        collective_id = self.config.agent.collective_id
+
+        async def _handle_submit(msg: object) -> None:
+            try:
+                payload = json.loads(getattr(msg, "data", b"{}"))
+            except json.JSONDecodeError:
+                logger.warning("plan: invalid SUBMIT JSON payload")
+                return
+            executor = self._plan_executor
+            assert executor is not None
+            await executor.register_plan(payload)
+
+        try:
+            await self.backends.signaling.subscribe(
+                subject_plan_submit(collective_id),
+                _handle_submit,
+            )
+            await self._stop_event.wait()
+        except Exception as exc:
+            logger.error("plan: submit subscription error: %s", exc)
+
+    async def _subscribe_plan_task_completes(self) -> None:
+        """Track TASK_COMPLETE messages relevant to active plans.
+
+        Runs alongside the per-agent ``_task_loop`` (which subscribes to
+        the same subject for its own role's TASK_ASSIGN handling).  We
+        filter strictly on ``signal_type == "TASK_COMPLETE"`` and let
+        the executor's ``_task_index`` reject anything that is not one
+        of our plan's tasks — so this loop is a no-op for tasks the
+        arbiter did not orchestrate.
+        """
+        if self._plan_executor is None:
+            return
+        collective_id = self.config.agent.collective_id
+
+        async def _handle_complete(msg: object) -> None:
+            try:
+                payload = json.loads(getattr(msg, "data", b"{}"))
+            except json.JSONDecodeError:
+                return
+            if payload.get("signal_type") != SIG_TASK_COMPLETE:
+                return
+            executor = self._plan_executor
+            assert executor is not None
+            await executor.on_task_complete(payload)
+
+        try:
+            await self.backends.signaling.subscribe(
+                subject_task(collective_id),
+                _handle_complete,
+            )
+            await self._stop_event.wait()
+        except Exception as exc:
+            logger.error("plan: task_complete subscription error: %s", exc)
+
+    # ------------------------------------------------------------------
     # Main lifecycle (Phase 4e)
     # ------------------------------------------------------------------
 
@@ -812,8 +900,11 @@ class Agent:
         await self.backends.signaling.connect()
         try:
             await self._register()
-            # Run heartbeat, task, role-update, bridge-result, centroid, and
-            # (arbiter only) oversight-decision loops concurrently.
+            # Run heartbeat, task, role-update, bridge-result, centroid,
+            # (arbiter only) oversight-decision and plan-orchestration
+            # loops concurrently.  Non-arbiter agents' plan / oversight
+            # subscribers return immediately because their executor /
+            # queue references are None.
             await asyncio.gather(
                 self._heartbeat_loop(),
                 self._task_loop(),
@@ -821,6 +912,8 @@ class Agent:
                 self._subscribe_bridge_results(),
                 self._subscribe_centroid_updates(),
                 self._subscribe_oversight_decisions(),
+                self._subscribe_plan_submit(),
+                self._subscribe_plan_task_completes(),
                 return_exceptions=True,
             )
         finally:

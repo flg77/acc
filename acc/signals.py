@@ -377,6 +377,25 @@ def subject_plan_all(collective_id: str) -> str:
     return f"acc.{collective_id}.plan.*"
 
 
+def subject_plan_submit(collective_id: str) -> str:
+    """Return the NATS subject for submitting a new PLAN to the arbiter.
+
+    The CLI / TUI / external orchestrator publishes a PLAN payload here;
+    the arbiter's :class:`acc.plan.PlanExecutor` registers the plan and
+    dispatches the first batch of TASK_ASSIGNs.  Status updates are
+    re-broadcast on ``subject_plan(collective_id, plan_id)`` so the TUI's
+    existing PLAN handler picks them up — no new signal type required.
+
+    Subject pattern: ``acc.{collective_id}.plan.submit``
+
+    Example::
+
+        subject_plan_submit("sol-01")
+        # → "acc.sol-01.plan.submit"
+    """
+    return f"acc.{collective_id}.plan.submit"
+
+
 def subject_knowledge_share(collective_id: str, tag: str) -> str:
     """Return the NATS subject for KNOWLEDGE_SHARE signals by tag.
 
