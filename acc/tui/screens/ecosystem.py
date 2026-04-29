@@ -39,6 +39,32 @@ def _roles_root() -> str:
     return os.environ.get("ACC_ROLES_ROOT", "roles")
 
 
+def _skills_root() -> str:
+    """Resolve the skills/ directory — respects ACC_SKILLS_ROOT env var."""
+    return os.environ.get("ACC_SKILLS_ROOT", "skills")
+
+
+def _mcps_root() -> str:
+    """Resolve the mcps/ directory — respects ACC_MCPS_ROOT env var."""
+    return os.environ.get("ACC_MCPS_ROOT", "mcps")
+
+
+# Risk-level → colour mapping for Skills + MCPs DataTables.  Same
+# palette as the Compliance screen so operators read one legend.
+_RISK_COLOURS = {
+    "LOW":      "green",
+    "MEDIUM":   "yellow",
+    "HIGH":     "red",
+    "CRITICAL": "bold red",
+}
+
+
+def _risk_cell(risk_level: str) -> str:
+    """Render a risk-level string with Rich markup for the DataTable."""
+    colour = _RISK_COLOURS.get(risk_level, "white")
+    return f"[{colour}]{risk_level}[/{colour}]"
+
+
 class EcosystemScreen(Screen):
     """Genome browser — roles, LLM backends, Skills/MCP roadmap (REQ-TUI-037 – REQ-TUI-040)."""
 
@@ -72,19 +98,15 @@ class EcosystemScreen(Screen):
                 yield Label("ROLE LIBRARY", classes="panel-label")
                 yield DataTable(id="role-table")
 
-                yield Static("── Skills: roadmap ──", classes="roadmap-label")
-                yield Static(
-                    "[dim]Skills are plug-in capability modules.\n"
-                    "Integration planned for a future ACC release.[/dim]",
-                    classes="roadmap-content",
-                )
+                # Phase 4.4 — live Skills table replaces the roadmap stub.
+                # Sourced from SkillRegistry().load_from(_skills_root())
+                # at mount time; one row per loaded skill manifest.
+                yield Label("SKILLS", classes="panel-label")
+                yield DataTable(id="skills-table")
 
-                yield Static("── MCPs: roadmap ──", classes="roadmap-label")
-                yield Static(
-                    "[dim]MCP (Model Context Protocol) tool servers\n"
-                    "will surface here when operator-registered.[/dim]",
-                    classes="roadmap-content",
-                )
+                # Phase 4.4 — live MCP servers table replaces the roadmap.
+                yield Label("MCP SERVERS", classes="panel-label")
+                yield DataTable(id="mcps-table")
 
             # Right: role detail panel + infusion action + LLM backends
             with Vertical(id="ecosystem-right"):
@@ -124,7 +146,18 @@ class EcosystemScreen(Screen):
         llm_table = self.query_one("#llm-table", DataTable)
         llm_table.add_columns("Agent", "Backend", "Model", "Health", "p50ms")
 
+        # Phase 4.4 — Skills + MCP servers tables.
+        skills_table = self.query_one("#skills-table", DataTable)
+        skills_table.add_columns("Skill", "Version", "Risk", "Requires")
+        skills_table.cursor_type = "row"
+
+        mcps_table = self.query_one("#mcps-table", DataTable)
+        mcps_table.add_columns("Server", "Transport", "Risk", "Tools")
+        mcps_table.cursor_type = "row"
+
         self._load_roles()
+        self._load_skills()
+        self._load_mcps()
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
@@ -210,6 +243,86 @@ class EcosystemScreen(Screen):
             return
 
         panel.update(f"[bold]{role_name}/role.yaml[/bold]\n\n{content}")
+
+    # ------------------------------------------------------------------
+    # Phase 4.4 — Skills + MCP table loading
+    # ------------------------------------------------------------------
+
+    def _load_skills(self) -> None:
+        """Discover loaded skills and render them in the Skills table.
+
+        Lazy import keeps the TUI startup time unchanged when the
+        skills package is absent (e.g. minimal CLI image).  Errors
+        are swallowed and replaced with a single "—" row so an empty
+        skills/ directory doesn't crash the screen.
+        """
+        table = self.query_one("#skills-table", DataTable)
+        try:
+            from acc.skills import SkillRegistry  # noqa: PLC0415
+        except Exception:
+            table.add_row("[dim]acc.skills not available[/dim]", "—", "—", "—")
+            return
+
+        try:
+            reg = SkillRegistry()
+            reg.load_from(_skills_root())
+        except Exception as exc:
+            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—")
+            return
+
+        manifests = reg.manifests()
+        if not manifests:
+            table.add_row(
+                "[dim]no skills loaded — see docs/howto-skills.md[/dim]",
+                "—", "—", "—",
+            )
+            return
+
+        for skill_id in sorted(manifests.keys()):
+            manifest = manifests[skill_id]
+            table.add_row(
+                skill_id,
+                manifest.version,
+                _risk_cell(manifest.risk_level),
+                ", ".join(manifest.requires_actions) or "—",
+                key=skill_id,
+            )
+
+    def _load_mcps(self) -> None:
+        """Discover loaded MCP servers and render them in the MCP table."""
+        table = self.query_one("#mcps-table", DataTable)
+        try:
+            from acc.mcp import MCPRegistry  # noqa: PLC0415
+        except Exception:
+            table.add_row("[dim]acc.mcp not available[/dim]", "—", "—", "—")
+            return
+
+        try:
+            reg = MCPRegistry()
+            reg.load_from(_mcps_root())
+        except Exception as exc:
+            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—")
+            return
+
+        manifests = reg.manifests()
+        if not manifests:
+            table.add_row(
+                "[dim]no MCP servers loaded — see docs/howto-mcp.md[/dim]",
+                "—", "—", "—",
+            )
+            return
+
+        for server_id in sorted(manifests.keys()):
+            manifest = manifests[server_id]
+            allowed = manifest.allowed_tools
+            tools_cell = ", ".join(allowed) if allowed else "all"
+            table.add_row(
+                server_id,
+                manifest.transport,
+                _risk_cell(manifest.risk_level),
+                tools_cell,
+                key=server_id,
+            )
 
     # ------------------------------------------------------------------
     # LLM backend rendering
