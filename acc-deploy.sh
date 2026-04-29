@@ -17,23 +17,32 @@
 #   tui-logs  Alias for `logs acc-tui`.
 #   status    Show running container status
 #   ps        Alias for status
+#   cli       Run the acc-cli image (one-shot).  Forwards all remaining
+#             arguments to acc-cli.  See docs/acc-cli.md for the full surface.
 #
 # Options (set as env vars or flags):
 #   STACK=beta|production    Which compose file to use (default: production)
 #   TUI=true|false           Include TUI container (production only; default: true)
 #   DETACH=false             Run in foreground instead of detached (default: true)
+#   ACC_CLI_IMAGE=...        Override the cli image reference (default: localhost/acc-cli:0.2.0)
+#   ACC_CLI_NETWORK=...      Override podman --network (default: host)
+#   ACC_NATS_URL=...         NATS endpoint (default: nats://localhost:4222)
+#   ACC_COLLECTIVE_ID=...    Default collective for cli commands (default: sol-01)
 #
 # Examples:
 #   ./acc-deploy.sh                          # Start production stack + TUI (detached)
 #   TUI=false ./acc-deploy.sh                # Start production stack without TUI
 #   STACK=beta ./acc-deploy.sh               # Start beta stack
-#   ./acc-deploy.sh build                    # Build production images
+#   ./acc-deploy.sh build                    # Build production images (incl. cli)
 #   STACK=beta ./acc-deploy.sh build         # Build beta images
 #   ./acc-deploy.sh down                     # Stop production stack
 #   ./acc-deploy.sh down -v                  # Stop and remove volumes
 #   ./acc-deploy.sh logs acc-agent-ingester  # Tail ingester logs
 #   ./acc-deploy.sh logs acc-tui             # Tail TUI log file (from volume)
 #   ./acc-deploy.sh tui-logs                 # Same as `logs acc-tui`
+#   ./acc-deploy.sh cli                      # acc-cli help screen
+#   ./acc-deploy.sh cli role list
+#   ./acc-deploy.sh cli oversight pending --watch
 #   ./acc-deploy.sh status                   # Show container status
 
 set -euo pipefail
@@ -54,6 +63,65 @@ DETACH="${DETACH:-true}"
 if [[ "$STACK" != "beta" && "$STACK" != "production" ]]; then
     echo "ERROR: STACK must be 'beta' or 'production' (got: '$STACK')" >&2
     exit 1
+fi
+
+# ── Short-circuit: cli ─────────────────────────────────────────────────────────
+# `cli` is a one-shot subcommand that wraps `podman run --rm acc-cli`.
+# We dispatch it here, BEFORE the compose-style header is printed, so the
+# CLI's stdout stream (used for piping into jq, awk, etc.) is not polluted
+# by deploy banners.  Header printing resumes for the standard
+# build/up/down/logs/status flow below.
+if [[ "$COMMAND" == "cli" ]]; then
+    if [[ "$STACK" != "production" ]]; then
+        echo "ERROR: 'cli' is only available with STACK=production." >&2
+        exit 1
+    fi
+
+    CLI_IMAGE="${ACC_CLI_IMAGE:-localhost/acc-cli:0.2.0}"
+    CLI_NETWORK="${ACC_CLI_NETWORK:-host}"
+    CLI_NATS_URL="${ACC_NATS_URL:-nats://localhost:4222}"
+    CLI_COLLECTIVE="${ACC_COLLECTIVE_ID:-sol-01}"
+    CLI_CONFIG_PATH="${ACC_CONFIG_PATH:-$REPO_ROOT/acc-config.yaml}"
+
+    if ! podman image exists "$CLI_IMAGE"; then
+        echo "ERROR: image $CLI_IMAGE not found." >&2
+        echo "       Run: ./acc-deploy.sh build" >&2
+        exit 1
+    fi
+
+    PODMAN_ARGS=(
+        run --rm
+        --network "$CLI_NETWORK"
+        -e "ACC_NATS_URL=$CLI_NATS_URL"
+        -e "ACC_COLLECTIVE_ID=$CLI_COLLECTIVE"
+    )
+
+    # Bind-mount acc-config.yaml when present so `cli llm test` can resolve
+    # the configured backend without rebuilding the image.  SELinux label
+    # `:z` (lower-case = shared) lets the container process read the host
+    # file under the default targeted policy — without it, the bind-mount
+    # would block reads with EACCES.
+    if [[ -f "$CLI_CONFIG_PATH" ]]; then
+        PODMAN_ARGS+=(-v "$CLI_CONFIG_PATH:/app/acc-config.yaml:ro,z")
+    fi
+
+    # Bind-mount roles/ from the host so `cli role show|infuse` reflects
+    # latest edits without an image rebuild.  `:ro,z` matches the other
+    # compose mounts and is required on SELinux-enabled hosts (without
+    # `z` the container hits EACCES on every read).
+    if [[ -d "$REPO_ROOT/roles" ]]; then
+        PODMAN_ARGS+=(-v "$REPO_ROOT/roles:/app/roles:ro,z")
+    fi
+
+    # Forward TTY when stdin is a terminal so `nats sub` /
+    # `oversight pending --watch` are interactive.
+    if [[ -t 0 && -t 1 ]]; then
+        PODMAN_ARGS+=(-it)
+    fi
+
+    PODMAN_ARGS+=("$CLI_IMAGE" "$@")
+
+    exec podman "${PODMAN_ARGS[@]}"
 fi
 
 # ── Select compose file ────────────────────────────────────────────────────────
@@ -99,7 +167,7 @@ echo "║  ACC Deploy — $STACK_LABEL"
 echo "╚═══════════════════════════════════════════════════╝"
 echo "  Compose file : $COMPOSE_FILE"
 [[ "$TUI" == "true" && "$STACK" == "production" ]] && echo "  TUI profile  : enabled"
-[[ "$STACK" == "production" && "$COMMAND" == "build" ]] && echo "  CLI image    : built (use ./acc-cli.sh to invoke)"
+[[ "$STACK" == "production" && "$COMMAND" == "build" ]] && echo "  CLI image    : built (use ./acc-deploy.sh cli ... to invoke)"
 echo "  Command      : $COMMAND $*"
 echo ""
 
