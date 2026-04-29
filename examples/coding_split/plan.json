@@ -1,0 +1,44 @@
+{
+    "signal_type": "PLAN",
+    "plan_id": "coding-split-slugify-001",
+    "collective_id": "sol-01",
+    "scratchpad_ttl_s": 1800,
+    "steps": [
+        {
+            "step_id": "analyse",
+            "role": "coding_agent",
+            "task_type": "REQUIREMENTS_ELICIT",
+            "task_description": "Analyse requirements for `slugify(text: str) -> str`. List the character classes that must be preserved (lowercase ASCII letters and digits), the separators that must collapse to a single dash, the unicode handling expected (NFKD-decompose and strip combining marks), the leading/trailing dash trimming rule, and the empty-input return value. Produce a numbered list of 6–8 acceptance criteria suitable for direct use as test-case generators.",
+            "deadline_s": 120,
+            "priority": 1,
+            "depends_on": []
+        },
+        {
+            "step_id": "implement",
+            "role": "coding_agent",
+            "task_type": "CODE_GENERATE",
+            "task_description": "Implement `slugify(text: str) -> str` in pure Python (stdlib only — unicodedata + re).  Output must satisfy every acceptance criterion produced by the `analyse` step.  Do not import third-party packages.  Wrap the function in a single self-contained module-level definition with a one-line docstring; no example usage.",
+            "deadline_s": 180,
+            "priority": 2,
+            "depends_on": ["analyse"]
+        },
+        {
+            "step_id": "test",
+            "role": "coding_agent",
+            "task_type": "TEST_WRITE",
+            "task_description": "Write a pytest module `test_slugify.py` covering every acceptance criterion from the `analyse` step.  Each test name should map to its criterion number (e.g. `test_ac3_collapses_separators`).  Cover one happy path, one Unicode case, one empty string, and one all-separators edge case at minimum.",
+            "deadline_s": 180,
+            "priority": 2,
+            "depends_on": ["analyse"]
+        },
+        {
+            "step_id": "review",
+            "role": "coding_agent",
+            "task_type": "CODE_REVIEW",
+            "task_description": "Review the `implement` output against the `test` output.  Identify (a) any acceptance criterion the implementation misses, (b) any pytest case that would fail given the implementation, (c) any code-quality concerns (dead branches, unused imports, exception silencing).  Produce a structured review with `gaps`, `bugs`, and `quality` sections.",
+            "deadline_s": 120,
+            "priority": 3,
+            "depends_on": ["implement", "test"]
+        }
+    ]
+}

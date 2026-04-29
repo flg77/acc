@@ -17,6 +17,8 @@ Usage::
     acc-cli oversight submit <task_id> <agent_id> <risk> <summary...>
     acc-cli oversight approve <oversight_id>
     acc-cli oversight reject  <oversight_id> [--reason TEXT]
+    acc-cli plan submit <plan.json> [--watch]
+    acc-cli plan watch <plan_id>
 
 Common environment variables (read on every invocation):
 
@@ -65,12 +67,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Lazy-import each command module so pip-install is fast and unused
     # dependencies (e.g. nats-py for `role list`) do not block startup.
-    from acc.cli import role_cmd, nats_cmd, llm_cmd, trace_cmd, oversight_cmd  # noqa: PLC0415
+    from acc.cli import (  # noqa: PLC0415
+        role_cmd,
+        nats_cmd,
+        llm_cmd,
+        trace_cmd,
+        oversight_cmd,
+        plan_cmd,
+    )
     role_cmd.register(sub)
     nats_cmd.register(sub)
     llm_cmd.register(sub)
     trace_cmd.register(sub)
     oversight_cmd.register(sub)
+    plan_cmd.register(sub)
 
     return parser
 
