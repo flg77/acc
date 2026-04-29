@@ -1,0 +1,43 @@
+# mcps/echo_server/mcp.yaml — stub example MCP manifest.
+#
+# Points at a hypothetical local MCP echo server at acc-mcp-echo:8080.
+# No actual server is shipped with this PR (4.2 is the client surface
+# only); we use the manifest to:
+#
+#   * Verify the loader / validator round-trip end-to-end.
+#   * Give the TUI Ecosystem screen (Phase 4.4) one row to render so
+#     the panel is never empty on a fresh checkout.
+#   * Document the canonical "happy path" manifest shape contributors
+#     copy when adding their first real MCP integration.
+#
+# A standalone echo server image is planned for the Phase 4 demo
+# (parallel to coding_split): a tiny Python service implementing
+# `tools/list` (returns one `echo` tool) and `tools/call` (returns
+# the input back).  When that lands, this manifest is exercised by
+# `acc-cli mcp call echo_server echo --args '{"text":"ping"}'`.
+
+purpose:        "Smoke-test MCP server: round-trip a single 'echo' tool."
+version:        "0.1.0"
+
+transport:      "http"
+url:            "http://acc-mcp-echo:8080/rpc"
+timeout_s:      10
+api_key_env:    ""
+
+allowed_tools:
+  - "echo"
+
+requires_actions: []
+risk_level:     "LOW"
+domain_id:      "diagnostic"
+tags:           ["test", "diagnostic"]
+
+description: |
+  Trivial diagnostic MCP server.  Exists primarily to:
+
+  * Keep the registry/loader code path under continuous test even
+    when no production MCP server is configured.
+  * Demonstrate a minimal correct manifest for first-time contributors.
+
+  The server is not yet packaged; treat the manifest as a fixture
+  until the matching container lands in a future PR.
