@@ -184,6 +184,104 @@ services:
       - acc-net
     restart: unless-stopped
 
+  # ── Coding-split demo: three peer coding_agent workers ───────────────────
+  # Profile-gated; only started when --profile coding-split is passed (or
+  # via CODING_SPLIT=true ./acc-deploy.sh up).  All three reuse the
+  # acc-agent-core image — only ACC_AGENT_ID and ACC_LANCEDB_PATH differ
+  # so the arbiter's PlanExecutor can dispatch parallel TASK_ASSIGNs to
+  # whichever worker accepts first.
+  #
+  # Bring-up:
+  #   CODING_SPLIT=true ./acc-deploy.sh up
+  # Demo:
+  #   ./acc-deploy.sh cli plan submit examples/coding_split/plan.json --watch
+  acc-coding-1:
+    profiles:
+      - coding-split
+    image: localhost/acc-agent-core:0.2.0
+    container_name: acc-coding-1
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../deploy/.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: coding_agent
+      ACC_AGENT_ID: coding-1
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/coding-1
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../roles:/app/roles:ro,z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  acc-coding-2:
+    profiles:
+      - coding-split
+    image: localhost/acc-agent-core:0.2.0
+    container_name: acc-coding-2
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../deploy/.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: coding_agent
+      ACC_AGENT_ID: coding-2
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/coding-2
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../roles:/app/roles:ro,z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  acc-coding-3:
+    profiles:
+      - coding-split
+    image: localhost/acc-agent-core:0.2.0
+    container_name: acc-coding-3
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../deploy/.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: coding_agent
+      ACC_AGENT_ID: coding-3
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/coding-3
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../roles:/app/roles:ro,z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
   # ── CLI (build-only — never run as a long-lived service) ────────────────
   # The acc-cli image is invoked one-shot through the host wrapper
   # `./acc-cli.sh` which calls `podman run --rm`.  Listing it here makes

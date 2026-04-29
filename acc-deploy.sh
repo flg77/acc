@@ -23,6 +23,9 @@
 # Options (set as env vars or flags):
 #   STACK=beta|production    Which compose file to use (default: production)
 #   TUI=true|false           Include TUI container (production only; default: true)
+#   CODING_SPLIT=true|false  Include the 3 peer coding_agent demo services
+#                            (production only; default: false).  Used by the
+#                            Phase 3 examples/coding_split/ runbook.
 #   DETACH=false             Run in foreground instead of detached (default: true)
 #   ACC_CLI_IMAGE=...        Override the cli image reference (default: localhost/acc-cli:0.2.0)
 #   ACC_CLI_NETWORK=...      Override podman --network (default: host)
@@ -57,6 +60,7 @@ shift 2>/dev/null || true   # remaining args passed directly to podman-compose
 
 STACK="${STACK:-production}"
 TUI="${TUI:-true}"
+CODING_SPLIT="${CODING_SPLIT:-false}"
 DETACH="${DETACH:-true}"
 
 # ── Validate ───────────────────────────────────────────────────────────────────
@@ -153,6 +157,17 @@ if [[ "$TUI" == "true" ]]; then
     fi
 fi
 
+# Coding-split demo profile (Phase 3) — three peer coding_agent workers.
+# Production only; auto-included on `build` so the demo images are baked
+# even when the operator hasn't opted into the demo at run time.
+if [[ "$STACK" == "production" ]]; then
+    if [[ "$CODING_SPLIT" == "true" || "$COMMAND" == "build" ]]; then
+        BASE_CMD+=(--profile coding-split)
+    fi
+elif [[ "$CODING_SPLIT" == "true" ]]; then
+    echo "WARNING: coding-split is only available in production. Ignoring CODING_SPLIT=true." >&2
+fi
+
 # CLI profile only matters at build time — the acc-cli image is one-shot
 # (invoked via ./acc-cli.sh).  Auto-enable on `build` so a single
 # `./acc-deploy.sh build` produces every image; suppress it on `up` so we
@@ -167,6 +182,7 @@ echo "║  ACC Deploy — $STACK_LABEL"
 echo "╚═══════════════════════════════════════════════════╝"
 echo "  Compose file : $COMPOSE_FILE"
 [[ "$TUI" == "true" && "$STACK" == "production" ]] && echo "  TUI profile  : enabled"
+[[ "$CODING_SPLIT" == "true" && "$STACK" == "production" ]] && echo "  CODING_SPLIT : enabled (3 peer coding_agent services)"
 [[ "$STACK" == "production" && "$COMMAND" == "build" ]] && echo "  CLI image    : built (use ./acc-deploy.sh cli ... to invoke)"
 echo "  Command      : $COMMAND $*"
 echo ""
