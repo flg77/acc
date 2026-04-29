@@ -43,6 +43,8 @@ dependencies = [
     "redis>=5.0,<6.0",
     # Wire serialization
     "msgpack>=1.1,<2.0",
+    # Skill manifest input/output schema validation (Phase 4)
+    "jsonschema>=4.19,<5.0",
 ]
 
 [project.optional-dependencies]

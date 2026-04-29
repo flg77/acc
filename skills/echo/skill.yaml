@@ -1,0 +1,44 @@
+# skills/echo/skill.yaml — trivial smoke-test skill.
+#
+# Returns whatever text the caller passes.  Useful as a CI canary: any
+# regression in the SkillRegistry / loader / schema validator is
+# detected by `acc-cli skill invoke echo --args '{"text":"ping"}'`
+# (CLI wiring lands in PR 4.3).  Zero side effects → safe to invoke
+# from any role with no extra `allowed_actions`.
+
+purpose:        "Round-trip the supplied text — CI smoke test."
+version:        "0.1.0"
+adapter_class:  "EchoSkill"
+risk_level:     "LOW"
+domain_id:      "diagnostic"
+tags:           ["test", "diagnostic", "stdlib"]
+
+input_schema:
+  type: object
+  properties:
+    text:
+      type: string
+      description: "Text to echo back verbatim."
+  required: ["text"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    echo:
+      type: string
+    length:
+      type: integer
+      minimum: 0
+  required: ["echo", "length"]
+  additionalProperties: false
+
+description: |
+  A no-op skill that returns its input.  Used by:
+
+  * The skills test suite to cover the registry's input/output
+    validation paths without depending on any external service.
+  * The TUI Ecosystem screen as a "hello world" entry so the panel is
+    never empty on a fresh checkout.
+
+  Safe to invoke from any role; carries no governance hooks.

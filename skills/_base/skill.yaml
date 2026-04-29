@@ -1,0 +1,32 @@
+# skills/_base/skill.yaml — defaults deep-merged into every child manifest.
+#
+# Every key here is overridable by a per-skill skill.yaml.  Lists are
+# replaced wholesale; nested dicts are merged key-by-key.  Match the
+# semantics already used by roles/_base/role.yaml so contributors only
+# learn one rule.
+#
+# When you create a new skill, copy `skill.yaml` from one of the
+# existing example directories (skills/echo/) — the SkillManifest
+# Pydantic model in acc/skills/manifest.py is the source of truth for
+# field validity.
+
+# Identity (set per-skill — NEVER inherit a non-empty default)
+# skill_id:        ""        # auto-filled from the directory name
+version:           "0.1.0"
+
+# Adapter wiring — most skills can leave these unchanged.
+adapter_module:    "adapter"
+# adapter_class:   ""        # MUST be set per-skill (no sensible default)
+
+# I/O — empty {} accepts anything; override with a real JSON Schema.
+input_schema:      {}
+output_schema:     {}
+
+# Governance defaults (Cat-A A-017 enforces requires_actions in Phase 4.3)
+requires_actions:  []
+domain_id:         ""
+risk_level:        "LOW"
+
+# Operator-facing metadata
+description:       ""
+tags:              []
