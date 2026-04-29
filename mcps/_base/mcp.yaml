@@ -1,0 +1,37 @@
+# mcps/_base/mcp.yaml — defaults deep-merged into every child manifest.
+#
+# Same merge rule as roles/_base/role.yaml and skills/_base/skill.yaml:
+# child wins, lists replaced wholesale, nested dicts merged key-by-key.
+# When you create a new MCP server entry, copy mcp.yaml from one of the
+# existing examples (e.g. mcps/echo_server/) — the MCPManifest pydantic
+# model in acc/mcp/manifest.py is the source of truth.
+
+# Identity (set per-manifest)
+# server_id:        ""        # auto-filled from the directory name
+version:            "0.1.0"
+
+# Transport — http (default) or stdio (reserved).
+transport:          "http"
+
+# HTTP transport defaults
+url:                ""        # MUST be set per-manifest when transport=http
+timeout_s:          30
+api_key_env:        ""        # name of the env var; empty = unauth
+
+# Stdio transport defaults (reserved)
+command:            []
+env:                {}
+
+# Tool sandbox — empty allowed_tools means "allow every tool the server
+# advertises".  Set explicitly to lock down what the role can reach.
+allowed_tools:      []
+denied_tools:       []
+
+# Governance
+requires_actions:   []
+domain_id:          ""
+risk_level:         "LOW"
+
+# Operator-facing metadata
+description:        ""
+tags:               []
