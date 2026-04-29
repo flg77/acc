@@ -184,6 +184,27 @@ services:
       - acc-net
     restart: unless-stopped
 
+  # ── CLI (build-only — never run as a long-lived service) ────────────────
+  # The acc-cli image is invoked one-shot through the host wrapper
+  # `./acc-cli.sh` which calls `podman run --rm`.  Listing it here makes
+  # `./acc-deploy.sh build` produce the image alongside the others; the
+  # `cli` profile keeps `./acc-deploy.sh up` from trying to start it.
+  acc-cli:
+    profiles:
+      - cli
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.cli
+      args:
+        ACC_VERSION: *acc-version
+    image: localhost/acc-cli:0.2.0
+    container_name: acc-cli
+    # The CLI is one-shot: print help and exit.  Any real invocation goes
+    # through `./acc-cli.sh <subcommand>` from the host.
+    command: ["--help"]
+    networks:
+      - acc-net
+
   # ── TUI (optional, disabled by default) ──────────────────────────────────
   # Multi-screen operator console (ACC-TUI-Evolution).
   # Enable with: podman-compose --profile tui up -d                (REQ-TUI-045)

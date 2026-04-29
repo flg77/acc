@@ -1,0 +1,113 @@
+# ACC CLI — Production UBI10 Python 3.12 (minimal)
+#
+# Single-shot operator CLI (acc-cli).  Runs `acc-cli ...` and exits.
+# Designed to be invoked through a thin host-side wrapper script (e.g.
+# `./acc-cli.sh` in the repo root) that wraps `podman run --rm`.
+#
+# Why a separate image?
+#   * Keeps the CLI usable on space-constrained hosts (e.g. lighthouse)
+#     without polluting the host's site-packages.
+#   * Avoids pip installing the heavy ML/DB stack just to publish a
+#     ROLE_UPDATE or tail NATS — the CLI image is < 200 MB while the
+#     agent-core image is ~ 1 GB once embeddings are baked in.
+#
+# Image dep matrix (per acc/cli/<verb>_cmd.py imports):
+#   role list/show/infuse  → pyyaml + pydantic + nats-py + msgpack
+#   nats sub/pub           → nats-py + msgpack
+#   llm test               → httpx (openai_compat — the most common path,
+#                            covers vLLM, OpenAI, Groq, Gemini, OpenRouter,
+#                            HuggingFace, Together, Anyscale, LM Studio).
+#                            Other LLM backends require the agent-core image
+#                            or a custom rebuild — the CLI surfaces a clear
+#                            error message if asked to test them.
+#   trace                  → nats-py + msgpack
+#   oversight *            → nats-py + msgpack
+#
+# Build:
+#   podman build -f container/production/Containerfile.cli \
+#     --build-arg ACC_VERSION=0.2.0 \
+#     -t localhost/acc-cli:0.2.0 .
+#
+# Run (one-shot):
+#   podman run --rm --network host \
+#     -e ACC_NATS_URL=nats://localhost:4222 \
+#     -e ACC_COLLECTIVE_ID=sol-01 \
+#     localhost/acc-cli:0.2.0 role list
+#
+# Run with a config bind-mount (for `llm test`):
+#   podman run --rm --network host \
+#     -v $PWD/acc-config.yaml:/app/acc-config.yaml:ro \
+#     localhost/acc-cli:0.2.0 llm test
+#
+# A repo-root wrapper `acc-cli.sh` collapses these into:
+#   ./acc-cli.sh role list
+#   ./acc-cli.sh oversight pending --watch
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.2.0
+
+LABEL org.opencontainers.image.title="acc-cli" \
+      org.opencontainers.image.description="ACC operator CLI (production UBI10, minimal deps)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+USER 0
+
+# Build tools needed only during pip install of msgpack (C extension).
+# microdnf is removed at the end of the layer to keep the image small.
+RUN microdnf install -y --nodocs \
+        gcc \
+        python3-devel \
+    && microdnf clean all \
+    && rm -rf /var/cache/dnf
+
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+
+# CLI dependency surface.  Use `pip` directly — NOT `python3 -c
+# "subprocess.run([sys.executable, ...])"` — to avoid the dual-python
+# path mismatch on UBI10 python-312-minimal that hit the TUI image
+# during initial bring-up.
+#
+# Heavy ML/DB packages explicitly excluded:
+#   lancedb, pymilvus       — vector store; CLI doesn't query them
+#   sentence-transformers   — embeddings; CLI doesn't embed
+#   anthropic               — separate SDK; openai_compat covers Anthropic
+#                             through their OpenAI-compat endpoint if needed
+#   opentelemetry-*         — metrics; CLI is a one-shot client
+#   redis                   — CLI talks to NATS only; oversight via signals
+#   cryptography            — Ed25519 signing happens server-side (arbiter)
+#   textual / rich          — TUI only
+RUN pip install --no-cache-dir \
+    "nats-py>=2.7,<3.0" \
+    "msgpack>=1.1,<2.0" \
+    "pyyaml>=6.0,<7.0" \
+    "pydantic>=2.8,<3.0" \
+    "httpx>=0.27,<1.0"
+
+# Application source.
+COPY acc/ /app/acc/
+# Roles directory — needed by `acc-cli role list/show/infuse`.
+COPY roles/ /app/roles/
+
+RUN pip install --no-cache-dir --no-deps . \
+ && echo "acc:x:1001:0:ACC CLI:/app:/bin/sh" >> /etc/passwd \
+ && chown -R 1001:0 /app \
+ && chmod -R g=u /app
+
+USER 1001
+
+ENV ACC_NATS_URL=nats://localhost:4222 \
+    ACC_COLLECTIVE_ID=sol-01 \
+    ACC_ROLES_ROOT=/app/roles \
+    ACC_CONFIG_PATH=/app/acc-config.yaml \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+# Default to the help screen so `podman run --rm acc-cli` prints usage.
+ENTRYPOINT ["acc-cli"]
+CMD []

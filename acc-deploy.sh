@@ -85,12 +85,21 @@ if [[ "$TUI" == "true" ]]; then
     fi
 fi
 
+# CLI profile only matters at build time — the acc-cli image is one-shot
+# (invoked via ./acc-cli.sh).  Auto-enable on `build` so a single
+# `./acc-deploy.sh build` produces every image; suppress it on `up` so we
+# don't spawn a transient acc-cli container that immediately exits.
+if [[ "$STACK" == "production" && "$COMMAND" == "build" ]]; then
+    BASE_CMD+=(--profile cli)
+fi
+
 # ── Print header ───────────────────────────────────────────────────────────────
 echo "╔═══════════════════════════════════════════════════╗"
 echo "║  ACC Deploy — $STACK_LABEL"
 echo "╚═══════════════════════════════════════════════════╝"
 echo "  Compose file : $COMPOSE_FILE"
 [[ "$TUI" == "true" && "$STACK" == "production" ]] && echo "  TUI profile  : enabled"
+[[ "$STACK" == "production" && "$COMMAND" == "build" ]] && echo "  CLI image    : built (use ./acc-cli.sh to invoke)"
 echo "  Command      : $COMMAND $*"
 echo ""
 
