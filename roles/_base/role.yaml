@@ -91,3 +91,38 @@ role_definition:
   # A role with domain_receptors: [software_engineering] silently drops
   # KNOWLEDGE_SHARE signals tagged data_analysis.
   domain_receptors: []
+
+  # --- Phase 4.3 fields (v0.5.0) ---
+  # Capability surface: which Skills and MCP servers this role may invoke.
+  # Both lists are FAIL-CLOSED — empty means the role cannot reach any
+  # skill / MCP server, regardless of what is loaded into the registries.
+  # This is the inverse of allowed_actions (where empty = unconstrained
+  # legacy behaviour) because skills + MCPs are a new capability surface
+  # and operators expect explicit opt-in.
+
+  # Skill ids (matching skills/<skill_id>/skill.yaml) the role may invoke.
+  # Cat-A rule A-017 enforces this list at decision time inside the
+  # CognitiveCore.invoke_skill() entry point.
+  allowed_skills: []
+
+  # Subset of allowed_skills advertised in the LLM system prompt as
+  # "Available skills".  Skills only in allowed_skills (not here) are
+  # reachable but the LLM has to be told about them out-of-band.
+  default_skills: []
+
+  # Maximum SkillRiskLevel this role may invoke.  Cat-A A-017 raises if
+  # the manifest's risk_level outranks this ceiling.  CRITICAL skills
+  # always additionally enqueue a human-oversight request (Art. 14).
+  # One of: LOW | MEDIUM | HIGH | CRITICAL
+  max_skill_risk_level: "MEDIUM"
+
+  # MCP server ids (matching mcps/<server_id>/mcp.yaml) this role may
+  # consume.  Cat-A rule A-018 enforces.
+  allowed_mcps: []
+
+  # Subset of allowed_mcps advertised in the system prompt.
+  default_mcps: []
+
+  # Maximum MCPRiskLevel this role may invoke.  Same semantics as
+  # max_skill_risk_level above, applied by Cat-A A-018.
+  max_mcp_risk_level: "MEDIUM"
