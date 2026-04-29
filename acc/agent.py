@@ -457,6 +457,36 @@ class Agent:
                 role=self._active_role,
             )
 
+            # Phase 4.4 — Capability dispatch.  Parse [SKILL:...] /
+            # [MCP:...] markers from result.output and run each through
+            # CognitiveCore.invoke_skill / invoke_mcp_tool so Cat-A
+            # A-017 / A-018 fire before the adapter executes.  Outcomes
+            # are folded into the TASK_COMPLETE payload below so the
+            # arbiter sees what tools fired.  We only dispatch when the
+            # task wasn't blocked upstream — a blocked LLM call carries
+            # no output to parse.
+            invocations: list = []
+            outcomes: list = []
+            if not result.blocked and result.output:
+                from acc.capability_dispatch import (  # noqa: PLC0415
+                    dispatch_invocations,
+                    parse_invocations,
+                )
+                invocations = parse_invocations(result.output)
+                if invocations:
+                    outcomes = await dispatch_invocations(
+                        invocations,
+                        self._cognitive_core,  # type: ignore[arg-type]
+                        self._active_role,
+                    )
+                    logger.info(
+                        "task_loop: dispatched %d capability invocation(s) "
+                        "(ok=%d, err=%d)",
+                        len(outcomes),
+                        sum(1 for o in outcomes if o.ok),
+                        sum(1 for o in outcomes if not o.ok),
+                    )
+
             # Bridge delegation routing (ACC-9 / A-010)
             if result.delegate_to:
                 task_id = data.get("task_id", str(uuid.uuid4()))
@@ -484,6 +514,20 @@ class Agent:
                 "block_reason": result.block_reason,
                 "latency_ms": result.latency_ms,
                 "output": result.output[:500] if result.output else "",  # truncate for bus
+                # Phase 4.4 — capability invocation summary.  Each
+                # outcome is reduced to (kind, target, ok, error) so the
+                # bus payload stays small even when the LLM fires many
+                # tools; full result dicts are persisted in the LanceDB
+                # episode and reachable by episode_id.
+                "invocations": [
+                    {
+                        "kind": o.parsed.kind,
+                        "target": o.parsed.target,
+                        "ok": o.ok,
+                        "error": o.error,
+                    }
+                    for o in outcomes
+                ],
             }).encode()
             await self.backends.signaling.publish(
                 subject_task(collective_id), complete_payload

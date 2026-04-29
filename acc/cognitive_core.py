@@ -726,10 +726,18 @@ class CognitiveCore:
         # opts in via default_skills (a subset of allowed_skills).  Empty
         # default_skills => no block in the prompt at all, so legacy
         # roles with no skill wiring see exactly their previous prompt.
+        # Phase 4.4 — block now also documents the [SKILL:...] marker
+        # grammar the agent's capability_dispatch parser recognises.
         if role.default_skills:
             advertised = [sid for sid in role.default_skills if sid in role.allowed_skills]
             if advertised:
-                lines = ["\n\nAvailable skills (call by name with [ACTION: <skill_id>]):"]
+                lines = [
+                    "\n\nAvailable skills.  Invoke by emitting EXACTLY this "
+                    "marker on its own line:",
+                    "  [SKILL: <skill_id> {<json args>}]",
+                    "Example: [SKILL: echo {\"text\": \"hello\"}]",
+                    "",
+                ]
                 for sid in advertised:
                     manifest = (
                         self._skill_registry.manifest(sid)
@@ -742,10 +750,18 @@ class CognitiveCore:
                 parts.append("\n".join(lines))
 
         # Phase 4.3 — Available MCP servers block.  Same gating as skills.
+        # Phase 4.4 — also documents the [MCP:...] marker grammar.
         if role.default_mcps:
             advertised = [sid for sid in role.default_mcps if sid in role.allowed_mcps]
             if advertised:
-                lines = ["\n\nAvailable MCP servers (external tool providers):"]
+                lines = [
+                    "\n\nAvailable MCP servers (external tool providers).  "
+                    "Invoke a tool by emitting EXACTLY this marker on its "
+                    "own line:",
+                    "  [MCP: <server_id>.<tool_name> {<json args>}]",
+                    "Example: [MCP: echo_server.echo {\"text\": \"ping\"}]",
+                    "",
+                ]
                 for sid in advertised:
                     manifest = (
                         self._mcp_registry.manifest(sid)
