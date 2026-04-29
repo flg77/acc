@@ -11,7 +11,10 @@
 #   build     Build container images (must be done before first 'up')
 #   up        Start the stack (default)
 #   down      Stop and remove containers; -v also removes volumes
-#   logs      Tail logs from all services (or pass a service name)
+#   logs      Tail logs from all services (or pass a service name).
+#             Special: `logs acc-tui` tails the acc-tui-logs volume file
+#             directly (the TUI's stdout is Textual render bytes, not text logs).
+#   tui-logs  Alias for `logs acc-tui`.
 #   status    Show running container status
 #   ps        Alias for status
 #
@@ -29,6 +32,8 @@
 #   ./acc-deploy.sh down                     # Stop production stack
 #   ./acc-deploy.sh down -v                  # Stop and remove volumes
 #   ./acc-deploy.sh logs acc-agent-ingester  # Tail ingester logs
+#   ./acc-deploy.sh logs acc-tui             # Tail TUI log file (from volume)
+#   ./acc-deploy.sh tui-logs                 # Same as `logs acc-tui`
 #   ./acc-deploy.sh status                   # Show container status
 
 set -euo pipefail
@@ -121,15 +126,36 @@ case "$COMMAND" in
         ;;
 
     logs)
-        # Always include the tui profile when streaming logs so acc-tui output
-        # is visible regardless of how the stack was started.  podman-compose
-        # treats services outside the active profiles as if they don't exist —
-        # without this, `acc-deploy.sh logs` would silently omit the TUI.
-        LOGS_CMD=(podman-compose -f "$COMPOSE_FILE")
-        if [[ "$STACK" == "production" ]]; then
-            LOGS_CMD+=(--profile tui)
+        # Special case: TUI logs.  The TUI writes Textual render bytes (alt-screen
+        # escape sequences) to stdout, which makes `podman-compose logs acc-tui`
+        # unreadable.  TUI log lines go to a file in the acc-tui-logs volume
+        # instead — tail that directly when the user asks for acc-tui logs.
+        if [[ "${1:-}" == "acc-tui" || "${1:-}" == "tui" ]]; then
+            VOL_PATH="$(podman volume inspect acc-tui-logs --format '{{.Mountpoint}}' 2>/dev/null || true)"
+            if [[ -z "$VOL_PATH" || ! -d "$VOL_PATH" ]]; then
+                echo "ERROR: acc-tui-logs volume not found.  Is the TUI container running?" >&2
+                echo "       Try: ./acc-deploy.sh up" >&2
+                exit 1
+            fi
+            LOG_FILE="$VOL_PATH/acc-tui.log"
+            if [[ ! -f "$LOG_FILE" ]]; then
+                echo "Waiting for $LOG_FILE to appear..."
+                until [[ -f "$LOG_FILE" ]]; do sleep 1; done
+            fi
+            echo "▶ Tailing $LOG_FILE  (Ctrl+C to stop)"
+            exec tail -f -n 200 "$LOG_FILE"
         fi
-        "${LOGS_CMD[@]}" logs -f "$@"
+
+        # Default: stream podman-compose logs for all services or a specific one.
+        # The tui profile is intentionally NOT activated here — the TUI's render
+        # bytes would otherwise pollute the unified log stream.  Use
+        # `./acc-deploy.sh logs acc-tui` (handled above) for TUI log tailing.
+        "${BASE_CMD[@]}" logs -f "$@"
+        ;;
+
+    tui-logs)
+        # Convenience alias for `./acc-deploy.sh logs acc-tui`.
+        exec "$0" logs acc-tui
         ;;
 
     status | ps)
