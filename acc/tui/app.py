@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import logging.handlers
 import os
 from pathlib import Path
 
@@ -224,18 +225,30 @@ class ACCTUIApp(App):
     async def _drain_queue(
         self, collective_id: str, queue: asyncio.Queue
     ) -> None:
-        """Drain update_queue and push snapshots into screens."""
+        """Drain update_queue and push snapshots into screens.
+
+        Runs as an asyncio task on the Textual event-loop thread.  Because the
+        drain loop and the Textual app share the same loop, snapshot dispatch
+        is a *direct* call into ``_apply_snapshot`` — NOT via ``call_from_thread``,
+        which is only valid from a different OS thread.  Using ``call_from_thread``
+        here would raise ``RuntimeError`` every tick and silently break screen
+        updates (Soma/Performance/Compliance render empty).
+        """
         while True:
             try:
                 snapshot = await queue.get()
-                self._snapshots[collective_id] = snapshot
-                # Only push to screens if this is the active collective
-                if collective_id == self._active_collective_id:
-                    self.call_from_thread(self._apply_snapshot, snapshot)
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
-                logger.warning("drain_queue[%s]: %s", collective_id, exc)
+            self._snapshots[collective_id] = snapshot
+            # Only push to screens if this is the active collective
+            if collective_id != self._active_collective_id:
+                continue
+            try:
+                self._apply_snapshot(snapshot)
+            except Exception:
+                # logger.exception preserves the traceback in the file handler
+                # so future routing bugs are diagnosable, not silenced.
+                logger.exception("drain_queue[%s]: snapshot apply failed", collective_id)
 
     @property
     def _active_collective_id(self) -> str:
@@ -364,13 +377,79 @@ class ACCTUIApp(App):
 
 
 # ---------------------------------------------------------------------------
+# Logging configuration
+# ---------------------------------------------------------------------------
+
+
+def _configure_logging() -> None:
+    """Configure root logging for the TUI.
+
+    The default ``logging.basicConfig()`` attaches a ``StreamHandler(sys.stderr)``
+    which writes log lines directly into the terminal — overlaying the Textual
+    canvas (visible as garbled text behind the panels).  We explicitly:
+
+    1. Remove every existing root handler (detach default stderr).
+    2. Attach a ``RotatingFileHandler`` writing to ``$ACC_TUI_LOG_DIR/acc-tui.log``
+       (5 MB × 3 backups = ~15 MB cap).
+    3. Attach Textual's ``TextualHandler`` so logs surface in ``textual console``
+       when devtools are attached.
+
+    Override the log directory at runtime with ``ACC_TUI_LOG_DIR``.  Defaults
+    to ``/app/logs`` inside the production container; we fall back to
+    ``./acc-tui-logs`` if that path is not writable (e.g. local pip-install dev).
+    """
+    requested = os.environ.get("ACC_TUI_LOG_DIR", "/app/logs")
+    log_dir = Path(requested)
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        # Probe writability — a read-only mount silently fails on file open
+        probe = log_dir / ".write-probe"
+        probe.touch()
+        probe.unlink()
+    except (OSError, PermissionError):
+        # Fall back to a per-process tmp dir so logging never crashes startup
+        log_dir = Path.cwd() / "acc-tui-logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_dir / "acc-tui.log",
+        maxBytes=5_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+
+    root = logging.getLogger()
+    # Detach any default handlers attached by importing Textual / nats / etc.
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+
+    root.addHandler(file_handler)
+
+    # TextualHandler is optional — gracefully degrade if textual.logging is
+    # unavailable (older Textual releases) so file logging still works.
+    try:
+        from textual.logging import TextualHandler
+        root.addHandler(TextualHandler())
+    except ImportError:
+        pass
+
+    root.setLevel(logging.INFO)
+    # Tame nats-py: it emits an INFO line per reconnect; keep WARNING+ only.
+    logging.getLogger("nats").setLevel(logging.WARNING)
+    logging.getLogger("nats.aio.client").setLevel(logging.WARNING)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 
 def main() -> None:
     """Launch acc-tui."""
-    logging.basicConfig(level=logging.WARNING)
+    _configure_logging()
     ACCTUIApp().run()
 
 

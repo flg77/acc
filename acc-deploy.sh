@@ -121,7 +121,15 @@ case "$COMMAND" in
         ;;
 
     logs)
-        "${BASE_CMD[@]}" logs -f "$@"
+        # Always include the tui profile when streaming logs so acc-tui output
+        # is visible regardless of how the stack was started.  podman-compose
+        # treats services outside the active profiles as if they don't exist —
+        # without this, `acc-deploy.sh logs` would silently omit the TUI.
+        LOGS_CMD=(podman-compose -f "$COMPOSE_FILE")
+        if [[ "$STACK" == "production" ]]; then
+            LOGS_CMD+=(--profile tui)
+        fi
+        "${LOGS_CMD[@]}" logs -f "$@"
         ;;
 
     status | ps)

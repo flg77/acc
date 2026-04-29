@@ -37,6 +37,12 @@ volumes:
   lancedb-data:
   redis-data:
   nats-data:
+  # acc-tui-logs holds the rotating acc-tui.log file (5MB × 3 backups).
+  # Inspect from host:
+  #   podman volume inspect acc-tui-logs --format '{{.Mountpoint}}'
+  # Or follow live:
+  #   tail -f $(podman volume inspect acc-tui-logs --format '{{.Mountpoint}}')/acc-tui.log
+  acc-tui-logs:
 
 services:
 
@@ -204,6 +210,12 @@ services:
       # WebBridge HTTP port — 0 = disabled; set to 8765 and enable port below (REQ-TUI-041)
       ACC_TUI_WEB_PORT: "0"
       ACC_ROLES_ROOT: /app/roles
+      # File log destination — keeps log lines out of the Textual canvas.
+      # Override with ACC_TUI_LOG_DIR; default falls back to ./acc-tui-logs
+      # if /app/logs is not writable.
+      ACC_TUI_LOG_DIR: /app/logs
+    volumes:
+      - acc-tui-logs:/app/logs:U,z
     # Uncomment when WebBridge is enabled (ACC_TUI_WEB_PORT=8765):
     # ports:
     #   - "8765:8765"
