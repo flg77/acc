@@ -227,6 +227,21 @@ class Agent:
         # Cumulative stress (shared across loops)
         self._stress = StressIndicators()
 
+        # ACC-12: Human oversight queue.  Only the arbiter actually owns the
+        # queue (it is the cell's mitotic checkpoint), but every role carries
+        # the attribute so the heartbeat loop can read pending_count uniformly
+        # without a role-specific branch.  Non-arbiter agents see an empty
+        # queue → oversight_pending_count stays at 0.
+        from acc.oversight import HumanOversightQueue  # noqa: PLC0415
+        if self.config.agent.role == "arbiter":
+            self._oversight_queue: HumanOversightQueue | None = HumanOversightQueue(
+                redis_client=self._redis,
+                collective_id=self.config.agent.collective_id,
+                agent_id=self.agent_id,
+            )
+        else:
+            self._oversight_queue = None
+
         # ACC-11: cached domain centroid from the most recent CENTROID_UPDATE
         # that carried a domain_centroid_vector.  Passed to CognitiveCore on
         # each task so that domain_drift_score is always current.
@@ -272,6 +287,35 @@ class Agent:
                 if self._cognitive_core is not None
                 else self._stress
             )
+
+            # ACC-12: keep oversight_pending_count current.  The arbiter is
+            # the only role that ever owns a non-None queue; for everyone else
+            # the field stays at 0.  Reading is O(N) over the bounded deque
+            # so it's safe in the heartbeat loop (default interval 30 s).
+            #
+            # Arbiters additionally serialise the full pending-item list into
+            # the heartbeat so the TUI can render rows with real oversight_ids
+            # (the Compliance screen uses those ids when publishing approve/
+            # reject decisions).  Non-arbiter agents emit an empty list.
+            oversight_pending_items: list[dict] = []
+            if self._oversight_queue is not None:
+                try:
+                    stress.oversight_pending_count = await self._oversight_queue.pending_count()
+                    items = await self._oversight_queue.pending()
+                    # Only include the small public surface — never serialise
+                    # raw payloads or PHI through the heartbeat channel.
+                    for it in items[:50]:
+                        oversight_pending_items.append({
+                            "oversight_id": it.oversight_id,
+                            "task_id": it.task_id,
+                            "agent_id": it.agent_id,
+                            "risk_level": it.risk_level,
+                            "summary": it.summary[:200],
+                            "submitted_at_ms": it.submitted_at_ms,
+                            "status": it.status,
+                        })
+                except Exception:
+                    logger.exception("oversight: pending serialisation failed")
             payload = json.dumps({
                 "signal_type": SIG_HEARTBEAT,
                 "agent_id": self.agent_id,
@@ -296,6 +340,9 @@ class Agent:
                 "compliance_health_score": stress.compliance_health_score,
                 "owasp_violation_count": stress.owasp_violation_count,
                 "oversight_pending_count": stress.oversight_pending_count,
+                # Arbiter-only: full pending-item list for TUI rendering.
+                # Other roles publish [] (cheap, omitted on the wire).
+                "oversight_pending_items": oversight_pending_items,
             }).encode()
             subject = subject_heartbeat(self.config.agent.collective_id)
             await self.backends.signaling.publish(subject, payload)
@@ -665,6 +712,94 @@ class Agent:
             logger.error("centroid_update: subscription error: %s", exc)
 
     # ------------------------------------------------------------------
+    # ACC-12 OVERSIGHT_DECISION subscription (arbiter only)
+    # ------------------------------------------------------------------
+
+    async def _subscribe_oversight_decisions(self) -> None:
+        """Receive operator approve/reject decisions and submit requests.
+
+        Two NATS subjects fan into this loop on the arbiter:
+
+        * ``acc.{cid}.oversight.{oversight_id}`` — OVERSIGHT_DECISION
+          (approve/reject) emitted by the TUI Compliance screen or by
+          ``acc-cli oversight approve|reject``.
+        * ``acc.{cid}.oversight.submit`` — OVERSIGHT_SUBMIT emitted by
+          ``acc-cli oversight submit`` to inject synthetic items for
+          demos and integration testing.
+
+        Non-arbiter roles return immediately (their ``_oversight_queue``
+        is None).  Unknown payloads are logged at WARNING and dropped.
+        """
+        if self._oversight_queue is None:
+            return
+        from acc.signals import subject_oversight_decision_all  # noqa: PLC0415
+        collective_id = self.config.agent.collective_id
+        submit_subject = f"acc.{collective_id}.oversight.submit"
+
+        async def _handle_decision(msg: object) -> None:
+            try:
+                payload = json.loads(getattr(msg, "data", b"{}"))
+            except json.JSONDecodeError:
+                logger.warning("oversight: invalid JSON payload")
+                return
+
+            oversight_id = payload.get("oversight_id", "")
+            decision = (payload.get("decision") or "").upper()
+            approver = payload.get("approver_id", "tui:anonymous")
+            reason = payload.get("reason", "")
+
+            if not oversight_id:
+                logger.warning("oversight: decision payload missing oversight_id")
+                return
+
+            queue = self._oversight_queue  # already not None here
+            assert queue is not None
+            try:
+                if decision == "APPROVE":
+                    await queue.approve(oversight_id, approver)
+                elif decision == "REJECT":
+                    await queue.reject(oversight_id, approver, reason)
+                else:
+                    logger.warning("oversight: unknown decision %r", decision)
+                    return
+            except Exception:
+                logger.exception("oversight: queue.%s failed", decision.lower())
+
+        async def _handle_submit(msg: object) -> None:
+            """Enqueue a new pending item from an OVERSIGHT_SUBMIT request."""
+            try:
+                payload = json.loads(getattr(msg, "data", b"{}"))
+            except json.JSONDecodeError:
+                logger.warning("oversight: invalid SUBMIT payload")
+                return
+
+            queue = self._oversight_queue
+            assert queue is not None
+            try:
+                oid = await queue.submit(
+                    task_id=str(payload.get("task_id", "")),
+                    risk_level=str(payload.get("risk_level", "HIGH")),
+                    summary=str(payload.get("summary", "")),
+                    role_id=str(payload.get("role_id", "external")),
+                )
+                logger.info("oversight: enqueued via OVERSIGHT_SUBMIT → %s", oid)
+            except Exception:
+                logger.exception("oversight: submit failed")
+
+        try:
+            await self.backends.signaling.subscribe(
+                subject_oversight_decision_all(collective_id),
+                _handle_decision,
+            )
+            await self.backends.signaling.subscribe(
+                submit_subject,
+                _handle_submit,
+            )
+            await self._stop_event.wait()
+        except Exception as exc:
+            logger.error("oversight: subscription error: %s", exc)
+
+    # ------------------------------------------------------------------
     # Main lifecycle (Phase 4e)
     # ------------------------------------------------------------------
 
@@ -677,13 +812,15 @@ class Agent:
         await self.backends.signaling.connect()
         try:
             await self._register()
-            # Run heartbeat, task, role-update, bridge-result, and centroid loops concurrently
+            # Run heartbeat, task, role-update, bridge-result, centroid, and
+            # (arbiter only) oversight-decision loops concurrently.
             await asyncio.gather(
                 self._heartbeat_loop(),
                 self._task_loop(),
                 self._subscribe_role_updates(),
                 self._subscribe_bridge_results(),
                 self._subscribe_centroid_updates(),
+                self._subscribe_oversight_decisions(),
                 return_exceptions=True,
             )
         finally:

@@ -31,6 +31,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Label
 
 from acc.tui.client import NATSObserver
+from acc.tui.messages import RolePreloadMessage
 from acc.tui.models import CollectiveSnapshot
 from acc.tui.screens.compliance import ComplianceScreen, _OversightAction
 from acc.tui.screens.comms import CommunicationsScreen
@@ -69,6 +70,13 @@ class ACCTUIApp(App):
 
     # External stylesheet — no inline CSS strings (REQ-TUI-005)
     CSS_PATH = Path(__file__).parent / "app.tcss"
+
+    # App-level bindings inherited by every screen.  Screen-level bindings
+    # override these, so `?` is reserved for help and should not be re-bound
+    # in any screen's own BINDINGS list.
+    BINDINGS = [
+        ("question_mark", "show_help", "Help"),
+    ]
 
     # All 6 biological screens (REQ-TUI-003)
     SCREENS = {
@@ -345,20 +353,117 @@ class ACCTUIApp(App):
             except Exception as exc:
                 logger.warning("app: re-subscribe failed for %s: %s", obs._collective_id, exc)
 
+    def action_show_help(self) -> None:
+        """Open the HelpScreen modal for the currently active screen.
+
+        Bound to ``?`` at App level — every screen inherits it.  We map the
+        active Textual screen class to a logical screen_id and look up the
+        matching markdown under ``acc/tui/help/{screen_id}.md`` (via
+        ``HelpScreen``'s loader).  Falls back to ``soma`` if the active
+        screen is unknown (e.g. the modal itself).
+        """
+        from acc.tui.screens.help import HelpScreen
+
+        # Map screen class → logical id used as the help filename stem.
+        screen_id_map = {
+            DashboardScreen: "soma",
+            InfuseScreen: "nucleus",
+            ComplianceScreen: "compliance",
+            CommunicationsScreen: "comms",
+            PerformanceScreen: "performance",
+            EcosystemScreen: "ecosystem",
+        }
+
+        active = self.screen
+        # Don't open Help on top of Help.
+        if isinstance(active, HelpScreen):
+            return
+        screen_id = "soma"
+        for cls, sid in screen_id_map.items():
+            if isinstance(active, cls):
+                screen_id = sid
+                break
+
+        try:
+            self.push_screen(HelpScreen(screen_id))
+        except Exception:
+            logger.exception("app: push HelpScreen(%s) failed", screen_id)
+
+    def on_role_preload_message(self, message: RolePreloadMessage) -> None:
+        """Pre-fill the Nucleus form from a role and switch screens.
+
+        Posted by EcosystemScreen when the user clicks the Schedule
+        infusion button after selecting a role row.  Biological framing:
+        reading the DNA in the extracellular matrix (Ecosystem) → loading
+        it into the cell's nucleus for expression (Nucleus).
+
+        We resolve the InfuseScreen instance, call ``preload_from_role``
+        with the chosen role name, then switch the active screen to
+        ``nucleus`` so the operator can review and Apply.
+        """
+        try:
+            infuse = self.get_screen("nucleus")
+        except KeyError:
+            try:
+                infuse = self.get_screen("infuse")
+            except KeyError:
+                logger.warning("app: nucleus/infuse screen not registered")
+                return
+
+        if isinstance(infuse, InfuseScreen):
+            try:
+                infuse.preload_from_role(message.role_name)
+            except Exception:
+                logger.exception("app: preload_from_role failed for %r", message.role_name)
+                return
+
+        try:
+            self.switch_screen("nucleus")
+        except Exception:
+            logger.exception("app: switch_screen('nucleus') failed")
+
     async def on__oversight_action(self, message: _OversightAction) -> None:
-        """Publish oversight approve/reject to NATS (REQ-TUI-026)."""
+        """Publish OVERSIGHT_DECISION to NATS (REQ-TUI-026 / ACC-12).
+
+        The Compliance screen has resolved the highlighted oversight_id;
+        we wrap it into an OVERSIGHT_DECISION payload and publish on the
+        per-item subject so the arbiter's wildcard subscriber routes it
+        to ``HumanOversightQueue.approve/reject``.
+
+        When the operator clicked on a legacy aggregate row (oversight_id
+        empty), there is no per-item id available — log and bail out
+        rather than send a malformed signal.
+        """
         obs = self._observers[self._active_collective_idx] if self._observers else None
         if obs is None:
             return
+        if not message.oversight_id:
+            logger.warning(
+                "app: oversight %s skipped — no oversight_id (legacy fallback row?)",
+                message.action,
+            )
+            return
+
         cid = self._active_collective_id
-        subject = f"acc.{cid}.oversight.action"
+        from acc.signals import subject_oversight_decision  # noqa: PLC0415
+        subject = subject_oversight_decision(cid, message.oversight_id)
+        decision = "APPROVE" if message.action == "approve" else "REJECT"
+        import time as _time  # noqa: PLC0415
         payload = {
-            "signal_type": "OVERSIGHT_ACTION",
-            "action": message.action,
+            "signal_type": "OVERSIGHT_DECISION",
+            "oversight_id": message.oversight_id,
+            "decision": decision,
+            "approver_id": "tui:anonymous",
+            "reason": message.reason,
+            "ts": _time.time(),
             "collective_id": cid,
         }
         try:
             await obs.publish(subject, payload)
+            logger.info(
+                "app: published OVERSIGHT_DECISION %s for %s",
+                decision, message.oversight_id,
+            )
         except Exception as exc:
             logger.warning("app: oversight publish failed: %s", exc)
 

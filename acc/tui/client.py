@@ -264,6 +264,14 @@ class NATSObserver:
                 a.compliance_health_score for a in active
             )
 
+        # ACC-12: arbiter heartbeats carry the authoritative oversight queue.
+        # Other roles publish [] which we ignore so the list isn't churned
+        # by interleaving heartbeats from non-arbiter agents.
+        if data.get("role") == "arbiter":
+            items = data.get("oversight_pending_items", [])
+            if isinstance(items, list):
+                self._snapshot.oversight_pending_items = items
+
     @handles("TASK_COMPLETE")
     def _route_task_complete(self, agent_id: str, data: dict) -> None:
         """Increment icl_episode_count on TASK_COMPLETE."""

@@ -24,9 +24,10 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Label, Static
+from textual.widgets import Button, DataTable, Footer, Label, Static
 
 from acc.role_loader import RoleLoader, list_roles
+from acc.tui.messages import RolePreloadMessage
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
 if TYPE_CHECKING:
@@ -56,6 +57,10 @@ class EcosystemScreen(Screen):
     def __init__(self, **kwargs) -> None:  # type: ignore[override]
         super().__init__(**kwargs)
         self._role_names: list[str] = []
+        # Currently-selected role row (set by on_data_table_row_selected).
+        # The "Schedule infusion" button reads this to decide which role
+        # to pre-load into the Nucleus form.
+        self._selected_role: str = ""
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="ecosystem", id="nav")
@@ -81,13 +86,29 @@ class EcosystemScreen(Screen):
                     classes="roadmap-content",
                 )
 
-            # Right: role detail panel + LLM backends
+            # Right: role detail panel + infusion action + LLM backends
             with Vertical(id="ecosystem-right"):
                 yield Label("ROLE DETAIL", classes="panel-label")
                 with ScrollableContainer(id="role-detail-container"):
                     yield Static(
                         "[dim]Select a role row to view its full definition.[/dim]",
                         id="role-detail-panel",
+                    )
+
+                # Infusion action — bridge from Ecosystem (extracellular role
+                # catalogue) to Nucleus (intracellular role expression).
+                # Biologically: reading DNA in the matrix → expressing it in
+                # the cell's nucleus.  Disabled until a role row is selected.
+                with Horizontal(id="row-infuse-action"):
+                    yield Button(
+                        "Schedule infusion → Nucleus",
+                        id="btn-schedule-infusion",
+                        variant="primary",
+                        disabled=True,
+                    )
+                    yield Static(
+                        "[dim]Select a role first[/dim]",
+                        id="infusion-hint",
                     )
 
                 yield Label("ACTIVE LLM BACKENDS", classes="panel-label")
@@ -109,7 +130,11 @@ class EcosystemScreen(Screen):
         self.app.switch_screen(event.screen_name)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Show full role.yaml content in the detail panel (REQ-TUI-038)."""
+        """Show full role.yaml content in the detail panel (REQ-TUI-038).
+
+        Also unlocks the "Schedule infusion" button and remembers the
+        selected role so the button click can route it to Nucleus.
+        """
         table = event.data_table
         if table.id != "role-table":
             return
@@ -118,8 +143,23 @@ class EcosystemScreen(Screen):
             # Row key was set to the role name during _load_roles
             role_name = str(row_key.value) if hasattr(row_key, "value") else str(row_key)
             self._show_role_detail(role_name)
+            self._selected_role = role_name
+            # Enable the infusion button now that a role is selected
+            try:
+                btn = self.query_one("#btn-schedule-infusion", Button)
+                btn.disabled = False
+                hint = self.query_one("#infusion-hint", Static)
+                hint.update(f"[dim]Selected: [b]{role_name}[/b][/dim]")
+            except Exception:
+                pass
         except Exception:
             pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle Ecosystem button presses — currently just Schedule infusion."""
+        if event.button.id == "btn-schedule-infusion" and self._selected_role:
+            # Post to the App; the App routes to InfuseScreen and switches.
+            self.app.post_message(RolePreloadMessage(self._selected_role))
 
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
         if snap is None:

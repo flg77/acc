@@ -187,14 +187,44 @@ class ComplianceScreen(Screen):
     def _render_oversight_queue(self, snap: "CollectiveSnapshot") -> None:
         """Populate oversight queue DataTable (REQ-TUI-025).
 
-        Items are sourced from agents with oversight_pending_count > 0.
-        The oversight queue itself is managed server-side; TUI reflects
-        counts from HEARTBEAT payloads.
+        Items come from the arbiter's HEARTBEAT — ``oversight_pending_items``
+        is a list of dicts mirroring the public surface of
+        :class:`acc.oversight.OversightItem`.  Each row's key is the real
+        ``oversight_id`` so the approve/reject actions can pick it up.
+
+        Falls back to the legacy per-agent count rendering when the new
+        list is empty (mixed-version deployments where some arbiters
+        haven't been redeployed yet).
         """
         table = self.query_one("#oversight-table", DataTable)
         table.clear()
 
-        # Build oversight rows from agent snapshots
+        items = snap.oversight_pending_items or []
+        if items:
+            for item in items:
+                if item.get("status", "PENDING") != "PENDING":
+                    continue
+                oid = str(item.get("oversight_id", ""))
+                if not oid:
+                    continue
+                submitted_ms = int(item.get("submitted_at_ms") or 0)
+                ts_str = (
+                    time.strftime("%H:%M:%S", time.localtime(submitted_ms / 1000.0))
+                    if submitted_ms
+                    else "—"
+                )
+                table.add_row(
+                    oid[:14],
+                    str(item.get("agent_id", ""))[:16],
+                    str(item.get("risk_level", "HIGH")),
+                    ts_str,
+                    "PENDING",
+                    key=oid,
+                )
+            return
+
+        # Legacy fallback: aggregate per-agent count when no per-item list
+        # is available (e.g. arbiter HEARTBEAT not yet upgraded).
         for agent_id, agent in snap.agents.items():
             if agent.oversight_pending_count > 0:
                 table.add_row(
@@ -203,6 +233,7 @@ class ComplianceScreen(Screen):
                     "HIGH",
                     time.strftime("%H:%M:%S"),
                     f"{agent.oversight_pending_count} pending",
+                    key=f"agg-{agent_id}",
                 )
 
     def _render_violation_log(self, snap: "CollectiveSnapshot") -> None:
@@ -236,18 +267,36 @@ class ComplianceScreen(Screen):
 
     async def action_approve_oversight(self) -> None:
         """Approve the selected oversight queue item via NATS (REQ-TUI-026)."""
-        table = self.query_one("#oversight-table", DataTable)
-        if table.row_count == 0:
+        oid = self._selected_oversight_id()
+        if oid is None:
             return
         # The app's observer handles publishing; delegate up
-        self.app.post_message(_OversightAction(action="approve"))
+        self.app.post_message(_OversightAction(action="approve", oversight_id=oid))
 
     async def action_reject_oversight(self) -> None:
         """Reject the selected oversight queue item via NATS (REQ-TUI-026)."""
+        oid = self._selected_oversight_id()
+        if oid is None:
+            return
+        self.app.post_message(_OversightAction(action="reject", oversight_id=oid))
+
+    def _selected_oversight_id(self) -> str | None:
+        """Return the oversight_id of the currently-highlighted table row.
+
+        Returns ``None`` when the table is empty or the cursor lands on a
+        legacy fallback row (key prefix ``agg-``) that has no per-item id.
+        """
         table = self.query_one("#oversight-table", DataTable)
         if table.row_count == 0:
-            return
-        self.app.post_message(_OversightAction(action="reject"))
+            return None
+        try:
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            value = row_key.value if hasattr(row_key, "value") else str(row_key)
+            if not value or value.startswith("agg-"):
+                return None
+            return str(value)
+        except Exception:
+            return None
 
     def action_navigate(self, screen_name: str) -> None:
         self.app.switch_screen(screen_name)
@@ -261,8 +310,19 @@ from textual.message import Message  # noqa: E402
 
 
 class _OversightAction(Message):
-    """Request an oversight approve/reject action."""
+    """Request an oversight approve/reject action.
 
-    def __init__(self, action: str) -> None:
+    Attributes:
+        action: ``"approve"`` or ``"reject"`` — the operator decision.
+        oversight_id: Identifier of the item the operator has highlighted.
+            Empty string when the legacy aggregate fallback is in use; the
+            App handler skips publishing in that case.
+        reason: Optional free-text rejection reason (Phase 1.3 keeps it
+            empty; future TUI prompt can populate it).
+    """
+
+    def __init__(self, action: str, oversight_id: str = "", reason: str = "") -> None:
         super().__init__()
         self.action = action  # "approve" | "reject"
+        self.oversight_id = oversight_id
+        self.reason = reason

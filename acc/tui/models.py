@@ -174,6 +174,13 @@ class CollectiveSnapshot:
     # ACC-12: OWASP violation log — FIFO-capped at _MAX_OWASP_LOG (REQ-TUI-017)
     owasp_violation_log: list[dict] = field(default_factory=list)
 
+    # ACC-12: pending oversight items (REQ-TUI-025).  Populated from the
+    # arbiter's HEARTBEAT — every other agent contributes nothing here.
+    # Each dict carries the public surface of acc.oversight.OversightItem:
+    #   oversight_id, task_id, agent_id, risk_level, summary,
+    #   submitted_at_ms, status.
+    oversight_pending_items: list[dict] = field(default_factory=list)
+
     # Signal flow log for CommunicationsScreen — FIFO-capped at 30
     signal_flow_log: list[dict] = field(default_factory=list)
 

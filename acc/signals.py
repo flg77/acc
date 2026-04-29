@@ -99,6 +99,29 @@ morphogen gradient that differentiates a stem cell into a specialised
 cell type before it performs any work.
 (A-016: only the arbiter may publish this signal.)"""
 
+# Compliance / EU AI Act human oversight signals (ACC-12)
+SIG_OVERSIGHT_DECISION = "OVERSIGHT_DECISION"
+"""Endocrine signal carrying a human operator's approve / reject decision
+for a paused HIGH-risk task in the oversight queue.
+
+Payload schema::
+
+    {
+        "signal_type": "OVERSIGHT_DECISION",
+        "oversight_id": "<id from HumanOversightQueue.submit()>",
+        "decision":     "APPROVE" | "REJECT",
+        "approver_id":  "<operator id or 'tui:anonymous'>",
+        "reason":       "<optional, free text>",
+        "ts":           <unix seconds float>,
+        "collective_id": "<cid>"
+    }
+
+Published by the TUI Compliance screen approve/reject buttons and
+consumed by the arbiter, which releases or escalates the underlying
+task accordingly.  Mode is endocrine because every agent in the
+collective may need to know the outcome (to clear its waiting state).
+"""
+
 # ---------------------------------------------------------------------------
 # Signal communication mode constants (ACC-11)
 # ---------------------------------------------------------------------------
@@ -143,6 +166,7 @@ SIGNAL_MODES: dict[str, str] = {
     SIG_BRIDGE_DELEGATE:        SIGNAL_MODE_ENDOCRINE,
     SIG_BRIDGE_RESULT:          SIGNAL_MODE_ENDOCRINE,
     SIG_DOMAIN_DIFFERENTIATION: SIGNAL_MODE_ENDOCRINE,
+    SIG_OVERSIGHT_DECISION:     SIGNAL_MODE_ENDOCRINE,
 }
 """Authoritative mapping from signal type constant to its communication mode.
 
@@ -539,3 +563,75 @@ def redis_domain_rubric_key(collective_id: str, domain_id: str) -> str:
         # → "acc:sol-01:domain_rubric:software_engineering"
     """
     return f"acc:{collective_id}:domain_rubric:{domain_id}"
+
+
+# ---------------------------------------------------------------------------
+# ACC-12 oversight subject + Redis key helpers
+# ---------------------------------------------------------------------------
+
+
+def subject_oversight_decision(collective_id: str, oversight_id: str) -> str:
+    """Return the NATS subject for OVERSIGHT_DECISION signals.
+
+    Each oversight item gets its own subject suffix so the arbiter can
+    subscribe to ``acc.{cid}.oversight.*`` and route decisions back to
+    the paused task by id.
+
+    Subject pattern: ``acc.{collective_id}.oversight.{oversight_id}``
+
+    Example::
+
+        subject_oversight_decision("sol-01", "ov-7c91a")
+        # → "acc.sol-01.oversight.ov-7c91a"
+    """
+    return f"acc.{collective_id}.oversight.{oversight_id}"
+
+
+def subject_oversight_decision_all(collective_id: str) -> str:
+    """Return the wildcard subject for subscribing to all OVERSIGHT_DECISION signals.
+
+    The arbiter subscribes here to receive every approve/reject for the
+    collective.
+
+    Example::
+
+        subject_oversight_decision_all("sol-01")
+        # → "acc.sol-01.oversight.*"
+    """
+    return f"acc.{collective_id}.oversight.*"
+
+
+def redis_oversight_pending_key(collective_id: str) -> str:
+    """Return the Redis key for the pending-items list of the oversight queue.
+
+    Stored as a Redis list: each entry is a JSON-encoded ``OversightItem``.
+    The TUI Compliance screen reads ``oversight_pending_count`` from the
+    arbiter's HEARTBEAT (``len(list)``) and the arbiter is the only writer.
+
+    Key pattern: ``acc:{collective_id}:oversight:pending``
+
+    Example::
+
+        redis_oversight_pending_key("sol-01")
+        # → "acc:sol-01:oversight:pending"
+    """
+    return f"acc:{collective_id}:oversight:pending"
+
+
+def redis_oversight_item_key(collective_id: str, oversight_id: str) -> str:
+    """Return the Redis key for a single oversight item by id.
+
+    Stored as JSON: the full item document so the arbiter can mutate the
+    ``status`` field on approve/reject without re-encoding the list.
+    Mirrors the pending-list entry — the list holds ids only when this
+    pattern is in use, but the minimum-viable implementation embeds the
+    full item in the list too (compatible).
+
+    Key pattern: ``acc:{collective_id}:oversight:item:{oversight_id}``
+
+    Example::
+
+        redis_oversight_item_key("sol-01", "ov-7c91a")
+        # → "acc:sol-01:oversight:item:ov-7c91a"
+    """
+    return f"acc:{collective_id}:oversight:item:{oversight_id}"

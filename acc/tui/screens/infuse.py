@@ -207,6 +207,70 @@ class InfuseScreen(Screen):
         domain_rec_input = self.query_one("#input-domain-receptors", Input)
         domain_rec_input.value = ", ".join(receptors)
 
+    def preload_from_role(self, role_name: str) -> None:
+        """Pre-fill the entire form from a roles/<name>/role.yaml definition.
+
+        Called by the App when the user clicks "Schedule infusion" in the
+        Ecosystem screen.  Resolves the role via RoleLoader and populates
+        every editable field — Select, Inputs, TextAreas — so the operator
+        can review and Apply without re-typing.
+
+        Falls back gracefully if the role does not exist or is malformed:
+        the form keeps its current values and the status bar reports the
+        problem.
+        """
+        root = _roles_root()
+        loader = RoleLoader(root, role_name)
+        role_def = loader.load()
+        if role_def is None:
+            self.status_text = f"⚠ Could not load role {role_name!r}"
+            return
+
+        # Switch the Select widget to the named role.  This will also
+        # trigger on_select_changed → _populate_task_types, but we set the
+        # remaining fields explicitly afterwards so partial data from the
+        # previous role does not linger.
+        try:
+            self.query_one("#select-role", Select).value = role_name
+        except Exception:
+            pass
+
+        # Persona dropdown — guard against custom personas not in _PERSONAS
+        try:
+            persona = role_def.persona or "concise"
+            self.query_one("#select-persona", Select).value = persona
+        except Exception:
+            pass
+
+        # Version
+        self.query_one("#input-version", Input).value = role_def.version or "0.1.0"
+
+        # Purpose + seed_context
+        self.query_one("#textarea-purpose", TextArea).text = role_def.purpose or ""
+        self.query_one("#textarea-seed", TextArea).text = role_def.seed_context or ""
+
+        # Task types, allowed actions
+        self._dynamic_task_types = list(role_def.task_types or [])
+        self.query_one("#input-task-types", Input).value = ", ".join(self._dynamic_task_types)
+        allowed = list(role_def.allowed_actions or [])
+        self.query_one("#input-allowed-actions", Input).value = ", ".join(allowed)
+
+        # Domain identity (ACC-11)
+        self.query_one("#input-domain-id", Input).value = (
+            getattr(role_def, "domain_id", "") or ""
+        )
+        receptors = list(getattr(role_def, "domain_receptors", []) or [])
+        self.query_one("#input-domain-receptors", Input).value = ", ".join(receptors)
+
+        # Cat-B overrides — coerce numeric values from the role's overrides dict
+        overrides = role_def.category_b_overrides or {}
+        token_budget = overrides.get("token_budget", 2048)
+        rate_rpm = overrides.get("rate_limit_rpm", 60)
+        self.query_one("#input-token-budget", Input).value = str(token_budget)
+        self.query_one("#input-rate-rpm", Input).value = str(rate_rpm)
+
+        self.status_text = f"Pre-filled from roles/{role_name}/ — review and Apply"
+
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
 
