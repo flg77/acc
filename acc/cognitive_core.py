@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from acc.config import ComplianceConfig, RoleDefinitionConfig
+from acc.governance_capabilities import CapabilityDecision, CapabilityGuard
 from acc.signals import redis_centroid_key, redis_stress_key
 
 logger = logging.getLogger("acc.cognitive_core")
@@ -188,6 +189,8 @@ class CognitiveCore:
         compliance_config: Optional[ComplianceConfig] = None,
         peer_collectives: Optional[list[str]] = None,
         bridge_enabled: bool = False,
+        skill_registry: Optional[Any] = None,
+        mcp_registry: Optional[Any] = None,
     ) -> None:
         self._agent_id = agent_id
         self._collective_id = collective_id
@@ -204,6 +207,18 @@ class CognitiveCore:
         self._task_timestamps: list[float] = []
         # ACC-11: shared domain centroid vector (updated by CENTROID_UPDATE signal)
         self._domain_centroid: list[float] = []
+
+        # Phase 4.3: Skills + MCP registries (optional — process_task does
+        # NOT use these; they back the explicit invoke_skill / invoke_mcp_tool
+        # entry points the agent's task loop calls when the LLM emits a
+        # skill or tool request).  Cat-A A-017 / A-018 enforcement is gated
+        # by CapabilityGuard.enforce, which mirrors compliance.cat_a_enforce.
+        self._skill_registry: Optional[Any] = skill_registry
+        self._mcp_registry: Optional[Any] = mcp_registry
+        self._capability_guard: CapabilityGuard = CapabilityGuard(
+            enforce=(compliance_config.cat_a_enforce
+                     if compliance_config is not None else False),
+        )
 
         # ACC-12: Compliance components (lazily wired; disabled by default)
         self._compliance_cfg: ComplianceConfig = compliance_config or ComplianceConfig()
@@ -475,6 +490,139 @@ class CognitiveCore:
         )
 
     # ------------------------------------------------------------------
+    # Phase 4.3 — Skills + MCP invocation surface
+    # ------------------------------------------------------------------
+
+    async def invoke_skill(
+        self,
+        skill_id: str,
+        args: dict[str, Any] | None,
+        role: RoleDefinitionConfig,
+    ) -> dict[str, Any]:
+        """Run an A-017-checked invocation of one Skill.
+
+        Called by the agent task loop when the LLM emits a skill request
+        (the parser lives in :mod:`acc.guardrails.agency_limiter` and
+        upstream of this method — see PR 4.4 for that wiring).  Cat-A
+        A-017 is evaluated *before* the registry is consulted so a
+        denied skill never executes its adapter.
+
+        Args:
+            skill_id: Must match an id loaded into ``skill_registry``.
+            args: Adapter input.  ``None`` is treated as ``{}``.
+            role: Active :class:`RoleDefinitionConfig`.
+
+        Returns:
+            The adapter's validated output dict.
+
+        Raises:
+            RuntimeError: ``skill_registry`` was not supplied at
+                construction time.
+            acc.skills.SkillForbiddenError: Cat-A A-017 blocked the call
+                (in enforce mode).
+            acc.skills.SkillNotFoundError: ``skill_id`` is unknown.
+            acc.skills.SkillSchemaError: Args/output failed validation.
+            acc.skills.SkillInvocationError: Adapter raised or returned
+                a non-dict.
+        """
+        if self._skill_registry is None:
+            raise RuntimeError(
+                "cognitive_core: skill_registry not configured — pass "
+                "skill_registry=... at CognitiveCore construction"
+            )
+
+        # Local imports keep the no-skills path import-light.
+        from acc.skills import SkillForbiddenError, SkillNotFoundError
+
+        manifest = self._skill_registry.manifest(skill_id)
+        if manifest is None:
+            # Surface the same error the registry would; we hit the
+            # whitelist check first only if the manifest exists.
+            raise SkillNotFoundError(
+                f"skill {skill_id!r} not found in registry"
+            )
+
+        decision = self._capability_guard.check_skill_invocation(role, manifest)
+        if not decision.allowed:
+            self._stress.cat_a_trigger_count += 1
+            self._emit_alert_escalate(f"a-017:{decision.reason}")
+            raise SkillForbiddenError(
+                f"A-017 blocked skill {skill_id!r}: {decision.reason}"
+            )
+        if decision.needs_oversight:
+            logger.info(
+                "cognitive_core: A-017 CRITICAL skill %r — oversight requested "
+                "(agent_id=%s)",
+                skill_id, self._agent_id,
+            )
+            # NOTE: oversight queue submission happens in the agent task
+            # loop, which has the queue handle.  We emit an info log so
+            # the absence of follow-up enqueue is visible.
+
+        return await self._skill_registry.invoke(skill_id, args)
+
+    async def invoke_mcp_tool(
+        self,
+        server_id: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None,
+        role: RoleDefinitionConfig,
+    ) -> dict[str, Any]:
+        """Run an A-018-checked invocation of one MCP tool.
+
+        Args:
+            server_id: Must match an id loaded into ``mcp_registry``.
+            tool_name: Tool advertised by the server.
+            arguments: Tool args.  ``None`` is treated as ``{}``.
+            role: Active :class:`RoleDefinitionConfig`.
+
+        Returns:
+            The tool's structured result envelope (the ``result`` field
+            of the JSON-RPC response — typically containing a
+            ``content`` list per the MCP spec).
+
+        Raises:
+            RuntimeError: ``mcp_registry`` was not supplied.
+            acc.mcp.MCPServerNotFoundError: ``server_id`` unknown.
+            acc.mcp.MCPToolNotFoundError: Cat-A A-018 blocked the call,
+                or the manifest's tool gate rejected it.
+            acc.mcp.MCPProtocolError, acc.mcp.MCPTransportError:
+                Bubbled up from the JSON-RPC client.
+        """
+        if self._mcp_registry is None:
+            raise RuntimeError(
+                "cognitive_core: mcp_registry not configured — pass "
+                "mcp_registry=... at CognitiveCore construction"
+            )
+
+        from acc.mcp import MCPServerNotFoundError, MCPToolNotFoundError
+
+        manifest = self._mcp_registry.manifest(server_id)
+        if manifest is None:
+            raise MCPServerNotFoundError(
+                f"mcp_server {server_id!r} not in registry"
+            )
+
+        decision = self._capability_guard.check_mcp_invocation(
+            role, manifest, tool_name,
+        )
+        if not decision.allowed:
+            self._stress.cat_a_trigger_count += 1
+            self._emit_alert_escalate(f"a-018:{decision.reason}")
+            raise MCPToolNotFoundError(
+                f"A-018 blocked tool {tool_name!r}@{server_id!r}: {decision.reason}"
+            )
+        if decision.needs_oversight:
+            logger.info(
+                "cognitive_core: A-018 CRITICAL tool %r@%r — oversight requested "
+                "(agent_id=%s)",
+                tool_name, server_id, self._agent_id,
+            )
+
+        client = await self._mcp_registry.client(server_id)
+        return await client.call_tool(tool_name, arguments or {})
+
+    # ------------------------------------------------------------------
     # ACC-12 Compliance helpers
     # ------------------------------------------------------------------
 
@@ -573,6 +721,41 @@ class CognitiveCore:
         parts = [purpose, f"\nPersona: {persona_instruction}"]
         if seed:
             parts.append(f"\n{seed}")
+
+        # Phase 4.3 — Available skills block.  Only listed when the role
+        # opts in via default_skills (a subset of allowed_skills).  Empty
+        # default_skills => no block in the prompt at all, so legacy
+        # roles with no skill wiring see exactly their previous prompt.
+        if role.default_skills:
+            advertised = [sid for sid in role.default_skills if sid in role.allowed_skills]
+            if advertised:
+                lines = ["\n\nAvailable skills (call by name with [ACTION: <skill_id>]):"]
+                for sid in advertised:
+                    manifest = (
+                        self._skill_registry.manifest(sid)
+                        if self._skill_registry is not None else None
+                    )
+                    if manifest is None:
+                        lines.append(f"  - {sid}")
+                    else:
+                        lines.append(f"  - {sid}: {manifest.purpose}")
+                parts.append("\n".join(lines))
+
+        # Phase 4.3 — Available MCP servers block.  Same gating as skills.
+        if role.default_mcps:
+            advertised = [sid for sid in role.default_mcps if sid in role.allowed_mcps]
+            if advertised:
+                lines = ["\n\nAvailable MCP servers (external tool providers):"]
+                for sid in advertised:
+                    manifest = (
+                        self._mcp_registry.manifest(sid)
+                        if self._mcp_registry is not None else None
+                    )
+                    if manifest is None:
+                        lines.append(f"  - {sid}")
+                    else:
+                        lines.append(f"  - {sid}: {manifest.purpose}")
+                parts.append("\n".join(lines))
 
         # Bridge delegation instruction (ACC-9) — only when peers are available
         if self._bridge_enabled and self._peer_collectives:

@@ -78,6 +78,57 @@ class RoleDefinitionConfig(BaseModel):
 
     Empty string = no rubric file present (role accepts any criteria)."""
 
+    # ------------------------------------------------------------------
+    # Phase 4.3 — Skills + MCP whitelists
+    # ------------------------------------------------------------------
+
+    allowed_skills: list[str] = Field(default_factory=list)
+    """Skill ids (matching ``skills/<skill_id>/skill.yaml``) this role may invoke.
+
+    Empty list = role cannot invoke ANY skill (default — fail-closed).  This
+    is the inverse default of ``allowed_actions`` (where empty = unconstrained
+    legacy behaviour) because skills are a new capability surface and we
+    want fail-closed semantics out of the box.
+
+    Cat-A rule A-017 enforces this list: ``CognitiveCore.invoke_skill()``
+    raises :class:`acc.skills.SkillForbiddenError` if the requested
+    ``skill_id`` is not present.
+
+    Biological framing: the membrane receptor set — only organelles the
+    cell expresses are reachable from inside the cell."""
+
+    default_skills: list[str] = Field(default_factory=list)
+    """Subset of ``allowed_skills`` advertised in the LLM system prompt.
+
+    Skills in this list appear in the prompt's "Available skills" block so
+    the LLM knows it can call them; skills only in ``allowed_skills`` (and
+    not here) are reachable but the LLM has to be told about them
+    out-of-band.  Useful for: keeping the prompt small when many skills
+    are licit, or hiding sensitive skills behind explicit operator
+    instructions."""
+
+    max_skill_risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = "MEDIUM"
+    """Maximum :class:`acc.skills.SkillRiskLevel` this role may invoke.
+
+    Cat-A rule A-017 raises ``SkillForbiddenError`` if the manifest's
+    ``risk_level`` ranks above this ceiling (LOW < MEDIUM < HIGH < CRITICAL).
+    Default ``MEDIUM`` allows LOW + MEDIUM skills; explicit upgrade required
+    for HIGH or CRITICAL.
+
+    CRITICAL invocations always additionally enqueue an oversight request
+    (EU AI Act Art. 14) regardless of this ceiling."""
+
+    allowed_mcps: list[str] = Field(default_factory=list)
+    """MCP server ids (matching ``mcps/<server_id>/mcp.yaml``) this role may
+    consume.  Same fail-closed semantics as ``allowed_skills``: empty list
+    = no MCP servers reachable.  Cat-A rule A-018 enforces."""
+
+    default_mcps: list[str] = Field(default_factory=list)
+    """Subset of ``allowed_mcps`` advertised in the system prompt."""
+
+    max_mcp_risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = "MEDIUM"
+    """Risk ceiling applied by Cat-A A-018 to MCP tool invocations."""
+
 
 class AgentConfig(BaseModel):
     role: AgentRole = "ingester"

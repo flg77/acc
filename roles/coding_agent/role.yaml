@@ -89,3 +89,18 @@ role_definition:
   domain_receptors:
     - "software_engineering"
     - "security_audit"
+
+  # Phase 4.3: Capability surface — coding_agent is the demonstrator role
+  # for skills + MCP servers.  The echo skill and echo_server MCP are
+  # both LOW-risk diagnostic capabilities used to smoke-test the wiring;
+  # production roles should replace them with real entries.
+  allowed_skills:
+    - echo
+  default_skills:
+    - echo
+  max_skill_risk_level: "MEDIUM"
+  allowed_mcps:
+    - echo_server
+  default_mcps:
+    - echo_server
+  max_mcp_risk_level: "MEDIUM"

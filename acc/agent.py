@@ -202,6 +202,13 @@ class Agent:
 
         # CognitiveCore — skipped for observer role (REQ-CORE-008)
         self._cognitive_core: CognitiveCore | None = None
+        # Phase 4.3 — Skill + MCP registries.  Built once at agent startup
+        # and shared by every CognitiveCore call site.  Empty registries
+        # are cheap; we always build them so role hot-reload (which can
+        # toggle allowed_skills from [] to non-empty) does not need a
+        # restart to gain capability access.
+        self._skill_registry = self._build_skill_registry()
+        self._mcp_registry = self._build_mcp_registry()
         if self.config.agent.role not in _NO_COGNITIVE_ROLES:
             # Merge hub_collective_id into peer_collectives when both are set
             peer_collectives = list(self.config.agent.peer_collectives)
@@ -218,6 +225,8 @@ class Agent:
                 role_label=self.config.agent.role,
                 peer_collectives=peer_collectives,
                 bridge_enabled=self.config.agent.bridge_enabled,
+                skill_registry=self._skill_registry,
+                mcp_registry=self._mcp_registry,
             )
 
         # Pending bridge delegations: task_id → asyncio.Future (ACC-9)
@@ -260,6 +269,54 @@ class Agent:
         # that carried a domain_centroid_vector.  Passed to CognitiveCore on
         # each task so that domain_drift_score is always current.
         self._domain_centroid: list[float] = []
+
+    # ------------------------------------------------------------------
+    # Phase 4.3 — Skill + MCP registry construction
+    # ------------------------------------------------------------------
+
+    def _build_skill_registry(self) -> Optional[Any]:
+        """Discover skills under ``$ACC_SKILLS_ROOT`` (or ``./skills``).
+
+        Returns the registry even when empty so the rest of the agent
+        can call ``invoke_skill()`` without a None-check; the registry
+        itself surfaces a :class:`SkillNotFoundError` for unknown ids.
+        Errors during discovery are logged and the registry is still
+        returned (potentially empty) — one bad skill must not stop the
+        agent from booting.
+        """
+        try:
+            from acc.skills import SkillRegistry  # noqa: PLC0415
+            reg = SkillRegistry()
+            reg.load_from()
+            logger.info(
+                "agent: skill registry loaded — %d skill(s)",
+                len(reg),
+            )
+            return reg
+        except Exception as exc:
+            logger.warning("agent: skill registry init failed: %s", exc)
+            return None
+
+    def _build_mcp_registry(self) -> Optional[Any]:
+        """Discover MCP server manifests under ``$ACC_MCPS_ROOT`` (or
+        ``./mcps``).  Same fail-soft semantics as
+        :meth:`_build_skill_registry` — connections to actual MCP
+        servers are deferred until the first :meth:`MCPRegistry.client`
+        call, so a missing or unreachable server does not stop the
+        agent from booting.
+        """
+        try:
+            from acc.mcp import MCPRegistry  # noqa: PLC0415
+            reg = MCPRegistry()
+            reg.load_from()
+            logger.info(
+                "agent: mcp registry loaded — %d server(s)",
+                len(reg),
+            )
+            return reg
+        except Exception as exc:
+            logger.warning("agent: mcp registry init failed: %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     # Registration

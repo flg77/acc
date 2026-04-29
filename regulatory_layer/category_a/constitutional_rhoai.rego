@@ -209,6 +209,52 @@ deny_domain_differentiation_from_non_arbiter if {
 }
 
 # ==========================================================================
+# NEW v0.5.0 RULES (Phase 4.3: skills + MCP capability whitelists)
+# ==========================================================================
+#
+# A-017 and A-018 are decision-level rules — they fire INSIDE the agent's
+# CognitiveCore.process_task pipeline, before any signal hits the bus.
+# OPA evaluation per skill/tool call would mean a JSON-RPC subprocess hop
+# for a check that resolves in microseconds against a list and an enum,
+# so the SOURCE OF TRUTH for runtime enforcement is the Python guard at
+# acc/governance_capabilities.py::CapabilityGuard.
+#
+# These Rego rules are kept as DECLARATIVE DOCUMENTATION so:
+#   * Auditors can read the constitutional bundle and see all 18 rules.
+#   * Future RHOAI Gatekeeper integrations can constrain spawning of
+#     agents whose role.allowed_skills / allowed_mcps would violate
+#     cluster-wide capability policy.
+# The Python guard remains authoritative; these rules deliberately do
+# not duplicate every check (no risk-level ranking, no per-tool gate).
+# ==========================================================================
+
+# A-017: A skill invocation must reference a skill_id present in the
+# calling role's allowed_skills whitelist.  Empty whitelist denies every
+# skill (fail-closed) — the inverse default of allowed_actions, because
+# skills are a new capability surface where explicit opt-in is expected.
+#
+# Biological analog: Only organelles the cell expresses can be
+# dispatched to.  A neuron cannot suddenly run a hepatocyte's
+# detoxification pathway just because the chemistry exists somewhere
+# in the genome.
+deny_skill_not_whitelisted if {
+    input.action == "SKILL_INVOKE"
+    not input.skill_id in input.agent.allowed_skills
+}
+
+# A-018: An MCP-tool invocation must reference a server_id present in
+# the calling role's allowed_mcps whitelist.  Same fail-closed default.
+#
+# Biological analog: Symbiotic bacteria the cell hosts but does not
+# synthesise — only those with active membrane contracts (allowed_mcps)
+# may transfer molecules across the cell wall.  A new symbiont must be
+# explicitly admitted; merely existing in the environment is not enough.
+deny_mcp_not_whitelisted if {
+    input.action == "MCP_INVOKE"
+    not input.mcp_server_id in input.agent.allowed_mcps
+}
+
+# ==========================================================================
 # HELPER FUNCTIONS
 # ==========================================================================
 
