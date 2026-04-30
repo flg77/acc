@@ -241,15 +241,23 @@ class Agent:
         # the attribute so the heartbeat loop can read pending_count uniformly
         # without a role-specific branch.  Non-arbiter agents see an empty
         # queue → oversight_pending_count stays at 0.
+        # Phase 4.5 — every agent gets an oversight queue, not just the
+        # arbiter.  Reason: capability_dispatch._gate_on_oversight blocks
+        # CRITICAL skill / MCP-tool invocations on the queue, and that
+        # gate fires on whatever agent the LLM happens to be running on
+        # — typically NOT the arbiter.  Each agent owns the items it
+        # submits (keyed by oversight_id); the OVERSIGHT_DECISION
+        # subscription routes operator approve/reject decisions to
+        # whichever agent's queue holds the matching id.  The arbiter
+        # keeps its central queue role for non-capability oversight
+        # submissions (e.g. CLI-injected items via OVERSIGHT_SUBMIT).
         from acc.oversight import HumanOversightQueue  # noqa: PLC0415
-        if self.config.agent.role == "arbiter":
-            self._oversight_queue: HumanOversightQueue | None = HumanOversightQueue(
-                redis_client=self._redis,
-                collective_id=self.config.agent.collective_id,
-                agent_id=self.agent_id,
-            )
-        else:
-            self._oversight_queue = None
+        self._oversight_queue: HumanOversightQueue | None = HumanOversightQueue(
+            redis_client=self._redis,
+            collective_id=self.config.agent.collective_id,
+            timeout_s=self.config.compliance.oversight_timeout_s,
+            agent_id=self.agent_id,
+        )
 
         # ACC-10 PLAN: arbiter-side DAG executor.  Same role-gated pattern
         # as the oversight queue — non-arbiter agents carry a None pointer
@@ -359,15 +367,16 @@ class Agent:
                 else self._stress
             )
 
-            # ACC-12: keep oversight_pending_count current.  The arbiter is
-            # the only role that ever owns a non-None queue; for everyone else
-            # the field stays at 0.  Reading is O(N) over the bounded deque
-            # so it's safe in the heartbeat loop (default interval 30 s).
-            #
-            # Arbiters additionally serialise the full pending-item list into
-            # the heartbeat so the TUI can render rows with real oversight_ids
-            # (the Compliance screen uses those ids when publishing approve/
-            # reject decisions).  Non-arbiter agents emit an empty list.
+            # ACC-12: keep oversight_pending_count current.  Every agent
+            # owns a queue since Phase 4.5 (capability_dispatch's
+            # CRITICAL gate runs on whichever agent the LLM was running
+            # on, not just the arbiter).  Reading is O(N) over the
+            # bounded deque so it's safe in the heartbeat loop (default
+            # interval 30 s).  Each agent serialises its OWN pending
+            # items — the TUI Compliance screen aggregates across the
+            # whole collective via the snapshot's oversight_pending_items
+            # list, so an item gated on coding_agent-1 still shows up in
+            # the operator's table even though the arbiter never saw it.
             oversight_pending_items: list[dict] = []
             if self._oversight_queue is not None:
                 try:
@@ -478,6 +487,11 @@ class Agent:
                         invocations,
                         self._cognitive_core,  # type: ignore[arg-type]
                         self._active_role,
+                        # Phase 4.5 — gate CRITICAL invocations on the
+                        # human-oversight queue.  Non-CRITICAL items
+                        # bypass the queue entirely (cheap fast-path).
+                        oversight_queue=self._oversight_queue,
+                        task_id=str(data.get("task_id", "")),
                     )
                     logger.info(
                         "task_loop: dispatched %d capability invocation(s) "

@@ -20,6 +20,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
@@ -88,9 +89,17 @@ def _compute_owasp_grades(
 class ComplianceScreen(Screen):
     """Compliance and governance monitoring screen (REQ-TUI-023 – REQ-TUI-027)."""
 
+    # Approve / reject use letter keys (NOT Enter) so the screen-level
+    # binding wins.  Pressing Enter while the oversight DataTable has
+    # focus triggers the table's own RowSelected handler — the screen
+    # binding never fires.  Confirmed via Pilot:
+    #   focus(table); press('enter')  →  no action_approve_oversight call
+    #   focus(table); press('r')      →  reject dispatched correctly
+    # We use 'a' / 'r' as the mnemonic pair and mark both priority=True
+    # so they fire even if a future child widget claims the keys.
     BINDINGS = [
-        ("enter", "approve_oversight", "Approve"),
-        ("r", "reject_oversight", "Reject"),
+        Binding("a", "approve_oversight", "Approve", priority=True),
+        Binding("r", "reject_oversight", "Reject", priority=True),
         ("q", "app.quit", "Quit"),
         ("1", "navigate('soma')", "Soma"),
         ("2", "navigate('nucleus')", "Nucleus"),
@@ -120,7 +129,7 @@ class ComplianceScreen(Screen):
             with Vertical(id="compliance-right"):
                 yield Label("HUMAN OVERSIGHT QUEUE", classes="panel-label")
                 yield DataTable(id="oversight-table")
-                yield Label("  [bold]Enter[/bold]=Approve  [bold]r[/bold]=Reject", classes="key-hint")
+                yield Label("  [bold]a[/bold]=Approve  [bold]r[/bold]=Reject", classes="key-hint")
 
                 yield Label("OWASP VIOLATION LOG (last 50)", classes="panel-label")
                 with ScrollableContainer(id="violation-log-container"):
