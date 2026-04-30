@@ -30,8 +30,19 @@ from __future__ import annotations
 from acc.channels.base import PromptChannel, PromptResponse
 from acc.channels.tui import TUIPromptChannel
 
+# SlackPromptChannel (and SlackDaemon) lives in a sibling module that
+# imports its NATS dependency lazily so the rest of the package stays
+# usable when nats-py / msgpack are absent.  We DO eagerly import the
+# class here so ``from acc.channels import SlackPromptChannel`` works
+# without forcing the operator to know which submodule it lives in.
+# The slack_bolt dependency is only loaded inside ``SlackDaemon.run``
+# so the import chain remains light for non-Slack consumers.
+from acc.channels.slack import SlackDaemon, SlackPromptChannel
+
 __all__ = [
     "PromptChannel",
     "PromptResponse",
+    "SlackDaemon",
+    "SlackPromptChannel",
     "TUIPromptChannel",
 ]
