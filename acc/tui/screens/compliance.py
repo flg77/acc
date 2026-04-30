@@ -107,6 +107,7 @@ class ComplianceScreen(Screen):
         ("4", "navigate('comms')", "Comms"),
         ("5", "navigate('performance')", "Performance"),
         ("6", "navigate('ecosystem')", "Ecosystem"),
+        ("7", "navigate('prompt')", "Prompt"),
     ]
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)

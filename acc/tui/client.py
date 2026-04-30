@@ -90,6 +90,12 @@ class NATSObserver:
         self._snapshot = CollectiveSnapshot(collective_id=collective_id)
         self._nc: Any = None  # nats.aio.client.Client
         self._subscription: Any = None
+        # PR-B — per-task_id Future registry.  Channels (TUIPromptChannel
+        # and friends) call ``register_task_listener`` with a fresh
+        # Future before publishing TASK_ASSIGN, then await the Future to
+        # resolve when the matching TASK_COMPLETE arrives.  Cleanup is
+        # the channel's responsibility via ``unregister_task_listener``.
+        self._task_listeners: dict[str, asyncio.Future[dict]] = {}
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -112,6 +118,36 @@ class NATSObserver:
         subject = f"acc.{self._collective_id}.>"
         self._subscription = await self._nc.subscribe(subject, cb=self._handle_message)
         logger.info("nats_observer: subscribed to %s", subject)
+
+    # ------------------------------------------------------------------
+    # PR-B — per-task_id correlation registry
+    # ------------------------------------------------------------------
+
+    def register_task_listener(
+        self, task_id: str, future: "asyncio.Future[dict]",
+    ) -> None:
+        """Bind *future* to TASK_COMPLETE messages carrying *task_id*.
+
+        Called by a :class:`acc.channels.PromptChannel` BEFORE
+        publishing TASK_ASSIGN so the Future is in the registry by the
+        time TASK_COMPLETE comes back.  The Future resolves to the
+        full TASK_COMPLETE payload dict.
+
+        Calling twice with the same task_id replaces the previous
+        Future — the old one is left dangling for the caller's
+        timeout handler to cancel.  In practice each task_id is
+        unique (UUID hex) so collisions don't happen.
+        """
+        self._task_listeners[task_id] = future
+
+    def unregister_task_listener(self, task_id: str) -> None:
+        """Drop a registration without delivering anything.
+
+        Channels call this from a timeout / cancellation path so a
+        stale Future doesn't keep a slot in the registry.  Idempotent —
+        unregistering an unknown id is a no-op.
+        """
+        self._task_listeners.pop(task_id, None)
 
     async def publish(self, subject: str, payload: dict) -> None:
         """Publish a message to NATS (used by InfuseScreen for ROLE_UPDATE).
@@ -274,7 +310,14 @@ class NATSObserver:
 
     @handles("TASK_COMPLETE")
     def _route_task_complete(self, agent_id: str, data: dict) -> None:
-        """Increment icl_episode_count on TASK_COMPLETE."""
+        """Increment icl_episode_count on TASK_COMPLETE.
+
+        PR-B addition: also fan the message out to any per-task_id
+        listener registered via :meth:`register_task_listener`.  This
+        is the correlation point :class:`acc.channels.tui.TUIPromptChannel`
+        uses to resolve the Future returned by ``receive``.  Resolving
+        a Future that's been cancelled or already-set is a no-op.
+        """
         if not data.get("blocked", False):
             self._snapshot.icl_episode_count += 1
 
@@ -284,6 +327,15 @@ class NATSObserver:
             snap.current_task_step = 0
             snap.total_task_steps = 0
             snap.task_progress_label = ""
+
+        # PR-B — fan out to per-task_id listeners.  Pop the entry on
+        # delivery so the dict doesn't grow unboundedly even if the
+        # channel forgets to unregister.
+        task_id = data.get("task_id", "")
+        if task_id:
+            future = self._task_listeners.pop(task_id, None)
+            if future is not None and not future.done():
+                future.set_result(data)
 
     @handles("ALERT_ESCALATE")
     def _route_alert_escalate(self, agent_id: str, data: dict) -> None:

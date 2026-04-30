@@ -25,6 +25,7 @@ _SCREENS: list[tuple[str, str, str]] = [
     ("4", "comms",       "4 Comms"),
     ("5", "performance", "5 Performance"),
     ("6", "ecosystem",   "6 Ecosystem"),
+    ("7", "prompt",      "7 Prompt"),
 ]
 
 
@@ -80,6 +81,7 @@ class NavigationBar(Widget):
         ("4", "navigate('comms')",       "Comms"),
         ("5", "navigate('performance')", "Performance"),
         ("6", "navigate('ecosystem')",   "Ecosystem"),
+        ("7", "navigate('prompt')",      "Prompt"),
     ]
 
     def __init__(self, active_screen: str = "soma", **kwargs) -> None:  # type: ignore[override]
