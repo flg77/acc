@@ -17,6 +17,7 @@ acc.role_loader, and acc.config (REQ-TUI-051).
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -29,6 +30,7 @@ from textual.widgets import Button, DataTable, Footer, Label, Static
 from acc.role_loader import RoleLoader, list_roles
 from acc.tui.messages import RolePreloadMessage
 from acc.tui.path_resolution import resolve_manifest_root
+from acc.tui.widgets.file_picker import FilePickerModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
 if TYPE_CHECKING:
@@ -93,6 +95,11 @@ class EcosystemScreen(Screen):
         # The "Schedule infusion" button reads this to decide which role
         # to pre-load into the Nucleus form.
         self._selected_role: str = ""
+        # PR-A2 — which upload kind is currently in-flight, set by the
+        # button handler before pushing the FilePickerModal so the
+        # FileSelected handler knows whether to copy into skills/ or
+        # mcps/.  ``""`` means no upload pending.
+        self._pending_upload_kind: str = ""
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="ecosystem", id="nav")
@@ -107,11 +114,26 @@ class EcosystemScreen(Screen):
                 # Phase 4.4 — live Skills table replaces the roadmap stub.
                 # Sourced from SkillRegistry().load_from(_skills_root())
                 # at mount time; one row per loaded skill manifest.
-                yield Label("SKILLS", classes="panel-label")
+                # PR-A2: header row with an Upload button next to the title.
+                with Horizontal(classes="panel-header-row"):
+                    yield Label("SKILLS", classes="panel-label")
+                    yield Button(
+                        "Upload skill",
+                        id="btn-upload-skill",
+                        variant="default",
+                        classes="panel-header-button",
+                    )
                 yield DataTable(id="skills-table")
 
                 # Phase 4.4 — live MCP servers table replaces the roadmap.
-                yield Label("MCP SERVERS", classes="panel-label")
+                with Horizontal(classes="panel-header-row"):
+                    yield Label("MCP SERVERS", classes="panel-label")
+                    yield Button(
+                        "Upload MCP",
+                        id="btn-upload-mcp",
+                        variant="default",
+                        classes="panel-header-button",
+                    )
                 yield DataTable(id="mcps-table")
 
             # Right: role detail panel + infusion action + LLM backends
@@ -249,14 +271,34 @@ class EcosystemScreen(Screen):
             )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle Ecosystem button presses — currently just Schedule infusion.
+        """Dispatch by button id.
 
-        When the operator presses the button without an active selection
-        we surface a Textual notification so the dead-click is visible
-        rather than silent.  Pre-PR-A this branch was a no-op.
+        Three buttons live on this screen post-PR-A2:
+
+        * ``btn-schedule-infusion`` — preload the selected role into Nucleus.
+        * ``btn-upload-skill`` — open the FilePickerModal targeting
+          ``skill.yaml`` (PR-A2).
+        * ``btn-upload-mcp`` — open the FilePickerModal targeting
+          ``mcp.yaml`` (PR-A2).
         """
-        if event.button.id != "btn-schedule-infusion":
-            return
+        bid = event.button.id or ""
+        if bid == "btn-schedule-infusion":
+            self._handle_schedule_infusion()
+        elif bid == "btn-upload-skill":
+            self._open_upload_picker(
+                kind="skill",
+                target_filename="skill.yaml",
+                title="Upload a skill — pick the directory's skill.yaml",
+            )
+        elif bid == "btn-upload-mcp":
+            self._open_upload_picker(
+                kind="mcp",
+                target_filename="mcp.yaml",
+                title="Upload an MCP server — pick the directory's mcp.yaml",
+            )
+
+    def _handle_schedule_infusion(self) -> None:
+        """Schedule-infusion handler split out for clarity."""
         if not self._selected_role:
             self.notify(
                 "Highlight or click a role row first",
@@ -266,6 +308,109 @@ class EcosystemScreen(Screen):
             return
         # Post to the App; the App routes to InfuseScreen and switches.
         self.app.post_message(RolePreloadMessage(self._selected_role))
+
+    # ------------------------------------------------------------------
+    # PR-A2 — Upload flow
+    # ------------------------------------------------------------------
+
+    def _open_upload_picker(
+        self, *, kind: str, target_filename: str, title: str,
+    ) -> None:
+        """Push a :class:`FilePickerModal` and remember which kind is pending.
+
+        Args:
+            kind: ``"skill"`` or ``"mcp"`` — read by
+                :meth:`on_file_picker_modal_file_selected` to decide
+                which manifest root to copy into.
+            target_filename: Filename the modal requires
+                (``skill.yaml`` or ``mcp.yaml``).
+            title: Header text rendered inside the modal.
+        """
+        self._pending_upload_kind = kind
+        modal = FilePickerModal(
+            target_filename=target_filename,
+            title=title,
+        )
+        self.app.push_screen(modal)
+
+    def on_file_picker_modal_file_selected(
+        self, message: FilePickerModal.FileSelected
+    ) -> None:
+        """Receive the picker's confirm and copy the parent directory.
+
+        The operator selects e.g. ``~/my_new_skill/skill.yaml``; we
+        copy the ENTIRE parent directory (``~/my_new_skill``) into the
+        target manifest root, preserving co-resident files like
+        ``adapter.py``.  Skills + MCPs follow the same workflow even
+        though MCPs typically have only the manifest file.
+
+        After the copy succeeds we re-run the corresponding loader so
+        the table refreshes without a full screen reload.  Errors are
+        surfaced as warning toasts AND logged so the operator sees a
+        diagnostic and the rotating TUI log keeps the trace.
+        """
+        kind = self._pending_upload_kind
+        self._pending_upload_kind = ""  # consume; reset for next round
+        if not kind:
+            logger.warning(
+                "ecosystem: file_selected with no pending upload kind — "
+                "ignoring (path=%s)",
+                message.path,
+            )
+            return
+
+        source_dir = message.path.parent
+        if kind == "skill":
+            target_root = _skills_root()
+        elif kind == "mcp":
+            target_root = _mcps_root()
+        else:
+            logger.error("ecosystem: unknown upload kind %r", kind)
+            return
+
+        # Refuse uploads that would clobber existing manifests rather
+        # than risk silent data loss.  The operator can delete + retry
+        # if they really mean to overwrite — explicit beats implicit.
+        target_dir = target_root / source_dir.name
+        if target_dir.exists():
+            self.notify(
+                f"{kind} '{source_dir.name}' already exists at {target_dir} — "
+                f"remove it first to overwrite",
+                severity="warning",
+                timeout=6.0,
+            )
+            return
+
+        try:
+            target_root.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source_dir, target_dir)
+        except Exception:
+            logger.exception(
+                "ecosystem: copytree %s → %s failed", source_dir, target_dir,
+            )
+            self.notify(
+                f"Upload failed — see TUI log for details",
+                severity="error",
+                timeout=6.0,
+            )
+            return
+
+        logger.info(
+            "ecosystem: uploaded %s '%s' to %s", kind, source_dir.name, target_dir,
+        )
+        self.notify(
+            f"Uploaded {kind} '{source_dir.name}'",
+            severity="information",
+            timeout=4.0,
+        )
+
+        # Refresh just the affected table rather than re-running every
+        # loader.  ``_load_skills`` / ``_load_mcps`` are idempotent
+        # post-PR-A2 (they clear the table before repopulating).
+        if kind == "skill":
+            self._load_skills()
+        else:
+            self._load_mcps()
 
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
         if snap is None:
@@ -324,12 +469,16 @@ class EcosystemScreen(Screen):
     def _load_skills(self) -> None:
         """Discover loaded skills and render them in the Skills table.
 
+        Idempotent post-PR-A2: clears the table first so the upload
+        flow can call this to refresh after copying a new manifest in.
+
         Lazy import keeps the TUI startup time unchanged when the
         skills package is absent (e.g. minimal CLI image).  Errors
-        are swallowed and replaced with a single "—" row so an empty
-        skills/ directory doesn't crash the screen.
+        are surfaced as a single guidance row so an empty skills/
+        directory doesn't crash the screen.
         """
         table = self.query_one("#skills-table", DataTable)
+        table.clear()
         try:
             from acc.skills import SkillRegistry  # noqa: PLC0415
         except Exception:
@@ -362,8 +511,13 @@ class EcosystemScreen(Screen):
             )
 
     def _load_mcps(self) -> None:
-        """Discover loaded MCP servers and render them in the MCP table."""
+        """Discover loaded MCP servers and render them in the MCP table.
+
+        Idempotent post-PR-A2: clears the table first so the upload
+        flow can call this to refresh after copying a new manifest in.
+        """
         table = self.query_one("#mcps-table", DataTable)
+        table.clear()
         try:
             from acc.mcp import MCPRegistry  # noqa: PLC0415
         except Exception:
