@@ -16,7 +16,7 @@ acc.role_loader, and acc.config (REQ-TUI-051).
 
 from __future__ import annotations
 
-import os
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -28,25 +28,31 @@ from textual.widgets import Button, DataTable, Footer, Label, Static
 
 from acc.role_loader import RoleLoader, list_roles
 from acc.tui.messages import RolePreloadMessage
+from acc.tui.path_resolution import resolve_manifest_root
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
 
-
-def _roles_root() -> str:
-    """Resolve the roles/ directory — respects ACC_ROLES_ROOT env var."""
-    return os.environ.get("ACC_ROLES_ROOT", "roles")
+logger = logging.getLogger("acc.tui.screens.ecosystem")
 
 
-def _skills_root() -> str:
-    """Resolve the skills/ directory — respects ACC_SKILLS_ROOT env var."""
-    return os.environ.get("ACC_SKILLS_ROOT", "skills")
+def _roles_root() -> Path:
+    """Resolve the roles/ directory — respects ACC_ROLES_ROOT, falls back to
+    the repo-anchored ``<repo>/roles`` so the screen works whether the TUI
+    runs from inside the repo, from a pip-installed entry point, or from a
+    container with ``WORKDIR=/app``."""
+    return resolve_manifest_root("ACC_ROLES_ROOT", "roles")
 
 
-def _mcps_root() -> str:
-    """Resolve the mcps/ directory — respects ACC_MCPS_ROOT env var."""
-    return os.environ.get("ACC_MCPS_ROOT", "mcps")
+def _skills_root() -> Path:
+    """Resolve the skills/ directory.  Same fallback chain as :func:`_roles_root`."""
+    return resolve_manifest_root("ACC_SKILLS_ROOT", "skills")
+
+
+def _mcps_root() -> Path:
+    """Resolve the mcps/ directory.  Same fallback chain as :func:`_roles_root`."""
+    return resolve_manifest_root("ACC_MCPS_ROOT", "mcps")
 
 
 # Risk-level → colour mapping for Skills + MCPs DataTables.  Same
@@ -162,37 +168,104 @@ class EcosystemScreen(Screen):
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Show full role.yaml content in the detail panel (REQ-TUI-038).
+    def on_data_table_row_highlighted(
+        self, event: DataTable.RowHighlighted
+    ) -> None:
+        """Cursor moved over a role row — populate ROLE DETAIL live.
 
-        Also unlocks the "Schedule infusion" button and remembers the
-        selected role so the button click can route it to Nucleus.
+        Textual's DataTable fires ``RowSelected`` only on Enter / mouse
+        click.  Pre-PR-A the operator had to know to press Enter to
+        see a role's definition; with this handler the detail panel
+        updates as the cursor scrolls, matching how every other
+        spreadsheet-style UI behaves.
+
+        ``RowHighlighted`` is also fired on the initial mount of the
+        table, so the operator sees a populated detail panel before
+        clicking anything.
         """
-        table = event.data_table
-        if table.id != "role-table":
+        if event.data_table.id != "role-table":
             return
+        role_name = self._extract_role_name(event.row_key)
+        if not role_name:
+            return
+        # Set _selected_role FIRST so a downstream detail-render failure
+        # doesn't leave the Schedule-infusion button disabled.  PR-A's
+        # central UX invariant: highlighting a row arms the button.
+        self._selected_role = role_name
+        self._arm_infusion_button(role_name)
+        self._show_role_detail(role_name)
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter pressed on a role row — pin the selection.
+
+        Same effect as :meth:`on_data_table_row_highlighted` today, but
+        kept distinct so a future enhancement (e.g. "double-click to
+        infuse immediately") has a hook.
+        """
+        if event.data_table.id != "role-table":
+            return
+        role_name = self._extract_role_name(event.row_key)
+        if not role_name:
+            return
+        self._selected_role = role_name
+        self._arm_infusion_button(role_name)
+        self._show_role_detail(role_name)
+
+    @staticmethod
+    def _extract_role_name(row_key) -> str:
+        """Pull the role-name string out of a DataTable RowKey.
+
+        Textual's RowKey is an opaque sentinel with a ``.value`` attribute
+        carrying the key we set in ``_load_roles``.  Older Textual versions
+        return a bare string instead.  We accept both shapes.  Returns an
+        empty string for unrecognised inputs so the caller can early-exit
+        without raising.
+        """
+        if row_key is None:
+            return ""
+        candidate = getattr(row_key, "value", None)
+        if candidate is None:
+            candidate = str(row_key)
+        return str(candidate) if candidate else ""
+
+    def _arm_infusion_button(self, role_name: str) -> None:
+        """Enable the Schedule-infusion button + update the hint label.
+
+        Split out so both row-highlight and row-select paths reuse the
+        same logic.  Logs (rather than swallows) any widget-lookup
+        failure so future regressions are debuggable from the TUI log
+        file rather than invisible.
+        """
         try:
-            row_key = event.row_key
-            # Row key was set to the role name during _load_roles
-            role_name = str(row_key.value) if hasattr(row_key, "value") else str(row_key)
-            self._show_role_detail(role_name)
-            self._selected_role = role_name
-            # Enable the infusion button now that a role is selected
-            try:
-                btn = self.query_one("#btn-schedule-infusion", Button)
-                btn.disabled = False
-                hint = self.query_one("#infusion-hint", Static)
-                hint.update(f"[dim]Selected: [b]{role_name}[/b][/dim]")
-            except Exception:
-                pass
+            btn = self.query_one("#btn-schedule-infusion", Button)
+            btn.disabled = False
+            hint = self.query_one("#infusion-hint", Static)
+            hint.update(f"[dim]Selected: [b]{role_name}[/b][/dim]")
         except Exception:
-            pass
+            logger.exception(
+                "ecosystem: failed to arm Schedule-infusion button "
+                "for role=%r",
+                role_name,
+            )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle Ecosystem button presses — currently just Schedule infusion."""
-        if event.button.id == "btn-schedule-infusion" and self._selected_role:
-            # Post to the App; the App routes to InfuseScreen and switches.
-            self.app.post_message(RolePreloadMessage(self._selected_role))
+        """Handle Ecosystem button presses — currently just Schedule infusion.
+
+        When the operator presses the button without an active selection
+        we surface a Textual notification so the dead-click is visible
+        rather than silent.  Pre-PR-A this branch was a no-op.
+        """
+        if event.button.id != "btn-schedule-infusion":
+            return
+        if not self._selected_role:
+            self.notify(
+                "Highlight or click a role row first",
+                severity="warning",
+                timeout=4.0,
+            )
+            return
+        # Post to the App; the App routes to InfuseScreen and switches.
+        self.app.post_message(RolePreloadMessage(self._selected_role))
 
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
         if snap is None:
