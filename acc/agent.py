@@ -452,6 +452,20 @@ class Agent:
                 logger.warning("task_loop: invalid JSON in TASK_ASSIGN payload")
                 return
 
+            # PR-B — directed-task filter.  When the publisher carries
+            # ``target_agent_id``, only the named agent processes the
+            # task; everyone else silently drops it.  ``None`` /
+            # missing key preserves the legacy broadcast-by-role
+            # behaviour (every agent of ``target_role`` sees it; first
+            # NATS-delivered wins on JetStream queues).
+            target_aid = data.get("target_agent_id")
+            if target_aid and target_aid != self.agent_id:
+                logger.debug(
+                    "task_loop: drop TASK_ASSIGN target_agent_id=%r != self=%r",
+                    target_aid, self.agent_id,
+                )
+                return
+
             result = await self._cognitive_core.process_task(  # type: ignore[union-attr]
                 task_payload=data,
                 role=self._active_role,
@@ -509,6 +523,12 @@ class Agent:
                 "agent_id": self.agent_id,
                 "collective_id": collective_id,
                 "ts": time.time(),
+                # PR-B — echo task_id so prompt-channel listeners (and
+                # any other request/response correlator) can match this
+                # reply to the originating TASK_ASSIGN.  Falls back to
+                # the empty string when the upstream payload omitted
+                # task_id, preserving legacy behaviour.
+                "task_id": data.get("task_id", ""),
                 "episode_id": result.episode_id,
                 "blocked": result.blocked,
                 "block_reason": result.block_reason,

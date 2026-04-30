@@ -39,6 +39,7 @@ from acc.tui.screens.dashboard import DashboardScreen, _RefreshMessage
 from acc.tui.screens.ecosystem import EcosystemScreen
 from acc.tui.screens.infuse import InfuseScreen, _PublishMessage
 from acc.tui.screens.performance import PerformanceScreen
+from acc.tui.screens.prompt import PromptScreen
 from acc.tui.widgets.nav_bar import NavigateTo
 from acc.tui.widgets.collective_tabs import CollectiveTabStrip, SwitchCollective
 
@@ -78,7 +79,7 @@ class ACCTUIApp(App):
         ("question_mark", "show_help", "Help"),
     ]
 
-    # All 6 biological screens (REQ-TUI-003)
+    # Seven screens — six biological + PR-B prompt pane (REQ-TUI-003)
     SCREENS = {
         "soma":        DashboardScreen,
         "nucleus":     InfuseScreen,
@@ -86,6 +87,7 @@ class ACCTUIApp(App):
         "comms":       CommunicationsScreen,
         "performance": PerformanceScreen,
         "ecosystem":   EcosystemScreen,
+        "prompt":      PromptScreen,    # PR-B
         # Legacy aliases so existing code using "dashboard"/"infuse" still works
         "dashboard":   DashboardScreen,
         "infuse":      InfuseScreen,
