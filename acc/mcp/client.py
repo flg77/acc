@@ -1,4 +1,4 @@
-"""MCP client surface — JSON-RPC 2.0 over HTTP (and stdio in a future PR).
+"""MCP client surface — JSON-RPC 2.0 over HTTP or stdio.
 
 Implements the minimum slice of the Model Context Protocol that ACC
 needs to drive tools from a role:
@@ -10,21 +10,22 @@ needs to drive tools from a role:
 Resource and prompt methods are not exercised here; they will be added
 when a role's CognitiveCore needs them.
 
-Thread/async safety: one :class:`MCPClient` instance owns one HTTP
-connection (httpx ``AsyncClient``) and is intended to be used from a
-single asyncio task.  The :class:`acc.mcp.MCPRegistry` instantiates
-one client per ``server_id`` lazily on first ``client(server_id)``
-call, then caches it for the process lifetime.
+Transport is selected at construction time from ``manifest.transport``
+via :func:`acc.mcp.transports.build_transport`.  HTTP and stdio are
+both implemented today; adding e.g. websockets is a one-class change
+in :mod:`acc.mcp.transports` plus a one-line dispatch update.
+
+Thread/async safety: one :class:`MCPClient` instance owns one transport
+and is intended to be used from a single asyncio task.  The
+:class:`acc.mcp.MCPRegistry` instantiates one client per ``server_id``
+lazily on first ``client(server_id)`` call, then caches it for the
+process lifetime.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 from typing import Any
-
-import httpx
 
 from acc.mcp.errors import (
     MCPConnectionError,
@@ -33,6 +34,7 @@ from acc.mcp.errors import (
     MCPTransportError,
 )
 from acc.mcp.manifest import MCPManifest
+from acc.mcp.transports import StdioTransport, Transport, build_transport
 
 logger = logging.getLogger("acc.mcp.client")
 
@@ -72,7 +74,7 @@ class MCPClient:
 
     def __init__(self, manifest: MCPManifest) -> None:
         self._manifest = manifest
-        self._http: httpx.AsyncClient | None = None
+        self._transport: Transport | None = None
         self._initialised = False
         self._cached_tools: list[dict] | None = None
 
@@ -94,36 +96,29 @@ class MCPClient:
         Idempotent — calling twice is a cheap no-op.  Raises
         :class:`MCPConnectionError` on transport failure or protocol
         mismatch.
+
+        Stdio transports also require a subprocess spawn before the
+        first RPC; we trigger that here via :meth:`StdioTransport.start`
+        so callers don't have to know which transport they got.
         """
         if self._initialised:
             return
-        if self._manifest.transport == "stdio":
-            raise NotImplementedError(
-                f"server_id={self._manifest.server_id!r}: stdio transport "
-                "is reserved for a future PR — only http is wired in 4.2"
-            )
-        if self._manifest.transport != "http":
-            raise NotImplementedError(
-                f"unknown transport {self._manifest.transport!r}"
-            )
 
-        # Build the httpx client lazily so construction stays sync.
-        headers = {"Content-Type": "application/json"}
-        if self._manifest.api_key_env:
-            api_key = os.environ.get(self._manifest.api_key_env, "")
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            else:
-                logger.warning(
-                    "mcp: api_key_env=%r set on server_id=%r but env var is empty — "
-                    "sending request unauthenticated",
-                    self._manifest.api_key_env, self._manifest.server_id,
-                )
-        self._http = httpx.AsyncClient(
-            base_url=self._manifest.url,
-            timeout=self._manifest.timeout_s,
-            headers=headers,
-        )
+        self._transport = build_transport(self._manifest)
+        # Stdio needs an explicit subprocess spawn.  HTTP transports
+        # don't expose start() — keep the call optional via duck typing.
+        if isinstance(self._transport, StdioTransport):
+            try:
+                await self._transport.start()
+            except MCPConnectionError:
+                self._transport = None
+                raise
+            except Exception as exc:
+                self._transport = None
+                raise MCPConnectionError(
+                    f"server_id={self._manifest.server_id!r}: stdio start "
+                    f"failed: {exc}"
+                ) from exc
 
         try:
             response = await self._rpc(
@@ -156,8 +151,9 @@ class MCPClient:
 
         self._initialised = True
         logger.info(
-            "mcp: initialised server_id=%r (server: %r)",
+            "mcp: initialised server_id=%r transport=%s (server: %r)",
             self._manifest.server_id,
+            self._manifest.transport,
             response.get("serverInfo", {}).get("name", "<unknown>"),
         )
 
@@ -168,12 +164,14 @@ class MCPClient:
         self._cached_tools = None
 
     async def _safe_close(self) -> None:
-        if self._http is not None:
+        if self._transport is not None:
             try:
-                await self._http.aclose()
+                await self._transport.close()
             except Exception:  # pragma: no cover — defensive
-                logger.exception("mcp: aclose failed for %r", self._manifest.server_id)
-            self._http = None
+                logger.exception(
+                    "mcp: transport close failed for %r", self._manifest.server_id,
+                )
+            self._transport = None
 
     # ------------------------------------------------------------------
     # Tool surface
@@ -256,7 +254,7 @@ class MCPClient:
         return response
 
     # ------------------------------------------------------------------
-    # Internal — JSON-RPC plumbing
+    # Internal — JSON-RPC envelope construction + validation
     # ------------------------------------------------------------------
 
     async def _rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -264,9 +262,10 @@ class MCPClient:
 
         Translates server-side ``error`` responses into
         :class:`MCPProtocolError`, transport failures into
-        :class:`MCPTransportError`.
+        :class:`MCPTransportError`.  The transport handles wire
+        framing; this method handles envelope shape.
         """
-        if self._http is None:
+        if self._transport is None:
             raise MCPConnectionError(
                 f"server_id={self._manifest.server_id!r}: client not initialised"
             )
@@ -279,34 +278,9 @@ class MCPClient:
             "params": params,
         }
 
-        try:
-            response = await self._http.post("", json=envelope)
-        except httpx.TimeoutException as exc:
-            raise MCPTransportError(
-                f"server_id={self._manifest.server_id!r}: timeout "
-                f"calling {method}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise MCPTransportError(
-                f"server_id={self._manifest.server_id!r}: transport error "
-                f"calling {method}: {exc}"
-            ) from exc
+        body = await self._transport.send_rpc(envelope)
 
-        if response.status_code >= 500:
-            raise MCPTransportError(
-                f"server_id={self._manifest.server_id!r}: HTTP "
-                f"{response.status_code} from {method}"
-            )
-
-        try:
-            body = response.json()
-        except Exception as exc:
-            raise MCPProtocolError(
-                f"server_id={self._manifest.server_id!r}: non-JSON response "
-                f"from {method} (HTTP {response.status_code})"
-            ) from exc
-
-        if not isinstance(body, dict) or body.get("jsonrpc") != "2.0":
+        if body.get("jsonrpc") != "2.0":
             raise MCPProtocolError(
                 f"server_id={self._manifest.server_id!r}: invalid JSON-RPC "
                 f"envelope from {method}"
