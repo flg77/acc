@@ -221,6 +221,61 @@ class HumanOversightQueue:
         """Return count of pending oversight items (for StressIndicators)."""
         return len(await self.pending())
 
+    async def wait_for_decision(
+        self,
+        oversight_id: str,
+        *,
+        poll_interval_s: float = 0.5,
+        timeout_s: Optional[float] = None,
+    ) -> "OversightItem | None":
+        """Block until *oversight_id* leaves the PENDING state, or timeout.
+
+        Used by :func:`acc.capability_dispatch.dispatch_invocations` to
+        gate CRITICAL skill / MCP-tool invocations on a human approver.
+
+        Args:
+            oversight_id: Returned by :meth:`submit`.
+            poll_interval_s: Sleep between status checks.  Defaults to
+                500 ms — short enough that a human approving via the
+                TUI sees the gated agent unblock without perceptible
+                delay, long enough that 200 concurrent gated tasks
+                don't hammer Redis.
+            timeout_s: Hard wall-clock cap on the wait.  ``None`` (the
+                default) means use the queue's configured
+                ``timeout_s``.  When the cap fires, the item's status
+                will be ``EXPIRED`` (the heartbeat loop's
+                :meth:`expire_timed_out` call sets that).
+
+        Returns:
+            The resolved :class:`OversightItem`, or ``None`` if the
+            item disappeared from storage entirely (Redis TTL flush,
+            in-process restart) before resolving.
+
+        Implementation: simple polling on top of :meth:`_load`.  We
+        deliberately avoid Redis pubsub — the additional connection +
+        channel surface is not justified for an event that fires at
+        most a few times per minute per agent.
+        """
+        import asyncio  # noqa: PLC0415 — keep oversight.py import-light
+
+        deadline = (
+            time.monotonic()
+            + (timeout_s if timeout_s is not None else self._timeout_s)
+        )
+        while True:
+            item = await self._load(oversight_id)
+            if item is None:
+                return None
+            if item.status != "PENDING":
+                return item
+            if time.monotonic() >= deadline:
+                # Caller sees PENDING here — usually the heartbeat loop's
+                # next expire_timed_out() pass will flip this to EXPIRED.
+                # Returning the still-PENDING item is honest: the gate
+                # timed out but the operator could still resolve it.
+                return item
+            await asyncio.sleep(poll_interval_s)
+
     # ------------------------------------------------------------------
     # Private storage helpers
     # ------------------------------------------------------------------
