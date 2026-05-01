@@ -9,6 +9,12 @@
 #
 # Commands:
 #   build     Build container images (must be done before first 'up')
+#   rebuild   Pull latest from origin (git fetch + git pull --ff-only) and
+#             rebuild every image with --no-cache --pull.  Use after a
+#             merge to main when you need fresh container layers AND fresh
+#             base images.  Does NOT restart the stack — run
+#             `./acc-deploy.sh down && ./acc-deploy.sh up` afterwards to
+#             roll the running containers onto the new images.
 #   up        Start the stack (default)
 #   down      Stop and remove containers; -v also removes volumes
 #   logs      Tail logs from all services (or pass a service name).
@@ -38,6 +44,9 @@
 #   STACK=beta ./acc-deploy.sh               # Start beta stack
 #   ./acc-deploy.sh build                    # Build production images (incl. cli)
 #   STACK=beta ./acc-deploy.sh build         # Build beta images
+#   ./acc-deploy.sh rebuild                  # git pull + rebuild every image
+#                                            # with --no-cache --pull (fresh base
+#                                            # layers too).  Follow with down/up.
 #   ./acc-deploy.sh down                     # Stop production stack
 #   ./acc-deploy.sh down -v                  # Stop and remove volumes
 #   ./acc-deploy.sh logs acc-agent-ingester  # Tail ingester logs
@@ -158,10 +167,10 @@ if [[ "$TUI" == "true" ]]; then
 fi
 
 # Coding-split demo profile (Phase 3) — three peer coding_agent workers.
-# Production only; auto-included on `build` so the demo images are baked
-# even when the operator hasn't opted into the demo at run time.
+# Production only; auto-included on `build`/`rebuild` so the demo images
+# are baked even when the operator hasn't opted into the demo at run time.
 if [[ "$STACK" == "production" ]]; then
-    if [[ "$CODING_SPLIT" == "true" || "$COMMAND" == "build" ]]; then
+    if [[ "$CODING_SPLIT" == "true" || "$COMMAND" == "build" || "$COMMAND" == "rebuild" ]]; then
         BASE_CMD+=(--profile coding-split)
     fi
 elif [[ "$CODING_SPLIT" == "true" ]]; then
@@ -169,10 +178,10 @@ elif [[ "$CODING_SPLIT" == "true" ]]; then
 fi
 
 # CLI profile only matters at build time — the acc-cli image is one-shot
-# (invoked via ./acc-cli.sh).  Auto-enable on `build` so a single
+# (invoked via ./acc-cli.sh).  Auto-enable on `build`/`rebuild` so a single
 # `./acc-deploy.sh build` produces every image; suppress it on `up` so we
 # don't spawn a transient acc-cli container that immediately exits.
-if [[ "$STACK" == "production" && "$COMMAND" == "build" ]]; then
+if [[ "$STACK" == "production" && ("$COMMAND" == "build" || "$COMMAND" == "rebuild") ]]; then
     BASE_CMD+=(--profile cli)
 fi
 
@@ -183,7 +192,7 @@ echo "╚═══════════════════════�
 echo "  Compose file : $COMPOSE_FILE"
 [[ "$TUI" == "true" && "$STACK" == "production" ]] && echo "  TUI profile  : enabled"
 [[ "$CODING_SPLIT" == "true" && "$STACK" == "production" ]] && echo "  CODING_SPLIT : enabled (3 peer coding_agent services)"
-[[ "$STACK" == "production" && "$COMMAND" == "build" ]] && echo "  CLI image    : built (use ./acc-deploy.sh cli ... to invoke)"
+[[ "$STACK" == "production" && ("$COMMAND" == "build" || "$COMMAND" == "rebuild") ]] && echo "  CLI image    : built (use ./acc-deploy.sh cli ... to invoke)"
 echo "  Command      : $COMMAND $*"
 echo ""
 
@@ -194,6 +203,43 @@ case "$COMMAND" in
         echo "▶ Building images..."
         "${BASE_CMD[@]}" build "$@"
         echo "✓ Build complete."
+        ;;
+
+    rebuild)
+        # Pull + no-cache build.  Two-stage so a git failure aborts BEFORE
+        # we burn 5+ minutes on a no-cache rebuild that won't reflect new
+        # source anyway.  --ff-only refuses to merge — operator handles
+        # divergent local commits explicitly rather than this script
+        # silently rewriting their tree.
+        if [[ ! -d "$REPO_ROOT/.git" ]]; then
+            echo "ERROR: $REPO_ROOT is not a git repo — cannot 'rebuild'." >&2
+            echo "       Use 'build' instead, or run rebuild from a clone." >&2
+            exit 1
+        fi
+        echo "▶ Pulling latest from origin..."
+        if ! git -C "$REPO_ROOT" fetch origin; then
+            echo "ERROR: git fetch failed." >&2
+            exit 1
+        fi
+        if ! git -C "$REPO_ROOT" pull --ff-only; then
+            echo "ERROR: git pull --ff-only failed." >&2
+            echo "       Likely cause: uncommitted local changes or non-ff history." >&2
+            echo "       Resolve manually, then re-run rebuild." >&2
+            exit 1
+        fi
+        CURRENT_COMMIT="$(git -C "$REPO_ROOT" log -1 --format='%h %s')"
+        echo "  → at $CURRENT_COMMIT"
+        echo ""
+        echo "▶ Rebuilding images (--no-cache --pull)..."
+        # --no-cache forces every layer to rebuild; --pull also re-pulls
+        # the FROM base images (UBI10, nats:alpine, etc.) so a CVE in the
+        # base layer isn't carried forward by a stale cache.
+        "${BASE_CMD[@]}" build --no-cache --pull "$@"
+        echo "✓ Rebuild complete."
+        echo ""
+        echo "  Roll the running stack onto the new images:"
+        echo "      ./acc-deploy.sh down"
+        echo "      ./acc-deploy.sh up"
         ;;
 
     up)
