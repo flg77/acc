@@ -48,6 +48,7 @@ import logging
 import time
 from typing import Any, Optional
 
+from acc.redis_compat import call_redis as _call_redis
 from acc.signals import redis_scratchpad_key
 
 logger = logging.getLogger("acc.scratchpad")
@@ -159,8 +160,8 @@ class ScratchpadClient:
         redis_key = redis_scratchpad_key(self._collective_id, plan_id, write_role, key)
         expiry = self._expiry_for(plan_id)
         if self._redis is not None:
-            await self._redis.set(redis_key, value)
-            await self._redis.expireat(redis_key, expiry)
+            await _call_redis(self._redis.set, redis_key, value)
+            await _call_redis(self._redis.expireat, redis_key, expiry)
             logger.debug("Scratchpad SET %s (expires at %d)", redis_key, expiry)
 
     async def set_json(
@@ -200,7 +201,7 @@ class ScratchpadClient:
         redis_key = redis_scratchpad_key(self._collective_id, plan_id, role, key)
         if self._redis is None:
             return None
-        raw = await self._redis.get(redis_key)
+        raw = await _call_redis(self._redis.get, redis_key)
         if raw is None:
             return None
         return raw.decode() if isinstance(raw, bytes) else str(raw)
@@ -242,7 +243,9 @@ class ScratchpadClient:
         result: dict[str, str] = {}
         cursor = 0
         while True:
-            cursor, keys = await self._redis.scan(cursor, match=pattern, count=100)
+            cursor, keys = await _call_redis(
+                self._redis.scan, cursor, match=pattern, count=100,
+            )
             for raw_key in keys:
                 k = raw_key.decode() if isinstance(raw_key, bytes) else str(raw_key)
                 # Extract role/key from the full Redis key
@@ -253,7 +256,7 @@ class ScratchpadClient:
                     role_part = parts[4]
                     key_part = ":".join(parts[5:])
                     # Use the decoded string key for the GET to avoid bytes/str mismatch
-                    val = await self._redis.get(k)
+                    val = await _call_redis(self._redis.get, k)
                     if val is not None:
                         result[f"{role_part}/{key_part}"] = (
                             val.decode() if isinstance(val, bytes) else str(val)
@@ -270,7 +273,7 @@ class ScratchpadClient:
         """Delete a single key from this client's own role namespace."""
         redis_key = redis_scratchpad_key(self._collective_id, plan_id, self._role, key)
         if self._redis is not None:
-            await self._redis.delete(redis_key)
+            await _call_redis(self._redis.delete, redis_key)
 
     async def flush_plan(self, plan_id: str) -> int:
         """Delete all scratchpad entries for *plan_id* (SCAN + pipeline DEL).
@@ -286,10 +289,12 @@ class ScratchpadClient:
         deleted = 0
         cursor = 0
         while True:
-            cursor, keys = await self._redis.scan(cursor, match=pattern, count=200)
+            cursor, keys = await _call_redis(
+                self._redis.scan, cursor, match=pattern, count=200,
+            )
             if keys:
                 # Use multi-key DELETE (avoids pipeline context-manager complexity)
-                result = await self._redis.delete(*keys)
+                result = await _call_redis(self._redis.delete, *keys)
                 deleted += result if isinstance(result, int) else len(keys)
             if cursor == 0:
                 break
