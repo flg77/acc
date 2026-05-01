@@ -1,20 +1,26 @@
-# mcps/echo_server/mcp.yaml — stub example MCP manifest.
+# mcps/echo_server/mcp.yaml — diagnostic MCP manifest.
 #
-# Points at a hypothetical local MCP echo server at acc-mcp-echo:8080.
-# No actual server is shipped with this PR (4.2 is the client surface
-# only); we use the manifest to:
+# Points at the JSON-RPC echo server packaged in
+# container/production/Containerfile.echo-mcp-server.  When the
+# `mcp-echo` compose profile is active (MCP_ECHO=true ./acc-deploy.sh up
+# or `podman-compose --profile mcp-echo up -d`), the agent resolves
+# this manifest's URL to a live container on the acc-net bridge and
+# can dispatch [MCP: echo_server.echo {"text": "..."}] markers to it.
 #
-#   * Verify the loader / validator round-trip end-to-end.
-#   * Give the TUI Ecosystem screen (Phase 4.4) one row to render so
-#     the panel is never empty on a fresh checkout.
-#   * Document the canonical "happy path" manifest shape contributors
-#     copy when adding their first real MCP integration.
+# When the profile is NOT active, the manifest still:
+#   * Round-trips through the loader / validator (continuous coverage
+#     for the registry code paths).
+#   * Gives the TUI Ecosystem screen (Phase 4.4) one row to render so
+#     the MCP SERVERS panel is never empty on a fresh checkout.
+#   * Documents the canonical "happy path" manifest shape for
+#     first-time MCP integration contributors.
 #
-# A standalone echo server image is planned for the Phase 4 demo
-# (parallel to coding_split): a tiny Python service implementing
-# `tools/list` (returns one `echo` tool) and `tools/call` (returns
-# the input back).  When that lands, this manifest is exercised by
-# `acc-cli mcp call echo_server echo --args '{"text":"ping"}'`.
+# Manual smoke test:
+#   MCP_ECHO=true ./acc-deploy.sh up
+#   podman exec -it acc-cli acc-cli nats sub 'acc.sol-01.>' &
+#   # ... in another terminal, send a prompt that yields
+#   # [MCP: echo_server.echo {"text": "hello"}] in the LLM response
+#   # → watch the response carry { "content": [{"type": "text", "text": "hello"}] }
 
 purpose:        "Smoke-test MCP server: round-trip a single 'echo' tool."
 version:        "0.1.0"
