@@ -14,6 +14,7 @@ This screen imports only from acc.tui.models and acc.tui.widgets (REQ-TUI-051).
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
@@ -65,7 +66,7 @@ class PerformanceScreen(Screen):
                 with ScrollableContainer(id="task-progress-container"):
                     yield Static(id="task-progress-panel")
 
-            # Right: token budget + latency percentiles
+            # Right: token budget + latency percentiles + capability telemetry
             with Vertical(id="performance-right"):
                 yield Label("TOKEN BUDGET UTILISATION", classes="panel-label")
                 with ScrollableContainer(id="token-budget-container"):
@@ -74,12 +75,38 @@ class PerformanceScreen(Screen):
                 yield Label("COLLECTIVE LATENCY PERCENTILES", classes="panel-label")
                 yield Static(id="latency-percentiles-panel")
 
+                # PR-telemetry — per-(skill | mcp tool) totals + ok rate.
+                # Populated from TASK_COMPLETE.invocations via
+                # NATSObserver._route_task_complete →
+                # CollectiveSnapshot.record_invocation.
+                yield Label(
+                    "CAPABILITY INVOCATIONS (skill / MCP tool)",
+                    classes="panel-label",
+                )
+                yield DataTable(
+                    id="capability-invocations-table", show_cursor=False,
+                )
+
+                yield Label(
+                    "RECENT FAILURES (latest 10)", classes="panel-label",
+                )
+                with ScrollableContainer(id="capability-failures-container"):
+                    yield Static(id="capability-failures-panel")
+
         yield Footer()
 
     def on_mount(self) -> None:
         table = self.query_one("#agent-perf-table", DataTable)
         table.add_columns(
             "Agent", "Role", "Queue", "▐", "Backpressure"
+        )
+
+        # PR-telemetry — capability invocations table columns.
+        cap_table = self.query_one(
+            "#capability-invocations-table", DataTable,
+        )
+        cap_table.add_columns(
+            "Kind", "Target", "Total", "OK%", "Last error",
         )
 
     def on_navigate_to(self, event: NavigateTo) -> None:
@@ -92,6 +119,8 @@ class PerformanceScreen(Screen):
         self._render_task_progress(snap)
         self._render_token_budgets(snap)
         self._render_latency_percentiles(snap)
+        self._render_capability_invocations(snap)
+        self._render_capability_failures(snap)
 
     # ------------------------------------------------------------------
     # Renderers
@@ -167,6 +196,87 @@ class PerformanceScreen(Screen):
             f"p99   {p['p99']:>7.1f} ms",
         ]
         self.query_one("#latency-percentiles-panel", Static).update(
+            "\n".join(lines)
+        )
+
+    # ------------------------------------------------------------------
+    # PR-telemetry — capability invocation panels
+    # ------------------------------------------------------------------
+
+    def _render_capability_invocations(
+        self, snap: "CollectiveSnapshot",
+    ) -> None:
+        """Render the per-(kind, target) totals + OK% table.
+
+        Sorted by total descending so the busiest tools surface at the
+        top.  Empty state shows a single grey hint row referencing the
+        operator-facing prompt-grammar docs.
+        """
+        table = self.query_one("#capability-invocations-table", DataTable)
+        table.clear()
+
+        stats = list(snap.capability_stats.values())
+        if not stats:
+            table.add_row(
+                "[dim]—[/dim]",
+                "[dim]no invocations yet — see docs/howto-skills.md[/dim]",
+                "[dim]0[/dim]", "[dim]—[/dim]", "[dim]—[/dim]",
+            )
+            return
+
+        stats.sort(key=lambda s: (-s.total, s.target))
+        for s in stats:
+            kind_colour = "cyan" if s.kind == "skill" else "magenta"
+            ok_pct = s.ok_rate * 100
+            ok_colour = (
+                "green" if ok_pct >= 95.0
+                else "yellow" if ok_pct >= 80.0
+                else "red"
+            )
+            last_err = (s.last_error or "—")[:40]
+            table.add_row(
+                f"[{kind_colour}]{s.kind}[/{kind_colour}]",
+                s.target[:32],
+                str(s.total),
+                f"[{ok_colour}]{ok_pct:>4.0f}%[/{ok_colour}]",
+                last_err,
+                key=f"{s.kind}:{s.target}",
+            )
+
+    def _render_capability_failures(
+        self, snap: "CollectiveSnapshot",
+    ) -> None:
+        """Tail-render the most recent failures from ``invocation_log``.
+
+        Each line: ``ts  kind:target  agent_id  error``.  Successes are
+        excluded — operators come here to see what's going wrong, the
+        running totals above already convey throughput.
+        """
+        failures = [e for e in snap.invocation_log if not e.get("ok", False)]
+        if not failures:
+            self.query_one("#capability-failures-panel", Static).update(
+                "[dim]No invocation failures observed.[/dim]"
+            )
+            return
+
+        # Most recent first, capped at 10 for the visible pane.
+        lines: list[str] = []
+        for entry in reversed(failures[-10:]):
+            ts_str = time.strftime(
+                "%H:%M:%S", time.localtime(entry.get("ts", 0)),
+            )
+            kind = entry.get("kind", "?")
+            target = entry.get("target", "?")
+            agent = entry.get("agent_id", "")[:12] or "?"
+            err = (entry.get("error", "") or "")[:50]
+            kind_colour = "cyan" if kind == "skill" else "magenta"
+            lines.append(
+                f"[dim]{ts_str}[/dim]  "
+                f"[{kind_colour}]{kind}[/{kind_colour}]:[bold]{target}[/bold]"
+                f"  [dim]{agent}[/dim]\n"
+                f"    [red]{err}[/red]"
+            )
+        self.query_one("#capability-failures-panel", Static).update(
             "\n".join(lines)
         )
 
