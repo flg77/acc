@@ -33,6 +33,8 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
+from acc.redis_compat import call_redis as _call_redis
+
 logger = logging.getLogger("acc.oversight")
 
 
@@ -286,12 +288,12 @@ class HumanOversightQueue:
 
         if self._redis is not None:
             try:
-                await self._redis.set(key, value, ex=self._timeout_s * 2)
+                await _call_redis(self._redis.set, key, value, ex=self._timeout_s * 2)
                 # Add to pending list if still pending
                 if item.status == "PENDING":
                     pkey = self._KEY_PENDING_LIST.format(cid=self._cid)
-                    await self._redis.sadd(pkey, item.oversight_id)
-                    await self._redis.expire(pkey, self._timeout_s * 2)
+                    await _call_redis(self._redis.sadd, pkey, item.oversight_id)
+                    await _call_redis(self._redis.expire, pkey, self._timeout_s * 2)
                 return
             except Exception as exc:
                 logger.error("oversight: Redis save failed: %s", exc)
@@ -303,7 +305,7 @@ class HumanOversightQueue:
 
         if self._redis is not None:
             try:
-                raw = await self._redis.get(key)
+                raw = await _call_redis(self._redis.get, key)
                 if raw:
                     data = json.loads(raw)
                     return OversightItem(**data)
@@ -317,7 +319,7 @@ class HumanOversightQueue:
         if self._redis is not None:
             try:
                 pkey = self._KEY_PENDING_LIST.format(cid=self._cid)
-                await self._redis.srem(pkey, oversight_id)
+                await _call_redis(self._redis.srem, pkey, oversight_id)
             except Exception as exc:
                 logger.error("oversight: Redis remove failed: %s", exc)
         else:
@@ -325,7 +327,7 @@ class HumanOversightQueue:
 
     async def _pending_redis(self) -> list[OversightItem]:
         pkey = self._KEY_PENDING_LIST.format(cid=self._cid)
-        ids = await self._redis.smembers(pkey)
+        ids = await _call_redis(self._redis.smembers, pkey)
         items: list[OversightItem] = []
         for oid in ids:
             item = await self._load(oid.decode() if isinstance(oid, bytes) else oid)
