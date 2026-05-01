@@ -1,8 +1,38 @@
 # Prompt — Direct operator → agent channel
 
-Screen 7.  The pane lets the operator type a prompt and dispatch it
-straight at an ACC agent over NATS, with the reply streamed back into
-a chat-history view inside the same screen.
+Screen 7.  Chat-style pane: the operator types a prompt at the
+**bottom** of the screen, the agent's thinking + actions + reply
+land in the **transcript** at the centre.  One concrete implementation
+of the open `acc.channels.PromptChannel` Protocol — Slack / Telegram /
+WhatsApp adapters in future PRs construct the same Protocol from a
+bot daemon and reuse the same wire shape (TASK_ASSIGN with optional
+`target_agent_id`, TASK_COMPLETE correlated by `task_id`).
+
+## Layout
+
+```
+┌─────────────────────────────────────────────────┐
+│ NavigationBar (1–7)                              │
+├─────────────────────────────────────────────────┤
+│ Target: <select role>  Agent id: <input>         │  compact
+├─────────────────────────────────────────────────┤
+│                                                  │
+│   TRANSCRIPT (operator + agent + traces)         │  centre, flex
+│                                                  │
+├─────────────────────────────────────────────────┤
+│ [Type your prompt …                  ]  [Send]   │  fixed
+│ Status: idle                                     │
+└─────────────────────────────────────────────────┘
+```
+
+## Transcript entry types
+
+| Type | Colour | Shows |
+|------|--------|-------|
+| **operator** | cyan header | Your prompt as submitted |
+| **trace** | one line per dispatched skill/MCP tool — `✓ skill:echo` (green) or `✗ mcp:fs.read  A-018 blocked` (red) | What the agent *did* on its way to the reply |
+| **agent** | green header (or red if blocked) | The agent's final response, latency in the header |
+| **system** | yellow header | Send/receive errors and timeouts |
 
 The pane is one concrete implementation of the open
 :class:`acc.channels.PromptChannel` Protocol — Slack / Telegram /

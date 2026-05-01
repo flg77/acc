@@ -1,25 +1,41 @@
-"""Direct prompt pane — operator types → agent dispatches → reply streams in.
+"""Direct prompt pane — chat-style operator → agent channel.
 
-PR-B's first-class operator-facing input surface, screen 7 in the
-NavigationBar.  The pane:
+Layout (top → bottom)::
 
-1. Lets the operator pick a target_role (Select) and optional
-   target_agent_id (Input).
-2. Reads a free-form prompt from a TextArea.
-3. Dispatches the prompt as a TASK_ASSIGN via
-   :class:`acc.channels.tui.TUIPromptChannel`.
-4. Awaits the matching TASK_COMPLETE (correlated by task_id) and
-   appends a coloured block to the chat-history Static.
+    ┌─────────────────────────────────────────────────┐
+    │ NavigationBar (1–7)                              │
+    ├─────────────────────────────────────────────────┤
+    │ Target: <select role>  Agent id: <input>         │  compact, fixed height
+    ├─────────────────────────────────────────────────┤
+    │                                                  │
+    │   TRANSCRIPT (operator + agent + traces)         │  1fr — flex, scrollable
+    │                                                  │
+    │                                                  │
+    ├─────────────────────────────────────────────────┤
+    │ [Type your prompt …                  ]  [Send]   │  fixed-height input row
+    │ Status: idle                                     │
+    └─────────────────────────────────────────────────┘
 
-The pane DOES NOT own the channel state — every Send button click
-constructs a fresh :class:`TUIPromptChannel` from the App's connected
-NATSObserver.  That keeps the screen a pure view: Slack / Telegram
-adapters in future PRs construct the same Protocol from a bot
-daemon, with no TUI involvement.
+The transcript shows three categories of entries:
 
-History rendering follows the convention from CommunicationsScreen
-(``ScrollableContainer`` wrapping a ``Static`` whose content is
-re-built from a list[dict]) so contributors learn one pattern.
+* **operator** — your prompt as you submitted it (cyan header).
+* **agent** — the agent's reply (green when ok, red when blocked /
+  timed out).  Body is rendered verbatim.
+* **trace** — one line per ``invocations[]`` entry on the matching
+  TASK_COMPLETE, showing which skills + MCP tools the agent fired
+  while answering.  ``→ skill:echo OK`` / ``✗ mcp:fs.read FAILED — ...``
+  Lets the operator see what the agent *did*, not just what it said.
+
+History is FIFO-capped at 200 entries (5× the v1 cap; chat panes get
+busy quickly).
+
+Bindings:
+
+* ``Ctrl+S`` — Send (priority).
+* ``Ctrl+L`` — Clear transcript.
+* ``Ctrl+J`` — Insert newline in the prompt (Enter alone in TextArea
+  inserts a newline by default; ``Ctrl+S`` is the explicit submit).
+* ``1–7`` — Navigate to other screens.
 """
 
 from __future__ import annotations
@@ -31,7 +47,7 @@ from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, ScrollableContainer, Vertical
+from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Button, Footer, Input, Label, Select, Static, TextArea
@@ -45,8 +61,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("acc.tui.screens.prompt")
 
 
-# Default target-role options.  Operator can type a free-form value
-# via the Select's prompt-input field; the list is just a hint.
+# Default target-role options.  Operator can pin a specific role from
+# the dropdown; future PR could populate this dynamically from the
+# loaded role registry.
 _TARGET_ROLES: list[tuple[str, str]] = [
     ("coding_agent", "coding_agent"),
     ("analyst", "analyst"),
@@ -54,18 +71,28 @@ _TARGET_ROLES: list[tuple[str, str]] = [
     ("ingester", "ingester"),
 ]
 
-# Per-task wait cap.  60 s matches the default in
-# :meth:`TUIPromptChannel.receive`; long-running tasks should split
-# via PLAN, not block the prompt pane.
+# Per-task wait cap.  Long-running tasks should split via PLAN, not
+# block the prompt pane.
 _RECEIVE_TIMEOUT_S: float = 60.0
+
+# History FIFO cap.  Chat panes accumulate fast; 200 entries gives
+# ~50 prompt round-trips with traces before the oldest fall off.
+_MAX_HISTORY: int = 200
 
 
 class PromptScreen(Screen):
-    """Two-pane direct-prompt screen — top form, bottom chat history."""
+    """Chat-style direct-prompt screen.
+
+    Three regions, top → bottom:
+
+    * Target row — compact ``role`` selector + optional ``agent_id``.
+    * Transcript — scrollable, flex-grow centre.
+    * Prompt input row — TextArea + Send button + status line.
+    """
 
     BINDINGS = [
         Binding("ctrl+s", "send", "Send", priority=True),
-        Binding("ctrl+l", "clear_history", "Clear history"),
+        Binding("ctrl+l", "clear_transcript", "Clear"),
         ("q", "app.quit", "Quit"),
         ("1", "navigate('soma')", "Soma"),
         ("2", "navigate('nucleus')", "Nucleus"),
@@ -77,88 +104,118 @@ class PromptScreen(Screen):
     ]
 
     DEFAULT_CSS = """
-    PromptScreen #prompt-form {
-        height: auto;
-        padding: 1;
+    PromptScreen {
+        layout: vertical;
     }
-    PromptScreen #prompt-row {
-        height: auto;
-    }
-    PromptScreen .prompt-cell {
-        width: 1fr;
-        margin: 0 1;
-    }
-    PromptScreen #prompt-textarea {
-        height: 6;
-    }
-    PromptScreen #prompt-actions {
+    PromptScreen #prompt-target-row {
         height: 3;
-        align: right middle;
+        padding: 0 1;
+        background: $surface;
+        border-bottom: solid $primary;
     }
-    PromptScreen #prompt-history-container {
+    PromptScreen #prompt-target-row Label {
+        width: auto;
+        margin: 0 1 0 0;
+        color: $text-muted;
+    }
+    PromptScreen #select-target-role {
+        width: 28;
+        margin: 0 2 0 0;
+    }
+    PromptScreen #input-target-agent-id {
+        width: 1fr;
+    }
+
+    PromptScreen #prompt-transcript-container {
         height: 1fr;
         border: round $primary;
-        padding: 1;
+        padding: 0 1;
+        background: $background;
+    }
+    PromptScreen #prompt-transcript {
+        width: 100%;
+    }
+
+    PromptScreen #prompt-input-row {
+        height: 7;
+        padding: 0 1;
+        background: $surface;
+        border-top: solid $primary;
+    }
+    PromptScreen #prompt-textarea {
+        height: 5;
+        width: 1fr;
+        margin: 1 1 0 0;
+    }
+    PromptScreen #btn-prompt-send {
+        height: 5;
+        width: 12;
+        margin: 1 0 0 0;
     }
     PromptScreen #prompt-status {
         height: 1;
+        padding: 0 1;
         color: $text-muted;
+        background: $surface;
     }
     """
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
 
-    # Chat history items rendered into the Static pane.  Each entry:
-    # ``{"role": "operator|agent|system", "task_id": str, "text": str,
-    #    "ts": float, "blocked": bool}``.
+    # Chat history list.  Each entry is a dict with shape:
+    #   {role: "operator|agent|trace|system", task_id, text, ts,
+    #    blocked?, target_role?, target_agent_id?, agent_id?,
+    #    latency_ms?, invocations?}
     history: reactive[list[dict[str, Any]]] = reactive([], layout=True)
 
     def __init__(self, **kwargs) -> None:  # type: ignore[override]
         super().__init__(**kwargs)
-        # Track in-flight workers so screen unmount can cancel them
-        # cleanly (the channel.close() call inside on_unmount handles
-        # the listener cleanup separately).
+        # Track in-flight workers so screen unmount cancels them.
         self._workers: set[asyncio.Task] = set()
 
     # ------------------------------------------------------------------
-    # Compose / mount
+    # Compose / mount / lifecycle
     # ------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="prompt", id="nav")
-        yield Label("ACC Prompt — Direct operator → agent channel", id="prompt-title")
 
-        with Vertical(id="prompt-form"):
-            with Horizontal(id="prompt-row"):
-                with Container(classes="prompt-cell"):
-                    yield Label("Target role")
-                    yield Select(_TARGET_ROLES, id="select-target-role",
-                                 value="coding_agent")
-                with Container(classes="prompt-cell"):
-                    yield Label("Target agent id (optional)")
-                    yield Input(
-                        placeholder="e.g. coding_agent-deadbeef",
-                        id="input-target-agent-id",
-                    )
+        # ── Target row (compact) ────────────────────────────────────
+        with Horizontal(id="prompt-target-row"):
+            yield Label("Target role:")
+            yield Select(
+                _TARGET_ROLES,
+                id="select-target-role",
+                value="coding_agent",
+                allow_blank=False,
+            )
+            yield Label("Agent id (optional):")
+            yield Input(
+                placeholder="e.g. coding_agent-deadbeef",
+                id="input-target-agent-id",
+            )
 
-            yield Label("Prompt")
+        # ── Transcript (centre, flex) ───────────────────────────────
+        with ScrollableContainer(id="prompt-transcript-container"):
+            yield Static(id="prompt-transcript")
+
+        # ── Prompt input row (bottom) ───────────────────────────────
+        with Horizontal(id="prompt-input-row"):
             yield TextArea(id="prompt-textarea")
+            yield Button("Send", id="btn-prompt-send", variant="primary")
 
-            with Horizontal(id="prompt-actions"):
-                yield Button("Send", id="btn-prompt-send", variant="primary")
-                yield Button("Clear history", id="btn-prompt-clear",
-                             variant="default")
-            yield Static("[dim]Idle.[/dim]", id="prompt-status")
-
-        yield Label("HISTORY", classes="panel-label")
-        with ScrollableContainer(id="prompt-history-container"):
-            yield Static(id="prompt-history")
-
+        yield Static("[dim]Idle. Type a prompt and press Ctrl+S or Send.[/dim]",
+                     id="prompt-status")
         yield Footer()
 
     def on_mount(self) -> None:
-        """Render the empty history once at mount."""
-        self._render_history()
+        """Render the empty transcript once at mount."""
+        self._render_transcript()
+        # Focus the textarea so the operator can type immediately.
+        try:
+            self.query_one("#prompt-textarea", TextArea).focus()
+        except Exception:
+            logger.exception("prompt: textarea focus failed")
 
     def on_unmount(self) -> None:
         """Cancel any in-flight workers so screen-switch is clean."""
@@ -167,13 +224,9 @@ class PromptScreen(Screen):
                 task.cancel()
         self._workers.clear()
 
-    # ------------------------------------------------------------------
-    # Snapshot wiring (kept for API parity; not actually consumed yet)
-    # ------------------------------------------------------------------
-
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
-        """Reserved for future per-snapshot rendering (e.g. live agent
-        list to populate the Select dynamically).  Currently a no-op."""
+        """Reserved for future per-snapshot rendering (live agent list,
+        TASK_PROGRESS streaming).  No-op today."""
         return
 
     # ------------------------------------------------------------------
@@ -187,11 +240,8 @@ class PromptScreen(Screen):
         self.app.switch_screen(screen_name)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        bid = event.button.id or ""
-        if bid == "btn-prompt-send":
+        if (event.button.id or "") == "btn-prompt-send":
             self.action_send()
-        elif bid == "btn-prompt-clear":
-            self.action_clear_history()
 
     def action_send(self) -> None:
         """Read the form, dispatch a task, await the reply in a worker."""
@@ -230,9 +280,6 @@ class PromptScreen(Screen):
             return
 
         cid = self._active_collective_id()
-        # Spawn the send/receive in a Textual worker so the screen
-        # stays responsive while we wait.  ``run_worker`` ties the
-        # task lifetime to the screen so unmount cancels it.
         worker = asyncio.create_task(
             self._dispatch_and_await(
                 observer=observer,
@@ -245,13 +292,13 @@ class PromptScreen(Screen):
         self._workers.add(worker)
         worker.add_done_callback(self._workers.discard)
 
-    def action_clear_history(self) -> None:
+    def action_clear_transcript(self) -> None:
         self.history = []
-        self._render_history()
+        self._render_transcript()
         self.query_one("#prompt-status", Static).update("[dim]Cleared.[/dim]")
 
     # ------------------------------------------------------------------
-    # Worker — send + receive + history append
+    # Worker — send + receive + transcript rendering
     # ------------------------------------------------------------------
 
     async def _dispatch_and_await(
@@ -282,8 +329,7 @@ class PromptScreen(Screen):
             })
             return
 
-        # Operator-side echo.  Append BEFORE awaiting the reply so the
-        # operator sees their own prompt land immediately.
+        # Operator-side echo lands immediately.
         self._append_history({
             "role": "operator",
             "task_id": task_id,
@@ -296,8 +342,7 @@ class PromptScreen(Screen):
         self.query_one("#prompt-status", Static).update(
             f"[yellow]Sent task_id={task_id[:12]} — awaiting reply…[/yellow]"
         )
-        # Clear the prompt textarea so the operator can start typing
-        # the next one without manually erasing.
+        # Clear the prompt textarea so the operator can start the next one.
         self.query_one("#prompt-textarea", TextArea).clear()
 
         try:
@@ -327,6 +372,25 @@ class PromptScreen(Screen):
         finally:
             await channel.close()
 
+        # Append one trace line per invocation BEFORE the agent's reply
+        # so the transcript reads chronologically: operator → traces →
+        # agent.  Cat-A blocks (ok=False) get an ✗ marker; successes ✓.
+        for inv in reply.invocations or []:
+            kind = str(inv.get("kind", ""))
+            target = str(inv.get("target", ""))
+            if not kind or not target:
+                continue
+            self._append_history({
+                "role": "trace",
+                "task_id": task_id,
+                "agent_id": reply.agent_id,
+                "ts": time.time(),
+                "kind": kind,
+                "target": target,
+                "ok": bool(inv.get("ok", False)),
+                "error": str(inv.get("error", "") or ""),
+            })
+
         text = reply.output or "(empty response)"
         if reply.blocked:
             text = f"[BLOCKED] {reply.block_reason}\n{text}"
@@ -338,7 +402,6 @@ class PromptScreen(Screen):
             "ts": time.time(),
             "blocked": reply.blocked,
             "latency_ms": reply.latency_ms,
-            "invocations": reply.invocations,
         })
         status = "[red]blocked[/red]" if reply.blocked else "[green]ok[/green]"
         self.query_one("#prompt-status", Static).update(
@@ -347,26 +410,39 @@ class PromptScreen(Screen):
         )
 
     # ------------------------------------------------------------------
-    # History render
+    # Transcript render
     # ------------------------------------------------------------------
 
     def _append_history(self, entry: dict) -> None:
-        """Append + cap at 100 entries (FIFO).  Triggers re-render."""
-        self.history = (self.history + [entry])[-100:]
-        self._render_history()
+        """Append to history (FIFO-capped at _MAX_HISTORY) + re-render +
+        scroll to bottom so the latest entry is visible."""
+        self.history = (self.history + [entry])[-_MAX_HISTORY:]
+        self._render_transcript()
+        try:
+            container = self.query_one(
+                "#prompt-transcript-container", ScrollableContainer,
+            )
+            container.scroll_end(animate=False)
+        except Exception:
+            # Container not mounted yet (tests).  Render still happened.
+            pass
 
-    def _render_history(self) -> None:
-        """Re-render the history Static from ``self.history``.
+    def _render_transcript(self) -> None:
+        """Re-render the transcript Static from ``self.history``.
 
-        Format mirrors the operator-friendly transcript style: each
-        entry gets a header line with timestamp + role + (optionally)
-        target_agent_id, then the text wrapped + indented two spaces.
-        Empty history shows a grey hint.
+        Per-entry block layout::
+
+            <ts>  <role-tag>  <metadata>
+              <body>
+
+        Empty history shows a grey placeholder hint.
         """
         if not self.history:
-            self.query_one("#prompt-history", Static).update(
-                "[dim]No prompts yet.  "
-                "Type a prompt above and press Send (or Ctrl+S).[/dim]"
+            self.query_one("#prompt-transcript", Static).update(
+                "[dim]No prompts yet.\n"
+                "Type a prompt below and press [b]Ctrl+S[/b] (or click "
+                "[b]Send[/b]).\n"
+                "Replies + tool traces will land here.[/dim]"
             )
             return
 
@@ -375,17 +451,20 @@ class PromptScreen(Screen):
             ts = time.strftime("%H:%M:%S", time.localtime(entry.get("ts", 0)))
             role = entry.get("role", "?")
             tid = entry.get("task_id", "")[:8]
-            text = entry.get("text", "")
 
             if role == "operator":
                 target = entry.get("target_role", "")
                 aid = entry.get("target_agent_id", "")
-                target_str = f"{target}" + (f" / {aid[:14]}" if aid else "")
+                target_str = target + (f" / {aid[:14]}" if aid else "")
                 header = (
                     f"[dim]{ts}[/dim]  "
                     f"[bold cyan]operator → {target_str}[/bold cyan]  "
                     f"[dim]task={tid}[/dim]"
                 )
+                lines.append(header)
+                for body_line in entry.get("text", "").splitlines() or [""]:
+                    lines.append(f"  {body_line}")
+
             elif role == "agent":
                 aid = entry.get("agent_id", "")[:14]
                 blocked = entry.get("blocked", False)
@@ -396,19 +475,43 @@ class PromptScreen(Screen):
                     f"[bold {col}]{aid}[/bold {col}]  "
                     f"[dim]task={tid} latency={lat:.0f}ms[/dim]"
                 )
+                lines.append(header)
+                for body_line in entry.get("text", "").splitlines() or [""]:
+                    lines.append(f"  {body_line}")
+
+            elif role == "trace":
+                # One-line summary of one capability invocation.
+                ok = entry.get("ok", False)
+                kind = entry.get("kind", "?")
+                target = entry.get("target", "?")
+                err = entry.get("error", "")
+                kind_colour = "cyan" if kind == "skill" else "magenta"
+                if ok:
+                    lines.append(
+                        f"  [green]✓[/green] "
+                        f"[{kind_colour}]{kind}[/{kind_colour}]:[bold]{target}[/bold]"
+                    )
+                else:
+                    err_short = (err[:80] + "…") if len(err) > 80 else err
+                    lines.append(
+                        f"  [red]✗[/red] "
+                        f"[{kind_colour}]{kind}[/{kind_colour}]:[bold]{target}[/bold]  "
+                        f"[red]{err_short}[/red]"
+                    )
+
             else:  # system
                 header = (
                     f"[dim]{ts}[/dim]  "
                     f"[bold yellow]system[/bold yellow]  "
                     f"[dim]task={tid}[/dim]"
                 )
+                lines.append(header)
+                for body_line in entry.get("text", "").splitlines() or [""]:
+                    lines.append(f"  {body_line}")
 
-            lines.append(header)
-            for body_line in text.splitlines() or [""]:
-                lines.append(f"  {body_line}")
-            lines.append("")  # blank separator
+            lines.append("")  # blank separator between entries
 
-        self.query_one("#prompt-history", Static).update("\n".join(lines))
+        self.query_one("#prompt-transcript", Static).update("\n".join(lines))
 
     # ------------------------------------------------------------------
     # App glue

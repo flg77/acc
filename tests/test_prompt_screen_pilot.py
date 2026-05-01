@@ -196,13 +196,13 @@ async def test_history_render_shows_operator_and_agent_blocks():
                 "latency_ms": 99.0,
             },
         ]
-        screen._render_history()
+        screen._render_transcript()
         await pilot.pause()
 
         # We can't read Static.renderable across Textual versions; tap
         # the same monkeypatch trick used in PR-A's ecosystem tests:
         # replace update with a recorder on a fresh render call.
-        history_widget = screen.query_one("#prompt-history", Static)
+        history_widget = screen.query_one("#prompt-transcript", Static)
         captured: list[str] = []
         original = history_widget.update
 
@@ -211,7 +211,7 @@ async def test_history_render_shows_operator_and_agent_blocks():
             return original(content, **kwargs)
 
         history_widget.update = recording  # type: ignore[assignment]
-        screen._render_history()
+        screen._render_transcript()
         await pilot.pause()
 
         rendered = "\n".join(captured)
@@ -219,6 +219,62 @@ async def test_history_render_shows_operator_and_agent_blocks():
         assert "hello" in rendered
         assert "coding_agent-x" in rendered
         assert "world" in rendered
+
+
+@pytest.mark.asyncio
+async def test_invocations_render_as_trace_lines_in_transcript():
+    """A TASK_COMPLETE carrying ``invocations`` produces one trace
+    line per entry between the operator prompt and the agent reply.
+
+    The trace lines are what the operator sees as "agent thinking /
+    actions" — green ✓ for OK, red ✗ for failed.
+    """
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        screen.query_one("#prompt-textarea", TextArea).text = "do work"
+        screen.action_send()
+        for _ in range(8):
+            await pilot.pause()
+            if app.observer.published:
+                break
+        task_id = app.observer.published[0][1]["task_id"]
+
+        # Synthetic TASK_COMPLETE with two invocations: one ok, one failed.
+        app.observer.deliver(task_id, {
+            "signal_type": "TASK_COMPLETE",
+            "task_id": task_id,
+            "agent_id": "coding_agent-x",
+            "output": "done",
+            "blocked": False,
+            "latency_ms": 5.0,
+            "episode_id": "ep",
+            "invocations": [
+                {"kind": "skill", "target": "echo", "ok": True, "error": ""},
+                {"kind": "mcp", "target": "fs.read", "ok": False,
+                 "error": "A-018 blocked"},
+            ],
+        })
+
+        for _ in range(8):
+            await pilot.pause()
+            if any(e.get("role") == "agent" for e in screen.history):
+                break
+
+        roles = [e.get("role") for e in screen.history]
+        # Order must be: operator → trace × 2 → agent.
+        assert roles == ["operator", "trace", "trace", "agent"], roles
+
+        traces = [e for e in screen.history if e["role"] == "trace"]
+        assert traces[0]["kind"] == "skill"
+        assert traces[0]["target"] == "echo"
+        assert traces[0]["ok"] is True
+        assert traces[1]["kind"] == "mcp"
+        assert traces[1]["target"] == "fs.read"
+        assert traces[1]["ok"] is False
+        assert "A-018" in traces[1]["error"]
 
 
 @pytest.mark.asyncio
@@ -236,10 +292,10 @@ async def test_clear_history_empties_the_pane():
                 "blocked": False,
             },
         ]
-        screen._render_history()
+        screen._render_transcript()
         await pilot.pause()
 
-        screen.action_clear_history()
+        screen.action_clear_transcript()
         await pilot.pause()
 
         assert screen.history == []
