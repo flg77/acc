@@ -27,7 +27,7 @@ the Protocol from their bot SDK.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 
 @dataclass
@@ -92,6 +92,7 @@ class PromptChannel(Protocol):
         *,
         target_role: str,
         target_agent_id: str | None = None,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> str:
         """Publish a TASK_ASSIGN derived from *prompt*.
 
@@ -104,6 +105,17 @@ class PromptChannel(Protocol):
             target_agent_id: When set, restrict execution to the named
                 agent within ``target_role``.  ``None`` (the default)
                 preserves the legacy broadcast-by-role behaviour.
+            on_progress: Optional callback invoked once per
+                ``TASK_PROGRESS`` event matching the returned
+                ``task_id``.  Receives the raw payload dict — fields
+                of interest live under ``progress``: ``current_step``,
+                ``total_steps_estimated``, ``step_label``,
+                ``confidence``, ``confidence_trend``.  Callback is
+                **synchronous** (fires from the NATS routing path —
+                long work should be queued for an asyncio task to
+                consume later).  Implementations that do NOT honour
+                streaming silently ignore this argument and
+                ``supports_streaming()`` returns False.
 
         Returns:
             ``task_id`` — UUID hex string the caller passes to

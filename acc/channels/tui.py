@@ -85,6 +85,7 @@ class TUIPromptChannel:
         *,
         target_role: str,
         target_agent_id: str | None = None,
+        on_progress=None,
     ) -> str:
         """Build + publish a TASK_ASSIGN derived from *prompt*.
 
@@ -102,6 +103,13 @@ class TUIPromptChannel:
             target_agent_id: When set, restricts execution to that
                 specific agent within ``target_role``.  Default
                 ``None`` preserves broadcast-by-role.
+            on_progress: Optional callback receiving every
+                ``TASK_PROGRESS`` payload that carries the freshly
+                minted ``task_id``.  Fires synchronously from the
+                observer's routing path; callback should be quick.
+                When set, ``supports_streaming()`` returns True and
+                the prompt pane uses this to surface live "agent
+                thinking" lines.  ``None`` disables streaming.
 
         Returns:
             Hex string ``task_id`` for use with :meth:`receive`.
@@ -110,6 +118,14 @@ class TUIPromptChannel:
         future: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
         self._observer.register_task_listener(task_id, future)
         self._inflight[task_id] = future
+        if on_progress is not None:
+            # Register BEFORE publish so a fast progress event isn't
+            # missed.  The observer auto-cleans on TASK_COMPLETE so
+            # no explicit unregister needed in receive() — only on
+            # close() when the operator unmounts mid-flight.
+            self._observer.register_task_progress_listener(
+                task_id, on_progress,
+            )
 
         payload = {
             "signal_type": SIG_TASK_ASSIGN,
@@ -137,6 +153,7 @@ class TUIPromptChannel:
             # Publish failed — clean up the listener so a stale future
             # doesn't sit in the registry forever.
             self._observer.unregister_task_listener(task_id)
+            self._observer.unregister_task_progress_listener(task_id)
             self._inflight.pop(task_id, None)
             raise
 
@@ -181,9 +198,11 @@ class TUIPromptChannel:
         return _payload_to_response(task_id, data)
 
     def supports_streaming(self) -> bool:
-        """Single-shot reply only.  TASK_PROGRESS streaming is a
-        future enhancement (see PromptChannel docstring)."""
-        return False
+        """TUIPromptChannel surfaces TASK_PROGRESS via the optional
+        ``on_progress`` kwarg on :meth:`send`.  Returning True lets
+        callers branch on the capability — the prompt pane uses this
+        to gate the "live thinking" rendering."""
+        return True
 
     async def close(self) -> None:
         """Cancel every in-flight future and clear the registry.
@@ -194,6 +213,7 @@ class TUIPromptChannel:
         """
         for task_id, future in list(self._inflight.items()):
             self._observer.unregister_task_listener(task_id)
+            self._observer.unregister_task_progress_listener(task_id)
             if not future.done():
                 future.cancel()
         self._inflight.clear()

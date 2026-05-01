@@ -97,6 +97,14 @@ class NATSObserver:
         # the channel's responsibility via ``unregister_task_listener``.
         self._task_listeners: dict[str, asyncio.Future[dict]] = {}
 
+        # PR-progress — per-task_id callback registry for TASK_PROGRESS
+        # events.  Fires from within the NATS routing path (sync), so
+        # the callbacks themselves must be quick and non-async — the
+        # canonical impl just appends to a list/queue and lets a
+        # downstream consumer re-render.  Channels register / deregister
+        # via ``register_task_progress_listener`` / ``unregister_task_progress_listener``.
+        self._task_progress_listeners: dict[str, list] = {}
+
     # ------------------------------------------------------------------
     # Connection lifecycle
     # ------------------------------------------------------------------
@@ -148,6 +156,35 @@ class NATSObserver:
         unregistering an unknown id is a no-op.
         """
         self._task_listeners.pop(task_id, None)
+
+    # ------------------------------------------------------------------
+    # PR-progress — per-task_id TASK_PROGRESS callback registry
+    # ------------------------------------------------------------------
+
+    def register_task_progress_listener(self, task_id: str, callback) -> None:
+        """Bind *callback* to TASK_PROGRESS messages carrying *task_id*.
+
+        Multiple callbacks can register for the same task_id (each one
+        appended to a list); they all fire in registration order on
+        each matching event.
+
+        The callback receives the full TASK_PROGRESS payload dict and
+        runs inside the observer's NATS routing path — it must be
+        synchronous and quick.  Long-running work (re-render, persist)
+        should be queued for an asyncio task to consume later.
+
+        Channels call this AFTER publishing TASK_ASSIGN (so a fast
+        progress event landing between the publish and the registration
+        is the only race we'd miss — acceptable; agents typically take
+        ≥ 100 ms to emit the first progress event).  Cleanup is the
+        channel's responsibility via
+        :meth:`unregister_task_progress_listener`.
+        """
+        self._task_progress_listeners.setdefault(task_id, []).append(callback)
+
+    def unregister_task_progress_listener(self, task_id: str) -> None:
+        """Drop ALL registered callbacks for *task_id*.  Idempotent."""
+        self._task_progress_listeners.pop(task_id, None)
 
     async def publish(self, subject: str, payload: dict) -> None:
         """Publish a message to NATS (used by InfuseScreen for ROLE_UPDATE).
@@ -341,6 +378,10 @@ class NATSObserver:
             future = self._task_listeners.pop(task_id, None)
             if future is not None and not future.done():
                 future.set_result(data)
+            # PR-progress — TASK_COMPLETE marks end-of-task; drop any
+            # progress listeners for this task_id so callers don't have
+            # to manually reach for unregister_task_progress_listener.
+            self._task_progress_listeners.pop(task_id, None)
 
         # PR-telemetry — fold the capability invocations.  Pre-PR-B
         # agents emit no ``invocations`` field; the snapshot helper
@@ -379,6 +420,13 @@ class NATSObserver:
 
         Extracts current_step, total_steps, step_label from the nested
         ``progress`` object published by CognitiveCore.
+
+        PR-progress addition: also fan the message out to any per-task_id
+        progress listener registered via
+        :meth:`register_task_progress_listener`.  The fan-out drives the
+        prompt pane's live "agent thinking" surface — operators see
+        ``→ step 2/3 — Generating test cases`` blocks appear in the
+        transcript between their prompt and the agent's reply.
         """
         if not agent_id:
             return
@@ -394,6 +442,23 @@ class NATSObserver:
             "step_label", data.get("step_label", snap.task_progress_label)
         )
         self._snapshot.agents[agent_id] = snap
+
+        # PR-progress — fan out to per-task_id listeners.  We do NOT
+        # pop the listener (unlike TASK_COMPLETE): a task may emit many
+        # progress events, all should reach the callback.  Cleanup
+        # happens explicitly when the channel calls
+        # ``unregister_task_progress_listener`` (typically after the
+        # matching TASK_COMPLETE delivers).
+        task_id = data.get("task_id", "")
+        if task_id:
+            for cb in list(self._task_progress_listeners.get(task_id, [])):
+                try:
+                    cb(data)
+                except Exception:
+                    logger.exception(
+                        "nats_observer: TASK_PROGRESS callback raised "
+                        "(task_id=%s) — continuing", task_id,
+                    )
 
     @handles("QUEUE_STATUS")
     def _route_queue_status(self, agent_id: str, data: dict) -> None:

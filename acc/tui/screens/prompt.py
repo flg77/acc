@@ -312,11 +312,25 @@ class PromptScreen(Screen):
     ) -> None:
         """Background worker.  One per Send click."""
         channel = TUIPromptChannel(observer, collective_id=collective_id)
+
+        # Progress callback fires from the observer's NATS routing
+        # path (sync).  We just append an entry to history; the
+        # reactive watcher re-renders on the next event-loop tick.
+        # ``_active_task_id`` is captured in the closure so the
+        # callback knows which task_id its events belong to without
+        # dispatching by ourselves.
+        def _on_progress(payload: dict) -> None:
+            try:
+                self._append_progress_entry(payload)
+            except Exception:
+                logger.exception("prompt: on_progress render failed")
+
         try:
             task_id = await channel.send(
                 prompt=prompt,
                 target_role=target_role,
                 target_agent_id=target_agent_id,
+                on_progress=_on_progress,
             )
         except Exception as exc:
             logger.exception("prompt: send failed")
@@ -427,6 +441,52 @@ class PromptScreen(Screen):
             # Container not mounted yet (tests).  Render still happened.
             pass
 
+    def _append_progress_entry(self, payload: dict) -> None:
+        """Convert one TASK_PROGRESS payload to a transcript entry.
+
+        Translates the agent's ``progress`` nested struct
+        (current_step / total_steps_estimated / step_label / confidence /
+        confidence_trend) into a flat history entry the transcript
+        renderer knows how to draw as a ``progress`` line.
+
+        Defensive against missing keys — pre-progress agents may emit
+        partial payloads.  Empty step_label is fine; the line still
+        shows the step counter so the operator sees forward motion.
+        """
+        progress = payload.get("progress", {}) or {}
+        # Some legacy emitters put fields at the top level instead of
+        # nested under ``progress`` — accept both shapes.
+        current_step = int(
+            progress.get("current_step", payload.get("current_step", 0)) or 0
+        )
+        total_steps = int(
+            progress.get(
+                "total_steps_estimated",
+                payload.get("total_steps", payload.get("total_steps_estimated", 0)),
+            ) or 0
+        )
+        step_label = str(
+            progress.get("step_label", payload.get("step_label", "")) or ""
+        )
+        confidence = float(
+            progress.get("confidence", payload.get("confidence", 0.0)) or 0.0
+        )
+        trend = str(
+            progress.get("confidence_trend", payload.get("confidence_trend", ""))
+            or ""
+        )
+        self._append_history({
+            "role": "progress",
+            "task_id": payload.get("task_id", ""),
+            "agent_id": payload.get("agent_id", ""),
+            "current_step": current_step,
+            "total_steps": total_steps,
+            "step_label": step_label,
+            "confidence": confidence,
+            "confidence_trend": trend,
+            "ts": time.time(),
+        })
+
     def _render_transcript(self) -> None:
         """Re-render the transcript Static from ``self.history``.
 
@@ -498,6 +558,37 @@ class PromptScreen(Screen):
                         f"[{kind_colour}]{kind}[/{kind_colour}]:[bold]{target}[/bold]  "
                         f"[red]{err_short}[/red]"
                     )
+
+            elif role == "progress":
+                # Live "agent thinking" line.  Renders as a single dim
+                # blue → entry between operator + agent so the operator
+                # sees forward motion.  Confidence trend gets a tiny
+                # arrow marker:  ↑ rising  → stable  ↓ falling.
+                cur = entry.get("current_step", 0)
+                tot = entry.get("total_steps", 0)
+                label = entry.get("step_label", "") or ""
+                conf = entry.get("confidence", 0.0) or 0.0
+                trend = entry.get("confidence_trend", "")
+                trend_arrow = (
+                    "↑" if trend == "RISING"
+                    else "↓" if trend == "FALLING"
+                    else "→"
+                )
+                step_str = (
+                    f"step {cur}/{tot}" if tot > 0
+                    else f"step {cur}" if cur > 0
+                    else "thinking"
+                )
+                conf_str = (
+                    f"  [dim]{trend_arrow} {conf:.0%}[/dim]"
+                    if conf > 0 else ""
+                )
+                label_str = f" — {label}" if label else ""
+                lines.append(
+                    f"  [blue]→[/blue] [dim]{step_str}[/dim]"
+                    f"{label_str}"
+                    f"{conf_str}"
+                )
 
             else:  # system
                 header = (
