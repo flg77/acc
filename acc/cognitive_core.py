@@ -23,7 +23,15 @@ from typing import Any, Optional
 
 from acc.config import ComplianceConfig, RoleDefinitionConfig
 from acc.governance_capabilities import CapabilityDecision, CapabilityGuard
+from acc.progress import ProgressContext
 from acc.signals import redis_centroid_key, redis_stress_key
+
+# Total steps in the canonical process_task pipeline (PRE-GATE → DRIFT).
+# Used as ``total_steps_estimated`` in every progress emission so the
+# operator's transcript shows a steady "step N/6" counter for the LLM
+# half of the work.  Capability dispatch (skills/MCPs) emits its own
+# progress with its own total — operators see two streams in sequence.
+_PROCESS_TASK_TOTAL_STEPS = 6
 
 logger = logging.getLogger("acc.cognitive_core")
 
@@ -284,6 +292,8 @@ class CognitiveCore:
         self,
         task_payload: dict,
         role: Optional[RoleDefinitionConfig] = None,
+        *,
+        progress_callback: Optional[Any] = None,
     ) -> CognitiveResult:
         """Run the full reasoning pipeline for one task.
 
@@ -294,6 +304,15 @@ class CognitiveCore:
             task_payload: TASK_ASSIGN signal payload dict.
             role: Active role definition. Falls back to empty RoleDefinitionConfig
                   if not provided.
+            progress_callback: Optional sync callable that fires once per
+                step boundary in the pipeline (PRE-GATE → DRIFT — six
+                emits in the happy path).  Receives a
+                :class:`acc.progress.ProgressContext`.  The agent's
+                task loop wraps this to publish TASK_PROGRESS on
+                ``acc.{cid}.task.progress`` so the prompt pane (PR #19)
+                renders live "agent thinking" lines.  ``None`` (default)
+                disables emission — zero overhead for non-prompt-pane
+                consumers.
 
         Returns:
             :class:`CognitiveResult` with updated :class:`StressIndicators`.
@@ -301,7 +320,47 @@ class CognitiveCore:
         if role is None:
             role = RoleDefinitionConfig()
 
+        # Wall-clock anchor for ``elapsed_ms`` in every emission.
+        process_start_t = time.monotonic()
+
+        def _emit(step: int, label: str, *,
+                  confidence: float = 0.5,
+                  llm_calls: int = 0,
+                  tokens_in: int = 0,
+                  tokens_out: int = 0) -> None:
+            """Emit one progress step.  No-op when callback is None.
+
+            Exception-isolated so a misbehaving callback can't break
+            the cognitive pipeline — the operator-facing TUI surface
+            should never hold the agent's task loop hostage.
+            """
+            if progress_callback is None:
+                return
+            try:
+                ctx = ProgressContext(
+                    current_step=step,
+                    total_steps_estimated=_PROCESS_TASK_TOTAL_STEPS,
+                    step_label=label,
+                    elapsed_ms=int((time.monotonic() - process_start_t) * 1000),
+                    estimated_remaining_ms=0,
+                    deadline_ms=0,
+                    confidence=confidence,
+                    confidence_trend="STABLE",
+                    llm_calls_so_far=llm_calls,
+                    tokens_in_so_far=tokens_in,
+                    tokens_out_so_far=tokens_out,
+                    token_budget_remaining=0,
+                    over_budget=False,
+                    over_token_budget=False,
+                )
+                progress_callback(ctx)
+            except Exception:
+                logger.exception(
+                    "cognitive_core: progress callback raised at step=%d", step,
+                )
+
         # 1 — PRE-GATE
+        _emit(1, "Pre-reasoning gate (Cat-B setpoints)")
         blocked, block_reason = self._pre_reasoning_gate(role)
         if blocked:
             self._stress.cat_b_trigger_count += 1
@@ -319,6 +378,7 @@ class CognitiveCore:
             )
 
         # 2 — PROMPT BUILD
+        _emit(2, "Building system prompt")
         system_prompt = self.build_system_prompt(role)
         user_content: str = task_payload.get("content", "")
 
@@ -375,7 +435,10 @@ class CognitiveCore:
             except Exception as exc:
                 logger.warning("cognitive_core: Cat-A evaluation error: %s", exc)
 
-        # 3 — LLM CALL (async)
+        # 3 — LLM CALL (async).  Emit BEFORE the call — the LLM is the
+        # slowest part of the pipeline, so the operator sees the
+        # "Calling LLM" line stay visible for most of the elapsed time.
+        _emit(3, "Calling LLM")
         response, latency_ms, token_count = await self._call_llm(system_prompt, user_content)
         output_text: str = response.get("content", "")
 
@@ -386,11 +449,19 @@ class CognitiveCore:
         else:
             self._stress.token_budget_utilization = 0.0
 
-        # 4 — POST-GATE
+        # 4 — POST-GATE.  Token counts now known — surface them in the
+        # progress event so the operator sees real numbers ticking up.
+        _emit(
+            4, "Post-reasoning governance",
+            llm_calls=1,
+            tokens_in=int(response.get("usage", {}).get("prompt_tokens", 0) or 0),
+            tokens_out=int(response.get("usage", {}).get("completion_tokens", 0) or 0),
+        )
         deviation_score = self._post_reasoning_governance(response, role)
         self._stress.cat_b_deviation_score += deviation_score
 
         # 5 — PERSIST episode (async embed)
+        _emit(5, "Persisting episode + embedding output")
         episode_id = ""
         output_embedding: list[float] = [0.0] * 384
         if output_text:
@@ -446,6 +517,7 @@ class CognitiveCore:
         )
 
         # 6 — DRIFT (role centroid + domain centroid, ACC-11)
+        _emit(6, "Drift scoring")
         drift = await self._compute_drift(
             output_embedding, role,
             domain_centroid=self._domain_centroid or None,

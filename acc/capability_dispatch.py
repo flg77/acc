@@ -205,6 +205,7 @@ async def dispatch_invocations(
     *,
     oversight_queue: "Any | None" = None,
     task_id: str = "",
+    progress_callback: "Any | None" = None,
 ) -> list[InvocationOutcome]:
     """Execute each parsed marker through the cognitive core.
 
@@ -233,13 +234,49 @@ async def dispatch_invocations(
             oversight item's ``task_id`` field so the TUI Compliance
             screen can correlate the gated invocation back to the
             originating TASK_ASSIGN.  Empty string is fine.
+        progress_callback: Optional sync callable that fires once per
+            invocation BEFORE dispatch.  Receives a
+            :class:`acc.progress.ProgressContext` whose
+            ``current_step`` is the 1-based index in *invocations*,
+            ``total_steps_estimated`` is the full list length, and
+            ``step_label`` reads ``"Calling skill:echo"`` /
+            ``"Calling mcp:fs.read"``.  The agent's task loop wraps
+            this to publish TASK_PROGRESS — operators see one
+            progress line per dispatched tool in the prompt-pane
+            transcript, in addition to the trace lines emitted from
+            the outcomes.  ``None`` (default) disables emission.
 
     Returns:
         One :class:`InvocationOutcome` per input marker, in the same
         order.  Empty input returns ``[]``.
     """
     outcomes: list[InvocationOutcome] = []
-    for inv in invocations:
+    total = len(invocations)
+    for idx, inv in enumerate(invocations, start=1):
+        if progress_callback is not None:
+            try:
+                from acc.progress import ProgressContext  # noqa: PLC0415
+                progress_callback(ProgressContext(
+                    current_step=idx,
+                    total_steps_estimated=total,
+                    step_label=f"Calling {inv.kind}:{inv.target}",
+                    elapsed_ms=0,
+                    estimated_remaining_ms=0,
+                    deadline_ms=0,
+                    confidence=0.5,
+                    confidence_trend="STABLE",
+                    llm_calls_so_far=0,
+                    tokens_in_so_far=0,
+                    tokens_out_so_far=0,
+                    token_budget_remaining=0,
+                    over_budget=False,
+                    over_token_budget=False,
+                ))
+            except Exception:
+                logger.exception(
+                    "capability_dispatch: progress callback raised "
+                    "for %s — continuing", inv.target,
+                )
         outcomes.append(await _dispatch_one(
             inv, core, role,
             oversight_queue=oversight_queue,

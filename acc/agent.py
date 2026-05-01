@@ -475,9 +475,55 @@ class Agent:
                 )
                 return
 
+            # Phase progress-emit — publish TASK_PROGRESS at every step
+            # boundary so the prompt pane (PR #19) can render live
+            # "agent thinking" lines.  Only build the callback when the
+            # inbound payload carries a task_id — otherwise there's
+            # nothing for downstream listeners to correlate against.
+            inbound_task_id = str(data.get("task_id", "") or "")
+            progress_callback = None
+            if inbound_task_id:
+                from acc.signals import (  # noqa: PLC0415
+                    SIG_TASK_PROGRESS,
+                    subject_task_progress,
+                )
+
+                def _publish_progress(ctx) -> None:
+                    """Sync callback fired by CognitiveCore /
+                    dispatch_invocations at each step boundary.  Schedules
+                    an async publish via ``create_task`` so the cognitive
+                    pipeline never blocks on NATS — fire-and-forget
+                    matches the operational tolerance for occasional lost
+                    progress events (operators care about forward motion,
+                    not ordering guarantees)."""
+                    payload = {
+                        "signal_type": SIG_TASK_PROGRESS,
+                        "task_id": inbound_task_id,
+                        "agent_id": self.agent_id,
+                        "collective_id": collective_id,
+                        "ts": time.time(),
+                        "progress": ctx.to_dict(),
+                    }
+                    try:
+                        asyncio.create_task(
+                            self.backends.signaling.publish(
+                                subject_task_progress(collective_id),
+                                payload,
+                            ),
+                            name=f"task-progress-{inbound_task_id[:8]}",
+                        )
+                    except Exception:
+                        logger.exception(
+                            "task_loop: failed to schedule TASK_PROGRESS "
+                            "publish (task_id=%s)", inbound_task_id,
+                        )
+
+                progress_callback = _publish_progress
+
             result = await self._cognitive_core.process_task(  # type: ignore[union-attr]
                 task_payload=data,
                 role=self._active_role,
+                progress_callback=progress_callback,
             )
 
             # Phase 4.4 — Capability dispatch.  Parse [SKILL:...] /
@@ -506,6 +552,10 @@ class Agent:
                         # bypass the queue entirely (cheap fast-path).
                         oversight_queue=self._oversight_queue,
                         task_id=str(data.get("task_id", "")),
+                        # Phase progress-emit — share the same callback
+                        # so the prompt pane sees a continuous progress
+                        # stream across the LLM steps + each invocation.
+                        progress_callback=progress_callback,
                     )
                     logger.info(
                         "task_loop: dispatched %d capability invocation(s) "
