@@ -39,6 +39,7 @@ class _StubObserver:
     def __init__(self) -> None:
         self.published: list[tuple[str, dict]] = []
         self._listeners: dict[str, asyncio.Future] = {}
+        self._progress_listeners: dict[str, list] = {}
 
     async def publish(self, subject: str, payload: dict) -> None:
         self.published.append((subject, payload))
@@ -48,6 +49,14 @@ class _StubObserver:
 
     def unregister_task_listener(self, task_id) -> None:
         self._listeners.pop(task_id, None)
+
+    # PR-progress: progress listener registry (mirrors NATSObserver
+    # surface — channel auto-registers when on_progress callback set).
+    def register_task_progress_listener(self, task_id, callback) -> None:
+        self._progress_listeners.setdefault(task_id, []).append(callback)
+
+    def unregister_task_progress_listener(self, task_id) -> None:
+        self._progress_listeners.pop(task_id, None)
 
     def deliver(self, task_id: str, data: dict) -> None:
         """Mimic the observer's TASK_COMPLETE fan-out for tests."""
@@ -165,8 +174,8 @@ async def test_close_cancels_inflight_futures():
 
 
 @pytest.mark.asyncio
-async def test_supports_streaming_returns_false():
-    """PR-B is single-shot; future PRs can flip this flag."""
+async def test_supports_streaming_returns_true():
+    """As of PR-progress, TUIPromptChannel honours on_progress."""
     obs = _StubObserver()
     channel = TUIPromptChannel(obs, collective_id="sol-test")
-    assert channel.supports_streaming() is False
+    assert channel.supports_streaming() is True

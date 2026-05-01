@@ -28,6 +28,8 @@ class _StubObserver:
     def __init__(self) -> None:
         self.published: list[tuple[str, dict]] = []
         self._listeners: dict[str, asyncio.Future] = {}
+        # PR-progress: per-task_id callback registry.
+        self._progress_listeners: dict[str, list] = {}
 
     async def publish(self, subject: str, payload: dict) -> None:
         self.published.append((subject, payload))
@@ -38,10 +40,18 @@ class _StubObserver:
     def unregister_task_listener(self, task_id) -> None:
         self._listeners.pop(task_id, None)
 
+    def register_task_progress_listener(self, task_id, callback) -> None:
+        self._progress_listeners.setdefault(task_id, []).append(callback)
+
+    def unregister_task_progress_listener(self, task_id) -> None:
+        self._progress_listeners.pop(task_id, None)
+
     def deliver(self, task_id: str, data: dict) -> None:
         future = self._listeners.pop(task_id, None)
         if future is not None and not future.done():
             future.set_result(data)
+        # Mirror the real observer's auto-clean of progress listeners.
+        self._progress_listeners.pop(task_id, None)
 
 
 class _PromptHarness(App):

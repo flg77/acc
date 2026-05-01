@@ -30,9 +30,70 @@ bot daemon and reuse the same wire shape (TASK_ASSIGN with optional
 | Type | Colour | Shows |
 |------|--------|-------|
 | **operator** | cyan header | Your prompt as submitted |
+| **progress** | dim blue arrow `→` | Live `step N/M — <step_label>` lines as the agent emits TASK_PROGRESS.  Tail confidence trend marker: `↑` rising / `→` stable / `↓` falling.  See "live thinking" below. |
 | **trace** | one line per dispatched skill/MCP tool — `✓ skill:echo` (green) or `✗ mcp:fs.read  A-018 blocked` (red) | What the agent *did* on its way to the reply |
 | **agent** | green header (or red if blocked) | The agent's final response, latency in the header |
 | **system** | yellow header | Send/receive errors and timeouts |
+
+## Live "thinking" (TASK_PROGRESS streaming)
+
+The `TUIPromptChannel` honours an optional `on_progress` callback at
+`send()` time, and the prompt pane wires it to render `progress` lines
+in the transcript as TASK_PROGRESS events arrive.  Operators see
+forward motion *while* the agent works, not just the final reply.
+
+Example transcript with streaming:
+
+```
+14:32:01  operator → coding_agent          task=ab12cd34
+  Generate a unit test for FizzBuzz
+
+  → step 1/3 — Reading specs                ↑ 45%
+  → step 2/3 — Drafting tests               ↑ 67%
+  ✓ skill:echo
+  → step 3/3 — Refining                     → 82%
+
+14:32:08  coding_agent-x   task=ab12cd34 latency=147ms
+  def test_fizzbuzz_basic():
+      assert fizzbuzz(15) == "FizzBuzz"
+```
+
+Pipeline:
+
+1. The agent publishes `TASK_PROGRESS` on `acc.{cid}.task.progress`
+   carrying the `task_id` from the originating TASK_ASSIGN plus a
+   nested `progress` struct (see `acc/progress.py:ProgressContext`).
+2. `NATSObserver._route_task_progress` updates the per-agent snapshot
+   AND fans the event out to every per-`task_id` listener registered
+   via `register_task_progress_listener`.
+3. `TUIPromptChannel.send(..., on_progress=cb)` registers the callback
+   BEFORE the publish call (so a fast first event isn't missed).
+4. The screen's callback appends a `progress` history entry; the
+   reactive watcher re-renders + auto-scrolls to the bottom.
+5. When TASK_COMPLETE eventually arrives, the observer auto-cleans
+   the progress listener — channels don't have to remember.
+
+`supports_streaming()` reports `True` for `TUIPromptChannel`.  Channels
+that do not honour streaming (e.g. `SlackPromptChannel` today) ignore
+the `on_progress` kwarg silently and return `False`.  Callers gate
+their UX on the capability, never on the concrete class.
+
+> **Agent-side note**: as of this PR, only the **receive** side is
+> wired.  `CognitiveCore` does not yet emit `TASK_PROGRESS` during
+> `process_task` — that's a separate follow-up.  Until it lands, the
+> only way to exercise the surface end-to-end on a live stack is to
+> inject synthetic events via:
+>
+>     acc-cli nats pub acc.sol-01.task.progress '{
+>       "signal_type": "TASK_PROGRESS",
+>       "task_id": "<id from your prompt>",
+>       "agent_id": "coding-1",
+>       "progress": {"current_step": 1, "total_steps_estimated": 3,
+>                    "step_label": "Drafting", "confidence": 0.6,
+>                    "confidence_trend": "RISING"}
+>     }'
+>
+> The prompt pane will render the line correctly.
 
 The pane is one concrete implementation of the open
 :class:`acc.channels.PromptChannel` Protocol — Slack / Telegram /
@@ -110,10 +171,10 @@ Below the form, one of:
 
 ## Out of scope
 
-* TASK_PROGRESS streaming — `TUIPromptChannel.supports_streaming()`
-  returns False today; the pane shows the final TASK_COMPLETE only.
-  A future PR can flip the flag once the agent's progress emissions
-  stabilise.
+* Agent-side `TASK_PROGRESS` emission during `CognitiveCore.process_task`
+  — the receive pipe ships in this PR (see "Live thinking" above);
+  the matching emitter follows in a separate PR so the agent surfaces
+  step boundaries without operators having to inject synthetic events.
 * Slack / Telegram / WhatsApp — those are separate channels
   (each a small follow-up PR) constructing the same `PromptChannel`
   Protocol from a bot daemon.
