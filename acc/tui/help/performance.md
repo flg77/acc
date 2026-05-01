@@ -27,6 +27,28 @@ Per-agent bar of `tokens_in + tokens_out` vs. the role's Cat-B
 Rolling p50 / p90 / p95 / p99 of TASK_COMPLETE end-to-end latency,
 collective-wide.
 
+### CAPABILITY INVOCATIONS (skill / MCP tool)
+Per-(kind, target) running counters built from
+`TASK_COMPLETE.invocations` (PR-B + PR-telemetry).  Columns:
+
+- **Kind** — `skill` (cyan) or `mcp` (magenta).
+- **Target** — skill id (`echo`) or fully-qualified MCP server.tool
+  (`echo_server.echo`).
+- **Total** — every invocation seen since the TUI connected.
+- **OK%** — green ≥ 95 %, yellow ≥ 80 %, red below.  No invocations
+  yet ⇒ 100 % (don't penalise unfired tools).
+- **Last error** — most recent non-empty error string from a failure
+  (Cat-A block, schema error, adapter exception — same shape as
+  `acc.capability_dispatch.InvocationOutcome`).
+
+Sorted by total descending — busiest tools surface at the top.
+
+### RECENT FAILURES (latest 10)
+FIFO tail of the most recent invocation failures, drawn from the
+50-entry `invocation_log`.  Each entry: timestamp, kind:target,
+agent_id, error message.  Successes are filtered out — the running
+totals above already convey throughput.
+
 ## What the colours mean
 
 - **Green** — within Cat-B setpoint.

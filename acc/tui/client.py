@@ -317,6 +317,11 @@ class NATSObserver:
         is the correlation point :class:`acc.channels.tui.TUIPromptChannel`
         uses to resolve the Future returned by ``receive``.  Resolving
         a Future that's been cancelled or already-set is a no-op.
+
+        PR-telemetry addition: fold every entry from the payload's
+        ``invocations`` list into ``snapshot.capability_stats`` so the
+        Performance screen can render per-(skill|mcp tool) totals,
+        success rates, and the most recent failure reason.
         """
         if not data.get("blocked", False):
             self._snapshot.icl_episode_count += 1
@@ -336,6 +341,20 @@ class NATSObserver:
             future = self._task_listeners.pop(task_id, None)
             if future is not None and not future.done():
                 future.set_result(data)
+
+        # PR-telemetry — fold the capability invocations.  Pre-PR-B
+        # agents emit no ``invocations`` field; the snapshot helper
+        # silently skips malformed entries so version skew is harmless.
+        ts = float(data.get("ts", 0.0)) or None
+        for invocation in data.get("invocations") or []:
+            if not isinstance(invocation, dict):
+                continue
+            self._snapshot.record_invocation(
+                invocation,
+                agent_id=agent_id,
+                task_id=task_id,
+                ts=ts,
+            )
 
     @handles("ALERT_ESCALATE")
     def _route_alert_escalate(self, agent_id: str, data: dict) -> None:

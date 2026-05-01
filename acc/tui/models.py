@@ -11,6 +11,9 @@ ACC-12 additions: compliance_health_score, owasp_violation_count,
                   oversight_pending_count on AgentSnapshot;
                   compliance_health_score, owasp_violation_log on
                   CollectiveSnapshot.
+PR-telemetry:     CapabilityInvocationStats per (kind, target) on
+                  CollectiveSnapshot; populated from the ``invocations``
+                  field PR-B added to TASK_COMPLETE payloads.
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from dataclasses import dataclass, field
 _MAX_KNOWLEDGE_FEED = 20
 _MAX_EPISODE_NOMINEES = 20
 _MAX_OWASP_LOG = 50
+_MAX_INVOCATION_LOG = 50  # capability invocation tail (Performance screen)
 
 
 @dataclass
@@ -147,6 +151,55 @@ class PlanSnapshot:
 
 
 @dataclass
+class CapabilityInvocationStats:
+    """Per-(kind, target) running counters for the Performance screen.
+
+    Populated from ``TASK_COMPLETE.invocations`` (the field PR-B added
+    to the payload published in :func:`acc.agent.Agent._task_loop`).
+    Each ``invocations`` entry is a dict with shape::
+
+        {"kind": "skill"|"mcp", "target": "<id>" or "<server>.<tool>",
+         "ok": bool, "error": str}
+
+    Attributes:
+        kind: ``"skill"`` or ``"mcp"`` — used to colour-code rows in
+            the Performance screen and to dispatch on the prompt
+            grammar reference (``[SKILL:...]`` vs ``[MCP:...]``).
+        target: Skill id (e.g. ``"echo"``) or fully-qualified MCP
+            server.tool name (e.g. ``"echo_server.echo"``).
+        total: Every invocation seen, regardless of outcome.
+        ok: Subset of *total* with ``ok=True``.
+        last_error: Most recent non-empty ``error`` string — handy
+            when an operator wants to know WHY a tool's success rate
+            dropped without scrolling the audit log.
+        last_seen_ts: UNIX seconds of the most recent observation;
+            drives the "stale tools" hint in the panel header.
+    """
+
+    kind: str
+    target: str
+    total: int = 0
+    ok: int = 0
+    last_error: str = ""
+    last_seen_ts: float = 0.0
+
+    @property
+    def fail(self) -> int:
+        """Failures = total minus successes (Cat-A blocks, schema errors,
+        adapter exceptions all collapse here — same shape as
+        :class:`acc.capability_dispatch.InvocationOutcome`)."""
+        return max(0, self.total - self.ok)
+
+    @property
+    def ok_rate(self) -> float:
+        """0.0–1.0 success ratio.  Returns 1.0 when no invocations yet
+        so a never-fired tool isn't shown as failing."""
+        if self.total <= 0:
+            return 1.0
+        return self.ok / self.total
+
+
+@dataclass
 class CollectiveSnapshot:
     """Aggregate state snapshot for one collective, built from NATS observations."""
 
@@ -183,6 +236,19 @@ class CollectiveSnapshot:
 
     # Signal flow log for CommunicationsScreen — FIFO-capped at 30
     signal_flow_log: list[dict] = field(default_factory=list)
+
+    # PR-telemetry: capability-invocation aggregates rendered on the
+    # Performance screen.  Keyed by ``f"{kind}:{target}"`` so skills and
+    # MCP tools that happen to share a name don't collide.
+    capability_stats: dict[str, "CapabilityInvocationStats"] = field(
+        default_factory=dict
+    )
+
+    # FIFO tail of the most recent invocations so operators can scrub
+    # failures even after the per-(kind, target) running totals have
+    # absorbed them.  Each entry mirrors ``InvocationOutcome``'s wire
+    # form: {kind, target, ok, error, agent_id, task_id, ts}.
+    invocation_log: list[dict] = field(default_factory=list)
 
     # --- Computed governance aggregates ---
 
@@ -269,3 +335,67 @@ class CollectiveSnapshot:
         self.signal_flow_log.append(entry)
         if len(self.signal_flow_log) > 30:
             self.signal_flow_log = self.signal_flow_log[-30:]
+
+    # ------------------------------------------------------------------
+    # PR-telemetry — capability invocation aggregates
+    # ------------------------------------------------------------------
+
+    def record_invocation(
+        self,
+        invocation: dict,
+        *,
+        agent_id: str = "",
+        task_id: str = "",
+        ts: float | None = None,
+    ) -> None:
+        """Fold one entry from ``TASK_COMPLETE.invocations`` into the running stats.
+
+        Looks up (or creates) the matching :class:`CapabilityInvocationStats`,
+        bumps the totals, and pushes a copy of the invocation onto
+        ``invocation_log`` (FIFO-capped at ``_MAX_INVOCATION_LOG``).
+
+        Args:
+            invocation: Dict with keys ``kind``, ``target``, ``ok``,
+                ``error`` — the wire shape PR-B produces.  Entries with
+                missing/invalid ``kind`` or ``target`` are dropped (we
+                won't synthesise data the agent didn't send).
+            agent_id: Sender id, taken from the enclosing TASK_COMPLETE
+                payload.  Stored on the log entry so the panel can
+                render "which agent fired this".
+            task_id: Original task id (also from TASK_COMPLETE) — useful
+                for cross-screen correlation with the Comms log.
+            ts: Override timestamp.  Defaults to ``time.time()``.
+        """
+        kind = str(invocation.get("kind", "")).strip()
+        target = str(invocation.get("target", "")).strip()
+        if kind not in ("skill", "mcp") or not target:
+            return  # malformed — drop silently, the agent's own logs cover it
+
+        ok = bool(invocation.get("ok", False))
+        error = str(invocation.get("error", "") or "")
+        when = ts if ts is not None else time.time()
+
+        key = f"{kind}:{target}"
+        stats = self.capability_stats.get(key)
+        if stats is None:
+            stats = CapabilityInvocationStats(kind=kind, target=target)
+            self.capability_stats[key] = stats
+        stats.total += 1
+        if ok:
+            stats.ok += 1
+        elif error:
+            stats.last_error = error
+        stats.last_seen_ts = when
+
+        # Tail log for the panel's "recent failures" view.
+        self.invocation_log.append({
+            "kind": kind,
+            "target": target,
+            "ok": ok,
+            "error": error,
+            "agent_id": agent_id,
+            "task_id": task_id,
+            "ts": when,
+        })
+        if len(self.invocation_log) > _MAX_INVOCATION_LOG:
+            self.invocation_log = self.invocation_log[-_MAX_INVOCATION_LOG:]
