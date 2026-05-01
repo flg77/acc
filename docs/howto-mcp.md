@@ -76,13 +76,55 @@ description: |
 
 | Field | Role |
 |-------|------|
-| `transport`        | `http` (implemented) or `stdio` (reserved for a follow-up PR). |
+| `transport`        | `http` or `stdio` — both implemented.  Use `http` for MCP servers running as a service (typically alongside the agent in compose); use `stdio` for CLI-shaped MCP servers spawned as subprocesses (Anthropic's reference SDK + most community servers ship in this shape). |
 | `url`              | Required for `http`.  Full base URL of the JSON-RPC endpoint. |
-| `api_key_env`      | Name of the env var carrying a bearer token; sent as `Authorization: Bearer <value>`.  Empty = unauthenticated. |
+| `command`          | Required for `stdio`.  Argv list, e.g. `["mcp-server-filesystem", "/app/workspace"]`.  Resolved against `$PATH`. |
+| `env`              | Per-server env var overrides for the spawned subprocess (`stdio` only).  Merged on top of the agent's own environment. |
+| `api_key_env`      | Name of the env var carrying a bearer token; sent as `Authorization: Bearer <value>`.  Empty = unauthenticated.  HTTP only. |
 | `allowed_tools`    | Operator-side sandbox.  Empty = "allow everything the server advertises"; non-empty = strict whitelist.  Tools blocked here are filtered out of `list_tools()` and raise `MCPToolNotFoundError` from `call_tool`. |
 | `denied_tools`     | Applied AFTER `allowed_tools`.  Useful when you want "everything except shell.exec". |
 | `requires_actions` | Composes with `role.allowed_actions` — Cat-A A-018 denies if any are missing. |
 | `risk_level`       | `LOW | MEDIUM | HIGH | CRITICAL`.  A-018 enforces the calling role's `max_mcp_risk_level` ceiling. |
+| `timeout_s`        | Per-RPC cap.  HTTP: request timeout.  Stdio: read-line timeout (server has this long to write the response after we wrote the request). |
+
+### `stdio` transport
+
+For a CLI-shaped MCP server (e.g. `mcp-server-filesystem`):
+
+```yaml
+purpose:        "Local filesystem MCP."
+version:        "0.1.0"
+
+transport:      "stdio"
+command:        ["mcp-server-filesystem", "/app/workspace"]
+env:
+  MCP_LOG_LEVEL: "info"
+timeout_s:      10
+
+allowed_tools:
+  - "fs.read"
+  - "fs.list"
+
+requires_actions: ["read_repo"]
+risk_level:     "MEDIUM"
+```
+
+Wire format: each request is `json.dumps(envelope) + "\n"` written to
+the child's stdin; each response is one JSON object terminated by
+`\n` on the child's stdout.  Stderr is drained into the agent's log
+at DEBUG (set `ACC_LOG_LEVEL=DEBUG` to see the server's own traces).
+
+Lifecycle:
+
+* The first call to `MCPClient.initialize` spawns the subprocess.
+* `MCPClient.close` (called by `MCPRegistry.close_all` at agent
+  shutdown) closes stdin → 2 s grace → SIGTERM → 2 s grace → SIGKILL.
+* Concurrent `send_rpc` calls on the same client serialise behind an
+  `asyncio.Lock` (one pipe pair shared across the whole client).
+
+Output cap: stdio response lines are bounded by `ACC_MCP_STDIO_MAX_BYTES`
+(default 1 MiB) so a misbehaving tool can't OOM the agent by writing
+unbounded output.
 
 ## 3. Wire it into a role
 

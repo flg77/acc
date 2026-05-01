@@ -10,7 +10,11 @@
 # server_id:        ""        # auto-filled from the directory name
 version:            "0.1.0"
 
-# Transport — http (default) or stdio (reserved).
+# Transport — http (default) or stdio.  Both implemented.
+#   http  — service-shaped MCP servers running alongside the agent.
+#   stdio — CLI-shaped MCP servers spawned as a subprocess (newline-
+#           delimited JSON-RPC over stdin/stdout).  See docs/howto-mcp.md
+#           "stdio transport" for the full lifecycle + output bounds.
 transport:          "http"
 
 # HTTP transport defaults
@@ -18,7 +22,9 @@ url:                ""        # MUST be set per-manifest when transport=http
 timeout_s:          30
 api_key_env:        ""        # name of the env var; empty = unauth
 
-# Stdio transport defaults (reserved)
+# Stdio transport defaults — set per-manifest when transport=stdio.
+#   command — argv list, e.g. ["mcp-server-filesystem", "/app/workspace"]
+#   env     — extra env vars merged on top of the agent's own environment
 command:            []
 env:                {}
 
