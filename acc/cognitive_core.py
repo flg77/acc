@@ -323,6 +323,15 @@ class CognitiveCore:
         # Wall-clock anchor for ``elapsed_ms`` in every emission.
         process_start_t = time.monotonic()
 
+        # Rolling confidence — each emit derives ``confidence_trend``
+        # from the delta between the new value and the previously
+        # emitted one, using the ±0.05 epsilon convention shared with
+        # :meth:`acc.progress.ProgressContext.next_step`.  Mutable
+        # closure cell so ``_emit`` can update it in-place across the
+        # six step boundaries without us threading the value through
+        # every call site.
+        _conf_history: list[float] = []
+
         def _emit(step: int, label: str, *,
                   confidence: float = 0.5,
                   llm_calls: int = 0,
@@ -330,12 +339,32 @@ class CognitiveCore:
                   tokens_out: int = 0) -> None:
             """Emit one progress step.  No-op when callback is None.
 
+            Computes ``confidence_trend`` by comparing *confidence* to
+            the most-recent prior value.  First emit always reports
+            STABLE (no prior to compare against).  ±0.05 epsilon
+            matches :meth:`acc.progress.ProgressContext.next_step`.
+
             Exception-isolated so a misbehaving callback can't break
             the cognitive pipeline — the operator-facing TUI surface
             should never hold the agent's task loop hostage.
             """
             if progress_callback is None:
+                # Still record the confidence so a future emit (when
+                # the callback is non-None on a later task) sees a
+                # consistent trend across step boundaries.  Cheap.
+                _conf_history.append(confidence)
                 return
+            if _conf_history:
+                prev = _conf_history[-1]
+                if confidence > prev + 0.05:
+                    trend = "RISING"
+                elif confidence < prev - 0.05:
+                    trend = "FALLING"
+                else:
+                    trend = "STABLE"
+            else:
+                trend = "STABLE"
+            _conf_history.append(confidence)
             try:
                 ctx = ProgressContext(
                     current_step=step,
@@ -345,7 +374,7 @@ class CognitiveCore:
                     estimated_remaining_ms=0,
                     deadline_ms=0,
                     confidence=confidence,
-                    confidence_trend="STABLE",
+                    confidence_trend=trend,
                     llm_calls_so_far=llm_calls,
                     tokens_in_so_far=tokens_in,
                     tokens_out_so_far=tokens_out,
@@ -438,7 +467,9 @@ class CognitiveCore:
         # 3 — LLM CALL (async).  Emit BEFORE the call — the LLM is the
         # slowest part of the pipeline, so the operator sees the
         # "Calling LLM" line stay visible for most of the elapsed time.
-        _emit(3, "Calling LLM")
+        # Confidence bumps slightly as we leave the gates and start
+        # actual reasoning — captures "we got past the guards".
+        _emit(3, "Calling LLM", confidence=0.55)
         response, latency_ms, token_count = await self._call_llm(system_prompt, user_content)
         output_text: str = response.get("content", "")
 
@@ -451,17 +482,30 @@ class CognitiveCore:
 
         # 4 — POST-GATE.  Token counts now known — surface them in the
         # progress event so the operator sees real numbers ticking up.
+        # Compute deviation NOW so the emit can carry a confidence
+        # value that reflects how clean the output looked relative to
+        # Cat-B setpoints: low deviation → high confidence, high
+        # deviation → falling.  Map (0..2+) → (0.85..0.40) using a
+        # gentle linear-clamp so the trend arrow has room to move
+        # without saturating.
+        deviation_score = self._post_reasoning_governance(response, role)
+        self._stress.cat_b_deviation_score += deviation_score
+        post_gate_confidence = max(
+            0.40, min(0.85, 0.85 - 0.225 * deviation_score),
+        )
         _emit(
             4, "Post-reasoning governance",
+            confidence=post_gate_confidence,
             llm_calls=1,
             tokens_in=int(response.get("usage", {}).get("prompt_tokens", 0) or 0),
             tokens_out=int(response.get("usage", {}).get("completion_tokens", 0) or 0),
         )
-        deviation_score = self._post_reasoning_governance(response, role)
-        self._stress.cat_b_deviation_score += deviation_score
 
-        # 5 — PERSIST episode (async embed)
-        _emit(5, "Persisting episode + embedding output")
+        # 5 — PERSIST episode (async embed).  Confidence carries over
+        # from the post-gate signal — persistence is mechanical, no
+        # new evidence to update the operator's confidence read.
+        _emit(5, "Persisting episode + embedding output",
+              confidence=post_gate_confidence)
         episode_id = ""
         output_embedding: list[float] = [0.0] * 384
         if output_text:
@@ -516,13 +560,19 @@ class CognitiveCore:
             outcome="PROCESSED",
         )
 
-        # 6 — DRIFT (role centroid + domain centroid, ACC-11)
-        _emit(6, "Drift scoring")
+        # 6 — DRIFT (role centroid + domain centroid, ACC-11).  Compute
+        # the drift score FIRST so the emit can carry a confidence
+        # informed by it: low drift = output aligns with role centroid
+        # = high confidence.  drift ∈ [0.0, 1.0]; we map directly to
+        # confidence via (1 - drift) clamped to [0.40, 0.95] so the
+        # operator sees a meaningful arrow even on a perfect run.
         drift = await self._compute_drift(
             output_embedding, role,
             domain_centroid=self._domain_centroid or None,
         )
         self._stress.drift_score = drift
+        drift_confidence = max(0.40, min(0.95, 1.0 - drift))
+        _emit(6, "Drift scoring", confidence=drift_confidence)
 
         # Update compliance health score
         self._update_compliance_health()
