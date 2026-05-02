@@ -32,6 +32,11 @@
 #   CODING_SPLIT=true|false  Include the 3 peer coding_agent demo services
 #                            (production only; default: false).  Used by the
 #                            Phase 3 examples/coding_split/ runbook.
+#   MCP_ECHO=true|false      Include the diagnostic JSON-RPC echo MCP server
+#                            backing mcps/echo_server/mcp.yaml (production
+#                            only; default: false).  Useful for manually
+#                            verifying [MCP: echo_server.echo {...}] markers
+#                            in agent output.
 #   DETACH=false             Run in foreground instead of detached (default: true)
 #   ACC_CLI_IMAGE=...        Override the cli image reference (default: localhost/acc-cli:0.2.0)
 #   ACC_CLI_NETWORK=...      Override podman --network (default: host)
@@ -70,6 +75,7 @@ shift 2>/dev/null || true   # remaining args passed directly to podman-compose
 STACK="${STACK:-production}"
 TUI="${TUI:-true}"
 CODING_SPLIT="${CODING_SPLIT:-false}"
+MCP_ECHO="${MCP_ECHO:-false}"
 DETACH="${DETACH:-true}"
 
 # ── Validate ───────────────────────────────────────────────────────────────────
@@ -177,6 +183,18 @@ elif [[ "$CODING_SPLIT" == "true" ]]; then
     echo "WARNING: coding-split is only available in production. Ignoring CODING_SPLIT=true." >&2
 fi
 
+# Echo MCP server profile — diagnostic JSON-RPC 2.0 server backing
+# mcps/echo_server/mcp.yaml.  Production only; auto-included on
+# build/rebuild so the image is baked + ready for `MCP_ECHO=true up`
+# without a separate build step.
+if [[ "$STACK" == "production" ]]; then
+    if [[ "$MCP_ECHO" == "true" || "$COMMAND" == "build" || "$COMMAND" == "rebuild" ]]; then
+        BASE_CMD+=(--profile mcp-echo)
+    fi
+elif [[ "$MCP_ECHO" == "true" ]]; then
+    echo "WARNING: mcp-echo is only available in production. Ignoring MCP_ECHO=true." >&2
+fi
+
 # CLI profile only matters at build time — the acc-cli image is one-shot
 # (invoked via ./acc-cli.sh).  Auto-enable on `build`/`rebuild` so a single
 # `./acc-deploy.sh build` produces every image; suppress it on `up` so we
@@ -192,6 +210,7 @@ echo "╚═══════════════════════�
 echo "  Compose file : $COMPOSE_FILE"
 [[ "$TUI" == "true" && "$STACK" == "production" ]] && echo "  TUI profile  : enabled"
 [[ "$CODING_SPLIT" == "true" && "$STACK" == "production" ]] && echo "  CODING_SPLIT : enabled (3 peer coding_agent services)"
+[[ "$MCP_ECHO" == "true" && "$STACK" == "production" ]] && echo "  MCP_ECHO     : enabled (diagnostic JSON-RPC echo server)"
 [[ "$STACK" == "production" && ("$COMMAND" == "build" || "$COMMAND" == "rebuild") ]] && echo "  CLI image    : built (use ./acc-deploy.sh cli ... to invoke)"
 echo "  Command      : $COMMAND $*"
 echo ""

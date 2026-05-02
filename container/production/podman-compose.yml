@@ -303,6 +303,45 @@ services:
     networks:
       - acc-net
 
+  # ── Echo MCP server (optional, --profile mcp-echo) ──────────────────────
+  # Tiny diagnostic JSON-RPC 2.0 server backing mcps/echo_server/mcp.yaml.
+  # stdlib-only Python; ~1 MB image on top of UBI10 python-312-minimal.
+  #
+  # Enable with: podman-compose --profile mcp-echo up -d
+  # Or via host wrapper: MCP_ECHO=true ./acc-deploy.sh up
+  #
+  # Container name matches the hostname referenced in the manifest's
+  # ``url: http://acc-mcp-echo:8080/rpc`` so agents resolve it on the
+  # acc-net bridge without manifest edits.  The image is auto-built
+  # alongside the others by ``./acc-deploy.sh build`` (compose
+  # discovers profile-gated services with build directives).
+  acc-mcp-echo:
+    profiles:
+      - mcp-echo
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.echo-mcp-server
+      args:
+        ACC_VERSION: *acc-version
+    image: localhost/acc-mcp-echo:0.2.0
+    container_name: acc-mcp-echo
+    environment:
+      ACC_MCP_ECHO_HOST: "0.0.0.0"
+      ACC_MCP_ECHO_PORT: "8080"
+      ACC_LOG_LEVEL: INFO
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      # GET / returns a small banner — enough to prove the server is
+      # answering before agents start dispatching tool calls to it.
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/',timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
   # ── TUI (optional, disabled by default) ──────────────────────────────────
   # Multi-screen operator console (ACC-TUI-Evolution).
   # Enable with: podman-compose --profile tui up -d                (REQ-TUI-045)

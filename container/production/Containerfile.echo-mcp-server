@@ -1,0 +1,69 @@
+# ACC echo MCP server — Production UBI10 Python 3.12 (minimal).
+#
+# Tiny diagnostic MCP server packaged for the coding-split / mcp-echo
+# demo profile.  Implements the three JSON-RPC methods the ACC client
+# exercises (initialize, tools/list, tools/call) using stdlib
+# http.server only — no Flask, aiohttp, or external pip deps.
+#
+# The image exists primarily to:
+#   * Make ``mcps/echo_server/mcp.yaml`` operational end-to-end so the
+#     coding_agent role's allowed_mcps=["echo_server"] entry actually
+#     resolves at run time.
+#   * Give the manual smoke test for PR #20 (TASK_PROGRESS streaming)
+#     a real MCP server to dispatch to — without one, the [MCP:
+#     echo_server.echo {...}] markers in LLM output fail with
+#     ``connection refused`` and the trace lines stay empty.
+#   * Demonstrate the smallest correct MCP server shape for
+#     contributors building their own integrations.
+#
+# Build:
+#   podman build -f container/production/Containerfile.echo-mcp-server \
+#     -t localhost/acc-mcp-echo:0.2.0 .
+#
+# Run (standalone):
+#   podman run --rm -p 8080:8080 localhost/acc-mcp-echo:0.2.0
+#   curl http://localhost:8080/                   # banner
+#   curl -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+#        -H 'Content-Type: application/json' \
+#        http://localhost:8080/rpc                # tools list
+#
+# Run via compose (production stack, --profile mcp-echo):
+#   ./acc-deploy.sh up                            # echo server NOT included
+#   ./acc-deploy.sh build                         # builds the image too
+#   podman-compose -f container/production/podman-compose.yml \
+#       --profile mcp-echo up -d                  # explicit opt-in
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.2.0
+
+LABEL org.opencontainers.image.title="acc-mcp-echo" \
+      org.opencontainers.image.description="Diagnostic MCP echo server for ACC (production UBI10, stdlib-only)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+USER 0
+
+# No pip deps to install — the server uses stdlib http.server only.
+# We just lay down the source + create a non-root user.
+
+WORKDIR /app
+
+COPY container/production/echo_mcp_server/main.py /app/main.py
+
+RUN echo "acc:x:1001:0:ACC echo MCP:/app:/bin/sh" >> /etc/passwd \
+    && chown -R 1001:0 /app \
+    && chmod -R g=u /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ACC_MCP_ECHO_HOST=0.0.0.0 \
+    ACC_MCP_ECHO_PORT=8080 \
+    ACC_LOG_LEVEL=INFO
+
+EXPOSE 8080
+
+USER 1001
+
+CMD ["python3", "/app/main.py"]
