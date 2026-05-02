@@ -48,10 +48,14 @@ Example transcript with streaming:
 14:32:01  operator → coding_agent          task=ab12cd34
   Generate a unit test for FizzBuzz
 
-  → step 1/3 — Reading specs                ↑ 45%
-  → step 2/3 — Drafting tests               ↑ 67%
+  → step 1/6 — Pre-reasoning gate (Cat-B setpoints)  → 50%
+  → step 2/6 — Building system prompt                → 50%
+  → step 3/6 — Calling LLM                           → 55%
+  → step 4/6 — Post-reasoning governance             ↑ 85%
+  → step 5/6 — Persisting episode + embedding output → 85%
+  → step 6/6 — Drift scoring                         ↑ 95%
+  → step 1/1 — Calling skill:echo                    → 50%
   ✓ skill:echo
-  → step 3/3 — Refining                     → 82%
 
 14:32:08  coding_agent-x   task=ab12cd34 latency=147ms
   def test_fizzbuzz_basic():
