@@ -39,7 +39,7 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from acc.signals import (
     SIG_PLAN,
@@ -144,6 +144,9 @@ class PlanExecutor:
         publish: PublishFn,
         arbiter_id: str,
         max_active_plans: int = 16,
+        *,
+        role_resolver: Callable[[str], Optional[Any]] | None = None,
+        skill_resolver: Callable[[str], list[str]] | None = None,
     ) -> None:
         self._cid = collective_id
         self._publish = publish
@@ -157,6 +160,23 @@ class PlanExecutor:
         # TASK_COMPLETE handler resolve a step in O(1) without scanning
         # every active plan.
         self._task_index: dict[str, tuple[str, str]] = {}
+
+        # PR-2 — sub-cluster spawn.  When *role_resolver* is supplied
+        # (typically by the arbiter wiring it to ``RoleLoader.load``)
+        # the executor consults the role's estimator before dispatch
+        # and may publish multiple TASK_ASSIGN payloads sharing one
+        # cluster_id.  When unset (legacy / tests) the estimator is
+        # skipped entirely and dispatch reverts to one sub-agent per
+        # step — fully back-compatible.
+        self._role_resolver = role_resolver
+        self._skill_resolver = skill_resolver
+
+        # Per-step → cluster_id map.  When a step is fanned out, every
+        # member task_id resolves to the same cluster_id; aggregation
+        # in :meth:`on_task_complete` waits for all members to report
+        # before marking the step COMPLETE.  Single-agent steps never
+        # populate this dict.
+        self._step_clusters: dict[tuple[str, str], dict] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -194,6 +214,12 @@ class PlanExecutor:
         Looks the ``task_id`` up in the reverse index; if not ours,
         returns silently.  Otherwise updates the step status and
         re-evaluates dispatch readiness.
+
+        PR-2 — when the step is part of a sub-cluster (the step has an
+        entry in ``_step_clusters``), we aggregate per-member
+        completions before transitioning the step.  The step transitions
+        when *all* members have reported: COMPLETE if every member
+        returned ``blocked=False``; FAILED if any one was blocked.
         """
         task_id = str(payload.get("task_id", ""))
         if not task_id:
@@ -211,6 +237,62 @@ class PlanExecutor:
             return
 
         blocked = bool(payload.get("blocked", False))
+
+        # PR-2 — cluster aggregation path.  Single-agent steps don't
+        # populate _step_clusters, so the legacy branch below runs as
+        # before.
+        cluster_state = self._step_clusters.get((plan_id, step_id))
+        if cluster_state is not None:
+            # Drop this task_id; aggregation tracks via members_done.
+            self._task_index.pop(task_id, None)
+            cluster_state["members_done"] += 1
+            if blocked:
+                cluster_state["members_failed"] += 1
+            output_snippet = str(payload.get("output", ""))[:500]
+            if output_snippet:
+                cluster_state["outputs"].append(output_snippet)
+
+            if cluster_state["members_done"] < cluster_state["members_total"]:
+                # Still waiting on remaining members — do not
+                # transition the step yet.  No re-broadcast either:
+                # nothing changed at the step level.
+                return
+
+            # All members reported.  Transition the step.
+            step.completed_ts = time.time()
+            step.output = "\n\n".join(cluster_state["outputs"])[:500]
+            if cluster_state["members_failed"] > 0:
+                step.status = STATUS_FAILED
+                self._cascade_failure(plan, step_id)
+                logger.warning(
+                    "plan: cluster step %s of %s FAILED "
+                    "(%d/%d members blocked)",
+                    step_id, plan_id,
+                    cluster_state["members_failed"],
+                    cluster_state["members_total"],
+                )
+            else:
+                step.status = STATUS_COMPLETE
+                logger.info(
+                    "plan: cluster step %s of %s COMPLETE (%d members)",
+                    step_id, plan_id, cluster_state["members_total"],
+                )
+
+            # Schedule cluster eviction + drop aggregation state.
+            try:
+                from acc.cluster import unregister_cluster as _unregister  # noqa: PLC0415
+                _unregister(cluster_state["cluster_id"])
+            except Exception:  # pragma: no cover — defensive
+                logger.exception("plan: cluster unregister failed")
+            self._step_clusters.pop((plan_id, step_id), None)
+
+            await self._dispatch_ready_steps(plan)
+            await self._broadcast(plan)
+            if self._is_terminal(plan):
+                self._on_plan_terminal(plan)
+            return
+
+        # Legacy single-agent path (untouched).
         step.completed_ts = time.time()
         step.output = str(payload.get("output", ""))[:500]
 
@@ -325,18 +407,161 @@ class PlanExecutor:
         return True
 
     async def _dispatch_ready_steps(self, plan: _Plan) -> None:
-        """Publish TASK_ASSIGN for every step that is now eligible."""
+        """Publish TASK_ASSIGN for every step that is now eligible.
+
+        PR-2 — when a ``role_resolver`` is wired and the resolved role
+        declares a sub-cluster estimator with ``subagent_count > 1``,
+        the step is fanned out as N TASK_ASSIGN payloads sharing one
+        ``cluster_id``.  Aggregation in :meth:`on_task_complete` waits
+        for all members before marking the step COMPLETE.
+
+        Without a resolver (legacy / tests) every step is dispatched
+        as a single TASK_ASSIGN exactly as before.
+        """
         for step in plan.steps.values():
             if not self._ready(plan, step):
                 continue
-            task_id = f"plan-{plan.plan_id}-{step.step_id}-{uuid.uuid4().hex[:8]}"
-            step.task_id = task_id
-            step.status = STATUS_RUNNING
+
+            cluster = self._maybe_build_cluster(plan, step)
+            if cluster is None:
+                # Single-agent path — preserved verbatim from PR-1.
+                task_id = f"plan-{plan.plan_id}-{step.step_id}-{uuid.uuid4().hex[:8]}"
+                step.task_id = task_id
+                step.status = STATUS_RUNNING
+                self._task_index[task_id] = (plan.plan_id, step.step_id)
+                await self._publish_task_assign(plan, step, task_id)
+                logger.info(
+                    "plan: dispatched step %s of %s as task_id=%s role=%s",
+                    step.step_id, plan.plan_id, task_id, step.role,
+                )
+                continue
+
+            # Cluster fan-out path.
+            await self._dispatch_cluster(plan, step, cluster)
+
+    def _maybe_build_cluster(self, plan: _Plan, step: _Step):
+        """Return a built :class:`acc.cluster.ClusterPlan` when the step's
+        role wants to fan out, else ``None`` for single-agent dispatch.
+
+        Wrapped in try/except so any estimator bug downgrades to legacy
+        single-agent dispatch — never crashes the arbiter.
+        """
+        if self._role_resolver is None:
+            return None
+        try:
+            role = self._role_resolver(step.role)
+            if role is None:
+                return None
+
+            # PR-2 deferred imports — avoid pulling estimator + cluster
+            # into modules that don't need them (e.g. Edge CLI builds).
+            from acc.cluster import register_cluster as _register_cluster
+            from acc.estimator import (
+                build_estimator as _build_estimator,
+                derive_complexity as _derive_complexity,
+            )
+
+            available_skills = (
+                self._skill_resolver(step.role)
+                if self._skill_resolver else
+                list(getattr(role, "allowed_skills", []) or [])
+            )
+            task = _derive_complexity(step.raw)
+            estimator = _build_estimator(role)
+            parent_task_id = (
+                f"plan-{plan.plan_id}-{step.step_id}-{uuid.uuid4().hex[:8]}"
+            )
+            plan_obj = estimator(
+                task,
+                role,
+                available_skills,
+                parent_task_id=parent_task_id,
+            )
+
+            # The estimator returns ``target_role=""`` by convention —
+            # the arbiter knows which role the step targets.
+            if not plan_obj.target_role:
+                plan_obj.target_role = step.role
+
+            # PR-2 Cat-A A-019 — defence-in-depth on top of the
+            # estimator's own clamp, in case a custom ``module:``
+            # estimator misbehaved.
+            role_cap = max(
+                1, int(getattr(role, "max_parallel_tasks", 1) or 1)
+            )
+            if plan_obj.subagent_count > role_cap:
+                logger.warning(
+                    "plan: A-019 — estimator returned %d > role.max_parallel_tasks=%d "
+                    "for role=%s; clamping",
+                    plan_obj.subagent_count, role_cap, step.role,
+                )
+                plan_obj.subagent_count = role_cap
+
+            if plan_obj.subagent_count <= 1:
+                # Estimator chose single-agent — fall back to the
+                # legacy path so we don't pay cluster bookkeeping.
+                return None
+
+            _register_cluster(plan_obj)
+            return plan_obj
+        except Exception:
+            logger.exception(
+                "plan: estimator failed for step=%s role=%s — "
+                "falling back to single-agent dispatch",
+                step.step_id, step.role,
+            )
+            return None
+
+    async def _dispatch_cluster(
+        self, plan: _Plan, step: _Step, cluster_plan,
+    ) -> None:
+        """Fan one PLAN step out as N TASK_ASSIGN payloads.
+
+        All members share ``cluster.cluster_id`` (echoed by every
+        sub-agent on every TASK_PROGRESS / TASK_COMPLETE per PR-1).
+        Aggregation in :meth:`on_task_complete` waits for all members
+        to report before transitioning the step.
+        """
+        from acc.estimator import slice_skill_mix as _slice
+
+        n = cluster_plan.subagent_count
+        skill_slices = _slice(cluster_plan.skill_mix or [], n)
+
+        member_task_ids: list[str] = []
+        for i in range(n):
+            task_id = (
+                f"plan-{plan.plan_id}-{step.step_id}"
+                f"-{cluster_plan.cluster_id[2:10]}-m{i+1}"
+            )
+            member_task_ids.append(task_id)
             self._task_index[task_id] = (plan.plan_id, step.step_id)
-            await self._publish_task_assign(plan, step, task_id)
+
+        # Track aggregation state for this step.
+        self._step_clusters[(plan.plan_id, step.step_id)] = {
+            "cluster_id": cluster_plan.cluster_id,
+            "members_total": n,
+            "members_done": 0,
+            "members_failed": 0,
+            "member_task_ids": list(member_task_ids),
+            "outputs": [],
+        }
+
+        # Mark the step's primary task_id to the first member so the
+        # legacy on_task_complete lookup still works for single-agent
+        # downstream consumers; aggregation waits internally.
+        step.task_id = member_task_ids[0]
+        step.status = STATUS_RUNNING
+
+        for i, task_id in enumerate(member_task_ids):
+            await self._publish_task_assign(
+                plan, step, task_id,
+                cluster_id=cluster_plan.cluster_id,
+            )
             logger.info(
-                "plan: dispatched step %s of %s as task_id=%s role=%s",
-                step.step_id, plan.plan_id, task_id, step.role,
+                "plan: cluster %s member %d/%d dispatched task_id=%s "
+                "role=%s skills=%s",
+                cluster_plan.cluster_id, i + 1, n, task_id, step.role,
+                skill_slices[i] if i < len(skill_slices) else [],
             )
 
     async def _publish_task_assign(
