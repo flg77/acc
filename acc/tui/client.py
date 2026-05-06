@@ -230,10 +230,17 @@ class NATSObserver:
         No-op when the payload omits ``cluster_id`` (legacy single-agent
         traffic).  Wraps each callback in try/except so one panel's
         bug never silences another listener.
+
+        PR-4 — also folds the event into ``snapshot.cluster_topology``
+        so the cluster panel renders without needing every screen to
+        register a listener of its own.
         """
         cluster_id = str(data.get("cluster_id", "") or "")
         if not cluster_id:
             return
+
+        self._update_cluster_topology(cluster_id, data)
+
         for cb in list(self._cluster_listeners.get(cluster_id, [])):
             try:
                 cb(data)
@@ -242,6 +249,83 @@ class NATSObserver:
                     "nats_observer: cluster listener raised "
                     "(cluster_id=%s)", cluster_id,
                 )
+
+    def _update_cluster_topology(self, cluster_id: str, data: dict) -> None:
+        """Fold one cluster-tagged signal into the topology snapshot.
+
+        ``data`` may be a TASK_PROGRESS or TASK_COMPLETE payload.  We
+        infer the member agent_id, step label, and status from each
+        canonical field.  Skill name is parsed out of the step label
+        when it appears in the ``Calling skill:<name>`` form
+        (capability_dispatch convention from PR #20) so the panel can
+        render the active skill per-member without a separate query.
+        """
+        row = self._snapshot.cluster_topology.setdefault(cluster_id, {
+            "cluster_id": cluster_id,
+            "target_role": "",
+            "subagent_count": 0,
+            "members": {},
+            "created_at": time.time(),
+            "finished_at": None,
+            "reason": "",
+        })
+
+        agent_id = str(data.get("agent_id", "") or "")
+        if not agent_id:
+            return
+
+        member = row["members"].setdefault(agent_id, {
+            "task_id": str(data.get("task_id", "") or ""),
+            "step_label": "",
+            "current_step": 0,
+            "total_steps": 0,
+            "status": "running",
+            "skill_in_use": "",
+            "last_seen": time.time(),
+        })
+
+        signal_type = data.get("signal_type", "")
+        if signal_type == "TASK_PROGRESS":
+            progress = data.get("progress") or {}
+            label = str(
+                progress.get("step_label", data.get("step_label", "")) or ""
+            )
+            member["step_label"] = label
+            member["current_step"] = int(
+                progress.get("current_step", member["current_step"]) or 0
+            )
+            member["total_steps"] = int(
+                progress.get(
+                    "total_steps_estimated", member["total_steps"],
+                ) or 0
+            )
+            member["last_seen"] = time.time()
+            if "skill:" in label.lower():
+                tail = label.split("skill:", 1)[1].strip()
+                member["skill_in_use"] = tail.split()[0] if tail else ""
+            elif "mcp:" in label.lower():
+                tail = label.split("mcp:", 1)[1].strip()
+                member["skill_in_use"] = (
+                    "mcp:" + (tail.split()[0] if tail else "")
+                )
+        elif signal_type == "TASK_COMPLETE":
+            blocked = bool(data.get("blocked", False))
+            member["status"] = "blocked" if blocked else "complete"
+            member["last_seen"] = time.time()
+            done = sum(
+                1 for m in row["members"].values()
+                if m["status"] in ("complete", "blocked")
+            )
+            if row["subagent_count"] and done >= row["subagent_count"]:
+                row["finished_at"] = time.time()
+
+        # subagent_count is a soft upper bound — we never know the
+        # authoritative count from inside the observer; we update it
+        # on the fly to whatever max we've witnessed so the panel
+        # header stays consistent.
+        row["subagent_count"] = max(
+            row["subagent_count"], len(row["members"]),
+        )
 
     async def publish(self, subject: str, payload: dict) -> None:
         """Publish a message to NATS (used by InfuseScreen for ROLE_UPDATE).
