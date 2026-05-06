@@ -105,6 +105,17 @@ class NATSObserver:
         # via ``register_task_progress_listener`` / ``unregister_task_progress_listener``.
         self._task_progress_listeners: dict[str, list] = {}
 
+        # PR-1 cluster — per-cluster_id callback registry.  When the
+        # arbiter fans a single PLAN step out as N TASK_ASSIGN payloads
+        # (PR-2), each carries the same ``cluster_id``.  The TUI
+        # cluster panel (PR-4) registers a callback per cluster_id and
+        # receives every TASK_PROGRESS / TASK_COMPLETE that belongs to
+        # the cluster — driving the live topology view without needing
+        # to know individual member task_ids in advance.  Same sync /
+        # exception-isolated semantics as the per-task progress
+        # registry above.
+        self._cluster_listeners: dict[str, list] = {}
+
     # ------------------------------------------------------------------
     # Connection lifecycle
     # ------------------------------------------------------------------
@@ -185,6 +196,52 @@ class NATSObserver:
     def unregister_task_progress_listener(self, task_id: str) -> None:
         """Drop ALL registered callbacks for *task_id*.  Idempotent."""
         self._task_progress_listeners.pop(task_id, None)
+
+    # ------------------------------------------------------------------
+    # PR-1 cluster — per-cluster_id event fan-out
+    # ------------------------------------------------------------------
+
+    def register_cluster_listener(self, cluster_id: str, callback) -> None:
+        """Bind *callback* to every signal carrying *cluster_id*.
+
+        Drives the TUI cluster panel (PR-4): one registration per
+        rendered cluster, callback fires on TASK_PROGRESS *and*
+        TASK_COMPLETE so the panel sees member state transitions
+        without per-task_id bookkeeping.  Multiple callbacks per
+        cluster_id are supported (panel + analytics sink, say).
+
+        Same sync / quick-callback contract as
+        :meth:`register_task_progress_listener` — exceptions are caught
+        per-callback so one buggy listener cannot starve the others.
+        """
+        self._cluster_listeners.setdefault(cluster_id, []).append(callback)
+
+    def unregister_cluster_listener(self, cluster_id: str) -> None:
+        """Drop ALL registered callbacks for *cluster_id*.  Idempotent.
+
+        Called when the panel removes a cluster row (after the 30 s
+        grace window the arbiter applies post-completion).
+        """
+        self._cluster_listeners.pop(cluster_id, None)
+
+    def _fan_out_cluster(self, data: dict) -> None:
+        """Internal — invoke every cluster-listener for *data*'s cluster_id.
+
+        No-op when the payload omits ``cluster_id`` (legacy single-agent
+        traffic).  Wraps each callback in try/except so one panel's
+        bug never silences another listener.
+        """
+        cluster_id = str(data.get("cluster_id", "") or "")
+        if not cluster_id:
+            return
+        for cb in list(self._cluster_listeners.get(cluster_id, [])):
+            try:
+                cb(data)
+            except Exception:
+                logger.exception(
+                    "nats_observer: cluster listener raised "
+                    "(cluster_id=%s)", cluster_id,
+                )
 
     async def publish(self, subject: str, payload: dict) -> None:
         """Publish a message to NATS (used by InfuseScreen for ROLE_UPDATE).
@@ -383,6 +440,14 @@ class NATSObserver:
             # to manually reach for unregister_task_progress_listener.
             self._task_progress_listeners.pop(task_id, None)
 
+        # PR-1 cluster — fan TASK_COMPLETE out to per-cluster listeners
+        # so the panel can transition the matching member row to its
+        # done state.  Cluster listeners are NOT auto-cleared here:
+        # member completions arrive serially, and the panel decides
+        # when the cluster as a whole is finished (after all members
+        # report) before unregistering.
+        self._fan_out_cluster(data)
+
         # PR-telemetry — fold the capability invocations.  Pre-PR-B
         # agents emit no ``invocations`` field; the snapshot helper
         # silently skips malformed entries so version skew is harmless.
@@ -459,6 +524,11 @@ class NATSObserver:
                         "nats_observer: TASK_PROGRESS callback raised "
                         "(task_id=%s) — continuing", task_id,
                     )
+
+        # PR-1 cluster — also fan out to per-cluster listeners so the
+        # cluster panel sees forward motion across every member without
+        # subscribing to each task_id individually.
+        self._fan_out_cluster(data)
 
     @handles("QUEUE_STATUS")
     def _route_queue_status(self, agent_id: str, data: dict) -> None:
