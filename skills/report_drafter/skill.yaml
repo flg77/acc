@@ -1,0 +1,33 @@
+# skills/report_drafter/skill.yaml — autoresearcher persona skill (stub).
+
+purpose:        "Report-drafter marker — round-trips a markdown section body."
+version:        "0.1.0"
+adapter_class:  "StubResearchSkill"
+risk_level:     "LOW"
+domain_id:      "business_research"
+tags:           ["research", "writing", "stub"]
+
+input_schema:
+  type: object
+  properties:
+    text:
+      type: string
+      description: "Markdown body produced by the synthesizer / strategist."
+  required: ["text"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    ok:    {type: boolean}
+    text:  {type: string}
+    skill_id: {type: string}
+  required: ["ok", "text", "skill_id"]
+  additionalProperties: false
+
+description: |
+  Default skill of `research_synthesizer` and
+  `research_strategist`; allowed read-only on
+  `research_critic`.  One invocation per drafted section so the
+  cluster panel can render `skill:report_drafter` while the
+  synthesizer is in flight.
