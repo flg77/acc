@@ -263,12 +263,22 @@ class Agent:
         # as the oversight queue — non-arbiter agents carry a None pointer
         # so the run() gather can reference the subscriber methods without
         # a role-specific branch.
+        #
+        # Cluster fan-out (PR #27): the arbiter passes role + skill
+        # resolvers so the executor's _maybe_build_cluster path can
+        # consult each step's role.estimator block.  Without these
+        # callbacks, every step dispatches as a single agent — clustering
+        # silently degrades to legacy behaviour.  Edge / non-arbiter
+        # agents do not need them.
         from acc.plan import PlanExecutor  # noqa: PLC0415
         if self.config.agent.role == "arbiter":
+            role_resolver, skill_resolver = self._build_cluster_resolvers()
             self._plan_executor: PlanExecutor | None = PlanExecutor(
                 collective_id=self.config.agent.collective_id,
                 publish=self.backends.signaling.publish,
                 arbiter_id=self.agent_id,
+                role_resolver=role_resolver,
+                skill_resolver=skill_resolver,
             )
         else:
             self._plan_executor = None
@@ -277,6 +287,71 @@ class Agent:
         # that carried a domain_centroid_vector.  Passed to CognitiveCore on
         # each task so that domain_drift_score is always current.
         self._domain_centroid: list[float] = []
+
+    # ------------------------------------------------------------------
+    # Cluster dispatch resolvers (PR #27 callback wiring)
+    # ------------------------------------------------------------------
+
+    def _build_cluster_resolvers(self):
+        """Return ``(role_resolver, skill_resolver)`` for PlanExecutor.
+
+        The arbiter consults these at every PLAN-step expansion to
+        decide whether to fan a step out into a sub-agent cluster.
+
+        ``role_resolver(role_id)`` returns the role's
+        :class:`acc.config.RoleDefinitionConfig` (or ``None`` on miss).
+
+        ``skill_resolver(role_id)`` returns the *intersection* of the
+        role's ``allowed_skills`` and the local skill registry's
+        loaded ids — the operator-visible list, not the registry
+        total.  This is what the estimator slices across cluster
+        members.
+
+        Both resolvers swallow + log exceptions so a malformed role.yaml
+        never crashes the dispatch hot path; the executor falls back to
+        single-agent dispatch in that case.
+        """
+        from acc.role_loader import RoleLoader  # noqa: PLC0415
+        from acc.tui.path_resolution import (  # noqa: PLC0415
+            resolve_manifest_root,
+        )
+
+        roles_root = str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
+
+        def _resolve_role(role_id: str):
+            try:
+                return RoleLoader(roles_root, role_id).load()
+            except Exception:
+                logger.exception(
+                    "agent: cluster role_resolver failed for %r", role_id,
+                )
+                return None
+
+        def _resolve_skills(role_id: str) -> list[str]:
+            try:
+                rd = _resolve_role(role_id)
+                if rd is None:
+                    return []
+                allowed = set(getattr(rd, "allowed_skills", []) or [])
+                if not allowed:
+                    return []
+                registry = self._skill_registry
+                if registry is None:
+                    # Skills layer not initialised — fall back to the
+                    # role's declared list directly.  The estimator
+                    # tolerates a wider list than the registry; the
+                    # eventual A-017 check still gates per-skill at
+                    # invocation time.
+                    return list(allowed)
+                live_ids = set(registry.list_skill_ids())
+                return [s for s in registry.list_skill_ids() if s in allowed and s in live_ids]
+            except Exception:
+                logger.exception(
+                    "agent: cluster skill_resolver failed for %r", role_id,
+                )
+                return []
+
+        return _resolve_role, _resolve_skills
 
     # ------------------------------------------------------------------
     # Phase 4.3 — Skill + MCP registry construction
