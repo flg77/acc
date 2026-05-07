@@ -1,0 +1,38 @@
+# roles/coding_agent_implementer/eval_rubric.yaml
+# Weights sum to 1.0; security ≥ 10%.
+
+criteria:
+  correctness:
+    weight: 0.35
+    description: >
+      Code produces the behaviour the architect's draft_interface
+      specifies.  1.0 = every public symbol behaves; 0.0 = broken.
+
+  contract_adherence:
+    weight: 0.20
+    description: >
+      Implementation honours the draft_interface — same signatures,
+      same docstrings, no silent restructure.  Computed from
+      diff(draft_interface, generated_signatures).
+
+  code_quality:
+    weight: 0.15
+    description: >
+      Linting, readability, cyclomatic complexity.
+
+  security:
+    weight: 0.15
+    description: >
+      No hard-coded secrets, no obvious injection vectors,
+      no unsafe deserialisation.  Score: 1.0 = clean; 0.0 =
+      critical finding.
+
+  token_efficiency:
+    weight: 0.10
+    description: >
+      Tokens used relative to the task complexity budget.
+
+  time_efficiency:
+    weight: 0.05
+    description: >
+      Wall-clock duration relative to the task deadline.

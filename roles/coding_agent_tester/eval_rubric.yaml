@@ -1,0 +1,39 @@
+# roles/coding_agent_tester/eval_rubric.yaml
+# Sum to 1.0; security ≥ 10%.
+
+criteria:
+  test_coverage:
+    weight: 0.30
+    description: >
+      Coverage percentage of the implementer's output the test suite
+      reaches.  Score: coverage_pct / 100.0 (e.g. 80% → 0.80).
+
+  case_diversity:
+    weight: 0.25
+    description: >
+      Each public symbol has at least one positive + boundary +
+      negative case.  Score: avg(min(symbols-met-the-bar) / total).
+
+  test_pass_rate:
+    weight: 0.20
+    description: >
+      Of the generated tests, the fraction that pass on the
+      implementer's output as-is.  Failing tests still count as
+      coverage but lower this score.
+
+  security:
+    weight: 0.15
+    description: >
+      Tests cover known-bad inputs (SQL injection strings, unicode
+      edge cases, oversized inputs).  Score: 1.0 = all such cases
+      covered; 0.0 = none.
+
+  token_efficiency:
+    weight: 0.05
+    description: >
+      Tokens used relative to the task complexity budget.
+
+  time_efficiency:
+    weight: 0.05
+    description: >
+      Wall-clock duration relative to the task deadline.

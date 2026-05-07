@@ -1,0 +1,57 @@
+# roles/coding_agent_architect/role.yaml
+# =============================================================================
+# coding_agent_architect — interface + file-layout author for clustered work.
+#
+# Always single-instance per cluster (estimator strategy: fixed count=1).
+# Publishes its draft as a KNOWLEDGE_SHARE so peer implementer +
+# reviewer members of the parent plan consume a canonical reference.
+# =============================================================================
+
+role_definition:
+  purpose: >
+    Define interfaces, file layout, and module boundaries before any
+    implementation begins.  Always single-instance per cluster — two
+    architects fragment the design.  Publish the resulting
+    draft_interface as a KNOWLEDGE_SHARE for peer implementer +
+    reviewer members of the parent plan to consume.
+  persona: "analytical"
+  task_types:
+    - CODE_GENERATE
+    - CODE_REVIEW
+    - DOCUMENTATION_WRITE
+  seed_context: ""    # populated by system_prompt.md at load time
+  allowed_actions:
+    - read_vector_db
+    - write_working_memory
+    - read_scratchpad
+    - write_scratchpad
+    - publish_task
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096.0
+    rate_limit_rpm: 30.0
+    max_task_duration_ms: 600000.0
+  version: "1.0.0"
+
+  domain_id: "software_engineering"
+  domain_receptors:
+    - "software_engineering"
+
+  allowed_skills:
+    - code_review
+    - code_generation
+  default_skills:
+    - code_review
+  max_skill_risk_level: "MEDIUM"
+  allowed_mcps:
+    - echo_server
+  default_mcps:
+    - echo_server
+  max_mcp_risk_level: "MEDIUM"
+
+  max_parallel_tasks: 1
+  estimator:
+    strategy: "fixed"
+    fixed:
+      count: 1

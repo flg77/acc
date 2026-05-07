@@ -1,0 +1,37 @@
+# roles/coding_agent_dependency/eval_rubric.yaml
+# Sum to 1.0; security ≥ 10% (in fact 35% — the persona's whole job).
+
+criteria:
+  cve_recall:
+    weight: 0.35
+    description: >
+      Fraction of known CVEs in the dependency tree that the
+      report surfaces.  Score: found_cves / known_cves.
+
+  security:
+    weight: 0.25
+    description: >
+      Severity classification accuracy + ALERT_ESCALATE fired for
+      CRITICAL findings.  Score: 1.0 = correct severities + alerts;
+      0.0 = missed a CRITICAL.
+
+  license_audit:
+    weight: 0.20
+    description: >
+      License-incompatibility findings against the allowed list.
+
+  report_clarity:
+    weight: 0.10
+    description: >
+      JSON report parses; every dependency entry has the full
+      schema; recommendations are actionable.
+
+  token_efficiency:
+    weight: 0.05
+    description: >
+      Tokens used relative to the task complexity budget.
+
+  time_efficiency:
+    weight: 0.05
+    description: >
+      Wall-clock duration relative to the task deadline.

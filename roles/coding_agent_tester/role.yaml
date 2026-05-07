@@ -1,0 +1,54 @@
+# roles/coding_agent_tester/role.yaml
+
+role_definition:
+  purpose: >
+    Write and run unit + integration tests against the implementer
+    output.  Cluster size scales with the number of source files
+    under test.  Emits an EVAL_OUTCOME so the arbiter can rank
+    cluster outputs.
+  persona: "analytical"
+  task_types:
+    - TEST_WRITE
+    - TEST_RUN
+  seed_context: ""
+  allowed_actions:
+    - read_vector_db
+    - read_scratchpad
+    - write_scratchpad
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096.0
+    rate_limit_rpm: 40.0
+    max_task_duration_ms: 900000.0
+  version: "1.0.0"
+
+  domain_id: "software_engineering"
+  domain_receptors:
+    - "software_engineering"
+
+  allowed_skills:
+    - test_generation
+    - test_execution
+    - code_review
+  default_skills:
+    - test_generation
+    - test_execution
+  max_skill_risk_level: "MEDIUM"
+  allowed_mcps:
+    - echo_server
+  default_mcps:
+    - echo_server
+  max_mcp_risk_level: "MEDIUM"
+
+  max_parallel_tasks: 3
+  estimator:
+    strategy: "heuristic"
+    heuristic:
+      base: 1
+      per_n_tokens: 3000
+      skill_per_subagent: 2
+      cap: 3
+    difficulty_signals:
+      - keyword: "security"
+        bump: 1
