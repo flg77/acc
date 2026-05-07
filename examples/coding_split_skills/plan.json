@@ -1,0 +1,49 @@
+{
+  "signal_type": "PLAN",
+  "plan_id": "ratelimiter-skills-2026-05",
+  "collective_id": "sol-01",
+  "steps": [
+    {
+      "step_id": "design",
+      "role": "coding_agent_architect",
+      "depends_on": [],
+      "task_type": "CODE_GENERATE",
+      "task_description": "Design a token-bucket HTTP rate limiter for the FastAPI gateway.\n\nConstraints:\n  - Per-IP, per-API-key, and global ceilings.\n  - Pluggable backend (memory + redis).\n  - All public symbols typed (3.12+ syntax).\n\nEmit ONLY the interface + file layout:\n  - rate_limiter/__init__.py  (re-exports)\n  - rate_limiter/types.py     (protocols + dataclasses)\n  - rate_limiter/buckets.py   (bucket interface + memory impl)\n  - rate_limiter/middleware.py (FastAPI middleware adapter)\n\nPublish a KNOWLEDGE_SHARE(domain_tag=code_patterns,\nknowledge_type=draft_interface, content=...) so peer\nimplementers and reviewers can pick it up.\n"
+    },
+    {
+      "step_id": "deps",
+      "role": "coding_agent_dependency",
+      "depends_on": [],
+      "task_type": "DEPENDENCY_AUDIT",
+      "task_description": "Audit the project's pyproject.toml for any new direct or\ntransitive dependencies the rate limiter might pull in\n(redis client, prometheus_client).  Cross-check the latest\ncompatible versions against known CVEs and report any\nlicense incompatibilities.\n"
+    },
+    {
+      "step_id": "implement",
+      "role": "coding_agent_implementer",
+      "depends_on": [
+        "design"
+      ],
+      "task_type": "CODE_GENERATE",
+      "task_description": "Implement the rate limiter modules from the architect's\ndraft_interface (read from the cluster scratchpad).  Slice\nthe work across cluster members:\n\n  member 1: rate_limiter/types.py + __init__.py\n  member 2: rate_limiter/buckets.py\n  member 3: rate_limiter/middleware.py\n\nEach member writes the canonical implementation back to\nthe scratchpad under\n  acc:<cid>:cluster:<cluster_id>:impl:<filename>\nand emits a KNOWLEDGE_SHARE(knowledge_type=impl_ready,\ncontent=<scratchpad key>) on completion.\n"
+    },
+    {
+      "step_id": "test",
+      "role": "coding_agent_tester",
+      "depends_on": [
+        "implement"
+      ],
+      "task_type": "TEST_WRITE",
+      "task_description": "Generate pytest cases for every public symbol of the\nrate limiter, organised one test module per source file.\nCover the positive case, a boundary case, and at least\none negative case per public API.  Include a fixture\nthat swaps in the memory backend so tests do not require\nRedis.\n\nAfter generation, run the suite via [SKILL: test_execution]\nand emit an EVAL_OUTCOME against the role's eval_rubric so\nthe arbiter can rank the cluster's outputs.\n"
+    },
+    {
+      "step_id": "review",
+      "role": "coding_agent_reviewer",
+      "depends_on": [
+        "implement",
+        "test"
+      ],
+      "task_type": "CODE_REVIEW",
+      "task_description": "Read the implementer output (scratchpad under cluster\nkeys) plus the tester verdict.  Produce a single\nJSON verdict: PASS | NEEDS_CHANGES | FAIL.  HIGH or\nCRITICAL security findings MUST trigger ALERT_ESCALATE\nbefore this step completes.\n\nSpecifically check:\n  - Is the architect's draft_interface contract honoured?\n  - Are there missing test cases the tester verdict admits?\n  - Any hidden Cat-A risks (skill or MCP outside allow-list,\n    unbounded resource use)?\n"
+    }
+  ]
+}
