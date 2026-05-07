@@ -1,0 +1,61 @@
+# ACC Browser-Harness MCP server — full Chromium + Playwright + browser-use.
+#
+# HIGH-risk MCP — Cat-A A-018 gates per invocation; persona must
+# explicitly raise `max_mcp_risk_level: HIGH` to reach this server.
+#
+# Image footprint is substantial (~1.5-2 GB) due to Chromium +
+# Playwright dependencies.  Operator-approved per the autoresearcher
+# plan revision 2.
+#
+# Build:
+#   podman build -f container/production/Containerfile.web-browser-harness \
+#     -t localhost/acc-mcp-web-browser-harness:0.1.0 .
+#
+# Run (standalone):
+#   podman run --rm -p 8080:8080 \
+#     -e ACC_ANTHROPIC_API_KEY="$ACC_ANTHROPIC_API_KEY" \
+#     -e BROWSER_HARNESS_HEADLESS=true \
+#     localhost/acc-mcp-web-browser-harness:0.1.0
+#
+# Activated via the `acc-autoresearcher` compose profile.
+
+FROM mcr.microsoft.com/playwright/python:v1.48.0-noble
+
+ARG ACC_VERSION=0.1.0
+
+LABEL org.opencontainers.image.title="acc-mcp-web-browser-harness" \
+      org.opencontainers.image.description="LLM-driven Chromium browser MCP for ACC autoresearcher" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+USER root
+
+WORKDIR /app
+
+# browser-use is the LLM-driven harness; langchain-anthropic +
+# langchain-openai are the LLM client adapters the harness consumes.
+# Pinned to known-compatible versions; bump in a single coordinated
+# follow-up PR rather than ad-hoc.
+RUN pip install --no-cache-dir --upgrade \
+        "browser-use>=0.1.40,<0.2" \
+        "langchain-anthropic>=0.3,<0.4" \
+        "langchain-openai>=0.2,<0.3"
+
+COPY container/production/web_browser_harness/main.py /app/main.py
+
+RUN useradd --uid 1001 --gid 0 --create-home harness \
+    && chown -R 1001:0 /app /home/harness \
+    && chmod -R g=u /app /home/harness
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HOME=/home/harness \
+    BROWSER_HARNESS_HEADLESS=true \
+    BROWSER_HARNESS_BACKEND=anthropic \
+    ACC_LOG_LEVEL=INFO
+
+EXPOSE 8080
+
+USER 1001
+
+CMD ["python3", "/app/main.py"]

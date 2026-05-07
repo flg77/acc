@@ -1,0 +1,49 @@
+# mcps/web_browser_harness/mcp.yaml — LLM-driven browser MCP.
+#
+# HIGH-risk MCP wrapping browser-use (Playwright + Chromium +
+# LLM-driven navigation).  Persona must declare
+# `max_mcp_risk_level: HIGH` in its role.yaml to reach this server.
+#
+# Active when AUTORESEARCHER=true.  Image is heavy (~1.5-2 GB) due
+# to Chromium + Playwright dependencies.
+
+purpose: |
+  Drive a real Chromium browser to perform a research task.
+  Primary research tool for ACC autoresearcher personas; the
+  underlying LLM client follows the harness's chain-of-action
+  navigation pattern.
+
+version:        "0.1.0"
+
+transport:      "http"
+url:            "http://acc-mcp-web-browser-harness:8080/rpc"
+timeout_s:      300
+api_key_env:    ""
+
+allowed_tools:
+  - "browse"
+
+requires_actions: []
+risk_level:     "HIGH"
+domain_id:      "business_research"
+tags:           ["research", "browser", "playwright", "browser-use", "high-risk"]
+
+description: |
+  Wraps `browser-use` <https://github.com/browser-use/browser-harness>
+  behind one MCP tool, ``browse(task: str, max_steps: int = 25,
+  start_url: str = '')``.
+
+  Why HIGH risk:
+    * Real Chromium browser executes arbitrary JavaScript from
+      operator-untrusted sites.
+    * The harness's LLM client may follow social-engineering
+      instructions embedded in pages.
+    * No same-origin policy on the *agent's* perspective — the
+      harness behaves like a user.
+
+  Per-invocation cap: max_steps (default 25, hard cap 60).
+  Wall-clock timeout enforced at the MCP transport (300 s).
+
+  Operators wanting smaller image footprints can swap to a
+  Firefox-only or no-LLM-client base in a follow-up PR; the
+  manifest URL stays stable.
