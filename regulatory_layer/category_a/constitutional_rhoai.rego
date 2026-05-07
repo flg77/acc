@@ -12,8 +12,8 @@
 # Levin mapping: These are the "hardware" layer of the TAME spectrum —
 # they CANNOT be persuaded, adjusted, or overridden by any signal.
 #
-# Version: 0.5.0
-# Date:    2026-05-05
+# Version: 0.6.0
+# Date:    2026-05-07
 # ==========================================================================
 
 package acc.membrane.constitutional
@@ -281,6 +281,62 @@ deny_cluster_oversize if {
 deny_cluster_nonpositive if {
     input.action == "CLUSTER_SPAWN"
     input.subagent_count < 1
+}
+
+# ==========================================================================
+# A-020 (v0.6.0): Iteration cap on the autoresearcher revision loop.
+#
+# Defence in depth on top of the in-process check in
+# acc.plan.PlanExecutor._maybe_reissue_for_revise.  An A-020 violation
+# indicates an external orchestrator tried to dispatch a re-issue past
+# the operator-declared max_iterations on the PLAN step.
+#
+# Action input shape:
+#   action            == "TASK_REISSUE"
+#   iteration_n       int — the iteration this re-issue would land at
+#   step.max_iterations int — operator-declared cap on the step
+# ==========================================================================
+
+deny_iteration_overrun if {
+    input.action == "TASK_REISSUE"
+    input.iteration_n > input.step.max_iterations
+}
+
+# ==========================================================================
+# A-021 (v0.6.0): Self-modifying-prompt sanity rules.
+#
+# When a step opted in to enable_prompt_patches, the critic may
+# attach a structured ``prompt_patch`` field to its EVAL_OUTCOME.
+# A-021 enforces three invariants the executor's
+# _sanitize_prompt_patch also applies in process:
+#
+# 1. Patch length capped (default 2000 chars; configurable via Cat-B
+#    setpoint prompt_patch_max_chars).
+# 2. The patch's target_persona must be the persona of the step
+#    being re-issued — the critic CANNOT modify a peer persona's
+#    prompt by default.  The step's prompt_patches_writable_to
+#    field is the explicit allow-list operators set when they want
+#    a critic to touch other personas.
+# 3. replace_section patches must point at a section_marker that
+#    actually exists in the persona's system_prompt.md (defence
+#    against substring-match fake-headers).
+# ==========================================================================
+
+deny_oversize_prompt_patch if {
+    input.action == "PROMPT_PATCH_APPLY"
+    count(input.patch.text) > input.cat_b.prompt_patch_max_chars
+}
+
+deny_cross_persona_patch if {
+    input.action == "PROMPT_PATCH_APPLY"
+    input.patch.target_persona != input.step.role
+    not input.patch.target_persona in input.step.prompt_patches_writable_to
+}
+
+deny_unbacked_section_replace if {
+    input.action == "PROMPT_PATCH_APPLY"
+    input.patch.patch_kind == "replace_section"
+    not contains(input.system_prompt, input.patch.section_marker)
 }
 
 # ==========================================================================
