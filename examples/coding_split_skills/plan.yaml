@@ -1,0 +1,98 @@
+# examples/coding_split_skills/plan.yaml
+# =============================================================================
+# Five-step PLAN exercising the four communication patterns documented in
+# docs/SUBAGENT_COMMUNICATION.md and the five personas from
+# docs/CODING_AGENT_SUBROLES.md.
+#
+# Submit with:
+#     acc-cli plan submit examples/coding_split_skills/plan.yaml
+# =============================================================================
+signal_type: "PLAN"
+plan_id: "ratelimiter-skills-2026-05"
+collective_id: "sol-01"
+
+steps:
+  - step_id: "design"
+    role: "coding_agent_architect"
+    depends_on: []
+    task_type: "CODE_GENERATE"
+    task_description: |
+      Design a token-bucket HTTP rate limiter for the FastAPI gateway.
+
+      Constraints:
+        - Per-IP, per-API-key, and global ceilings.
+        - Pluggable backend (memory + redis).
+        - All public symbols typed (3.12+ syntax).
+
+      Emit ONLY the interface + file layout:
+        - rate_limiter/__init__.py  (re-exports)
+        - rate_limiter/types.py     (protocols + dataclasses)
+        - rate_limiter/buckets.py   (bucket interface + memory impl)
+        - rate_limiter/middleware.py (FastAPI middleware adapter)
+
+      Publish a KNOWLEDGE_SHARE(domain_tag=code_patterns,
+      knowledge_type=draft_interface, content=...) so peer
+      implementers and reviewers can pick it up.
+
+  - step_id: "deps"
+    role: "coding_agent_dependency"
+    depends_on: []
+    task_type: "DEPENDENCY_AUDIT"
+    task_description: |
+      Audit the project's pyproject.toml for any new direct or
+      transitive dependencies the rate limiter might pull in
+      (redis client, prometheus_client).  Cross-check the latest
+      compatible versions against known CVEs and report any
+      license incompatibilities.
+
+  - step_id: "implement"
+    role: "coding_agent_implementer"
+    depends_on: ["design"]
+    task_type: "CODE_GENERATE"
+    task_description: |
+      Implement the rate limiter modules from the architect's
+      draft_interface (read from the cluster scratchpad).  Slice
+      the work across cluster members:
+
+        member 1: rate_limiter/types.py + __init__.py
+        member 2: rate_limiter/buckets.py
+        member 3: rate_limiter/middleware.py
+
+      Each member writes the canonical implementation back to
+      the scratchpad under
+        acc:<cid>:cluster:<cluster_id>:impl:<filename>
+      and emits a KNOWLEDGE_SHARE(knowledge_type=impl_ready,
+      content=<scratchpad key>) on completion.
+
+  - step_id: "test"
+    role: "coding_agent_tester"
+    depends_on: ["implement"]
+    task_type: "TEST_WRITE"
+    task_description: |
+      Generate pytest cases for every public symbol of the
+      rate limiter, organised one test module per source file.
+      Cover the positive case, a boundary case, and at least
+      one negative case per public API.  Include a fixture
+      that swaps in the memory backend so tests do not require
+      Redis.
+
+      After generation, run the suite via [SKILL: test_execution]
+      and emit an EVAL_OUTCOME against the role's eval_rubric so
+      the arbiter can rank the cluster's outputs.
+
+  - step_id: "review"
+    role: "coding_agent_reviewer"
+    depends_on: ["implement", "test"]
+    task_type: "CODE_REVIEW"
+    task_description: |
+      Read the implementer output (scratchpad under cluster
+      keys) plus the tester verdict.  Produce a single
+      JSON verdict: PASS | NEEDS_CHANGES | FAIL.  HIGH or
+      CRITICAL security findings MUST trigger ALERT_ESCALATE
+      before this step completes.
+
+      Specifically check:
+        - Is the architect's draft_interface contract honoured?
+        - Are there missing test cases the tester verdict admits?
+        - Any hidden Cat-A risks (skill or MCP outside allow-list,
+          unbounded resource use)?
