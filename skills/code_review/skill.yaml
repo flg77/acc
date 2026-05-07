@@ -1,0 +1,52 @@
+# skills/code_review/skill.yaml — coding-cluster persona skill (stub).
+#
+# Pass-through adapter that lets the LLM emit
+# `[SKILL: code_review {"text": "..."}]` markers from inside a
+# coding_agent_reviewer / _architect / _implementer system prompt.
+# The skill itself does not run a code review; the LLM's structured
+# output IS the review.  This skill is the governance hook + audit
+# anchor that Cat-A A-017 enforces.
+#
+# Replacing this with a real linter / static-analysis adapter is a
+# separate hardening track.
+
+purpose:        "Code-review marker — round-trips the LLM's review verbatim."
+version:        "0.1.0"
+adapter_class:  "StubCodingSkill"
+risk_level:     "LOW"
+domain_id:      "software_engineering"
+tags:           ["coding", "review", "stub"]
+
+input_schema:
+  type: object
+  properties:
+    text:
+      type: string
+      description: "The review verdict the LLM produced."
+  required: ["text"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    ok:
+      type: boolean
+    text:
+      type: string
+    skill_id:
+      type: string
+  required: ["ok", "text", "skill_id"]
+  additionalProperties: false
+
+description: |
+  Stub skill backing the `coding_agent_reviewer` persona's review
+  output.  The adapter (`StubCodingSkill`) returns the input text as
+  the result + the skill_id for audit attribution.
+
+  Used by:
+    * coding_agent_reviewer (default skill)
+    * coding_agent_architect (allowed for self-validation)
+    * coding_agent_implementer (allowed for self-validation)
+
+  Risk LOW — no external IO; output is the LLM's own text rounded
+  through the skill registry's schema validator.
