@@ -62,6 +62,13 @@ SIG_ALERT_ESCALATE = "ALERT_ESCALATE"
 SIG_BRIDGE_DELEGATE = "BRIDGE_DELEGATE"
 SIG_BRIDGE_RESULT = "BRIDGE_RESULT"
 
+# PR-5 — operator-issued cancel from the prompt pane (slash command).
+# Carries either a task_id (single-task cancel) or a cluster_id
+# (every member of a cluster cancels).  Cooperative — agents check a
+# cancel flag at each cognitive step boundary and abort cleanly,
+# emitting TASK_COMPLETE with blocked=True, block_reason="cancelled".
+SIG_TASK_CANCEL = "TASK_CANCEL"
+
 # Intra-collective communication signals (ACC-10)
 SIG_TASK_PROGRESS = "TASK_PROGRESS"
 """Step-level progress for arbiter mid-task cancellation and load balancing."""
@@ -197,6 +204,15 @@ def subject_task(collective_id: str) -> str:
 def subject_role_update(collective_id: str) -> str:
     """Return the NATS subject for ROLE_UPDATE signals."""
     return f"acc.{collective_id}.role_update"
+
+
+def subject_task_cancel(collective_id: str) -> str:
+    """Return the NATS subject for TASK_CANCEL signals (PR-5).
+
+    Distinct from ``subject_task`` so cancel handlers can subscribe
+    cheaply without filtering on signal_type, and so a flood of
+    operator cancels never starves the main task subject."""
+    return f"acc.{collective_id}.task.cancel"
 
 
 def subject_role_approval(collective_id: str) -> str:

@@ -273,7 +273,12 @@ class PromptScreen(Screen):
             self.action_send()
 
     def action_send(self) -> None:
-        """Read the form, dispatch a task, await the reply in a worker."""
+        """Read the form, dispatch a task, await the reply in a worker.
+
+        PR-5 — input starting with ``/`` is parsed as a slash command
+        and dispatched without an LLM round-trip.  Empty / whitespace
+        and non-slash inputs follow the legacy prompt path unchanged.
+        """
         prompt = self.query_one("#prompt-textarea", TextArea).text.strip()
         if not prompt:
             self.notify(
@@ -281,6 +286,12 @@ class PromptScreen(Screen):
                 severity="warning",
                 timeout=4.0,
             )
+            return
+
+        # PR-5 — slash command branch.
+        if prompt.startswith("/"):
+            self._dispatch_slash(prompt)
+            self.query_one("#prompt-textarea", TextArea).clear()
             return
 
         target_role = str(
@@ -325,6 +336,206 @@ class PromptScreen(Screen):
         self.history = []
         self._render_transcript()
         self.query_one("#prompt-status", Static).update("[dim]Cleared.[/dim]")
+
+    # ------------------------------------------------------------------
+    # PR-5 — slash command dispatch
+    # ------------------------------------------------------------------
+
+    def _dispatch_slash(self, raw_input: str) -> None:
+        """Parse + dispatch a ``/`` command.
+
+        Implementation is intentionally light — the parser
+        (:func:`acc.slash_commands.parse`) is pure; this method picks
+        the side-effect (publish CANCEL, render help text, …) for each
+        intent kind.  Unknown verbs append a system entry so operators
+        learn from typos without leaving the screen.
+        """
+        from acc import slash_commands as _sc  # noqa: PLC0415
+
+        intent = _sc.parse(raw_input)
+
+        def _system(text: str, *, blocked: bool = False) -> None:
+            self._append_history({
+                "role": "system",
+                "task_id": "",
+                "text": text,
+                "ts": time.time(),
+                "blocked": blocked,
+            })
+
+        if intent.kind == _sc.KIND_HELP:
+            _system(_sc.HELP_TEXT)
+            return
+        if intent.kind == _sc.KIND_INVALID:
+            _system(intent.error, blocked=True)
+            return
+        if intent.kind == _sc.KIND_UNKNOWN:
+            _system(intent.error, blocked=True)
+            return
+
+        if intent.kind == _sc.KIND_CANCEL:
+            self._publish_cancel(task_id=intent.args["task_id"])
+            _system(
+                f"cancel requested for task_id={intent.args['task_id'][:14]}"
+            )
+            return
+
+        if intent.kind == _sc.KIND_CLUSTER_KILL:
+            cid = intent.args.get("cluster_id", "")
+            if not cid:
+                _system("cluster id required", blocked=True)
+                return
+            self._publish_cancel(cluster_id=cid)
+            _system(f"cancel requested for cluster {cid[:10]}")
+            return
+
+        if intent.kind == _sc.KIND_CLUSTER_SHOW:
+            self._render_cluster_show(intent.args.get("cluster_id", ""))
+            return
+
+        if intent.kind == _sc.KIND_ROLE_LIST:
+            self._render_role_list()
+            return
+
+        if intent.kind == _sc.KIND_SKILLS:
+            self._render_skills_summary()
+            return
+
+        if intent.kind in (
+            _sc.KIND_OVERSIGHT_PENDING,
+            _sc.KIND_OVERSIGHT_APPROVE,
+            _sc.KIND_OVERSIGHT_REJECT,
+        ):
+            _system(
+                "oversight slash commands are wired in a follow-up — "
+                "use Compliance screen for now",
+            )
+            return
+
+        _system(f"unhandled intent: {intent.kind}", blocked=True)
+
+    def _publish_cancel(
+        self,
+        *,
+        task_id: str = "",
+        cluster_id: str = "",
+    ) -> None:
+        """Publish a TASK_CANCEL signal on ``acc.{cid}.task.cancel``.
+
+        Best-effort: failures are logged + reflected in the transcript
+        via the caller.  We don't surface a Future here — the cancel
+        is fire-and-forget; the agent's TASK_COMPLETE with
+        ``blocked=True, block_reason='cancelled'`` is what the operator
+        ultimately observes via the existing prompt-channel listener.
+        """
+        observer = self._active_observer()
+        if observer is None:
+            self.notify(
+                "No NATS connection — cannot send cancel",
+                severity="error",
+            )
+            return
+        cid = self._active_collective_id()
+        from acc.signals import (  # noqa: PLC0415
+            SIG_TASK_CANCEL,
+            subject_task_cancel,
+        )
+        payload = {
+            "signal_type": SIG_TASK_CANCEL,
+            "collective_id": cid,
+            "ts": time.time(),
+        }
+        if task_id:
+            payload["task_id"] = task_id
+        if cluster_id:
+            payload["cluster_id"] = cluster_id
+
+        async def _do_publish() -> None:
+            try:
+                await observer.publish(subject_task_cancel(cid), payload)
+            except Exception:
+                logger.exception("prompt: cancel publish failed")
+
+        worker = asyncio.create_task(_do_publish())
+        self._workers.add(worker)
+        worker.add_done_callback(self._workers.discard)
+
+    def _render_cluster_show(self, cluster_id: str) -> None:
+        """Append a system entry summarising current cluster topology."""
+        snap = self.snapshot
+        topology = dict(getattr(snap, "cluster_topology", {}) or {})
+        if cluster_id:
+            topology = {k: v for k, v in topology.items() if k == cluster_id}
+        if not topology:
+            self._append_history({
+                "role": "system",
+                "task_id": "",
+                "text": "no clusters" + (
+                    f" matching {cluster_id[:10]}" if cluster_id else ""
+                ),
+                "ts": time.time(),
+            })
+            return
+        lines: list[str] = []
+        for cid, row in topology.items():
+            members = row.get("members", {}) or {}
+            lines.append(
+                f"cluster {cid[:10]} · {row.get('target_role', '?')} · "
+                f"{len(members)}/{row.get('subagent_count', 0)} agents"
+            )
+            for aid, m in members.items():
+                lines.append(
+                    f"  - {aid[:14]} · skill:{m.get('skill_in_use', '?') or '?'}"
+                    f" · {m.get('status', 'running')}"
+                )
+        self._append_history({
+            "role": "system",
+            "task_id": "",
+            "text": "\n".join(lines),
+            "ts": time.time(),
+        })
+
+    def _render_role_list(self) -> None:
+        """Append a system entry listing roles in the local registry."""
+        try:
+            from acc.role_loader import list_roles  # noqa: PLC0415
+            from acc.tui.path_resolution import resolve_manifest_root  # noqa: PLC0415
+            roots = str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
+            names = list_roles(roots)
+            text = (
+                "roles:\n  " + "\n  ".join(names)
+                if names else "(no roles found)"
+            )
+        except Exception as exc:
+            text = f"role list failed: {exc}"
+        self._append_history({
+            "role": "system", "task_id": "", "text": text, "ts": time.time(),
+        })
+
+    def _render_skills_summary(self) -> None:
+        target_role = str(
+            self.query_one("#select-target-role", Select).value or ""
+        )
+        try:
+            from acc.role_loader import RoleLoader  # noqa: PLC0415
+            from acc.tui.path_resolution import resolve_manifest_root  # noqa: PLC0415
+            roots = str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
+            rd = RoleLoader(roots, target_role).load()
+            if rd is None:
+                text = f"role {target_role!r} not found"
+            else:
+                allowed = ", ".join(getattr(rd, "allowed_skills", []) or []) or "(none)"
+                default = ", ".join(getattr(rd, "default_skills", []) or []) or "(none)"
+                text = (
+                    f"skills for {target_role}:\n"
+                    f"  allowed: {allowed}\n"
+                    f"  default: {default}"
+                )
+        except Exception as exc:
+            text = f"skills lookup failed: {exc}"
+        self._append_history({
+            "role": "system", "task_id": "", "text": text, "ts": time.time(),
+        })
 
     # ------------------------------------------------------------------
     # Worker — send + receive + transcript rendering
