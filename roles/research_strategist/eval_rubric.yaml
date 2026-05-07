@@ -1,0 +1,38 @@
+# roles/research_strategist/eval_rubric.yaml
+# Sum to 1.0; security ≥ 10%.
+
+criteria:
+  argument_strength:
+    weight: 0.30
+    description: >
+      The "ACC-shaped opportunity" claim is grounded in concrete
+      architectural differentiators (clustering, Cat-A governance,
+      edge-native design) that the competitor cards established.
+
+  sourcing_density:
+    weight: 0.25
+    description: >
+      Every factual claim about Red Hat's position OR a competitor's
+      gap reuses a citation_tracker entry from a predecessor
+      persona.  Score: cited_claims / total_claims.
+
+  internal_consistency:
+    weight: 0.15
+    description: >
+      Strategist claims do NOT contradict the economist /
+      competitor outputs in scratchpad.  Computed as 1.0 minus the
+      contradiction count over total claims.
+
+  red_hat_positioning:
+    weight: 0.15
+    description: >
+      The "Where Red Hat is strong" section names ≥ 3 product
+      capabilities (e.g. RHACM, MicroShift, OpenShift AI, etc.)
+      that match competitor edge-support gaps.
+
+  security:
+    weight: 0.15
+    description: >
+      No fabricated competitor weaknesses.  No claims about Red Hat
+      capabilities that aren't backed by a current product page or
+      announcement the citation_tracker captured.

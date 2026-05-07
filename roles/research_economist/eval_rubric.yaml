@@ -1,0 +1,36 @@
+# roles/research_economist/eval_rubric.yaml
+# Sum to 1.0; security ≥ 10%.
+
+criteria:
+  factual_accuracy:
+    weight: 0.30
+    description: >
+      Numbers + claims match what the cited sources actually say.
+      Computed at critic-time via spot-fetch of a sample of
+      citation_tracker URLs.
+
+  sourcing_density:
+    weight: 0.25
+    description: >
+      Every numeric claim has at least one citation_tracker entry
+      pointing at a primary source.  Score: cited_claims /
+      total_claims.
+
+  forecast_internal_consistency:
+    weight: 0.20
+    description: >
+      3 / 5 / 10-year forecasts share a CAGR or explicit
+      regime-change rationale; sensitivity bands monotonic.
+
+  coverage:
+    weight: 0.15
+    description: >
+      Every research question the planner assigned to this
+      persona is answered.
+
+  security:
+    weight: 0.10
+    description: >
+      No fabricated numbers; no fabricated CVE / regulatory
+      references.  Score: 1.0 = clean; 0.0 = at least one
+      uncited claim that fails spot-check.

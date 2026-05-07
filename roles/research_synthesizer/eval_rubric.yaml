@@ -1,0 +1,34 @@
+# roles/research_synthesizer/eval_rubric.yaml
+# Sum to 1.0; security ≥ 10%.
+
+criteria:
+  section_coverage:
+    weight: 0.30
+    description: >
+      Every section in the planner's outline is present in the
+      report draft.  Score: covered_sections / outline_sections.
+
+  citation_density:
+    weight: 0.25
+    description: >
+      Every numeric / factual claim in the body has an inline
+      footnote referencing a citation_tracker entry.  Score:
+      cited_claims / total_claims.
+
+  prose_quality:
+    weight: 0.15
+    description: >
+      Markdown parses cleanly; section headers consistent; no
+      unresolved placeholder text (e.g. "TBD", "[INSERT NUMBER]").
+
+  internal_consistency:
+    weight: 0.15
+    description: >
+      Synthesizer claims do NOT contradict the predecessor outputs
+      (1.0 minus contradiction_count / total_claims).
+
+  security:
+    weight: 0.15
+    description: >
+      No fabricated citations; paywalled sources marked as such;
+      no claim from outside the predecessor scratchpads.
