@@ -67,6 +67,38 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     inf.set_defaults(func=_cmd_infuse)
 
+    # PR-3 — markdown role authoring
+    compile_p = role_sub.add_parser(
+        "compile",
+        help="Compile a role.md source into role.yaml + system_prompt.md.",
+    )
+    compile_p.add_argument("path", help="Path to a role.md file.")
+    compile_p.add_argument(
+        "--dest", default=None,
+        help=(
+            "Destination directory (default: sibling directory named after "
+            "the role's '# Role: <name>' header)."
+        ),
+    )
+    compile_p.set_defaults(func=_cmd_compile)
+
+    decompile_p = role_sub.add_parser(
+        "decompile",
+        help="Render an existing roles/<name>/ directory back to markdown.",
+    )
+    decompile_p.add_argument(
+        "name",
+        help="Role directory name under roles/ (e.g. coding_agent).",
+    )
+    decompile_p.set_defaults(func=_cmd_decompile)
+
+    lint_p = role_sub.add_parser(
+        "lint",
+        help="Validate a role.md without writing.  Exits 0 clean, 1 dirty.",
+    )
+    lint_p.add_argument("path", help="Path to a role.md file.")
+    lint_p.set_defaults(func=_cmd_lint)
+
 
 # ---------------------------------------------------------------------------
 # Handlers
@@ -145,6 +177,62 @@ async def _cmd_infuse(args: argparse.Namespace) -> int:
     print(f"  approver_id: {args.approver_id}")
     print(f"  version:     {role_def.version}")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# PR-3 — markdown role authoring handlers
+# ---------------------------------------------------------------------------
+
+
+def _cmd_compile(args: argparse.Namespace) -> int:
+    from acc.role_md import RoleMarkdownError, compile_file  # noqa: PLC0415
+
+    md_path = Path(args.path)
+    if not md_path.is_file():
+        print(f"role.md not found: {md_path}", file=sys.stderr)
+        return 1
+    dest = Path(args.dest) if args.dest else None
+    try:
+        yaml_path, sp_path = compile_file(md_path, dest_dir=dest)
+    except RoleMarkdownError as exc:
+        print(f"role compile failed (L{exc.line}): {exc}", file=sys.stderr)
+        return 1
+    print(f"wrote {yaml_path}")
+    if sp_path.exists():
+        print(f"wrote {sp_path}")
+    return 0
+
+
+def _cmd_decompile(args: argparse.Namespace) -> int:
+    from acc.role_md import RoleMarkdownError, decompile_dir  # noqa: PLC0415
+
+    role_dir = Path(roles_root()) / args.name
+    if not role_dir.is_dir():
+        print(f"role directory not found: {role_dir}", file=sys.stderr)
+        return 1
+    try:
+        markdown = decompile_dir(role_dir)
+    except RoleMarkdownError as exc:
+        print(f"decompile failed: {exc}", file=sys.stderr)
+        return 1
+    print(markdown, end="")
+    return 0
+
+
+def _cmd_lint(args: argparse.Namespace) -> int:
+    from acc.role_md import lint_markdown  # noqa: PLC0415
+
+    md_path = Path(args.path)
+    if not md_path.is_file():
+        print(f"role.md not found: {md_path}", file=sys.stderr)
+        return 1
+    issues = lint_markdown(md_path.read_text(encoding="utf-8"))
+    if not issues:
+        print(f"{md_path}: clean")
+        return 0
+    for issue in issues:
+        print(f"{md_path}: {issue}", file=sys.stderr)
+    return 1
 
 
 # ---------------------------------------------------------------------------
