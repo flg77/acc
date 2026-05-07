@@ -94,13 +94,12 @@ async def _cmd_submit(args: argparse.Namespace) -> int:
     raw = _read_plan(args.plan_file)
     if raw is None:
         return 1
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        print(f"plan: invalid JSON in {args.plan_file!r}: {exc}", file=sys.stderr)
+    payload = _parse_plan_text(raw, str(args.plan_file))
+    if payload is None:
         return 1
     if not isinstance(payload, dict):
-        print("plan: payload must be a JSON object", file=sys.stderr)
+        print("plan: payload must be a mapping (JSON object / YAML map)",
+              file=sys.stderr)
         return 1
 
     cid = args.collective or payload.get("collective_id") or default_collective()
@@ -241,4 +240,55 @@ def _read_plan(plan_file: str) -> str | None:
         return path.read_text(encoding="utf-8")
     except OSError as exc:
         print(f"plan: read failed: {exc}", file=sys.stderr)
+        return None
+
+
+def _parse_plan_text(raw: str, path_hint: str) -> Any:
+    """Parse a PLAN payload from JSON or YAML text.
+
+    Routing:
+
+    * Files ending ``.yaml`` / ``.yml`` parse via PyYAML directly.
+      A YAML parse error is fatal — a YAML-extension file should
+      always be valid YAML.
+    * Anything else attempts JSON first.  On JSONDecodeError, the
+      content is retried as YAML — JSON is itself a YAML subset, so
+      this lets ``acc-cli plan submit -`` accept either dialect from
+      stdin without a flag.
+
+    Returns ``None`` on parse failure; the handler converts that to
+    exit code 1 and prints a diagnostic.
+
+    YAML support lets operators author plans next to the role.md
+    sources (PR #28) without an extra json-conversion step.
+    """
+    is_yaml_path = path_hint.lower().endswith((".yaml", ".yml"))
+    if is_yaml_path:
+        try:
+            import yaml  # noqa: PLC0415 — already a project dep
+        except ImportError:  # pragma: no cover — defensive
+            print("plan: PyYAML not installed; cannot parse .yaml plan file",
+                  file=sys.stderr)
+            return None
+        try:
+            return yaml.safe_load(raw)
+        except yaml.YAMLError as exc:
+            print(f"plan: invalid YAML in {path_hint!r}: {exc}",
+                  file=sys.stderr)
+            return None
+
+    # JSON-first path (back-compat: pre-existing JSON plan files keep
+    # working; stdin defaults here too).
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        # Permissive fallback: a stdin-piped YAML or a comment-bearing
+        # JSON-ish file may still parse cleanly as YAML.
+        try:
+            import yaml  # noqa: PLC0415
+            return yaml.safe_load(raw)
+        except (ImportError, Exception):
+            pass
+        print(f"plan: invalid JSON in {path_hint!r}: {exc}",
+              file=sys.stderr)
         return None
