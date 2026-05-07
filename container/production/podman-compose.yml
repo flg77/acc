@@ -342,6 +342,100 @@ services:
       retries: 3
       start_period: 5s
 
+  # ── Autoresearcher MCPs (optional, --profile acc-autoresearcher) ─────────
+  # Three real MCP servers backing the autoresearcher demo
+  # (examples/acc_autoresearcher/, ROADMAP E1-E6).  Activated via the
+  # AUTORESEARCHER=true env var consumed by acc-deploy.sh.
+  #
+  # Risk classifications:
+  #   - web_search_brave : MEDIUM  (Brave HTTP API; needs BRAVE_API_KEY)
+  #   - web_fetch        : MEDIUM  (URL → markdown + paywall flag)
+  #   - web_browser_harness : HIGH (Chromium + Playwright + LLM-driven)
+  acc-mcp-web-search-brave:
+    profiles:
+      - acc-autoresearcher
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.web-search-brave
+      args:
+        ACC_VERSION: *acc-version
+    image: localhost/acc-mcp-web-search-brave:0.1.0
+    container_name: acc-mcp-web-search-brave
+    environment:
+      BRAVE_API_KEY: "${BRAVE_API_KEY:-}"
+      ACC_LOG_LEVEL: INFO
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/',timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  acc-mcp-web-fetch:
+    profiles:
+      - acc-autoresearcher
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.web-fetch
+      args:
+        ACC_VERSION: *acc-version
+    image: localhost/acc-mcp-web-fetch:0.1.0
+    container_name: acc-mcp-web-fetch
+    environment:
+      ACC_LOG_LEVEL: INFO
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/',timeout=2).status==200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  acc-mcp-web-browser-harness:
+    profiles:
+      - acc-autoresearcher
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.web-browser-harness
+      args:
+        ACC_VERSION: *acc-version
+    image: localhost/acc-mcp-web-browser-harness:0.1.0
+    container_name: acc-mcp-web-browser-harness
+    environment:
+      # The harness's LLM client picks one of these credential sets
+      # at runtime based on BROWSER_HARNESS_BACKEND.
+      ACC_ANTHROPIC_API_KEY: "${ACC_ANTHROPIC_API_KEY:-}"
+      ACC_ANTHROPIC_MODEL:   "${ACC_ANTHROPIC_MODEL:-claude-sonnet-4-5}"
+      ACC_OPENAI_API_KEY:    "${ACC_OPENAI_API_KEY:-}"
+      ACC_OPENAI_BASE_URL:   "${ACC_OPENAI_BASE_URL:-}"
+      ACC_OPENAI_MODEL:      "${ACC_OPENAI_MODEL:-gpt-4}"
+      BROWSER_HARNESS_BACKEND:  "${BROWSER_HARNESS_BACKEND:-anthropic}"
+      BROWSER_HARNESS_HEADLESS: "${BROWSER_HARNESS_HEADLESS:-true}"
+      ACC_LOG_LEVEL: INFO
+    # Chromium needs more shared memory than the default 64 MB to
+    # avoid intermittent crashes mid-navigation.  256 MB is browser-use's
+    # documented minimum.
+    shm_size: "256m"
+    networks:
+      - acc-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8080/',timeout=2).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # Browser-harness boot takes longer than the smaller MCPs
+      # (Chromium + Playwright initialisation).
+      start_period: 30s
+
   # ── TUI (optional, disabled by default) ──────────────────────────────────
   # Multi-screen operator console (ACC-TUI-Evolution).
   # Enable with: podman-compose --profile tui up -d                (REQ-TUI-045)

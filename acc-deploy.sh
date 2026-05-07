@@ -37,6 +37,12 @@
 #                            only; default: false).  Useful for manually
 #                            verifying [MCP: echo_server.echo {...}] markers
 #                            in agent output.
+#   AUTORESEARCHER=true|false  Include the three real research MCP servers
+#                              (web_browser_harness, web_search_brave,
+#                              web_fetch) backing the autoresearcher demo
+#                              (examples/acc_autoresearcher/, production
+#                              only; default: false).  Requires BRAVE_API_KEY
+#                              + ACC_ANTHROPIC_API_KEY in the operator env.
 #   DETACH=false             Run in foreground instead of detached (default: true)
 #   ACC_CLI_IMAGE=...        Override the cli image reference (default: localhost/acc-cli:0.2.0)
 #   ACC_CLI_NETWORK=...      Override podman --network (default: host)
@@ -76,6 +82,7 @@ STACK="${STACK:-production}"
 TUI="${TUI:-true}"
 CODING_SPLIT="${CODING_SPLIT:-false}"
 MCP_ECHO="${MCP_ECHO:-false}"
+AUTORESEARCHER="${AUTORESEARCHER:-false}"
 DETACH="${DETACH:-true}"
 
 # ── Validate ───────────────────────────────────────────────────────────────────
@@ -195,6 +202,19 @@ elif [[ "$MCP_ECHO" == "true" ]]; then
     echo "WARNING: mcp-echo is only available in production. Ignoring MCP_ECHO=true." >&2
 fi
 
+# Autoresearcher MCP profile — three real research MCP servers
+# (web_search_brave, web_fetch, web_browser_harness) backing the
+# autoresearcher demo (examples/acc_autoresearcher/, ROADMAP E1-E6).
+# Auto-included on build/rebuild so the images are baked + ready for
+# `AUTORESEARCHER=true up`.
+if [[ "$STACK" == "production" ]]; then
+    if [[ "$AUTORESEARCHER" == "true" || "$COMMAND" == "build" || "$COMMAND" == "rebuild" ]]; then
+        BASE_CMD+=(--profile acc-autoresearcher)
+    fi
+elif [[ "$AUTORESEARCHER" == "true" ]]; then
+    echo "WARNING: acc-autoresearcher is only available in production. Ignoring AUTORESEARCHER=true." >&2
+fi
+
 # CLI profile only matters at build time — the acc-cli image is one-shot
 # (invoked via ./acc-cli.sh).  Auto-enable on `build`/`rebuild` so a single
 # `./acc-deploy.sh build` produces every image; suppress it on `up` so we
@@ -211,6 +231,7 @@ echo "  Compose file : $COMPOSE_FILE"
 [[ "$TUI" == "true" && "$STACK" == "production" ]] && echo "  TUI profile  : enabled"
 [[ "$CODING_SPLIT" == "true" && "$STACK" == "production" ]] && echo "  CODING_SPLIT : enabled (3 peer coding_agent services)"
 [[ "$MCP_ECHO" == "true" && "$STACK" == "production" ]] && echo "  MCP_ECHO     : enabled (diagnostic JSON-RPC echo server)"
+[[ "$AUTORESEARCHER" == "true" && "$STACK" == "production" ]] && echo "  AUTORESEARCHER : enabled (browser-harness + Brave Search + fetch MCPs)"
 [[ "$STACK" == "production" && ("$COMMAND" == "build" || "$COMMAND" == "rebuild") ]] && echo "  CLI image    : built (use ./acc-deploy.sh cli ... to invoke)"
 echo "  Command      : $COMMAND $*"
 echo ""

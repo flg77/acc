@@ -1,0 +1,51 @@
+# ACC Brave Search MCP server — Production UBI10 Python 3.12 (minimal).
+#
+# Wraps the Brave Search API behind the canonical MCP JSON-RPC shape.
+# stdlib-only (urllib + http.server) — same image footprint as
+# Containerfile.echo-mcp-server.
+#
+# Build:
+#   podman build -f container/production/Containerfile.web-search-brave \
+#     -t localhost/acc-mcp-web-search-brave:0.1.0 .
+#
+# Run (standalone):
+#   podman run --rm -p 8080:8080 \
+#     -e BRAVE_API_KEY="$BRAVE_API_KEY" \
+#     localhost/acc-mcp-web-search-brave:0.1.0
+#
+# Activated via the `acc-autoresearcher` compose profile when
+# AUTORESEARCHER=true is set in the operator's .env.
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.1.0
+
+LABEL org.opencontainers.image.title="acc-mcp-web-search-brave" \
+      org.opencontainers.image.description="Brave Search MCP wrapper for ACC autoresearcher (stdlib-only)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+USER 0
+
+WORKDIR /app
+
+COPY container/production/web_search_brave/main.py /app/main.py
+
+RUN echo "acc:x:1001:0:ACC Brave Search MCP:/app:/bin/sh" >> /etc/passwd \
+    && chown -R 1001:0 /app \
+    && chmod -R g=u /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ACC_LOG_LEVEL=INFO
+
+# BRAVE_API_KEY is operator-supplied at run time — never baked in.
+# The server returns -32603 with a clear message when the key is
+# missing.
+
+EXPOSE 8080
+
+USER 1001
+
+CMD ["python3", "/app/main.py"]

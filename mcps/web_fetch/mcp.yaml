@@ -1,0 +1,42 @@
+# mcps/web_fetch/mcp.yaml — URL → markdown MCP with paywall detection.
+#
+# Active when AUTORESEARCHER=true.  Used by every research persona
+# (and notably by the critic persona for citation re-verification).
+
+purpose: |
+  Retrieve a URL and return its body as markdown-ish text plus a
+  paywalled flag.  Default citation-grounding tool for ACC
+  autoresearcher personas.
+
+version:        "0.1.0"
+
+transport:      "http"
+url:            "http://acc-mcp-web-fetch:8080/rpc"
+timeout_s:      20
+api_key_env:    ""
+
+allowed_tools:
+  - "fetch"
+
+requires_actions: []
+risk_level:     "MEDIUM"
+domain_id:      "business_research"
+tags:           ["research", "fetch", "web", "paywall"]
+
+description: |
+  Fetches an http(s) URL and converts the body to plain text via
+  a stdlib HTML stripper.  Detects paywalls via:
+
+    * HTTP 401 / 402 → paywalled: true
+    * Content-pattern match against well-known paywall snippets
+
+  When paywalled, the response still carries whatever body was
+  visible (so the persona can quote the lede), but the
+  citation_tracker marks the URL with `paywalled: true` so the
+  final report can flag it for the reader.
+
+  Body capped at 50000 chars; truncation surfaced via the
+  `truncated` field.
+
+  Risk MEDIUM — read-only; the response is operator-untrusted
+  text the persona may quote.  Cat-A A-018 gates per invocation.

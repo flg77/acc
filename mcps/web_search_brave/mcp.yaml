@@ -1,0 +1,38 @@
+# mcps/web_search_brave/mcp.yaml — Brave Search MCP for autoresearcher.
+#
+# Active when AUTORESEARCHER=true and BRAVE_API_KEY is set in .env.
+# When inactive the manifest still loads (registry coverage + TUI
+# Ecosystem rendering); calls return an error from the live server
+# until BRAVE_API_KEY is supplied.
+#
+# Free tier: 2k queries / month.  Operator-extensible via the
+# `count` argument (max 20) on each call.
+
+purpose: |
+  Web search via Brave Search API.  Default fallback for research
+  personas when the heavier browser_harness MCP is overkill.
+
+version:        "0.1.0"
+
+transport:      "http"
+url:            "http://acc-mcp-web-search-brave:8080/rpc"
+timeout_s:      20
+api_key_env:    "BRAVE_API_KEY"
+
+allowed_tools:
+  - "search"
+
+requires_actions: []
+risk_level:     "MEDIUM"
+domain_id:      "business_research"
+tags:           ["research", "search", "web", "brave"]
+
+description: |
+  Lightweight Brave Search wrapper for ACC autoresearcher
+  personas.  Returns a list of {title, url, description, age}
+  dicts; personas chase deeper context via the web_fetch MCP.
+
+  Risk MEDIUM — read-only API call; the response is
+  operator-untrusted text the persona may quote in citations.
+  Cat-A A-018 gates per invocation; the persona's role.yaml
+  must list `web_search_brave` in `allowed_mcps`.

@@ -25,3 +25,9 @@ docs/competitive-analysis.md
 docs/PITCH_DECK.md
 docs/STRATEGIC_PITCH.md
 docs/PLAN_subagent_clustering.md
+test/results/
+
+# Autoresearcher per-run outputs (E5).  Each run lands at
+# runs/<topic-slug>-<YYYYMMDD>/ — gitignored so report drafts never
+# leak into commits.
+runs/

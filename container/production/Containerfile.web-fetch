@@ -1,0 +1,45 @@
+# ACC Web Fetch MCP server — Production UBI10 Python 3.12 (minimal).
+#
+# Retrieves URLs and surfaces a paywall flag in the MCP response.
+# stdlib-only (urllib + html.parser + http.server) — same image
+# footprint as Containerfile.echo-mcp-server.
+#
+# Build:
+#   podman build -f container/production/Containerfile.web-fetch \
+#     -t localhost/acc-mcp-web-fetch:0.1.0 .
+#
+# Run (standalone):
+#   podman run --rm -p 8080:8080 \
+#     localhost/acc-mcp-web-fetch:0.1.0
+#
+# Activated via the `acc-autoresearcher` compose profile.
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.1.0
+
+LABEL org.opencontainers.image.title="acc-mcp-web-fetch" \
+      org.opencontainers.image.description="URL → markdown fetch with paywall detection (stdlib-only)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+USER 0
+
+WORKDIR /app
+
+COPY container/production/web_fetch/main.py /app/main.py
+
+RUN echo "acc:x:1001:0:ACC Web Fetch MCP:/app:/bin/sh" >> /etc/passwd \
+    && chown -R 1001:0 /app \
+    && chmod -R g=u /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ACC_LOG_LEVEL=INFO
+
+EXPOSE 8080
+
+USER 1001
+
+CMD ["python3", "/app/main.py"]
