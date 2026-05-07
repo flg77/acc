@@ -481,6 +481,12 @@ class Agent:
             # inbound payload carries a task_id — otherwise there's
             # nothing for downstream listeners to correlate against.
             inbound_task_id = str(data.get("task_id", "") or "")
+            # PR-1 — propagate optional cluster_id so every emitted
+            # TASK_PROGRESS / TASK_COMPLETE can be fan-in-aggregated by
+            # the TUI cluster panel.  Empty string means "not part of
+            # any cluster" — the field is omitted from outbound payloads
+            # in that case to preserve the legacy wire shape.
+            inbound_cluster_id = str(data.get("cluster_id", "") or "")
             progress_callback = None
             if inbound_task_id:
                 from acc.signals import (  # noqa: PLC0415
@@ -504,6 +510,8 @@ class Agent:
                         "ts": time.time(),
                         "progress": ctx.to_dict(),
                     }
+                    if inbound_cluster_id:
+                        payload["cluster_id"] = inbound_cluster_id
                     try:
                         asyncio.create_task(
                             self.backends.signaling.publish(
@@ -582,7 +590,7 @@ class Agent:
                 return
 
             # Publish TASK_COMPLETE
-            complete_payload = json.dumps({
+            complete_body: dict[str, Any] = {
                 "signal_type": SIG_TASK_COMPLETE,
                 "agent_id": self.agent_id,
                 "collective_id": collective_id,
@@ -612,7 +620,13 @@ class Agent:
                     }
                     for o in outcomes
                 ],
-            }).encode()
+            }
+            # PR-1 — echo cluster_id back when present so the cluster
+            # fan-in aggregator (PR-4 TUI panel + arbiter PR-2) can
+            # match this completion to its originating cluster spawn.
+            if inbound_cluster_id:
+                complete_body["cluster_id"] = inbound_cluster_id
+            complete_payload = json.dumps(complete_body).encode()
             await self.backends.signaling.publish(
                 subject_task(collective_id), complete_payload
             )

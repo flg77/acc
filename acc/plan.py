@@ -344,8 +344,20 @@ class PlanExecutor:
         plan: _Plan,
         step: _Step,
         task_id: str,
+        *,
+        cluster_id: str | None = None,
+        target_agent_id: str | None = None,
     ) -> None:
-        """Construct and publish a TASK_ASSIGN payload for one step."""
+        """Construct and publish a TASK_ASSIGN payload for one step.
+
+        ``cluster_id`` (PR-1) is optional and tags every member of a
+        sub-cluster spawned by the role's estimator (PR-2).  When
+        absent the wire shape is byte-identical to legacy single-agent
+        TASK_ASSIGN payloads — every existing consumer keeps working.
+
+        ``target_agent_id`` lets the cluster fan-out (PR-2) pin each
+        member assignment to a specific sub-agent within the role.
+        """
         # Carry every operator-supplied field through verbatim (deadline,
         # priority, task_description, …) and add the routing fields the
         # downstream agent's CognitiveCore needs.
@@ -363,6 +375,14 @@ class PlanExecutor:
         # task_type defaults to the role if the operator didn't set one;
         # the receiving agent's role.task_types filter will accept it.
         body.setdefault("task_type", step.raw.get("task_type", step.role.upper()))
+
+        # PR-1 — only attach cluster fields when explicitly set.  Empty
+        # / missing keys keep the back-compat wire shape so receivers
+        # without cluster awareness see no difference.
+        if cluster_id:
+            body["cluster_id"] = cluster_id
+        if target_agent_id:
+            body["target_agent_id"] = target_agent_id
 
         await self._publish(
             subject_task(plan.collective_id),
