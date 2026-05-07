@@ -1,0 +1,32 @@
+# skills/test_execution/skill.yaml — coding-cluster persona skill (stub).
+
+purpose:        "Test-execution marker — surfaces a synthetic pass/fail summary."
+version:        "0.1.0"
+adapter_class:  "StubCodingSkill"
+risk_level:     "LOW"
+domain_id:      "software_engineering"
+tags:           ["coding", "testing", "stub"]
+
+input_schema:
+  type: object
+  properties:
+    text:
+      type: string
+      description: "Free-form test invocation summary the LLM produced."
+  required: ["text"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    ok:    {type: boolean}
+    text:  {type: string}
+    skill_id: {type: string}
+  required: ["ok", "text", "skill_id"]
+  additionalProperties: false
+
+description: |
+  Default skill of `coding_agent_tester` (paired with
+  `test_generation`).  Real pytest execution is gated behind a
+  shell-exec skill in a future hardening track — today this is a
+  governance-only stub.
