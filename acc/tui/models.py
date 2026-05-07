@@ -244,6 +244,13 @@ class CollectiveSnapshot:
         default_factory=dict
     )
 
+    # PR-4 cluster topology — populated from cluster-tagged
+    # TASK_PROGRESS / TASK_COMPLETE.  Keyed by cluster_id.  Each value is
+    # a free-form dict so tests can synthesise rows without importing
+    # extra schema.  See acc.tui.widgets.cluster_panel.ClusterPanel for
+    # the rendered shape.
+    cluster_topology: dict[str, dict] = field(default_factory=dict)
+
     # FIFO tail of the most recent invocations so operators can scrub
     # failures even after the per-(kind, target) running totals have
     # absorbed them.  Each entry mirrors ``InvocationOutcome``'s wire

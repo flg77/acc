@@ -53,6 +53,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Footer, Input, Label, Select, Static, TextArea
 
 from acc.channels import TUIPromptChannel
+from acc.tui.widgets.cluster_panel import ClusterPanel
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
 if TYPE_CHECKING:
@@ -126,6 +127,11 @@ class PromptScreen(Screen):
         width: 1fr;
     }
 
+    PromptScreen #prompt-cluster-panel {
+        height: auto;
+        max-height: 14;
+        margin: 0 1 0 1;
+    }
     PromptScreen #prompt-transcript-container {
         height: 1fr;
         border: round $primary;
@@ -180,7 +186,7 @@ class PromptScreen(Screen):
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="prompt", id="nav")
 
-        # ── Target row (compact) ────────────────────────────────────
+        # ── Target row + cluster panel (compact) ────────────────────
         with Horizontal(id="prompt-target-row"):
             yield Label("Target role:")
             yield Select(
@@ -194,6 +200,12 @@ class PromptScreen(Screen):
                 placeholder="e.g. coding_agent-deadbeef",
                 id="input-target-agent-id",
             )
+
+        # PR-4 — collapsible cluster topology panel.  Rendered above
+        # the transcript so the operator can see active sub-agent
+        # clusters without leaving the prompt pane.  The watcher on
+        # ``snapshot`` (below) feeds it on every snapshot tick.
+        yield ClusterPanel(id="prompt-cluster-panel")
 
         # ── Transcript (centre, flex) ───────────────────────────────
         with ScrollableContainer(id="prompt-transcript-container"):
@@ -225,9 +237,26 @@ class PromptScreen(Screen):
         self._workers.clear()
 
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
-        """Reserved for future per-snapshot rendering (live agent list,
-        TASK_PROGRESS streaming).  No-op today."""
-        return
+        """Push cluster topology to the cluster panel on every tick.
+
+        PR-4 — keeps the panel rendering-side stateless so unit tests
+        can drive it just by feeding a snapshot dict.
+
+        We assign to ``panel.snapshot`` and then call ``render_now``
+        explicitly (NOT a reactive watcher on the panel — see
+        :meth:`ClusterPanel.render_now` for the textual>=0.80 trap).
+        """
+        if snap is None:
+            return
+        try:
+            panel = self.query_one("#prompt-cluster-panel", ClusterPanel)
+        except Exception:
+            return  # panel not mounted yet
+        panel.snapshot = dict(getattr(snap, "cluster_topology", {}) or {})
+        try:
+            panel.render_now()
+        except Exception:
+            logger.exception("prompt: cluster panel render failed")
 
     # ------------------------------------------------------------------
     # Actions
