@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -128,6 +128,49 @@ class RoleDefinitionConfig(BaseModel):
 
     max_mcp_risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = "MEDIUM"
     """Risk ceiling applied by Cat-A A-018 to MCP tool invocations."""
+
+    # ------------------------------------------------------------------
+    # PR-2 — Sub-cluster estimator + parallelism cap
+    # ------------------------------------------------------------------
+
+    max_parallel_tasks: int = 1
+    """Hard ceiling on sub-agents spawned for one PLAN step.
+
+    Read by :func:`acc.estimator.default_estimator` to clamp the
+    heuristic output, and enforced again by Cat-A rule A-019 so a
+    misconfigured estimator override cannot exceed the role's declared
+    parallelism budget.
+
+    Default 1 = no parallelisation (legacy single-agent dispatch).
+    Bump explicitly per role when the workload benefits from
+    parallel sub-agents (e.g. coding_agent typically runs at 3)."""
+
+    estimator: dict[str, Any] = Field(default_factory=dict)
+    """Operator-supplied estimator configuration block.
+
+    Schema (every field optional — missing block falls back to the
+    default heuristic with role-defaults)::
+
+        estimator:
+          strategy: "heuristic"          # or "fixed", "module:dotted.path"
+          heuristic:
+            base: 1
+            per_n_tokens: 2000
+            skill_per_subagent: 2
+            cap: 5
+          fixed:
+            count: 3                     # only used when strategy=="fixed"
+          difficulty_signals:
+            - keyword: "security"
+              bump: 1
+            - keyword: "concurrency"
+              bump: 2
+
+    Stored as a free-form dict (not a nested BaseModel) on purpose:
+    the estimator strategy is dispatched at runtime via
+    :func:`acc.estimator.build_estimator`, and operators may register
+    custom strategies in the future via the ``module:`` form without
+    needing to touch this config schema."""
 
 
 class AgentConfig(BaseModel):

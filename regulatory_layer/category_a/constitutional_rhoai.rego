@@ -12,8 +12,8 @@
 # Levin mapping: These are the "hardware" layer of the TAME spectrum —
 # they CANNOT be persuaded, adjusted, or overridden by any signal.
 #
-# Version: 0.4.0
-# Date:    2026-04-26
+# Version: 0.5.0
+# Date:    2026-05-05
 # ==========================================================================
 
 package acc.membrane.constitutional
@@ -252,6 +252,35 @@ deny_skill_not_whitelisted if {
 deny_mcp_not_whitelisted if {
     input.action == "MCP_INVOKE"
     not input.mcp_server_id in input.agent.allowed_mcps
+}
+
+# ==========================================================================
+# A-019 (v0.5.0): A sub-cluster spawn must not exceed the role's
+# declared max_parallel_tasks budget.
+#
+# Defence in depth on top of the in-process clamp in
+# acc.estimator + acc.plan.PlanExecutor.  An A-019 violation indicates
+# a custom estimator (``estimator.strategy: module:…``) returned a
+# ClusterPlan whose subagent_count exceeds the role's parallelism
+# ceiling — a signal that operator-supplied code is misbehaving.
+#
+# Action input shape:
+#   action            == "CLUSTER_SPAWN"
+#   subagent_count    int
+#   agent.max_parallel_tasks int (from RoleDefinitionConfig)
+# ==========================================================================
+
+deny_cluster_oversize if {
+    input.action == "CLUSTER_SPAWN"
+    input.subagent_count > input.agent.max_parallel_tasks
+}
+
+# A cluster spawn with subagent_count <= 0 is structurally invalid —
+# in practice the dataclass refuses construction, but this rule lets
+# Gatekeeper catch the same misuse coming from external systems.
+deny_cluster_nonpositive if {
+    input.action == "CLUSTER_SPAWN"
+    input.subagent_count < 1
 }
 
 # ==========================================================================
