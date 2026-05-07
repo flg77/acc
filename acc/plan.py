@@ -82,6 +82,27 @@ class _Step:
     ``raw`` is the original step dict from the inbound PLAN payload — kept
     as-is so re-broadcasts contain exactly the operator-supplied fields
     (task_description, deadline_s, priority, …) without lossy round-trip.
+
+    PR-E1 — autoresearcher iteration loop:
+
+    * ``max_iterations`` — operator-declared per-step cap (default 1
+      = no iteration; legacy behaviour).  Read from the inbound step
+      payload.
+    * ``iteration_n`` — runtime counter, 0 on first dispatch,
+      incremented each time the critic emits NEEDS_REVISE and the
+      arbiter re-issues.
+    * ``original_task_description`` — captured before the first
+      iteration so the critic-injected critique is always appended to
+      the *original* prompt, not the previously-amended one.
+    * ``enable_prompt_patches`` — opt-in flag from the step payload.
+      When False (default), the critic's ``prompt_patch`` field is
+      ignored even if present (back-compat + safety floor).
+    * ``prompt_patches_writable_to`` — whitelist of personas the
+      critic's patches may target.  Empty / unset means "the step's
+      own role".  Cat-A A-021 enforces.
+    * ``last_critique`` / ``last_prompt_patch`` — populated when the
+      arbiter re-issues; the inflight TASK_ASSIGN payload includes
+      both for the agent's CognitiveCore to consume.
     """
 
     step_id: str
@@ -93,16 +114,42 @@ class _Step:
     completed_ts: float = 0.0
     output: str = ""         # truncated output from TASK_COMPLETE
 
+    # PR-E1 — iteration loop state
+    max_iterations: int = 1
+    iteration_n: int = 0
+    original_task_description: str = ""
+    enable_prompt_patches: bool = False
+    prompt_patches_writable_to: list[str] = field(default_factory=list)
+    last_critique: str = ""
+    last_prompt_patch: dict = field(default_factory=dict)
+
 
 @dataclass
 class _Plan:
-    """Mutable per-plan state."""
+    """Mutable per-plan state.
+
+    PR-E1 cost cap:
+
+    * ``max_run_tokens`` — operator-declared total-token budget for
+      the run (0 = unset = no cap).  Aggregated across every
+      TASK_COMPLETE that carries a ``tokens_used`` field.
+    * ``tokens_used`` — running total.  When it exceeds
+      ``max_run_tokens`` the arbiter refuses further reissues, marks
+      the plan FAILED with ``block_reason: max_run_tokens_exceeded``,
+      and emits ALERT_ESCALATE.
+    """
 
     plan_id: str
     collective_id: str
     steps: dict[str, _Step]   # step_id → _Step
     raw: dict                  # original PLAN payload for re-broadcast
     submitted_ts: float = field(default_factory=time.time)
+
+    # PR-E1 cost cap
+    max_run_tokens: int = 0   # 0 = unset = no cap
+    tokens_used: int = 0
+    cost_cap_breached: bool = False
+    cost_cap_reason: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -292,9 +339,17 @@ class PlanExecutor:
                 self._on_plan_terminal(plan)
             return
 
-        # Legacy single-agent path (untouched).
+        # Legacy single-agent path with PR-E1 iteration loop hook.
         step.completed_ts = time.time()
         step.output = str(payload.get("output", ""))[:500]
+
+        # PR-E1 — accumulate token usage for the cost cap.  Receivers
+        # without knowledge of `tokens_used` simply omit the field;
+        # default 0 is harmless.
+        try:
+            self._accumulate_tokens(plan, payload)
+        except Exception:  # pragma: no cover — defensive
+            logger.exception("plan: token accumulation failed")
 
         if blocked:
             step.status = STATUS_FAILED
@@ -304,8 +359,25 @@ class PlanExecutor:
                 step_id, plan_id, payload.get("block_reason", ""),
             )
         else:
-            step.status = STATUS_COMPLETE
-            logger.info("plan: step %s of %s COMPLETE", step_id, plan_id)
+            # PR-E1 — iteration loop branch.  Honoured only on
+            # non-blocked completions: a blocked step is FAILED
+            # regardless of any critic verdict.
+            handled = await self._maybe_reissue_for_revise(
+                plan, step, payload, task_id,
+            )
+            if handled == "reissued":
+                # Step stays RUNNING under a new task_id; broadcast
+                # / terminal check intentionally skipped (no plan
+                # state changed at the step level).
+                return
+            if handled == "no_action":
+                step.status = STATUS_COMPLETE
+                logger.info(
+                    "plan: step %s of %s COMPLETE (iteration_n=%d)",
+                    step_id, plan_id, step.iteration_n,
+                )
+            # "transitioned": helper already set the status (cost cap
+            # breach FAILED).  Fall through to broadcast + terminal.
 
         # Drop the task_id from the index so future reads of the same
         # TASK_COMPLETE bouncing on the bus are no-ops.
@@ -327,6 +399,222 @@ class PlanExecutor:
     def active_plan_ids(self) -> list[str]:
         """Return ids of every plan still tracked (terminal-but-not-evicted included)."""
         return list(self._plans.keys())
+
+    # ------------------------------------------------------------------
+    # PR-E1 — autoresearcher iteration loop + cost cap
+    # ------------------------------------------------------------------
+
+    # Default Cat-A A-021 patch length cap.  Operators bump via the
+    # collective's Cat-B setpoints; this is the safety floor for the
+    # built-in plan executor.
+    PROMPT_PATCH_MAX_CHARS: int = 2000
+
+    async def _maybe_reissue_for_revise(
+        self, plan: _Plan, step: _Step, payload: dict, task_id: str,
+    ) -> str:
+        """Inspect the TASK_COMPLETE for a critic NEEDS_REVISE verdict.
+
+        Returns one of three states the caller acts on:
+
+        * ``"reissued"`` — the helper minted a new task_id + published
+          a fresh TASK_ASSIGN; the step stays RUNNING.  The caller
+          must NOT touch step.status and SHOULD return early so the
+          broadcast + terminal-check do not run (no plan state
+          changed at the step level).
+        * ``"transitioned"`` — the helper already set step.status
+          (e.g. cost-cap breach → FAILED).  The caller MUST NOT
+          overwrite the status; broadcast + terminal-check should
+          still run so the new state propagates.
+        * ``"no_action"`` — no NEEDS_REVISE verdict, or the verdict
+          was refused (iteration cap reached).  The caller proceeds
+          with the legacy COMPLETE transition.
+
+        Wire shape (operator-supplied; all optional):
+
+        * ``payload['eval_outcome']['verdict']`` — one of GOOD,
+          PARTIAL, NEEDS_REVISE, BAD.  Anything other than
+          NEEDS_REVISE leaves us in the legacy completion path.
+        * ``payload['eval_outcome']['critique']`` — operator-readable
+          text explaining what to revise.  Appended to the step's
+          ORIGINAL task_description (not the previously-amended one,
+          to avoid critique drift across iterations).
+        * ``payload['eval_outcome']['prompt_patch']`` — optional
+          structured patch the critic proposes.  Honoured only when
+          ``step.enable_prompt_patches`` is True AND the patch
+          survives Cat-A A-021 sanity checks.
+
+        Cost-cap interaction: a re-issue that would push the plan
+        over ``max_run_tokens`` is refused — the step transitions to
+        FAILED with ``block_reason: max_run_tokens_exceeded`` instead
+        of dispatching a new task.
+        """
+        eo = payload.get("eval_outcome") or {}
+        if not isinstance(eo, dict):
+            return "no_action"
+        verdict = str(eo.get("verdict", "") or "").upper()
+        if verdict != "NEEDS_REVISE":
+            return "no_action"
+
+        # Iteration cap (Cat-A A-020) — the wire payload is informational
+        # only; the executor's own bookkeeping is authoritative.
+        if step.iteration_n + 1 >= step.max_iterations:
+            logger.info(
+                "plan: step %s of %s NEEDS_REVISE refused — iteration "
+                "cap reached (n=%d, max=%d).  Transitioning as COMPLETE.",
+                step.step_id, plan.plan_id,
+                step.iteration_n, step.max_iterations,
+            )
+            return "no_action"
+
+        # Cost cap (PR-E1).  Refusing a reissue here is the cheapest
+        # way to honour max_run_tokens: we do not know the cost of
+        # the next iteration, so we cap on cumulative usage observed
+        # so far.  The plan transitions to FAILED here so the broadcast
+        # at the end of on_task_complete propagates the new state to
+        # the TUI / observers.
+        if (
+            plan.max_run_tokens > 0
+            and plan.tokens_used >= plan.max_run_tokens
+        ):
+            plan.cost_cap_breached = True
+            plan.cost_cap_reason = (
+                f"max_run_tokens={plan.max_run_tokens} exceeded "
+                f"(used={plan.tokens_used})"
+            )
+            step.status = STATUS_FAILED
+            self._cascade_failure(plan, step.step_id)
+            self._task_index.pop(task_id, None)
+            logger.warning(
+                "plan: step %s of %s FAILED — %s",
+                step.step_id, plan.plan_id, plan.cost_cap_reason,
+            )
+            await self._publish_alert(plan, plan.cost_cap_reason)
+            return "transitioned"
+
+        critique = str(eo.get("critique", "") or "")
+        prompt_patch_raw = eo.get("prompt_patch") or {}
+        if not isinstance(prompt_patch_raw, dict):
+            prompt_patch_raw = {}
+
+        # Cat-A A-021 — patch sanity, applied only when the step
+        # opted in via enable_prompt_patches.  A bogus patch from a
+        # buggy critic gets logged + dropped; the iteration still
+        # runs, just without prompt modification.
+        prompt_patch: dict = {}
+        if step.enable_prompt_patches and prompt_patch_raw:
+            patch = self._sanitize_prompt_patch(step, prompt_patch_raw)
+            if patch is not None:
+                prompt_patch = patch
+            else:
+                logger.warning(
+                    "plan: step %s of %s — prompt_patch dropped (A-021)",
+                    step.step_id, plan.plan_id,
+                )
+
+        # Bookkeeping.
+        step.iteration_n += 1
+        step.last_critique = critique
+        step.last_prompt_patch = prompt_patch
+        # Drop the just-completed task_id (a fresh task_id is minted
+        # below).  The step itself stays RUNNING for the next
+        # iteration.
+        self._task_index.pop(task_id, None)
+
+        new_task_id = (
+            f"plan-{plan.plan_id}-{step.step_id}-it{step.iteration_n}"
+            f"-{uuid.uuid4().hex[:6]}"
+        )
+        step.task_id = new_task_id
+        self._task_index[new_task_id] = (plan.plan_id, step.step_id)
+
+        await self._publish_task_assign(plan, step, new_task_id)
+        logger.info(
+            "plan: step %s of %s re-issued for revision (iteration_n=%d, "
+            "task_id=%s, patch=%s)",
+            step.step_id, plan.plan_id, step.iteration_n, new_task_id,
+            "yes" if prompt_patch else "no",
+        )
+        return "reissued"
+
+    def _sanitize_prompt_patch(
+        self, step: _Step, raw: dict,
+    ) -> Optional[dict]:
+        """Apply Cat-A A-021 sanity rules to an inbound prompt_patch.
+
+        Returns the validated patch dict, or ``None`` to indicate the
+        patch is invalid + must be dropped.
+
+        Rules:
+
+        1. ``patch_kind`` must be one of ``append`` / ``prepend`` /
+           ``replace_section``.
+        2. ``text`` must be a string of ≤ ``PROMPT_PATCH_MAX_CHARS``.
+        3. ``target_persona``, when set, must equal the step's role
+           (the critic cannot patch a peer's prompt) OR appear in the
+           step's ``prompt_patches_writable_to`` whitelist.
+        4. ``replace_section`` patches must carry a non-empty
+           ``section_marker``.
+        """
+        kind = str(raw.get("patch_kind", "") or "").lower()
+        if kind not in {"append", "prepend", "replace_section"}:
+            return None
+        text = str(raw.get("text", "") or "")
+        if not text or len(text) > self.PROMPT_PATCH_MAX_CHARS:
+            return None
+        target = str(raw.get("target_persona", "") or "")
+        if target:
+            allowed = {step.role} | set(step.prompt_patches_writable_to)
+            if target not in allowed:
+                return None
+        else:
+            target = step.role
+        section_marker = str(raw.get("section_marker", "") or "")
+        if kind == "replace_section" and not section_marker:
+            return None
+        return {
+            "patch_kind": kind,
+            "text": text,
+            "target_persona": target,
+            "section_marker": section_marker,
+        }
+
+    def _accumulate_tokens(self, plan: _Plan, payload: dict) -> None:
+        """Add this TASK_COMPLETE's ``tokens_used`` to the plan total.
+
+        Field is optional + new; legacy publishers omit it (treated as
+        0).  When the cap is unset (``max_run_tokens == 0``) we still
+        accumulate so the operator can see the total in trace logs.
+        """
+        try:
+            tokens = int(payload.get("tokens_used", 0) or 0)
+        except (TypeError, ValueError):
+            tokens = 0
+        if tokens > 0:
+            plan.tokens_used += tokens
+
+    async def _publish_alert(self, plan: _Plan, reason: str) -> None:
+        """Emit ALERT_ESCALATE for cost-cap / iteration-cap failures."""
+        from acc.signals import (  # noqa: PLC0415
+            SIG_ALERT_ESCALATE,
+            subject_alert,
+        )
+        alert = {
+            "signal_type": SIG_ALERT_ESCALATE,
+            "agent_id": self._arbiter_id,
+            "collective_id": plan.collective_id,
+            "ts": time.time(),
+            "reason": reason,
+            "plan_id": plan.plan_id,
+        }
+        try:
+            await self._publish(
+                subject_alert(plan.collective_id),
+                json.dumps(alert).encode("utf-8"),
+            )
+        except Exception:  # pragma: no cover — best-effort telemetry
+            logger.exception(
+                "plan: ALERT_ESCALATE publish failed (reason=%r)", reason,
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -361,11 +649,31 @@ class PlanExecutor:
             depends_on = raw.get("depends_on") or []
             if not isinstance(depends_on, list):
                 depends_on = []
+
+            # PR-E1 — iteration loop fields (all optional, all
+            # back-compat: missing → legacy single-shot dispatch).
+            try:
+                max_iter = int(raw.get("max_iterations", 1) or 1)
+            except (TypeError, ValueError):
+                max_iter = 1
+            max_iter = max(1, max_iter)
+            enable_patches = bool(raw.get("enable_prompt_patches", False))
+            patches_to = raw.get("prompt_patches_writable_to") or []
+            if not isinstance(patches_to, list):
+                patches_to = []
+            patches_to = [str(x) for x in patches_to]
+
             steps[step_id] = _Step(
                 step_id=step_id,
                 role=role,
                 depends_on=[str(d) for d in depends_on],
                 raw=dict(raw),
+                max_iterations=max_iter,
+                original_task_description=str(
+                    raw.get("task_description", "") or ""
+                ),
+                enable_prompt_patches=enable_patches,
+                prompt_patches_writable_to=patches_to,
             )
 
         if not steps:
@@ -385,6 +693,13 @@ class PlanExecutor:
                         step.step_id, dep, plan_id,
                     )
 
+        # PR-E1 — cost cap (optional; 0 = unset = no cap).
+        try:
+            max_run_tokens = int(payload.get("max_run_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            max_run_tokens = 0
+        max_run_tokens = max(0, max_run_tokens)
+
         return _Plan(
             plan_id=plan_id,
             collective_id=str(
@@ -392,6 +707,7 @@ class PlanExecutor:
             ) or self._cid,
             steps=steps,
             raw=dict(payload),
+            max_run_tokens=max_run_tokens,
         )
 
     def _ready(self, plan: _Plan, step: _Step) -> bool:
@@ -608,6 +924,26 @@ class PlanExecutor:
             body["cluster_id"] = cluster_id
         if target_agent_id:
             body["target_agent_id"] = target_agent_id
+
+        # PR-E1 — iteration loop fields.  iteration_n=0 + max_iterations=1
+        # is the legacy single-shot dispatch shape; we still tag the
+        # payload so downstream telemetry (TUI, episode log) can render
+        # the "iteration 0/1" badge consistently across all tasks.
+        body["iteration_n"] = step.iteration_n
+        body["max_iterations"] = step.max_iterations
+        if step.iteration_n > 0:
+            # Re-issued task: append the critique to the original
+            # task_description (NEVER the previously-amended one).
+            base = step.original_task_description
+            critique = step.last_critique
+            if critique:
+                body["task_description"] = (
+                    base
+                    + f"\n\n## Critic feedback (iteration {step.iteration_n}):\n"
+                    + critique
+                )
+            if step.last_prompt_patch:
+                body["prompt_patch"] = dict(step.last_prompt_patch)
 
         await self._publish(
             subject_task(plan.collective_id),

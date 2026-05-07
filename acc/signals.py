@@ -87,7 +87,34 @@ SIG_KNOWLEDGE_SHARE = "KNOWLEDGE_SHARE"
 """Namespace-scoped knowledge propagation between roles within a collective."""
 
 SIG_EVAL_OUTCOME = "EVAL_OUTCOME"
-"""Evaluation feedback loop (GOOD / BAD / PARTIAL) with per-criterion rubric scores."""
+"""Evaluation feedback loop with per-criterion rubric scores.
+
+Verdict values (canonical set, in ranking order):
+
+* ``GOOD``         — score above the persona's gating threshold.
+* ``PARTIAL``      — partial completion (e.g. a cluster member
+                     reported but the rest didn't); score uncertain.
+* ``NEEDS_REVISE`` — *autoresearcher iteration loop* (PR-E1).
+                     Critic asks the arbiter to re-issue the step
+                     with critique injected.  Optional companion
+                     fields on the EVAL_OUTCOME payload:
+                     ``critique`` (str), ``iteration_n`` (int),
+                     ``max_iterations`` (int), ``prompt_patch``
+                     (dict, gated behind plan-step
+                     ``enable_prompt_patches``).
+* ``BAD``          — verdict failed; the step transitions to FAILED
+                     and cascades to dependents."""
+
+EVAL_VERDICT_GOOD = "GOOD"
+EVAL_VERDICT_PARTIAL = "PARTIAL"
+EVAL_VERDICT_NEEDS_REVISE = "NEEDS_REVISE"
+EVAL_VERDICT_BAD = "BAD"
+EVAL_VERDICTS = frozenset({
+    EVAL_VERDICT_GOOD,
+    EVAL_VERDICT_PARTIAL,
+    EVAL_VERDICT_NEEDS_REVISE,
+    EVAL_VERDICT_BAD,
+})
 
 SIG_CENTROID_UPDATE = "CENTROID_UPDATE"
 """Push-model centroid broadcast; receiving roles self-assess drift immediately
