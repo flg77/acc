@@ -1,0 +1,46 @@
+# roles/coding_agent_reviewer/role.yaml
+
+role_definition:
+  purpose: >
+    Read implementer + tester output, surface correctness + style
+    issues, escalate security findings.  Always single-instance per
+    cluster — multiple reviewers fragment the verdict.
+  persona: "analytical"
+  task_types:
+    - CODE_REVIEW
+    - SECURITY_SCAN
+  seed_context: ""
+  allowed_actions:
+    - read_vector_db
+    - read_scratchpad
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096.0
+    rate_limit_rpm: 30.0
+    max_task_duration_ms: 600000.0
+  version: "1.0.0"
+
+  domain_id: "software_engineering"
+  domain_receptors:
+    - "software_engineering"
+    - "security_audit"
+
+  allowed_skills:
+    - code_review
+    - security_scan
+  default_skills:
+    - code_review
+    - security_scan
+  max_skill_risk_level: "MEDIUM"
+  allowed_mcps:
+    - echo_server
+  default_mcps:
+    - echo_server
+  max_mcp_risk_level: "MEDIUM"
+
+  max_parallel_tasks: 1
+  estimator:
+    strategy: "fixed"
+    fixed:
+      count: 1

@@ -1,0 +1,39 @@
+# roles/coding_agent_reviewer/eval_rubric.yaml
+# Reviewer's verdict is authoritative; security weight is the
+# heaviest among personas.  Sum to 1.0; security ≥ 10%.
+
+criteria:
+  finding_accuracy:
+    weight: 0.35
+    description: >
+      Reported findings cluster under verifiable issues — false
+      positives lower this score, missed real issues lower it more
+      (computed by the post-hoc reviewer-of-reviewer when present).
+
+  contract_validation:
+    weight: 0.20
+    description: >
+      Reviewer correctly identifies contract violations against the
+      architect's draft_interface.
+
+  security:
+    weight: 0.25
+    description: >
+      Security findings flagged at the right severity; CRITICAL +
+      HIGH triggered ALERT_ESCALATE.  Highest weight of any persona.
+
+  verdict_clarity:
+    weight: 0.10
+    description: >
+      JSON verdict parses; findings list is non-empty for FAIL /
+      NEEDS_CHANGES; PASS verdicts have an explanatory note.
+
+  token_efficiency:
+    weight: 0.05
+    description: >
+      Tokens used relative to the task complexity budget.
+
+  time_efficiency:
+    weight: 0.05
+    description: >
+      Wall-clock duration relative to the task deadline.
