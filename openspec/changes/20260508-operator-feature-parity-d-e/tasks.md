@@ -13,8 +13,8 @@
 ## PR-49 — API & CRD foundations
 
 **Branch suggestion**: `feat/op-pr49-api-foundations`
-**PR slot claimed by**: `-`
-**Status**: `unstarted`
+**PR slot claimed by**: `acc1` (host 10.199.12.91 — Claude instance)
+**Status**: `in-progress` since 2026-05-09
 
 - [ ] **Fix the `}` bug** in `operator/api/v1alpha1/agentcollective_types.go:91-94`
   (`RoleDefinition` struct missing closing brace before `AgentRoleSpec`). After the fix,
