@@ -67,3 +67,12 @@ work. Read in this order if you're new to the topic.
 
 Stack order: #26 → #27 → #29 → #30. #28 is independent of all
 others.
+
+---
+
+## See also
+
+* **[`AUTORESEARCHER_index.md`](AUTORESEARCHER_index.md)** — companion
+  index for Example No. 2 (autoresearcher demo, PRs #41-#46).
+  Builds on this clustering foundation with iteration loop +
+  cost cap + real research MCPs + six research personas.
