@@ -93,7 +93,7 @@ Status mirror: `Status.MCPServerStatuses map[string]MCPServerStatus` with `Ready
 func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconciler {
     return []reconcilers.SubReconciler{
         &reconcilers.PrerequisiteReconciler{...},
-        &manifests.ManifestDeliveryReconciler{...},  // NEW (PR-49) — slot 2
+        &manifests.ManifestDeliveryReconciler{...},  // NEW (PR-50) — slot 2
         &reconcilers.UpgradeReconciler{...},
         &infra.NATSReconciler{...},
         &infra.RedisReconciler{...},
@@ -101,7 +101,7 @@ func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconcile
         &governance.OPABundleServerReconciler{...},
         &governance.GatekeeperReconciler{...},
         &bridge.KafkaBridgeReconciler{...},
-        &mcp.MCPServerReconciler{...},                // NEW (PR-50)
+        &mcp.MCPServerReconciler{...},                // NEW (PR-51)
         &observability.OTelCollectorReconciler{...},
         &observability.PrometheusRulesReconciler{...},
         &collectiverec.CollectiveReconciler{...},
@@ -132,34 +132,34 @@ acc-operator.v0.1.0` for OLM seamless upgrade.
 ## Critical files
 
 Modified:
-- `operator/api/v1alpha1/agentcollective_types.go` (PR-48 — `}` fix + enum loosening)
-- `operator/api/v1alpha1/agentcorpus_types.go` (PR-48 — MCP + delivery fields)
-- `operator/api/v1alpha1/common_types.go` (PR-48 — enum loosening + role consts)
-- `operator/internal/controller/agentcorpus_controller.go` (PR-49/50 — wire-in)
-- `operator/internal/reconcilers/collective/agent_deployment.go` (PR-49 — volume + env)
-- `operator/bundle/manifests/acc-operator.clusterserviceversion.yaml` (PR-51)
-- `operator/config/samples/acc_tui_deployment.yaml` (PR-49 — TUI parity)
+- `operator/api/v1alpha1/agentcollective_types.go` (PR-49 — `}` fix + enum loosening)
+- `operator/api/v1alpha1/agentcorpus_types.go` (PR-49 — MCP + delivery fields)
+- `operator/api/v1alpha1/common_types.go` (PR-49 — enum loosening + role consts)
+- `operator/internal/controller/agentcorpus_controller.go` (PR-50/51 — wire-in)
+- `operator/internal/reconcilers/collective/agent_deployment.go` (PR-50 — volume + env)
+- `operator/bundle/manifests/acc-operator.clusterserviceversion.yaml` (PR-52)
+- `operator/config/samples/acc_tui_deployment.yaml` (PR-50 — TUI parity)
 
 New:
-- `operator/internal/rolecatalogue/catalogue.go` + `operator/hack/gen-catalogue.go` (PR-48)
-- `operator/api/v1alpha1/agentcollective_webhook.go` (PR-48)
-- `operator/internal/reconcilers/manifests/delivery.go` (PR-49)
-- `operator/internal/reconcilers/mcp/server.go` (+ test) (PR-50)
-- `operator/config/samples/acc_v1alpha1_agentcorpus_{autoresearcher,coding_split}.yaml` (PR-51)
-- `operator/hack/test-kind.sh` (PR-51)
+- `operator/internal/rolecatalogue/catalogue.go` + `operator/hack/gen-catalogue.go` (PR-49)
+- `operator/api/v1alpha1/agentcollective_webhook.go` (PR-49)
+- `operator/internal/reconcilers/manifests/delivery.go` (PR-50)
+- `operator/internal/reconcilers/mcp/server.go` (+ test) (PR-51)
+- `operator/config/samples/acc_v1alpha1_agentcorpus_{autoresearcher,coding_split}.yaml` (PR-52)
+- `operator/hack/test-kind.sh` (PR-52)
 
 ## Verification
 
-- **PR-48**: `make generate manifests` is a no-op after the `}` fix; existing samples still
+- **PR-49**: `make generate manifests` is a no-op after the `}` fix; existing samples still
   apply; new `operator/test/unit/role_catalogue_test.go` covers catalogue membership and
   closest-match suggestions.
-- **PR-49**: envtest creates the legacy `sol-corpus` sample, asserts `acc-roles` /
+- **PR-50**: envtest creates the legacy `sol-corpus` sample, asserts `acc-roles` /
   `acc-skills` / `acc-mcps` ConfigMaps exist with key counts equal to
   `find roles -type f | wc -l` etc.; agent Deployment carries the three env vars + three
   volumes; `manifest_delivery_test.go` exercises a small fixture FS.
-- **PR-50**: envtest creates a corpus with `mcpServers: [{name: web-fetch, image: ...}]`,
+- **PR-51**: envtest creates a corpus with `mcpServers: [{name: web-fetch, image: ...}]`,
   asserts Deployment + Service `acc-mcp-web-fetch` exist; status populated.
-- **PR-51**: end-to-end on kind via `hack/test-kind.sh`:
+- **PR-52**: end-to-end on kind via `hack/test-kind.sh`:
   ```
   kind create cluster --name acc-operator-test
   make install deploy IMG=...

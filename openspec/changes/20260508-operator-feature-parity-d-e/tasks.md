@@ -10,9 +10,9 @@
 
 ---
 
-## PR-48 — API & CRD foundations
+## PR-49 — API & CRD foundations
 
-**Branch suggestion**: `feat/op-pr48-api-foundations`
+**Branch suggestion**: `feat/op-pr49-api-foundations`
 **PR slot claimed by**: `-`
 **Status**: `unstarted`
 
@@ -63,12 +63,12 @@
 
 ---
 
-## PR-49 — Manifest delivery reconciler
+## PR-50 — Manifest delivery reconciler
 
-**Branch suggestion**: `feat/op-pr49-manifest-delivery`
+**Branch suggestion**: `feat/op-pr50-manifest-delivery`
 **PR slot claimed by**: `-`
 **Status**: `unstarted`
-**Blocks on**: PR-48 merged (uses the new `ManifestDelivery` field)
+**Blocks on**: PR-49 merged (uses the new `ManifestDelivery` field)
 
 - [ ] **Implement `ManifestDeliveryReconciler`** at
   `operator/internal/reconcilers/manifests/delivery.go`. `embed.FS` over `roles/`,
@@ -103,12 +103,12 @@
 
 ---
 
-## PR-50 — MCP server reconciler
+## PR-51 — MCP server reconciler
 
-**Branch suggestion**: `feat/op-pr50-mcp-reconciler`
+**Branch suggestion**: `feat/op-pr51-mcp-reconciler`
 **PR slot claimed by**: `-`
 **Status**: `unstarted`
-**Blocks on**: PR-48 merged (uses `MCPServerSpec`)
+**Blocks on**: PR-49 merged (uses `MCPServerSpec`)
 
 - [ ] **Implement `MCPServerReconciler`** at
   `operator/internal/reconcilers/mcp/server.go`. For each `corpus.Spec.MCPServers[i]`:
@@ -133,12 +133,12 @@
 
 ---
 
-## PR-51 — Demo samples + CSV update
+## PR-52 — Demo samples + CSV update
 
-**Branch suggestion**: `feat/op-pr51-demo-samples`
+**Branch suggestion**: `feat/op-pr52-demo-samples`
 **PR slot claimed by**: `-`
 **Status**: `unstarted`
-**Blocks on**: PR-48, PR-49, PR-50 merged
+**Blocks on**: PR-49, PR-50, PR-51 merged
 
 - [ ] **Autoresearcher sample**:
   `operator/config/samples/acc_v1alpha1_agentcorpus_autoresearcher.yaml`. `AgentCorpus` +
@@ -171,7 +171,7 @@
 
 ## Optional — PR-A (parallel hardening)
 
-Not blocking the main sequence; can run in parallel with PR-49 or PR-50.
+Not blocking the main sequence; can run in parallel with PR-50 or PR-51.
 
 - [ ] Add `jsonschema` to `Containerfile.agent-core` (`microdnf install`) so role/skill
   schema validation is strict in cluster — `acc/skills/registry.py:52-64` falls back
