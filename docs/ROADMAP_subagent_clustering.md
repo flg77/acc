@@ -235,6 +235,103 @@ fleet. Customers don't have to migrate; they wrap.
 
 ---
 
+## Autoresearcher follow-ups (post PR #41-#46)
+
+The autoresearcher demo (Example No. 2) shipped fully runnable but
+surfaced its own follow-up list during implementation + the operator
+review of revision 2 of the plan.
+
+### A1. Live cost panel in the TUI
+
+**State:** `tokens_used` is on the wire (TASK_COMPLETE), the cost
+cap fires in the arbiter, ALERT_ESCALATE renders in Compliance —
+but there is no per-plan cost rollup screen yet.
+
+**Scope.**
+* New panel on Performance (or a dedicated screen 8) that
+  aggregates `plan_id` → `tokens_used` running total.
+* `cost_remaining` rendered when `max_run_tokens > 0`.
+* Sparkline of token spend over time per active plan.
+
+**ROI.** Operators running production demos cite cost visibility
+as the main reason they shy away from longer runs. ~250 LOC + 4
+Pilot tests.
+
+### A2. Active citation re-fetch verification
+
+**State:** `acc/research/citation_verifier.py` confirms the
+critic's audit trail (which URLs the critic re-fetched). It does
+NOT itself re-fetch URLs to compare claim text.
+
+**Scope.**
+* New `acc/research/active_verifier.py` that takes the report +
+  invocations + an LLM client; for each cited URL, fetches the
+  page and asks the LLM whether the cited claim is supported.
+* New `verify.sh --active` flag enables it; off by default
+  because it adds substantial cost.
+* Surfaces a per-claim verdict in the verification report.
+
+**ROI.** Active defence against fabricated citations. Currently
+the critic's own re-fetch is the source of truth; A2 makes the
+verification doubly independent.
+
+### A3. Cat-C promotion of useful prompt_patches
+
+**State:** Patches survive A-021 sanity at apply time + persist in
+the episode log; promotion to permanent `system_prompt.md` edits
+is not wired.
+
+**Scope.**
+* Episode-log analyser that flags patches recurring across runs
+  with above-threshold scores.
+* Compliance-screen oversight item proposing the edit.
+* Operator approves → arbiter rewrites the persona's
+  `system_prompt.md` (versioned via existing role hot-reload).
+
+**ROI.** Closes the self-improvement loop documented in revision 2
+of the plan ("Cat-C promotion of useful prompt_patches" residual #4).
+
+### A4. Iteration-quality experiment automated CI
+
+**State:** Documented in `examples/acc_autoresearcher/README.md`;
+not yet automated.
+
+**Scope.**
+* New CI job `acc-research-iter-quality.yml` that runs the demo
+  at max_iterations=3 and =5 against a fixture topic, compares
+  citation coverage + verdict scores, fails the build if 5
+  iterations regress vs. 3.
+* Prereq: a stable mock LLM backend so CI doesn't burn live cost.
+
+**ROI.** Automated regression watchdog for the central operator
+question "do more iterations actually help?".
+
+### A5. Browser-harness lean variant
+
+**State:** Reference container ships with full Chromium + LLM
+client (~1.5-2 GB image).
+
+**Scope.**
+* Alternative `Containerfile.web_browser_harness.lean` —
+  Firefox-only, no LLM-driven flow, ~600 MB.
+* Operator opts via `BROWSER_HARNESS_LEAN=true`.
+
+**ROI.** Edge / SNO deployments with constrained image storage.
+
+### A6. Topic-slug derivation in the TUI
+
+**State:** Operator passes `--topic <slug>` to `run.sh`. Operator
+decision (revision 2) noted "TUI implementation/trigger on roadmap".
+
+**Scope.**
+* New prompt-pane action: "Submit autoresearcher plan…" opens a
+  modal asking for a topic slug + cost cap; submits the plan
+  + opens the cluster panel pre-populated.
+
+**ROI.** Reduces the muscle memory required to demo the feature.
+
+---
+
 ## Cross-cutting improvements
 
 ### C1. Telemetry — cluster cohorts
