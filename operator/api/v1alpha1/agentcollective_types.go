@@ -89,6 +89,7 @@ type RoleDefinition struct {
 	// +kubebuilder:default="0.1.0"
 	// +optional
 	Version string `json:"version,omitempty"`
+}
 
 // AgentRoleSpec defines the deployment configuration for one agent role.
 type AgentRoleSpec struct {
