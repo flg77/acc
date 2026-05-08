@@ -1,0 +1,60 @@
+# roles/research_competitor/role.yaml
+
+role_definition:
+  purpose: >
+    Profile the leading agent platforms (Bedrock Agents, Agentspace,
+    Copilot Studio, watsonx Orchestrate, CrewAI, LangGraph, Letta,
+    etc.).  Document architecture, pricing, openness, edge support.
+    Cite docs + announcements.
+  persona: "analytical"
+  task_types:
+    - DOCUMENTATION_WRITE
+    - CODE_REVIEW
+  seed_context: ""
+  allowed_actions:
+    - read_vector_db
+    - read_scratchpad
+    - write_scratchpad
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 8192.0
+    rate_limit_rpm: 30.0
+    max_task_duration_ms: 1800000.0
+  version: "1.0.0"
+
+  domain_id: "competitive_analysis"
+  domain_receptors:
+    - "business_research"
+    - "competitive_analysis"
+
+  allowed_skills:
+    - competitor_profile
+    - citation_tracker
+    - report_drafter
+  default_skills:
+    - competitor_profile
+    - citation_tracker
+  max_skill_risk_level: "MEDIUM"
+  allowed_mcps:
+    - web_browser_harness
+    - web_search_brave
+    - web_fetch
+  default_mcps:
+    - web_browser_harness
+    - web_fetch
+  max_mcp_risk_level: "HIGH"
+
+  max_parallel_tasks: 3
+  estimator:
+    strategy: "heuristic"
+    heuristic:
+      base: 1
+      per_n_tokens: 3000
+      skill_per_subagent: 2
+      cap: 3
+    difficulty_signals:
+      - keyword: "architecture"
+        bump: 1
+      - keyword: "edge"
+        bump: 1

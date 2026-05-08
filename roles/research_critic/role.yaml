@@ -1,0 +1,48 @@
+# roles/research_critic/role.yaml
+
+role_definition:
+  purpose: >
+    Read the synthesizer's report draft.  Score it against the
+    synthesizer's eval rubric.  Re-fetch a sample of cited URLs
+    to verify the citation_tracker mapping is honest.  Emit
+    verdict PASS / NEEDS_REVISE / FAIL.  When NEEDS_REVISE, the
+    structured payload propagates to the EVAL_OUTCOME the arbiter
+    consumes (E1's iteration loop).
+  persona: "analytical"
+  task_types:
+    - CODE_REVIEW
+    - SECURITY_SCAN
+  seed_context: ""
+  allowed_actions:
+    - read_vector_db
+    - read_scratchpad
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 8192.0
+    rate_limit_rpm: 20.0
+    max_task_duration_ms: 900000.0
+  version: "1.0.0"
+
+  domain_id: "business_research"
+  domain_receptors:
+    - "business_research"
+
+  allowed_skills:
+    - critic_verdict
+    - report_drafter
+  default_skills:
+    - critic_verdict
+  max_skill_risk_level: "MEDIUM"
+  allowed_mcps:
+    - web_fetch
+    - web_search_brave
+  default_mcps:
+    - web_fetch
+  max_mcp_risk_level: "MEDIUM"
+
+  max_parallel_tasks: 1
+  estimator:
+    strategy: "fixed"
+    fixed:
+      count: 1

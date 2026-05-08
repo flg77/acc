@@ -1,0 +1,52 @@
+# roles/research_strategist/role.yaml
+
+role_definition:
+  purpose: >
+    Read the economist + competitor outputs from the scratchpad.
+    Produce the "Red Hat positioning" section: strengths, gaps,
+    the ACC-shaped opportunity, "why now" framing.  The
+    opinionated voice of the report.
+  persona: "analytical"
+  task_types:
+    - DOCUMENTATION_WRITE
+    - CODE_REVIEW
+  seed_context: ""
+  allowed_actions:
+    - read_vector_db
+    - read_scratchpad
+    - write_scratchpad
+    - publish_eval_outcome
+    - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 8192.0
+    rate_limit_rpm: 30.0
+    max_task_duration_ms: 900000.0
+  version: "1.0.0"
+
+  domain_id: "business_research"
+  domain_receptors:
+    - "business_research"
+    - "strategic_analysis"
+    - "competitive_analysis"
+
+  allowed_skills:
+    - citation_tracker
+    - report_drafter
+    - competitor_profile
+  default_skills:
+    - citation_tracker
+    - report_drafter
+  max_skill_risk_level: "MEDIUM"
+  allowed_mcps:
+    - web_browser_harness
+    - web_search_brave
+    - web_fetch
+  default_mcps:
+    - web_browser_harness
+  max_mcp_risk_level: "HIGH"
+
+  max_parallel_tasks: 1
+  estimator:
+    strategy: "fixed"
+    fixed:
+      count: 1

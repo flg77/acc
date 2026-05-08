@@ -1,0 +1,43 @@
+# roles/research_critic/eval_rubric.yaml
+# Sum to 1.0; security ≥ 10%.  Critic is itself eval'd against
+# how *good* its verdicts were on average across runs (Cat-C
+# rule promotion picks up patterns).
+
+criteria:
+  finding_accuracy:
+    weight: 0.35
+    description: >
+      Reported defects in the synthesizer draft cluster under
+      verifiable issues — false positives lower this score, missed
+      real issues lower it more (post-hoc reviewer-of-reviewer when
+      present).
+
+  threshold_calibration:
+    weight: 0.20
+    description: >
+      Verdicts (PASS / NEEDS_REVISE / FAIL) match the score
+      thresholds documented in the system prompt.  Score: 1.0 when
+      every emitted verdict honours the threshold; 0.0 on any
+      threshold violation.
+
+  critique_actionability:
+    weight: 0.20
+    description: >
+      Numbered critique points are specific enough that the
+      synthesizer can address each one in a single iteration.
+      Vague feedback ("write better") scores low.
+
+  prompt_patch_quality:
+    weight: 0.15
+    description: >
+      When prompt_patch is present, it survives Cat-A A-021 sanity
+      AND addresses a defect that recurred across iterations.
+      Score 1.0 when not emitted; full weight only when emitted +
+      survives + helps.
+
+  security:
+    weight: 0.10
+    description: >
+      Citation verification covers at least 3 URLs; 'verified'
+      flags match the spot-fetch result; no fabricated
+      verification claims.
