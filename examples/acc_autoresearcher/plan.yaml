@@ -1,0 +1,117 @@
+# examples/acc_autoresearcher/plan.yaml
+# =============================================================================
+# Autoresearcher demo plan — five DAG steps connecting the six
+# personas via depends_on edges.  The synthesize step opts in to the
+# iteration loop (E1) and prompt patches.
+#
+# Submit with:
+#     acc-cli plan submit examples/acc_autoresearcher/plan.yaml
+# (run.sh wraps this + sources .env first)
+# =============================================================================
+signal_type: "PLAN"
+plan_id: "agentic-ai-strategy-2026-05"
+collective_id: "sol-01"
+
+# E1 cost cap (operator-tunable via ACC_RESEARCH_MAX_RUN_TOKENS).
+# 0 = unset = no cap.  run.sh substitutes the env value at submission.
+max_run_tokens: 0
+
+steps:
+  # 1. PLAN — outline + research questions.
+  - step_id: "plan"
+    role: "research_planner"
+    depends_on: []
+    task_type: "DOCUMENTATION_WRITE"
+    task_description: |
+      Topic: Agentic AI as a strategic Red Hat opportunity.
+
+      Produce the report outline + per-section research questions
+      for a thought-leadership report arguing that ACC is the
+      vehicle to drive Red Hat's agentic business from the edge to
+      the datacenter.
+
+      Required sections (assign these to the matching persona):
+
+        1. Executive Summary           → research_synthesizer
+        2. Market Economics            → research_economist
+        3. The Edge Market             → research_economist
+        4. Competitive Landscape       → research_competitor
+        5. Architecture Analysis       → research_competitor
+        6. Red Hat Positioning         → research_strategist
+        7. Forecast Assumptions        → research_economist
+        8. Citations                   → research_synthesizer
+
+      Global constraints:
+        - Every numeric claim must carry a citation_tracker entry.
+        - The report's "why now" framing must be ≤ 3 events.
+        - Paywalled sources are OK; mark them.
+
+  # 2. ECONOMICS — TAM/SAM/SOM + edge market + forecasts.
+  - step_id: "economics"
+    role: "research_economist"
+    depends_on: ["plan"]
+    task_type: "DOCUMENTATION_WRITE"
+    task_description: |
+      Read the planner's outline from the cluster scratchpad.
+      Produce the Market Economics + Edge Market + Forecast
+      Assumptions sections.  Cite every number.  3/5/10-year
+      horizons with sensitivity bands.
+
+  # 3. COMPETITIVE — vendor + architecture analysis.
+  - step_id: "competitive"
+    role: "research_competitor"
+    depends_on: ["plan"]
+    task_type: "DOCUMENTATION_WRITE"
+    task_description: |
+      Read the planner's outline.  Profile every vendor named in
+      the Competitive Landscape section's research_questions, plus
+      any open-source agent runtime (CrewAI, LangGraph, Letta).
+      Document architecture, pricing, openness, edge support.
+
+  # 4. STRATEGY — Red Hat positioning section.
+  - step_id: "strategy"
+    role: "research_strategist"
+    depends_on: ["economics", "competitive"]
+    task_type: "DOCUMENTATION_WRITE"
+    task_description: |
+      Read the economist + competitor outputs from the cluster
+      scratchpad.  Produce the Red Hat Positioning section.
+      Argument structure: where Red Hat is strong / where the
+      gaps are / the ACC-shaped opportunity / why now.
+
+  # 5. SYNTHESIZE → CRITIQUE — the iteration loop closes here.
+  - step_id: "synthesize"
+    role: "research_synthesizer"
+    depends_on: ["strategy"]
+    task_type: "DOCUMENTATION_WRITE"
+
+    # E1 — iteration loop opt-in.  Up to 3 revisions per run.  The
+    # critic publishes NEEDS_REVISE on EVAL_OUTCOME; arbiter
+    # re-issues this step with the critique appended.
+    max_iterations: 3
+    enable_prompt_patches: true
+    prompt_patches_writable_to:
+      - research_synthesizer
+
+    task_description: |
+      Read every researcher's output from the cluster scratchpad.
+      Produce the canonical markdown report following the
+      planner's outline verbatim.  Inline footnote-style citations
+      ([1], [2], …) with full URLs in the Citations section.
+      Mark paywalled sources.
+
+  - step_id: "critique"
+    role: "research_critic"
+    depends_on: ["synthesize"]
+    task_type: "CODE_REVIEW"
+    task_description: |
+      Read the synthesize step's draft.  Score against the
+      synthesizer's eval rubric.  Re-fetch a SAMPLE (3-5) of
+      cited URLs to verify the citation_tracker mapping is honest
+      — this is the defence against fabricated citations.
+
+      Emit verdict + critique via critic_verdict.  When verdict
+      is NEEDS_REVISE, your CognitiveCore lifts the structured
+      payload onto EVAL_OUTCOME so the arbiter re-issues the
+      synthesize step.  Cat-A A-021 enforces prompt_patch sanity
+      when you propose persona-prompt modifications.
