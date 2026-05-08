@@ -1,0 +1,66 @@
+{
+  "signal_type": "PLAN",
+  "plan_id": "agentic-ai-strategy-2026-05",
+  "collective_id": "sol-01",
+  "max_run_tokens": 0,
+  "steps": [
+    {
+      "step_id": "plan",
+      "role": "research_planner",
+      "depends_on": [],
+      "task_type": "DOCUMENTATION_WRITE",
+      "task_description": "Topic: Agentic AI as a strategic Red Hat opportunity.\n\nProduce the report outline + per-section research questions\nfor a thought-leadership report arguing that ACC is the\nvehicle to drive Red Hat's agentic business from the edge to\nthe datacenter.\n\nRequired sections (assign these to the matching persona):\n\n  1. Executive Summary           \u2192 research_synthesizer\n  2. Market Economics            \u2192 research_economist\n  3. The Edge Market             \u2192 research_economist\n  4. Competitive Landscape       \u2192 research_competitor\n  5. Architecture Analysis       \u2192 research_competitor\n  6. Red Hat Positioning         \u2192 research_strategist\n  7. Forecast Assumptions        \u2192 research_economist\n  8. Citations                   \u2192 research_synthesizer\n\nGlobal constraints:\n  - Every numeric claim must carry a citation_tracker entry.\n  - The report's \"why now\" framing must be \u2264 3 events.\n  - Paywalled sources are OK; mark them.\n"
+    },
+    {
+      "step_id": "economics",
+      "role": "research_economist",
+      "depends_on": [
+        "plan"
+      ],
+      "task_type": "DOCUMENTATION_WRITE",
+      "task_description": "Read the planner's outline from the cluster scratchpad.\nProduce the Market Economics + Edge Market + Forecast\nAssumptions sections.  Cite every number.  3/5/10-year\nhorizons with sensitivity bands.\n"
+    },
+    {
+      "step_id": "competitive",
+      "role": "research_competitor",
+      "depends_on": [
+        "plan"
+      ],
+      "task_type": "DOCUMENTATION_WRITE",
+      "task_description": "Read the planner's outline.  Profile every vendor named in\nthe Competitive Landscape section's research_questions, plus\nany open-source agent runtime (CrewAI, LangGraph, Letta).\nDocument architecture, pricing, openness, edge support.\n"
+    },
+    {
+      "step_id": "strategy",
+      "role": "research_strategist",
+      "depends_on": [
+        "economics",
+        "competitive"
+      ],
+      "task_type": "DOCUMENTATION_WRITE",
+      "task_description": "Read the economist + competitor outputs from the cluster\nscratchpad.  Produce the Red Hat Positioning section.\nArgument structure: where Red Hat is strong / where the\ngaps are / the ACC-shaped opportunity / why now.\n"
+    },
+    {
+      "step_id": "synthesize",
+      "role": "research_synthesizer",
+      "depends_on": [
+        "strategy"
+      ],
+      "task_type": "DOCUMENTATION_WRITE",
+      "max_iterations": 3,
+      "enable_prompt_patches": true,
+      "prompt_patches_writable_to": [
+        "research_synthesizer"
+      ],
+      "task_description": "Read every researcher's output from the cluster scratchpad.\nProduce the canonical markdown report following the\nplanner's outline verbatim.  Inline footnote-style citations\n([1], [2], \u2026) with full URLs in the Citations section.\nMark paywalled sources.\n"
+    },
+    {
+      "step_id": "critique",
+      "role": "research_critic",
+      "depends_on": [
+        "synthesize"
+      ],
+      "task_type": "CODE_REVIEW",
+      "task_description": "Read the synthesize step's draft.  Score against the\nsynthesizer's eval rubric.  Re-fetch a SAMPLE (3-5) of\ncited URLs to verify the citation_tracker mapping is honest\n\u2014 this is the defence against fabricated citations.\n\nEmit verdict + critique via critic_verdict.  When verdict\nis NEEDS_REVISE, your CognitiveCore lifts the structured\npayload onto EVAL_OUTCOME so the arbiter re-issues the\nsynthesize step.  Cat-A A-021 enforces prompt_patch sanity\nwhen you propose persona-prompt modifications.\n"
+    }
+  ]
+}
