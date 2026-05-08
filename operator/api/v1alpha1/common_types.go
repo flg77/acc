@@ -27,16 +27,43 @@ const (
 )
 
 // AgentRole identifies an ACC agent function.
-// Mirrors the Python AgentRole literal. Full 5-role spec from ACCv3.
-// +kubebuilder:validation:Enum=ingester;analyst;synthesizer;arbiter;observer
+//
+// Schema-level validation is a regex on a DNS-label-style string;
+// semantic validation against the operator's compiled-in catalogue happens
+// in the AgentCollective validating webhook. New personas can be added by
+// dropping a roles/<name>/role.yaml into the source tree and running
+// `go generate ./...` against operator/internal/rolecatalogue/.
+// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]{1,62}$`
+// +kubebuilder:validation:MinLength=2
+// +kubebuilder:validation:MaxLength=63
 type AgentRole string
 
 const (
+	// Legacy ACCv3 5-role set — kept for backwards compatibility with
+	// existing AgentCorpus / AgentCollective custom resources.
 	RoleIngester    AgentRole = "ingester"
 	RoleAnalyst     AgentRole = "analyst"
 	RoleSynthesizer AgentRole = "synthesizer"
 	RoleArbiter     AgentRole = "arbiter"
 	RoleObserver    AgentRole = "observer"
+
+	// Coding-split-skills personas (D3 / PR #44, #39).
+	// Used by examples/coding_split_skills/.
+	RoleCodingAgent       AgentRole = "coding_agent"
+	RoleCodingArchitect   AgentRole = "coding_agent_architect"
+	RoleCodingDependency  AgentRole = "coding_agent_dependency"
+	RoleCodingImplementer AgentRole = "coding_agent_implementer"
+	RoleCodingReviewer    AgentRole = "coding_agent_reviewer"
+	RoleCodingTester      AgentRole = "coding_agent_tester"
+
+	// Autoresearcher personas (E4 / PR #44).
+	// Used by examples/acc_autoresearcher/.
+	RoleResearchPlanner     AgentRole = "research_planner"
+	RoleResearchStrategist  AgentRole = "research_strategist"
+	RoleResearchEconomist   AgentRole = "research_economist"
+	RoleResearchCompetitor  AgentRole = "research_competitor"
+	RoleResearchSynthesizer AgentRole = "research_synthesizer"
+	RoleResearchCritic      AgentRole = "research_critic"
 )
 
 // LLMBackend selects the language model implementation.

@@ -93,8 +93,9 @@ type RoleDefinition struct {
 
 // AgentRoleSpec defines the deployment configuration for one agent role.
 type AgentRoleSpec struct {
-	// Role identifies the ACC agent role.
-	// +kubebuilder:validation:Enum=ingester;analyst;synthesizer;arbiter;observer
+	// Role identifies the ACC agent role. Schema-level validation is the
+	// regex pattern on the AgentRole type; semantic validation against the
+	// operator's compiled-in catalogue happens in the AgentCollective webhook.
 	Role AgentRole `json:"role"`
 
 	// Replicas is the baseline replica count (before KEDA scaling).
@@ -215,7 +216,7 @@ type ScalingSpec struct {
 // RoleScalingSpec configures KEDA scaling for a single agent role.
 type RoleScalingSpec struct {
 	// Role identifies which agent role this scaling config applies to.
-	// +kubebuilder:validation:Enum=ingester;analyst;synthesizer;arbiter;observer
+	// Validation: regex on the AgentRole type + webhook catalogue check.
 	Role AgentRole `json:"role"`
 
 	// MinReplicas is the KEDA minimum replica count.
