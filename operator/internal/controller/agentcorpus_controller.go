@@ -32,6 +32,7 @@ import (
 	collectiverec "github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/collective"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/governance"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/infra"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/manifests"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/observability"
 	statuspkg "github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/status"
 )
@@ -186,6 +187,11 @@ func (r *AgentCorpusReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconciler {
 	return []reconcilers.SubReconciler{
 		&reconcilers.PrerequisiteReconciler{Client: r.Client, Discovery: r.Discovery},
+		// ManifestDelivery slot 2: emits the corpus-scoped acc-roles /
+		// acc-skills / acc-mcps ConfigMaps that every collective's agent
+		// Deployment mounts. Must run before UpgradeReconciler so the CMs
+		// exist before upgrade pods reference them.
+		&manifests.ManifestDeliveryReconciler{Client: r.Client, Scheme: r.Scheme},
 		&reconcilers.UpgradeReconciler{Client: r.Client},
 		&infra.NATSReconciler{Client: r.Client, Scheme: r.Scheme},
 		&infra.RedisReconciler{Client: r.Client, Scheme: r.Scheme},

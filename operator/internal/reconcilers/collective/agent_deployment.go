@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/manifests"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/templates"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/util"
 )
@@ -114,6 +115,17 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	// Resolve Anthropic API key env var if needed.
 	extraEnv := buildExtraEnv(corpus, collective, roleSpec)
 
+	// Manifest delivery (PR-51): build the three roles/skills/mcps volumes
+	// and items[] projections from the corpus-scoped ConfigMaps emitted by
+	// ManifestDeliveryReconciler. Returns empty slices when delivery is
+	// disabled (spec.manifestDelivery == "none") or when a CM is not yet
+	// present (next reconcile cycle picks them up — manifest delivery runs
+	// first in the parent chain, so this is rare in practice).
+	manifestMounts, manifestVolumes, manifestEnv, err := r.buildManifestDelivery(ctx, corpus, ns)
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("build manifest delivery for %s: %w", deployName, err)
+	}
+
 	image := fmt.Sprintf("%s/acc-agent-core:%s", corpus.Spec.ImageRegistry, corpus.Spec.Version)
 
 	deploy := &appsv1.Deployment{
@@ -137,14 +149,14 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 						{
 							Name:  "agent",
 							Image: image,
-							Env:   append([]corev1.EnvVar{
+							Env: append(append([]corev1.EnvVar{
 								{Name: "ACC_AGENT_ROLE", Value: string(role)},
 								{Name: "ACC_COLLECTIVE_ID", Value: collective.Spec.CollectiveID},
 								{Name: "ACC_CORPUS_NAME", Value: corpus.Name},
 								{Name: "ACC_CONFIG_PATH", Value: "/etc/acc/acc-config.yaml"},
-							}, extraEnv...),
+							}, manifestEnv...), extraEnv...),
 							Resources: derefResources(roleSpec.Resources),
-							VolumeMounts: []corev1.VolumeMount{
+							VolumeMounts: append([]corev1.VolumeMount{
 								{Name: "acc-config", MountPath: "/etc/acc"},
 								{Name: "wasm-governance", MountPath: "/etc/acc/governance"},
 								// ACC-6a: role definition mounted read-only at /app/acc-role.yaml
@@ -154,10 +166,10 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 									SubPath:   "acc-role.yaml",
 									ReadOnly:  true,
 								},
-							},
+							}, manifestMounts...),
 						},
 					},
-					Volumes: []corev1.Volume{
+					Volumes: append([]corev1.Volume{
 						{
 							Name: "acc-config",
 							VolumeSource: corev1.VolumeSource{
@@ -187,7 +199,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 								},
 							},
 						},
-					},
+					}, manifestVolumes...),
 					// Append any role-specific VolumeClaimTemplates as emptyDir for Deployments
 					// (StatefulSets would handle this differently; Deployments use PVC directly).
 				},
@@ -273,4 +285,80 @@ func derefResources(r *corev1.ResourceRequirements) corev1.ResourceRequirements 
 		return *r
 	}
 	return corev1.ResourceRequirements{}
+}
+
+// buildManifestDelivery returns the VolumeMount/Volume/EnvVar slices that
+// inject the corpus-scoped acc-roles, acc-skills, and acc-mcps ConfigMaps
+// into agent pods at /etc/acc/{roles,skills,mcps} (with the matching
+// ACC_*_ROOT env vars).
+//
+// Each Volume uses an explicit items[] projection so the flattened
+// ConfigMap keys (path__separated__like__this) re-project to slash-paths
+// in the pod's filesystem. The keys are read from the live ConfigMap so
+// the projection always matches the data — no separate source of truth.
+//
+// When spec.manifestDelivery == "none" or any expected ConfigMap is not
+// yet present, returns empty slices and a nil error. The reconciler will
+// retry on the next cycle once ManifestDeliveryReconciler has emitted
+// the CMs.
+func (r *AgentDeploymentReconciler) buildManifestDelivery(
+	ctx context.Context,
+	corpus *accv1alpha1.AgentCorpus,
+	ns string,
+) ([]corev1.VolumeMount, []corev1.Volume, []corev1.EnvVar, error) {
+	if corpus.Spec.ManifestDelivery == "none" {
+		return nil, nil, nil, nil
+	}
+
+	rolesSuffix, skillsSuffix, mcpsSuffix := manifests.Suffixes()
+
+	plans := []struct {
+		volumeName string
+		cmSuffix   string
+		mountPath  string
+		envVarName string
+	}{
+		{"acc-roles", rolesSuffix, manifests.RolesMountPath, "ACC_ROLES_ROOT"},
+		{"acc-skills", skillsSuffix, manifests.SkillsMountPath, "ACC_SKILLS_ROOT"},
+		{"acc-mcps", mcpsSuffix, manifests.MCPsMountPath, "ACC_MCPS_ROOT"},
+	}
+
+	var (
+		mounts  []corev1.VolumeMount
+		volumes []corev1.Volume
+		envs    []corev1.EnvVar
+	)
+	for _, p := range plans {
+		cmName := manifests.ConfigMapName(corpus, p.cmSuffix)
+		cm := &corev1.ConfigMap{}
+		if err := r.Client.Get(ctx, types.NamespacedName{Namespace: ns, Name: cmName}, cm); err != nil {
+			// CM not yet present — skip this tree; next reconcile picks it up.
+			// Do not error: the manifest reconciler runs in a separate slot of
+			// the parent chain and may not have completed on first apply.
+			continue
+		}
+		items := make([]corev1.KeyToPath, 0, len(cm.Data))
+		for key := range cm.Data {
+			items = append(items, corev1.KeyToPath{
+				Key:  key,
+				Path: manifests.UnflattenKey(key),
+			})
+		}
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      p.volumeName,
+			MountPath: p.mountPath,
+			ReadOnly:  true,
+		})
+		volumes = append(volumes, corev1.Volume{
+			Name: p.volumeName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: cmName},
+					Items:                items,
+				},
+			},
+		})
+		envs = append(envs, corev1.EnvVar{Name: p.envVarName, Value: p.mountPath})
+	}
+	return mounts, volumes, envs, nil
 }

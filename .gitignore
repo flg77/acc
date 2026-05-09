@@ -41,3 +41,9 @@ runs/
 # land here when the operator/Makefile downloads them. Refetched per
 # developer.
 operator/bin/
+
+# Operator manifest mirror: build-time copy of repo-root roles/, skills/,
+# mcps/ trees so `//go:embed` in
+# operator/internal/reconcilers/manifests/ can reach them. Repopulated
+# by `make sync-manifests`.
+operator/internal/reconcilers/manifests/data/

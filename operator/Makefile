@@ -39,12 +39,36 @@ help: ## Display this help.
 
 ##@ Development
 
+# MANIFEST_DATA_DIR holds copies of the repo-root roles/, skills/, mcps/
+# trees inside the operator module so `//go:embed` can reach them. The
+# directory is gitignored — it's a build-time mirror, not source.
+MANIFEST_DATA_DIR := internal/reconcilers/manifests/data
+
+.PHONY: sync-manifests
+sync-manifests: ## Mirror repo-root roles/, skills/, mcps/ into the operator module for go:embed.
+	@mkdir -p $(MANIFEST_DATA_DIR)
+	@for tree in roles skills mcps; do \
+	    if [ -d ../$$tree ]; then \
+	        rm -rf $(MANIFEST_DATA_DIR)/$$tree && \
+	        cp -R ../$$tree $(MANIFEST_DATA_DIR)/$$tree && \
+	        find $(MANIFEST_DATA_DIR)/$$tree \( \
+	            -type d -name __pycache__ \
+	            -o -name '*.pyc' \
+	            -o -name '*.pyo' \
+	            -o -name '.DS_Store' \
+	        \) -exec rm -rf {} +; \
+	    else \
+	        echo "warning: ../$$tree does not exist; skipping"; \
+	    fi; \
+	done
+	@find $(MANIFEST_DATA_DIR) -type f | wc -l | xargs printf "sync-manifests: %s files mirrored into $(MANIFEST_DATA_DIR)\n"
+
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CRD objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases output:rbac:artifacts:config=config/rbac
 
 .PHONY: generate
-generate: controller-gen ## Generate code (DeepCopy, etc.)
+generate: controller-gen sync-manifests ## Generate code (DeepCopy, etc.) and refresh embedded manifest mirror.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 .PHONY: fmt
@@ -56,25 +80,25 @@ vet: ## Run go vet.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet envtest ## Run tests.
+test: manifests generate fmt vet envtest sync-manifests ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-path $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out
 
 .PHONY: test-unit
-test-unit: ## Run unit tests only (no envtest).
+test-unit: sync-manifests ## Run unit tests only (no envtest).
 	go test ./test/unit/... -v
 
 ##@ Build
 
 .PHONY: build
-build: manifests generate fmt vet ## Build operator binary.
+build: manifests generate fmt vet sync-manifests ## Build operator binary.
 	go build -o bin/manager cmd/main.go
 
 .PHONY: run
-run: manifests generate fmt vet ## Run the operator locally against the configured Kubernetes cluster.
+run: manifests generate fmt vet sync-manifests ## Run the operator locally against the configured Kubernetes cluster.
 	go run ./cmd/main.go
 
 .PHONY: docker-build
-docker-build: ## Build container image.
+docker-build: sync-manifests ## Build container image (data/ tree must be in place before COPY).
 	docker build -t ${IMG} .
 
 .PHONY: docker-push

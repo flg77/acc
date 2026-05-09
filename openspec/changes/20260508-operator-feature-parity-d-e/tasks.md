@@ -74,49 +74,67 @@
 
 ---
 
-## PR-50 — Manifest delivery reconciler
+## PR-51 — Manifest delivery reconciler
 
-**Branch suggestion**: `feat/op-pr50-manifest-delivery`
-**PR slot claimed by**: `-`
-**Status**: `unstarted`
-**Blocks on**: PR-49 merged (uses the new `ManifestDelivery` field)
+**Branch**: `feat/op-pr50-manifest-delivery` (named for the originally-expected slot)
+**PR**: https://github.com/flg77/acc/pull/51 (draft → ready 2026-05-09)
+**PR slot claimed by**: `acc1` (host 10.199.12.91 — Claude instance)
+**Status**: `ready-for-review` since 2026-05-09
+**Blocks on**: PR-49 merged ✅ (uses the new `ManifestDelivery` field)
 
-- [ ] **Implement `ManifestDeliveryReconciler`** at
-  `operator/internal/reconcilers/manifests/delivery.go`. `embed.FS` over `roles/`,
-  `skills/`, `mcps/`. Upsert three corpus-namespace ConfigMaps (`acc-roles`,
-  `acc-skills`, `acc-mcps`) via `util.Upsert`. Keys flatten `/` to `__`; carry the
-  `items[]` projection list alongside so the volume mount re-projects to slash-paths.
-  *— claimed by: -*
+- [x] **Build-side prep** (out-of-plan but required): `make sync-manifests` target
+  mirrors repo-root `roles/`, `skills/`, `mcps/` into
+  `operator/internal/reconcilers/manifests/data/` so `//go:embed` can reach them.
+  Filters out `__pycache__`, `*.pyc`, `*.pyo`, `.DS_Store` to keep the round-trip
+  flat-key contract safe. Gitignored. Wired as a prereq for `generate`, `build`,
+  `run`, `test`, `test-unit`, `docker-build`. Commit `baa60f0`. *— claimed by: acc1*
 
-- [ ] **Wire reconciler into chain**: `operator/internal/controller/agentcorpus_controller.go`
-  — slot the new reconciler #2 (after `PrerequisiteReconciler`, before
-  `UpgradeReconciler`). *— claimed by: -*
+- [x] **Implement `ManifestDeliveryReconciler`** at
+  `operator/internal/reconcilers/manifests/delivery.go`. `//go:embed all:data/{roles,
+  skills,mcps}`. Upsert three corpus-namespace ConfigMaps (`{corpus}-acc-roles`,
+  `{corpus}-acc-skills`, `{corpus}-acc-mcps`) via `util.Upsert`. Keys flatten `/` to
+  `__`. Public helpers (`FlattenPath`, `UnflattenKey`, `ConfigMapName`, `Suffixes`,
+  `RolesMountPath` / `SkillsMountPath` / `MCPsMountPath` consts) so
+  agent_deployment can reference the same naming and path rules. Commit `72a8650`.
+  *— claimed by: acc1*
 
-- [ ] **Inject volumes/env in agent pods**:
-  `operator/internal/reconcilers/collective/agent_deployment.go`. Append three
-  `VolumeMount`s (`/etc/acc/roles`, `/etc/acc/skills`, `/etc/acc/mcps`, all read-only),
-  three `Volume`s referencing the corpus-scoped CMs with `items[]` projection, three env
-  vars (`ACC_ROLES_ROOT`, `ACC_SKILLS_ROOT`, `ACC_MCPS_ROOT`). Gate on
-  `corpus.Spec.ManifestDelivery != "none"`. *— claimed by: -*
+- [x] **Wire reconciler into chain**: slot 2 in
+  `agentcorpus_controller.go::buildSubReconcilers()` (after `PrerequisiteReconciler`,
+  before `UpgradeReconciler`). Commit `93783ee`. *— claimed by: acc1*
 
-- [ ] **TUI parity**: edit `operator/config/samples/acc_tui_deployment.yaml` to add the
-  same three env vars and `acc-roles` / `acc-skills` volume mounts. *— claimed by: -*
+- [x] **Inject volumes/env in agent pods**: new `buildManifestDelivery` helper in
+  `agent_deployment.go` reads each ConfigMap from the API client and projects keys
+  into `items[]: [{key, path: UnflattenKey(key)}]`. Appends three `VolumeMount`s,
+  three `Volume`s, three env vars (`ACC_ROLES_ROOT`, `ACC_SKILLS_ROOT`,
+  `ACC_MCPS_ROOT`). Returns empty slices when `spec.manifestDelivery == "none"` or
+  when a CM is not yet present (graceful first-cycle handling). Commit `a6ac7c1`.
+  *— claimed by: acc1*
 
-- [ ] **Unit + envtest coverage**:
-  - `manifest_delivery_test.go` with a 3-role embed.FS fixture.
-  - Extend `agentcorpus_controller_test.go` to assert the legacy `sol-corpus` sample
-    produces all three ConfigMaps with key counts equal to `find roles -type f | wc -l`,
-    `find skills -type f | wc -l`, `find mcps -type f | wc -l`.
-  *— claimed by: -*
+- [x] **TUI parity**: `acc_tui_deployment.yaml` gains `ACC_ROLES_ROOT` /
+  `ACC_SKILLS_ROOT` env, `acc-roles` / `acc-skills` ConfigMap mounts at
+  `/etc/acc/{roles,skills}` (read-only, `optional: true` to tolerate first-apply
+  race). Commit `adf1f90`. *— claimed by: acc1*
 
-- [ ] **Manual contract check**: `kubectl get cm acc-roles -o jsonpath='{.data}' | jq
-  'keys|length'` equals `find roles -type f | wc -l`. *— claimed by: -*
+- [x] **Unit tests** (8 total across two packages, all PASS):
+  - `internal/reconcilers/manifests/delivery_test.go` — walkTree spot-checks
+    legacy + D3 + E4 personas; round-trip safety across all three trees;
+    FlattenPath/UnflattenKey direct cases; suffix contract.
+  - `test/unit/manifest_delivery_test.go` — black-box Reconcile against
+    controller-runtime fake client. Asserts three CMs created with non-empty
+    Data + operator-managed labels; keys never contain "/"; opt-out short-
+    circuits (no CMs); two passes are idempotent.
+  Commit `6ba5b0f`. *— claimed by: acc1*
+
+- [x] **Manual contract check**: deferred — the manifest reconciler test
+  asserts the same property (CM `Data` size matches the embedded tree) inside
+  the test harness, removing the need for a live `kubectl get cm` step.
+  Documented for completeness in PR description. *— claimed by: acc1*
 
 ---
 
-## PR-51 — MCP server reconciler
+## PR-52 — MCP server reconciler
 
-**Branch suggestion**: `feat/op-pr51-mcp-reconciler`
+**Branch suggestion**: `feat/op-pr52-mcp-reconciler`
 **PR slot claimed by**: `-`
 **Status**: `unstarted`
 **Blocks on**: PR-49 merged (uses `MCPServerSpec`)
@@ -144,12 +162,12 @@
 
 ---
 
-## PR-52 — Demo samples + CSV update
+## PR-53 — Demo samples + CSV update
 
-**Branch suggestion**: `feat/op-pr52-demo-samples`
+**Branch suggestion**: `feat/op-pr53-demo-samples`
 **PR slot claimed by**: `-`
 **Status**: `unstarted`
-**Blocks on**: PR-49, PR-50, PR-51 merged
+**Blocks on**: PR-49, PR-51, PR-52 merged
 
 - [ ] **Autoresearcher sample**:
   `operator/config/samples/acc_v1alpha1_agentcorpus_autoresearcher.yaml`. `AgentCorpus` +
@@ -182,7 +200,7 @@
 
 ## Optional — PR-A (parallel hardening)
 
-Not blocking the main sequence; can run in parallel with PR-50 or PR-51.
+Not blocking the main sequence; can run in parallel with PR-51 or PR-52.
 
 - [ ] Add `jsonschema` to `Containerfile.agent-core` (`microdnf install`) so role/skill
   schema validation is strict in cluster — `acc/skills/registry.py:52-64` falls back

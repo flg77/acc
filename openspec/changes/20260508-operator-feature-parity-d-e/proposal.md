@@ -5,7 +5,7 @@
 | Change ID  | 20260508-operator-feature-parity-d-e                     |
 | Date       | 2026-05-08                                               |
 | Status     | Draft                                                    |
-| PR slots   | this proposal lands as #48; implementation in #49 → #52  |
+| PR slots   | this proposal lands as #48; implementation in #49, #51, #52, #53 (drift: an unrelated docs PR took #50) |
 | Depends on | D1–D6 (coding-split-skills, PRs #34–#40), E1–E6 (autoresearcher, PRs #41–#46) |
 
 ---
