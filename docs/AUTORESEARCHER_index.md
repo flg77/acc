@@ -92,3 +92,33 @@ Operators familiar with Example No. 1 will recognise the
 `run.sh` / `verify.sh` / `clean.sh` / `.env.example` shape
 verbatim. The new bits are wire-shape additions, not workflow
 re-invention.
+
+---
+
+## See also — Podman Desktop extension
+
+The autoresearcher demo can be driven entirely from inside
+Podman Desktop via the
+**[acc-podman-desktop](https://github.com/flg77/acc-podman-desktop)**
+extension.  Operators living in PD get:
+
+* **Stack panel** — bring the AUTORESEARCHER profile up with one
+  checkbox; live container status mirrors `acc-deploy.sh status`.
+* **Examples panel** — topic-slug input → `--topic <slug>`;
+  streaming stdout/stderr in the panel; post-run reads
+  `runs/<topic>-<date>/.verification.json` and renders the
+  citation report inline.
+* **Cluster topology panel** — the same six research personas
+  that the TUI's prompt pane (PR #29) renders, surfaced as a
+  webview against the same NATS subscription.
+* **Compliance + Performance dashboards** — OWASP-LLM violation
+  log + Cat-A trigger summary + per-MCP `capability_stats` +
+  the cost-cap progress bar driven by E1's `tokens_used` /
+  `max_run_tokens` fields documented in
+  `AUTORESEARCHER_implementation.md § E1`.
+
+Same wire format (msgpack-of-JSON over NATS).  See
+[`docs/EXTENSION_implementation.md`](https://github.com/flg77/acc-podman-desktop/blob/main/docs/EXTENSION_implementation.md)
+for the panel-side module breakdown and
+[`docs/DEMO_PD_extension.md`](https://github.com/flg77/acc-podman-desktop/blob/main/docs/DEMO_PD_extension.md)
+for the operator walkthrough.
