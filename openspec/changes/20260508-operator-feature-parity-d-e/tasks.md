@@ -74,9 +74,9 @@
 
 ---
 
-## PR-50 — Manifest delivery reconciler
+## PR-51 — Manifest delivery reconciler
 
-**Branch**: `feat/op-pr50-manifest-delivery`
+**Branch**: `feat/op-pr50-manifest-delivery` (branch named when PR was expected to be #50; landed as #51 due to drift)
 **PR slot claimed by**: `acc1` (host 10.199.12.91 — Claude instance)
 **Status**: `in-progress` since 2026-05-09
 **Blocks on**: PR-49 merged ✅ (uses the new `ManifestDelivery` field)
@@ -114,9 +114,9 @@
 
 ---
 
-## PR-51 — MCP server reconciler
+## PR-52 — MCP server reconciler
 
-**Branch suggestion**: `feat/op-pr51-mcp-reconciler`
+**Branch suggestion**: `feat/op-pr52-mcp-reconciler`
 **PR slot claimed by**: `-`
 **Status**: `unstarted`
 **Blocks on**: PR-49 merged (uses `MCPServerSpec`)
@@ -144,12 +144,12 @@
 
 ---
 
-## PR-52 — Demo samples + CSV update
+## PR-53 — Demo samples + CSV update
 
-**Branch suggestion**: `feat/op-pr52-demo-samples`
+**Branch suggestion**: `feat/op-pr53-demo-samples`
 **PR slot claimed by**: `-`
 **Status**: `unstarted`
-**Blocks on**: PR-49, PR-50, PR-51 merged
+**Blocks on**: PR-49, PR-51, PR-52 merged
 
 - [ ] **Autoresearcher sample**:
   `operator/config/samples/acc_v1alpha1_agentcorpus_autoresearcher.yaml`. `AgentCorpus` +
@@ -182,7 +182,7 @@
 
 ## Optional — PR-A (parallel hardening)
 
-Not blocking the main sequence; can run in parallel with PR-50 or PR-51.
+Not blocking the main sequence; can run in parallel with PR-51 or PR-52.
 
 - [ ] Add `jsonschema` to `Containerfile.agent-core` (`microdnf install`) so role/skill
   schema validation is strict in cluster — `acc/skills/registry.py:52-64` falls back
