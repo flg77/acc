@@ -36,3 +36,8 @@ test/results/
 # runs/<topic-slug>-<YYYYMMDD>/ — gitignored so report drafts never
 # leak into commits.
 runs/
+
+# Operator dev tooling: controller-gen, kustomize, envtest binaries
+# land here when the operator/Makefile downloads them. Refetched per
+# developer.
+operator/bin/

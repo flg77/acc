@@ -65,6 +65,28 @@ type AgentCorpusSpec struct {
 	// Ignored when deployMode is standalone or rhoai.
 	// +optional
 	Edge *EdgeSpec `json:"edge,omitempty"`
+
+	// MCPServers configures shared MCP servers visible to every collective in
+	// this corpus. Each entry produces a Deployment + Service named
+	// acc-mcp-{name}, matching the URL convention used by mcps/<name>/mcp.yaml.
+	// The reconciler that owns these objects ships in PR-51 (this PR only adds
+	// the schema).
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	MCPServers []MCPServerSpec `json:"mcpServers,omitempty"`
+
+	// ManifestDelivery controls how the operator-baked roles/, skills/, and
+	// mcps/ trees reach agent pods.
+	//   "all"  (default) — operator emits ConfigMaps and mounts them at
+	//                      /etc/acc/{roles,skills,mcps} in every agent pod.
+	//   "none" — operator skips the mounts; users must bake the trees into
+	//            a custom agent image.
+	// The reconciler that emits the ConfigMaps and the volume injection in
+	// agent pods both ship in PR-50 (this PR only adds the schema).
+	// +kubebuilder:validation:Enum=all;none
+	// +kubebuilder:default=all
+	// +optional
+	ManifestDelivery string `json:"manifestDelivery,omitempty"`
 }
 
 // CollectiveRef references an AgentCollective resource in the same namespace.
@@ -284,6 +306,80 @@ type KafkaSpec struct {
 	CredentialsSecretRef *corev1.SecretReference `json:"credentialsSecretRef,omitempty"`
 }
 
+// MCPServerSpec configures one MCP server Deployment + Service.
+// The operator emits a Deployment named acc-mcp-{Name} and a Service of the
+// same name on Port. The Service name matches the url: field convention used
+// by mcps/<Name>/mcp.yaml so agents resolve the server without manifest edits.
+//
+// The reconciler that owns these objects ships in PR-51 of the
+// 20260508-operator-feature-parity-d-e openspec change.
+type MCPServerSpec struct {
+	// Name matches the directory name under mcps/ in the source tree
+	// (e.g. "web-search-brave"). DNS-label-safe.
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9-]{1,62}$`
+	// +kubebuilder:validation:MinLength=2
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+
+	// Image is the full container image reference for the MCP server,
+	// including registry, repository, and tag.
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
+
+	// Replicas sets the Deployment replica count.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=10
+	// +kubebuilder:default=1
+	// +optional
+	Replicas int32 `json:"replicas,omitempty"`
+
+	// Port is the JSON-RPC port the server listens on. Becomes the Service
+	// port and the targetPort. Convention across the bundled MCPs is 8080.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=8080
+	// +optional
+	Port int32 `json:"port,omitempty"`
+
+	// Env injects environment variables into the MCP container.
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// SecretEnv pulls env vars from referenced Secrets / ConfigMaps via
+	// envFrom (typical use: BRAVE_API_KEY for web-search-brave, an Anthropic
+	// or OpenAI key for web-browser-harness).
+	// +optional
+	SecretEnv []corev1.EnvFromSource `json:"secretEnv,omitempty"`
+
+	// ShmSizeMi mounts a Memory-medium emptyDir at /dev/shm sized to the
+	// requested mebibytes. Required for the browser-harness MCP because
+	// Chromium crashes intermittently with the default 64 MiB tmpfs;
+	// 256 MiB is browser-use's documented minimum.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4096
+	// +kubebuilder:default=0
+	// +optional
+	ShmSizeMi int32 `json:"shmSizeMi,omitempty"`
+
+	// Resources sets CPU/memory requests and limits for the MCP container.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// MCPServerStatus reports the operational state of one MCP server.
+// Aggregated into AgentCorpusStatus.MCPServerStatuses by the MCP reconciler.
+type MCPServerStatus struct {
+	// Ready is true when the Deployment's ReadyReplicas matches Replicas.
+	Ready bool `json:"ready"`
+
+	// Replicas is the live ReadyReplicas count from the Deployment.
+	Replicas int32 `json:"replicas"`
+
+	// ServiceURL is the in-cluster JSON-RPC URL agents should call.
+	// Format: http://acc-mcp-{name}.{namespace}.svc.cluster.local:{port}/rpc
+	ServiceURL string `json:"serviceURL,omitempty"`
+}
+
 // ObservabilitySpec configures telemetry collection.
 type ObservabilitySpec struct {
 	// Backend selects the telemetry backend.
@@ -384,6 +480,17 @@ type AgentCorpusStatus struct {
 	// KafkaBridgeReady is true when the Kafka bridge Deployment is available.
 	// +optional
 	KafkaBridgeReady bool `json:"kafkaBridgeReady,omitempty"`
+
+	// MCPServerStatuses reports the per-MCP-server state. Keyed by
+	// MCPServerSpec.Name. Populated by the MCP reconciler that ships in PR-51.
+	// +optional
+	MCPServerStatuses map[string]MCPServerStatus `json:"mcpServerStatuses,omitempty"`
+
+	// ManifestDeliveryReady is true when the acc-roles, acc-skills, and
+	// acc-mcps ConfigMaps have been emitted by the manifest delivery
+	// reconciler that ships in PR-50.
+	// +optional
+	ManifestDeliveryReady bool `json:"manifestDeliveryReady,omitempty"`
 
 	// CurrentVersion is the ACC version currently deployed.
 	// +optional

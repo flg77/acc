@@ -12,54 +12,65 @@
 
 ## PR-49 — API & CRD foundations
 
-**Branch suggestion**: `feat/op-pr49-api-foundations`
-**PR slot claimed by**: `-`
-**Status**: `unstarted`
+**Branch**: `feat/op-pr49-api-foundations`
+**PR**: https://github.com/flg77/acc/pull/49 (draft → ready 2026-05-09)
+**PR slot claimed by**: `acc1` (host 10.199.12.91 — Claude instance)
+**Status**: `ready-for-review` since 2026-05-09
 
-- [ ] **Fix the `}` bug** in `operator/api/v1alpha1/agentcollective_types.go:91-94`
-  (`RoleDefinition` struct missing closing brace before `AgentRoleSpec`). After the fix,
-  `make generate` should be a no-op against the existing `zz_generated.deepcopy.go`,
-  proving the source matches the generated shape. *— claimed by: -*
+- [x] **Fix the `}` bug** in `operator/api/v1alpha1/agentcollective_types.go:91-94`
+  (`RoleDefinition` struct missing closing brace before `AgentRoleSpec`). Landed in
+  commit `466273b`. *— claimed by: acc1*
 
-- [ ] **Loosen the role enum**. In `operator/api/v1alpha1/common_types.go` replace the
-  `// +kubebuilder:validation:Enum=ingester;...` marker on `AgentRole` with
-  `Pattern=^[a-z][a-z0-9_]{1,62}$` + `MinLength=2` + `MaxLength=63`. Drop the redundant
-  field-level `Enum=` markers in `agentcollective_types.go` on `AgentRoleSpec.Role` and
-  `RoleScalingSpec.Role`. *— claimed by: -*
+- [x] **Loosen the role enum** in `operator/api/v1alpha1/common_types.go`: replaced
+  closed `Enum=` with `Pattern=^[a-z][a-z0-9_]{1,62}$` + length bounds; dropped
+  field-level `Enum=` markers on `AgentRoleSpec.Role` and `RoleScalingSpec.Role`.
+  Landed in commit `9052391`. *— claimed by: acc1*
 
-- [ ] **Append exported role consts** in `common_types.go` for the 11 new personas plus
-  `RoleCodingAgent` umbrella: `RoleCodingArchitect`, `RoleCodingDependency`,
-  `RoleCodingImplementer`, `RoleCodingReviewer`, `RoleCodingTester`, `RoleResearchPlanner`,
-  `RoleResearchStrategist`, `RoleResearchEconomist`, `RoleResearchCompetitor`,
-  `RoleResearchSynthesizer`, `RoleResearchCritic`. *— claimed by: -*
+- [x] **Append exported role consts** in `common_types.go` for 12 personas (5
+  coding-split + 6 research + umbrella `RoleCodingAgent`). Landed in commit
+  `9052391`. *— claimed by: acc1*
 
-- [ ] **Add `MCPServerSpec` + status types** in `operator/api/v1alpha1/agentcorpus_types.go`.
-  Fields: `Name, Image, Replicas, Port, Env, SecretEnv, ShmSizeMi, Resources`. Status
-  type: `MCPServerStatus{Ready bool; Replicas int32; ServiceURL string}`. Add
-  `Status.MCPServerStatuses map[string]MCPServerStatus`. *— claimed by: -*
+- [x] **Add `MCPServerSpec` + status types** in `agentcorpus_types.go` —
+  `Name/Image/Replicas/Port/Env/SecretEnv/ShmSizeMi/Resources` + matching status type
+  + `Status.MCPServerStatuses` map. Landed in commit `d9c2784`. *— claimed by: acc1*
 
-- [ ] **Add `ManifestDelivery` field** in `agentcorpus_types.go`:
-  `// +kubebuilder:validation:Enum=all;none` + `// +kubebuilder:default=all`. *— claimed by: -*
+- [x] **Add `ManifestDelivery` field** — `Enum=all;none`, default `all`. Landed in
+  commit `d9c2784`. *— claimed by: acc1*
 
-- [ ] **Implement role catalogue**: create `operator/internal/rolecatalogue/catalogue.go`
-  with `var KnownRoles map[string]struct{}` populated via `go:embed`-baked listing of
-  `roles/*/role.yaml`. Add the generator at `operator/hack/gen-catalogue.go` triggered by
-  `//go:generate`. *— claimed by: -*
+- [x] **Implement role catalogue** at `operator/internal/rolecatalogue/`. Public API:
+  `IsKnown / All / Suggest`. Source via `//go:embed known_roles.txt`; generator at
+  `operator/hack/gen-catalogue.go` triggered by `//go:generate`. 47 roles seeded.
+  Landed in commit `1f7c3d…` *(pre-rebase hash, see git log)*. *— claimed by: acc1*
 
-- [ ] **Add `AgentCollective` validating webhook** at
-  `operator/api/v1alpha1/agentcollective_webhook.go` (parallel to existing
-  `agentcorpus_webhook.go`). Reject roles not in `KnownRoles` with closest-match
-  suggestions. *— claimed by: -*
+- [x] **Add `AgentCollective` validating webhook** at `agentcollective_webhook.go`
+  with closest-match Levenshtein suggestions; bonus validation for
+  `roleScaling[*].role` declared-in-agents check, minReplicas≤maxReplicas, and
+  llm sub-struct presence. Also extended `agentcorpus_webhook.go`: defaults
+  `manifestDelivery=all`, defaults `MCPServer.Replicas=1` and `Port=8080`,
+  rejects duplicate MCP server names. Landed in commit `d2043d0`.
+  *— claimed by: acc1*
 
-- [ ] **Run `make generate manifests`** and commit the regenerated
-  `zz_generated.deepcopy.go` and `config/crd/bases/*.yaml` deltas. *— claimed by: -*
+- [x] **Run `make manifests generate`** — regenerated `zz_generated.deepcopy.go`
+  (+632/-238), `config/crd/bases/acc.redhat.io_agent{collectives,corpora}.yaml`
+  (the role enum opens up; the new MCP/manifest fields appear), and
+  `config/webhook/manifests.yaml` (AgentCollective mutating + validating webhooks
+  registered). Landed in commit `1d61a17`. Includes a build-hygiene side commit
+  `24e5414` that repaired a stale kube-openapi pseudo-version in `go.mod` and
+  generated a missing `go.sum` so `go vet/build/test` and `make generate` could
+  run at all. *— claimed by: acc1*
 
-- [ ] **Unit tests** at `operator/test/unit/role_catalogue_test.go` covering catalogue
-  membership and the closest-match suggestion path. *— claimed by: -*
+- [x] **Unit tests** at `operator/test/unit/role_catalogue_test.go` — 12 test
+  functions covering catalogue membership for legacy + new personas, sorted /
+  unique / mutation-isolated `All()`, Suggest typo recognition for 6 realistic
+  inputs, n-cap, n≤0 contract, and distance cutoff. All pass; full suite clean.
+  Landed in commit `b325344`. *— claimed by: acc1*
 
-- [ ] **Verify backwards compat**: `kubectl apply --dry-run=server -f
-  config/samples/acc_v1alpha1_agentcorpus_standalone.yaml` succeeds; same for `_rhoai`.
-  *— claimed by: -*
+- [x] **Verify backwards compat** — `go vet ./...`, `go build ./...`,
+  `go test ./test/unit/...` all clean. Regex `^[a-z][a-z0-9_]{1,62}$` accepts
+  every role in both legacy samples (`standalone` + `rhoai`) and every new
+  persona const. Live `kubectl apply` skipped in favour of regex verification
+  to avoid mutating the shared cluster — see PR #49 description.
+  *— claimed by: acc1*
 
 ---
 

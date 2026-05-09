@@ -37,8 +37,19 @@ spec:
         description: AgentCorpus is the primary resource representing a full ACC deployment.
         properties:
           apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
             type: string
           kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
             type: string
           metadata:
             type: object
@@ -46,10 +57,16 @@ spec:
             description: AgentCorpusSpec defines the desired state of an ACC deployment.
             properties:
               collectives:
-                description: Collectives lists references to AgentCollective resources this corpus manages.
+                description: |-
+                  Collectives lists references to AgentCollective resources this corpus manages.
+                  Each collective gets its own set of agent Deployments and ScaledObjects.
                 items:
+                  description: CollectiveRef references an AgentCollective resource
+                    in the same namespace.
                   properties:
                     name:
+                      description: Name is the metadata.name of the AgentCollective
+                        resource.
                       maxLength: 63
                       minLength: 1
                       type: string
@@ -60,52 +77,128 @@ spec:
                 minItems: 1
                 type: array
               deployMode:
+                allOf:
+                - enum:
+                  - standalone
+                  - rhoai
+                  - edge
+                - enum:
+                  - standalone
+                  - rhoai
+                  - edge
                 default: standalone
-                description: DeployMode selects the infrastructure profile.
-                enum:
-                - standalone
-                - rhoai
+                description: |-
+                  DeployMode selects the infrastructure profile.
+                  "standalone" — local dev / CI / Podman Compose.
+                  "edge" — MicroShift / K3s / production edge node; NATS runs as a leaf node
+                            connecting to a datacenter hub when network is available.
+                  "rhoai" — OpenShift datacenter with RHOAI GPU inference.
                 type: string
+              edge:
+                description: |-
+                  Edge configures edge-specific behaviour (deployMode=edge only).
+                  Ignored when deployMode is standalone or rhoai.
+                properties:
+                  hubCollectiveId:
+                    description: |-
+                      HubCollectiveID is the collective ID of the datacenter hub that edge
+                      agents should delegate complex tasks to (ACC-9 bridge protocol).
+                      Rendered as ACC_HUB_COLLECTIVE_ID in agent pod environments.
+                    type: string
+                  hubNatsUrl:
+                    description: |-
+                      HubNatsUrl is the NATS leaf node remote URL of the datacenter hub.
+                      When set, the operator renders a leafnodes block in nats.conf so the
+                      local NATS server connects to the hub and forwards bridge subjects.
+                      Format: nats-leaf://hub.example.com:7422
+                    type: string
+                  hubRegistry:
+                    description: |-
+                      HubRegistry is the container image registry to pull from when the
+                      edge node has connectivity to the hub (image pull on reconnect).
+                      Defaults to spec.imageRegistry when empty.
+                    type: string
+                  redisMaxMemoryMb:
+                    default: 512
+                    description: |-
+                      RedisMaxMemoryMB caps Redis working memory (MiB) to prevent OOM on
+                      edge hardware. When > 0, sets Redis maxmemory and maxmemory-policy.
+                    format: int32
+                    minimum: 64
+                    type: integer
+                  redisMaxMemoryPolicy:
+                    default: allkeys-lru
+                    description: RedisMaxMemoryPolicy controls Redis eviction when
+                      maxmemory is reached.
+                    enum:
+                    - allkeys-lru
+                    - allkeys-lfu
+                    - volatile-lru
+                    - noeviction
+                    type: string
+                type: object
               governance:
                 description: Governance configures the 3-tier rule system.
                 properties:
                   categoryA:
+                    description: CategoryA configures immutable constitutional rule
+                      enforcement.
                     properties:
                       wasmConfigMapRef:
+                        description: |-
+                          WASMConfigMapRef names the ConfigMap holding the compiled
+                          category_a.wasm blob to mount into each agent pod.
                         minLength: 1
                         type: string
                     required:
                     - wasmConfigMapRef
                     type: object
                   categoryB:
+                    description: CategoryB configures the live-updatable OPA bundle
+                      server.
                     properties:
                       bundlePVCSize:
                         default: 500Mi
+                        description: BundlePVCSize is the PVC size for the bundle
+                          store.
                         type: string
                       bundleServerImage:
                         default: openpolicyagent/opa:latest
+                        description: BundleServerImage is the OPA bundle server image.
                         type: string
                       pollIntervalSeconds:
                         default: 30
+                        description: PollIntervalSeconds controls how often agent
+                          OPA sidecars poll the bundle server.
+                        format: int32
                         maximum: 300
                         minimum: 10
                         type: integer
-                        format: int32
                     type: object
                   categoryC:
+                    description: CategoryC configures adaptive rule generation by
+                      the arbiter.
                     properties:
                       confidenceThreshold:
+                        description: |-
+                          ConfidenceThreshold is the minimum ICL confidence an arbiter must have
+                          before signing a Category C rule. Expressed as a decimal string, e.g. "0.80".
                         pattern: ^0\.[0-9]+$|^1\.0+$
                         type: string
                       maxRulesPerCollective:
                         default: 100
+                        description: MaxRulesPerCollective caps the number of active
+                          Cat-C rules.
+                        format: int32
                         maximum: 1000
                         minimum: 1
                         type: integer
-                        format: int32
                     type: object
                   gatekeeperIntegration:
                     default: false
+                    description: |-
+                      GatekeeperIntegration enables syncing Category A rules as OPA Gatekeeper
+                      ConstraintTemplates (requires Gatekeeper to be installed cluster-wide).
                     type: boolean
                 required:
                 - categoryA
@@ -114,39 +207,88 @@ spec:
                 type: object
               imageRegistry:
                 default: registry.access.redhat.com
+                description: ImageRegistry is the base registry for acc-agent-core
+                  and infrastructure images.
                 type: string
               infrastructure:
                 description: Infrastructure configures the shared backing services.
                 properties:
                   milvus:
+                    description: |-
+                      Milvus configures the datacenter vector DB (rhoai mode only).
+                      Required when deployMode=rhoai; ignored in standalone mode.
                     properties:
                       collectionPrefix:
                         default: acc_
-                        type: string
-                      uri:
-                        minLength: 1
+                        description: CollectionPrefix is prepended to all ACC Milvus
+                          collection names.
                         type: string
                       credentialsSecretRef:
+                        description: CredentialsSecretRef references a Secret with
+                          milvus_user / milvus_password.
                         properties:
                           name:
+                            description: name is unique within a namespace to reference
+                              a secret resource.
                             type: string
                           namespace:
+                            description: namespace defines the space within which
+                              the secret name must be unique.
                             type: string
                         type: object
+                        x-kubernetes-map-type: atomic
+                      uri:
+                        description: URI is the Milvus gRPC endpoint.
+                        minLength: 1
+                        type: string
                     required:
                     - uri
                     type: object
                   nats:
+                    description: NATS configures the JetStream StatefulSet.
                     properties:
                       replicas:
                         default: 1
+                        description: Replicas sets the NATS cluster size (1 = single-node,
+                          3 = clustered).
                         format: int32
                         maximum: 5
                         minimum: 1
                         type: integer
                       resources:
-                        description: ResourceRequirements describes the compute resource requirements.
+                        description: Resources sets CPU/memory for NATS pods.
                         properties:
+                          claims:
+                            description: |-
+                              Claims lists the names of resources, defined in spec.resourceClaims,
+                              that are used by this container.
+
+                              This is an alpha field and requires enabling the
+                              DynamicResourceAllocation feature gate.
+
+                              This field is immutable. It can only be set for containers.
+                            items:
+                              description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name must match the name of one entry in pod.spec.resourceClaims of
+                                    the Pod where this field is used. It makes that resource available
+                                    inside a container.
+                                  type: string
+                                request:
+                                  description: |-
+                                    Request is the name chosen for a request in the referenced claim.
+                                    If empty, everything from the claim is made available, otherwise
+                                    only the result of this request.
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
                           limits:
                             additionalProperties:
                               anyOf:
@@ -154,6 +296,9 @@ spec:
                               - type: string
                               pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                               x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                             type: object
                           requests:
                             additionalProperties:
@@ -162,32 +307,73 @@ spec:
                               - type: string
                               pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                               x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                             type: object
                         type: object
                       storageClass:
+                        description: StorageClass for the JetStream PVC.
                         type: string
                       storageSize:
                         default: 2Gi
+                        description: StorageSize for JetStream persistence.
                         type: string
                       version:
                         default: "2.10"
+                        description: Version is the NATS server image tag.
                         pattern: ^[0-9]+\.[0-9]+.*$
                         type: string
                     required:
-                    - version
                     - replicas
+                    - version
                     type: object
                   redis:
+                    description: Redis configures the working memory store.
                     properties:
                       replicas:
                         default: 1
+                        description: Replicas (1 = standalone, 3 = Sentinel mode).
                         format: int32
                         maximum: 6
                         minimum: 1
                         type: integer
                       resources:
-                        description: ResourceRequirements describes the compute resource requirements.
+                        description: Resources sets CPU/memory for Redis pods.
                         properties:
+                          claims:
+                            description: |-
+                              Claims lists the names of resources, defined in spec.resourceClaims,
+                              that are used by this container.
+
+                              This is an alpha field and requires enabling the
+                              DynamicResourceAllocation feature gate.
+
+                              This field is immutable. It can only be set for containers.
+                            items:
+                              description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name must match the name of one entry in pod.spec.resourceClaims of
+                                    the Pod where this field is used. It makes that resource available
+                                    inside a container.
+                                  type: string
+                                request:
+                                  description: |-
+                                    Request is the name chosen for a request in the referenced claim.
+                                    If empty, everything from the claim is made available, otherwise
+                                    only the result of this request.
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
                           limits:
                             additionalProperties:
                               anyOf:
@@ -195,6 +381,9 @@ spec:
                               - type: string
                               pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                               x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                             type: object
                           requests:
                             additionalProperties:
@@ -203,98 +392,474 @@ spec:
                               - type: string
                               pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                               x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                             type: object
                         type: object
                       storageSize:
                         default: 1Gi
+                        description: StorageSize for Redis persistence PVC.
                         type: string
                       version:
                         default: "6"
+                        description: Version selects the UBI Redis image tag.
                         type: string
                     required:
-                    - version
                     - replicas
+                    - version
                     type: object
                 required:
                 - nats
                 - redis
                 type: object
               kafka:
+                description: |-
+                  Kafka configures the optional NATS-to-Kafka audit bridge.
+                  Kafka itself is NOT installed by the operator.
                 properties:
                   auditTopic:
                     default: acc.audit.all
+                    description: AuditTopic is the Kafka topic for all signal audit
+                      records.
                     type: string
                   bootstrapServers:
+                    description: |-
+                      BootstrapServers is a comma-separated list of Kafka broker addresses.
+                      The operator TCP-probes these to verify connectivity.
                     minLength: 1
                     type: string
                   bridgeReplicas:
                     default: 1
+                    description: BridgeReplicas sets the number of bridge Deployment
+                      replicas.
                     format: int32
                     maximum: 10
                     minimum: 1
                     type: integer
                   credentialsSecretRef:
+                    description: |-
+                      CredentialsSecretRef references a Secret with kafka_sasl_username /
+                      kafka_sasl_password keys.
                     properties:
                       name:
+                        description: name is unique within a namespace to reference
+                          a secret resource.
                         type: string
                       namespace:
+                        description: namespace defines the space within which the
+                          secret name must be unique.
                         type: string
                     type: object
+                    x-kubernetes-map-type: atomic
                   signalTopicsPrefix:
                     default: acc.signals
+                    description: SignalTopicsPrefix is the prefix for per-signal-type
+                      Kafka topics.
                     type: string
                 required:
                 - bootstrapServers
                 type: object
+              manifestDelivery:
+                default: all
+                description: |-
+                  ManifestDelivery controls how the operator-baked roles/, skills/, and
+                  mcps/ trees reach agent pods.
+                    "all"  (default) — operator emits ConfigMaps and mounts them at
+                                       /etc/acc/{roles,skills,mcps} in every agent pod.
+                    "none" — operator skips the mounts; users must bake the trees into
+                             a custom agent image.
+                  The reconciler that emits the ConfigMaps and the volume injection in
+                  agent pods both ship in PR-50 (this PR only adds the schema).
+                enum:
+                - all
+                - none
+                type: string
+              mcpServers:
+                description: |-
+                  MCPServers configures shared MCP servers visible to every collective in
+                  this corpus. Each entry produces a Deployment + Service named
+                  acc-mcp-{name}, matching the URL convention used by mcps/<name>/mcp.yaml.
+                  The reconciler that owns these objects ships in PR-51 (this PR only adds
+                  the schema).
+                items:
+                  description: |-
+                    MCPServerSpec configures one MCP server Deployment + Service.
+                    The operator emits a Deployment named acc-mcp-{Name} and a Service of the
+                    same name on Port. The Service name matches the url: field convention used
+                    by mcps/<Name>/mcp.yaml so agents resolve the server without manifest edits.
+
+                    The reconciler that owns these objects ships in PR-51 of the
+                    20260508-operator-feature-parity-d-e openspec change.
+                  properties:
+                    env:
+                      description: Env injects environment variables into the MCP
+                        container.
+                      items:
+                        description: EnvVar represents an environment variable present
+                          in a Container.
+                        properties:
+                          name:
+                            description: Name of the environment variable. Must be
+                              a C_IDENTIFIER.
+                            type: string
+                          value:
+                            description: |-
+                              Variable references $(VAR_NAME) are expanded
+                              using the previously defined environment variables in the container and
+                              any service environment variables. If a variable cannot be resolved,
+                              the reference in the input string will be unchanged. Double $$ are reduced
+                              to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                              "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                              Escaped references will never be expanded, regardless of whether the variable
+                              exists or not.
+                              Defaults to "".
+                            type: string
+                          valueFrom:
+                            description: Source for the environment variable's value.
+                              Cannot be used if value is not empty.
+                            properties:
+                              configMapKeyRef:
+                                description: Selects a key of a ConfigMap.
+                                properties:
+                                  key:
+                                    description: The key to select.
+                                    type: string
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                  optional:
+                                    description: Specify whether the ConfigMap or
+                                      its key must be defined
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              fieldRef:
+                                description: |-
+                                  Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                                  spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                                properties:
+                                  apiVersion:
+                                    description: Version of the schema the FieldPath
+                                      is written in terms of, defaults to "v1".
+                                    type: string
+                                  fieldPath:
+                                    description: Path of the field to select in the
+                                      specified API version.
+                                    type: string
+                                required:
+                                - fieldPath
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              resourceFieldRef:
+                                description: |-
+                                  Selects a resource of the container: only resources limits and requests
+                                  (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                                properties:
+                                  containerName:
+                                    description: 'Container name: required for volumes,
+                                      optional for env vars'
+                                    type: string
+                                  divisor:
+                                    anyOf:
+                                    - type: integer
+                                    - type: string
+                                    description: Specifies the output format of the
+                                      exposed resources, defaults to "1"
+                                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                    x-kubernetes-int-or-string: true
+                                  resource:
+                                    description: 'Required: resource to select'
+                                    type: string
+                                required:
+                                - resource
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              secretKeyRef:
+                                description: Selects a key of a secret in the pod's
+                                  namespace
+                                properties:
+                                  key:
+                                    description: The key of the secret to select from.  Must
+                                      be a valid secret key.
+                                    type: string
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                  optional:
+                                    description: Specify whether the Secret or its
+                                      key must be defined
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            type: object
+                        required:
+                        - name
+                        type: object
+                      type: array
+                    image:
+                      description: |-
+                        Image is the full container image reference for the MCP server,
+                        including registry, repository, and tag.
+                      minLength: 1
+                      type: string
+                    name:
+                      description: |-
+                        Name matches the directory name under mcps/ in the source tree
+                        (e.g. "web-search-brave"). DNS-label-safe.
+                      maxLength: 63
+                      minLength: 2
+                      pattern: ^[a-z][a-z0-9-]{1,62}$
+                      type: string
+                    port:
+                      default: 8080
+                      description: |-
+                        Port is the JSON-RPC port the server listens on. Becomes the Service
+                        port and the targetPort. Convention across the bundled MCPs is 8080.
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                    replicas:
+                      default: 1
+                      description: Replicas sets the Deployment replica count.
+                      format: int32
+                      maximum: 10
+                      minimum: 0
+                      type: integer
+                    resources:
+                      description: Resources sets CPU/memory requests and limits for
+                        the MCP container.
+                      properties:
+                        claims:
+                          description: |-
+                            Claims lists the names of resources, defined in spec.resourceClaims,
+                            that are used by this container.
+
+                            This is an alpha field and requires enabling the
+                            DynamicResourceAllocation feature gate.
+
+                            This field is immutable. It can only be set for containers.
+                          items:
+                            description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                            properties:
+                              name:
+                                description: |-
+                                  Name must match the name of one entry in pod.spec.resourceClaims of
+                                  the Pod where this field is used. It makes that resource available
+                                  inside a container.
+                                type: string
+                              request:
+                                description: |-
+                                  Request is the name chosen for a request in the referenced claim.
+                                  If empty, everything from the claim is made available, otherwise
+                                  only the result of this request.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        limits:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Limits describes the maximum amount of compute resources allowed.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                        requests:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Requests describes the minimum amount of compute resources required.
+                            If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                            otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                      type: object
+                    secretEnv:
+                      description: |-
+                        SecretEnv pulls env vars from referenced Secrets / ConfigMaps via
+                        envFrom (typical use: BRAVE_API_KEY for web-search-brave, an Anthropic
+                        or OpenAI key for web-browser-harness).
+                      items:
+                        description: EnvFromSource represents the source of a set
+                          of ConfigMaps
+                        properties:
+                          configMapRef:
+                            description: The ConfigMap to select from
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the ConfigMap must be
+                                  defined
+                                type: boolean
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          prefix:
+                            description: An optional identifier to prepend to each
+                              key in the ConfigMap. Must be a C_IDENTIFIER.
+                            type: string
+                          secretRef:
+                            description: The Secret to select from
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret must be defined
+                                type: boolean
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                      type: array
+                    shmSizeMi:
+                      default: 0
+                      description: |-
+                        ShmSizeMi mounts a Memory-medium emptyDir at /dev/shm sized to the
+                        requested mebibytes. Required for the browser-harness MCP because
+                        Chromium crashes intermittently with the default 64 MiB tmpfs;
+                        256 MiB is browser-use's documented minimum.
+                      format: int32
+                      maximum: 4096
+                      minimum: 0
+                      type: integer
+                  required:
+                  - image
+                  - name
+                  type: object
+                maxItems: 16
+                type: array
               observability:
+                description: Observability configures OTel collector and Prometheus
+                  rules.
                 properties:
                   backend:
+                    allOf:
+                    - enum:
+                      - log
+                      - otel
+                    - enum:
+                      - log
+                      - otel
                     default: log
-                    enum:
-                    - log
-                    - otel
+                    description: Backend selects the telemetry backend.
                     type: string
                   grafanaDashboard:
                     default: false
+                    description: GrafanaDashboard enables creation of a ConfigMap-based
+                      Grafana dashboard.
                     type: boolean
                   otelCollector:
+                    description: |-
+                      OTelCollector configures the OpenTelemetry collector deployment.
+                      Required when backend=otel.
                     properties:
                       endpoint:
+                        description: Endpoint is the OTLP gRPC/HTTP endpoint to export
+                          telemetry to.
                         minLength: 1
                         type: string
                       serviceName:
                         default: acc-agent
+                        description: ServiceName is the OTel service.name resource
+                          attribute.
                         type: string
                       tlsInsecure:
                         default: false
+                        description: |-
+                          TLSInsecure disables TLS verification for the remote OTLP endpoint.
+                          Use only in development environments.
                         type: boolean
                     required:
                     - endpoint
                     type: object
                   prometheusRules:
                     default: true
+                    description: PrometheusRules enables creation of PrometheusRule
+                      CRs for ACC alerts.
                     type: boolean
                 required:
                 - backend
                 type: object
               upgradePolicy:
+                description: UpgradePolicy controls how the operator handles ACC version
+                  upgrades.
                 properties:
                   minKafkaVersion:
+                    description: |-
+                      MinKafkaVersion is the minimum Kafka broker version required for bridge
+                      compatibility. Operator warns but does not block if Kafka is older.
                     type: string
                   mode:
+                    allOf:
+                    - enum:
+                      - auto
+                      - manual
+                    - enum:
+                      - auto
+                      - manual
                     default: auto
-                    enum:
-                    - auto
-                    - manual
+                    description: Mode selects the upgrade strategy.
                     type: string
                   requireApproval:
                     default: false
+                    description: |-
+                      RequireApproval forces the operator to pause before upgrading shared
+                      infrastructure components (NATS, Redis). When true, the operator writes
+                      a Warning Event and sets UpgradeApprovalPending=True, then waits for the
+                      annotation acc.redhat.io/approve-upgrade=<version> to be applied.
                     type: boolean
                 required:
                 - mode
                 type: object
               version:
                 default: 0.1.0
+                description: |-
+                  Version pins the acc-agent-core image tag to deploy.
+                  Must be a valid SemVer string.
                 pattern: ^v?[0-9]+\.[0-9]+\.[0-9]+.*$
                 type: string
             required:
@@ -305,27 +870,62 @@ spec:
             - version
             type: object
           status:
-            description: AgentCorpusStatus reports the observed state of the full ACC deployment.
+            description: AgentCorpusStatus reports the observed state of the full
+              ACC deployment.
             properties:
               collectiveStatuses:
                 additionalProperties:
+                  description: CollectiveStatus reports per-collective operational
+                    state (embedded in AgentCorpus status).
                   properties:
                     conditions:
                       items:
+                        description: Condition contains details for one aspect of
+                          the current state of this API Resource.
                         properties:
                           lastTransitionTime:
+                            description: |-
+                              lastTransitionTime is the last time the condition transitioned from one status to another.
+                              This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
                             format: date-time
                             type: string
                           message:
+                            description: |-
+                              message is a human readable message indicating details about the transition.
+                              This may be an empty string.
+                            maxLength: 32768
                             type: string
                           observedGeneration:
+                            description: |-
+                              observedGeneration represents the .metadata.generation that the condition was set based upon.
+                              For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                              with respect to the current state of the instance.
                             format: int64
+                            minimum: 0
                             type: integer
                           reason:
+                            description: |-
+                              reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                              Producers of specific condition types may define expected values and meanings for this field,
+                              and whether the values are considered a guaranteed API.
+                              The value should be a CamelCase string.
+                              This field may not be empty.
+                            maxLength: 1024
+                            minLength: 1
+                            pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
                             type: string
                           status:
+                            description: status of the condition, one of True, False,
+                              Unknown.
+                            enum:
+                            - "True"
+                            - "False"
+                            - Unknown
                             type: string
                           type:
+                            description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                            maxLength: 316
+                            pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
                             type: string
                         required:
                         - lastTransitionTime
@@ -335,9 +935,6 @@ spec:
                         - type
                         type: object
                       type: array
-                      x-kubernetes-list-map-keys:
-                      - type
-                      x-kubernetes-list-type: map
                     desiredAgents:
                       additionalProperties:
                         format: int32
@@ -346,6 +943,13 @@ spec:
                     kserveReady:
                       type: boolean
                     phase:
+                      description: CollectivePhase represents the operational phase
+                        of a single AgentCollective.
+                      enum:
+                      - Pending
+                      - Progressing
+                      - Ready
+                      - Degraded
                       type: string
                     readyAgents:
                       additionalProperties:
@@ -355,23 +959,60 @@ spec:
                     scaledObjectsActive:
                       type: boolean
                   type: object
+                description: CollectiveStatuses maps collective name → its operational
+                  status.
                 type: object
               conditions:
+                description: |-
+                  Conditions contains the standard metav1.Condition set.
+                  Known types: Ready, InfrastructureReady, CollectivesReady,
+                  PrerequisitesMet, KafkaBridgeReady, UpgradeApprovalPending.
                 items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
                   properties:
                     lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
                       format: date-time
                       type: string
                     message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
                       type: string
                     observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
                       format: int64
+                      minimum: 0
                       type: integer
                     reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
                       type: string
                     status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
                       type: string
                     type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
                       type: string
                   required:
                   - lastTransitionTime
@@ -385,10 +1026,18 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               currentVersion:
+                description: CurrentVersion is the ACC version currently deployed.
                 type: string
               infrastructure:
+                description: Infrastructure reports the state of operator-managed
+                  shared components.
                 properties:
                   milvusConnected:
+                    type: boolean
+                  natsLeafConnected:
+                    description: |-
+                      NATSLeafConnected is true when the edge NATS leaf node has established
+                      a connection to the datacenter hub (deployMode=edge only).
                     type: boolean
                   natsReady:
                     type: boolean
@@ -404,30 +1053,95 @@ spec:
                     type: string
                 type: object
               kafkaBridgeReady:
+                description: KafkaBridgeReady is true when the Kafka bridge Deployment
+                  is available.
                 type: boolean
+              manifestDeliveryReady:
+                description: |-
+                  ManifestDeliveryReady is true when the acc-roles, acc-skills, and
+                  acc-mcps ConfigMaps have been emitted by the manifest delivery
+                  reconciler that ships in PR-50.
+                type: boolean
+              mcpServerStatuses:
+                additionalProperties:
+                  description: |-
+                    MCPServerStatus reports the operational state of one MCP server.
+                    Aggregated into AgentCorpusStatus.MCPServerStatuses by the MCP reconciler.
+                  properties:
+                    ready:
+                      description: Ready is true when the Deployment's ReadyReplicas
+                        matches Replicas.
+                      type: boolean
+                    replicas:
+                      description: Replicas is the live ReadyReplicas count from the
+                        Deployment.
+                      format: int32
+                      type: integer
+                    serviceURL:
+                      description: |-
+                        ServiceURL is the in-cluster JSON-RPC URL agents should call.
+                        Format: http://acc-mcp-{name}.{namespace}.svc.cluster.local:{port}/rpc
+                      type: string
+                  required:
+                  - ready
+                  - replicas
+                  type: object
+                description: |-
+                  MCPServerStatuses reports the per-MCP-server state. Keyed by
+                  MCPServerSpec.Name. Populated by the MCP reconciler that ships in PR-51.
+                type: object
               observedGeneration:
+                description: ObservedGeneration is the .metadata.generation this status
+                  reflects.
                 format: int64
                 type: integer
               pendingUpgradeVersion:
+                description: |-
+                  PendingUpgradeVersion is set when upgradePolicy.requireApproval=true and a
+                  version change is pending user approval.
                 type: string
               phase:
-                description: CorpusPhase represents the top-level operational phase.
+                description: Phase is the top-level operational state.
+                enum:
+                - Pending
+                - Progressing
+                - Ready
+                - Degraded
+                - Error
+                - UpgradeApprovalPending
                 type: string
               prerequisites:
+                description: |-
+                  Prerequisites reports the detected presence of each optional cluster dependency.
+                  Written by the PrerequisiteReconciler; read by downstream sub-reconcilers.
                 properties:
                   allMet:
+                    description: AllMet is true when every required prerequisite is
+                      satisfied.
                     type: boolean
                   gatekeeperInstalled:
+                    description: GatekeeperInstalled is true when templates.gatekeeper.sh
+                      is registered.
                     type: boolean
                   kafkaReachable:
+                    description: KafkaReachable is true when the configured Kafka
+                      bootstrap servers are TCP-reachable.
                     type: boolean
                   kedaInstalled:
+                    description: KEDAInstalled is true when the KEDA API group (keda.sh)
+                      is present.
                     type: boolean
                   kserveInstalled:
+                    description: KServeInstalled is true when serving.kserve.io is
+                      registered.
                     type: boolean
                   prometheusRulesSupported:
+                    description: PrometheusRulesSupported is true when monitoring.coreos.com
+                      is registered.
                     type: boolean
                   rhoaiInstalled:
+                    description: RHOAIInstalled is true when the ODH/RHOAI API group
+                      is registered.
                     type: boolean
                 type: object
             type: object

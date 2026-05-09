@@ -80,6 +80,18 @@ func (r *AgentCorpus) Default() {
 	if r.Spec.UpgradePolicy.Mode == "" {
 		r.Spec.UpgradePolicy.Mode = UpgradeModeAuto
 	}
+	if r.Spec.ManifestDelivery == "" {
+		r.Spec.ManifestDelivery = "all"
+	}
+	for i := range r.Spec.MCPServers {
+		mcp := &r.Spec.MCPServers[i]
+		if mcp.Replicas == 0 {
+			mcp.Replicas = 1
+		}
+		if mcp.Port == 0 {
+			mcp.Port = 8080
+		}
+	}
 }
 
 // +kubebuilder:webhook:path=/validate-acc-redhat-io-v1alpha1-agentcorpus,mutating=false,failurePolicy=fail,sideEffects=None,groups=acc.redhat.io,resources=agentcorpora,verbs=create;update,versions=v1alpha1,name=vagentcorpus.kb.io,admissionReviewVersions=v1
@@ -153,6 +165,20 @@ func (r *AgentCorpus) validateAgentCorpus() error {
 			))
 		}
 		seen[c.Name] = true
+	}
+
+	// duplicate MCP server names not allowed; the reconciler in PR-51 derives
+	// the Service name from MCPServerSpec.Name, so collisions would be fatal.
+	mcpSeen := map[string]bool{}
+	for i, m := range r.Spec.MCPServers {
+		if mcpSeen[m.Name] {
+			allErrs = append(allErrs, field.Invalid(
+				field.NewPath("spec", "mcpServers").Index(i).Child("name"),
+				m.Name,
+				fmt.Sprintf("duplicate MCP server name %q", m.Name),
+			))
+		}
+		mcpSeen[m.Name] = true
 	}
 
 	if len(allErrs) == 0 {
