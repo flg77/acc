@@ -76,10 +76,10 @@
 
 ## PR-50 — Manifest delivery reconciler
 
-**Branch suggestion**: `feat/op-pr50-manifest-delivery`
-**PR slot claimed by**: `-`
-**Status**: `unstarted`
-**Blocks on**: PR-49 merged (uses the new `ManifestDelivery` field)
+**Branch**: `feat/op-pr50-manifest-delivery`
+**PR slot claimed by**: `acc1` (host 10.199.12.91 — Claude instance)
+**Status**: `in-progress` since 2026-05-09
+**Blocks on**: PR-49 merged ✅ (uses the new `ManifestDelivery` field)
 
 - [ ] **Implement `ManifestDeliveryReconciler`** at
   `operator/internal/reconcilers/manifests/delivery.go`. `embed.FS` over `roles/`,
