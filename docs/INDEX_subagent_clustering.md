@@ -76,3 +76,17 @@ others.
   index for Example No. 2 (autoresearcher demo, PRs #41-#46).
   Builds on this clustering foundation with iteration loop +
   cost cap + real research MCPs + six research personas.
+
+* **[acc-podman-desktop](https://github.com/flg77/acc-podman-desktop)**
+  — sibling Podman Desktop extension that surfaces the cluster
+  topology described here as a webview, mirroring the TUI
+  rendering described in `IMPLEMENTATION_subagent_clustering.md
+  § PR #29`.  Same wire format (msgpack-of-JSON over NATS), same
+  30 s grace window for finished clusters.  Operators using PD as
+  their primary container UI get the cluster panel without
+  installing the TUI.  See:
+  * [`docs/EXTENSION_implementation.md`](https://github.com/flg77/acc-podman-desktop/blob/main/docs/EXTENSION_implementation.md)
+    — module + wire-protocol reference (mirrors the format of
+    this index's `IMPLEMENTATION_subagent_clustering.md`).
+  * [`docs/DEMO_PD_extension.md`](https://github.com/flg77/acc-podman-desktop/blob/main/docs/DEMO_PD_extension.md)
+    — operator walkthrough.
