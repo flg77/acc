@@ -30,6 +30,16 @@ docs/competitive-analysis.md
 docs/PITCH_DECK.md
 docs/STRATEGIC_PITCH.md
 docs/PLAN_subagent_clustering.md
+
+# Operator's Obsidian-vault docs.  Canonical home is
+# C:\Users\micro\Documents\Notes\Notes\Development\AgenticCellCorpus\
+# (Agent Communication\, ACC Implementation\, …).  If any are ever
+# copied/symlinked into docs/ for cross-referencing, these patterns
+# keep them local-only.
+docs/Cell Communication *.md
+docs/Agent Communication *.md
+docs/ACC Implementation/
+docs/[0-9][0-9][0-9] - *.md
 test/results/
 
 # Autoresearcher per-run outputs (E5).  Each run lands at
