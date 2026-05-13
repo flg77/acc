@@ -58,17 +58,35 @@ class DashboardScreen(Screen):
             # Right: governance + compliance health + memory + LLM metrics
             with Vertical(id="right-panels"):
                 # Governance counters
+                # Proposal 003 PR-5 — each row now carries a one-line
+                # definition pulled from a single GOVERNANCE_TAXONOMY
+                # constant (NOT view-hardcoded — defined at module
+                # bottom).  Operators previously got raw counters with
+                # no explanation; now they get context too.
                 with Vertical(id="governance-panel", classes="info-panel"):
                     yield Label("GOVERNANCE", classes="panel-label")
                     yield Static(id="gov-cat-a")
+                    yield Static(id="gov-cat-a-def", classes="gov-definition")
                     yield Static(id="gov-cat-b")
+                    yield Static(id="gov-cat-b-def", classes="gov-definition")
                     yield Static(id="gov-cat-c")
+                    yield Static(id="gov-cat-c-def", classes="gov-definition")
                     # Compliance health score bar (REQ-TUI-019)
                     yield Label("COMPLIANCE HEALTH", classes="panel-label")
                     yield Static(id="compliance-health-value")
                     yield ProgressBar(
                         id="compliance-health-bar", total=100, show_eta=False
                     )
+
+                # Proposal 003 PR-5 — token-budget-per-cluster panel.
+                # Per the operator review: "Token Budget allocation
+                # overview of active agent cluster."  Reads
+                # snap.cluster_topology + sums member token util.
+                with Vertical(id="cluster-budget-panel", classes="info-panel"):
+                    yield Label(
+                        "TOKEN BUDGET BY CLUSTER", classes="panel-label",
+                    )
+                    yield Static(id="cluster-budget-content")
 
                 # Memory
                 with Vertical(id="memory-panel", classes="info-panel"):
@@ -104,6 +122,7 @@ class DashboardScreen(Screen):
         self._render_compliance_health(snap)
         self._render_memory(snap)
         self._render_llm_metrics(snap)
+        self._render_cluster_budgets(snap)
 
         ts = datetime.datetime.fromtimestamp(snap.last_updated_ts).strftime("%H:%M:%S") \
             if snap.last_updated_ts else "—"
@@ -134,15 +153,84 @@ class DashboardScreen(Screen):
                 card.refresh_from_snapshot(agent_snap)
 
     def _render_governance(self, snap: "CollectiveSnapshot") -> None:
+        # Counts on the primary line.
         self.query_one("#gov-cat-a", Static).update(
-            f"Cat-A triggers   {snap.total_cat_a_triggers:>4}"
+            f"[bold]Cat-A triggers[/bold]   {snap.total_cat_a_triggers:>4}"
         )
         self.query_one("#gov-cat-b", Static).update(
-            f"Cat-B deviations {snap.total_cat_b_deviations:>4}"
+            f"[bold]Cat-B deviations[/bold] {snap.total_cat_b_deviations:>4}"
         )
         self.query_one("#gov-cat-c", Static).update(
-            f"Cat-C rules      {snap.total_cat_c_rules:>4}"
+            f"[bold]Cat-C rules[/bold]      {snap.total_cat_c_rules:>4}"
         )
+        # Proposal 003 PR-5 — definition rows.  Source = a single
+        # GOVERNANCE_TAXONOMY constant at module bottom so the
+        # taxonomy text is editable in one place, not hard-coded in
+        # the view.
+        self.query_one("#gov-cat-a-def", Static).update(
+            f"[dim]{GOVERNANCE_TAXONOMY['cat_a']}[/dim]"
+        )
+        self.query_one("#gov-cat-b-def", Static).update(
+            f"[dim]{GOVERNANCE_TAXONOMY['cat_b']}[/dim]"
+        )
+        self.query_one("#gov-cat-c-def", Static).update(
+            f"[dim]{GOVERNANCE_TAXONOMY['cat_c']}[/dim]"
+        )
+
+    def _render_cluster_budgets(self, snap: "CollectiveSnapshot") -> None:
+        """Render per-cluster token budget rollup.
+
+        Proposal 003 PR-5.  Joins ``snap.cluster_topology`` (cluster
+        membership) with ``snap.agents`` (per-agent
+        token_budget_utilization) to produce one row per active
+        cluster.  Empty state shows a calm placeholder.
+
+        ``token_budget_utilization`` is a 0.0-1.0 fraction per agent;
+        the rollup shows the AVERAGE across cluster members (not the
+        sum — sum would exceed 100% for a 3-agent cluster) plus the
+        worst single agent so the operator can spot outliers.
+        """
+        try:
+            target = self.query_one("#cluster-budget-content", Static)
+        except Exception:
+            return
+        topology = getattr(snap, "cluster_topology", {}) or {}
+        if not topology:
+            target.update("[dim]No active agent clusters.[/dim]")
+            return
+
+        lines: list[str] = []
+        for cluster_id, row in topology.items():
+            target_role = row.get("target_role", "?")
+            members = row.get("members", {}) or {}
+            utils: list[float] = []
+            for agent_id in members:
+                agent = snap.agents.get(agent_id)
+                if agent is None:
+                    continue
+                utils.append(float(agent.token_budget_utilization))
+            if not utils:
+                continue
+            avg = sum(utils) / len(utils)
+            worst = max(utils)
+            avg_pct = avg * 100
+            worst_pct = worst * 100
+            colour = (
+                "red" if worst >= 0.90
+                else "yellow" if worst >= 0.75
+                else "green"
+            )
+            lines.append(
+                f"[cyan]{cluster_id[:10]}[/cyan] · [bold]{target_role}[/bold] · "
+                f"{len(utils)} agents  "
+                f"[{colour}]avg {avg_pct:>4.0f}%  worst {worst_pct:>4.0f}%[/{colour}]"
+            )
+        if not lines:
+            target.update(
+                "[dim]Clusters present but no token telemetry yet.[/dim]"
+            )
+            return
+        target.update("\n".join(lines))
 
     def _render_compliance_health(self, snap: "CollectiveSnapshot") -> None:
         """Render compliance health score bar (REQ-TUI-019)."""
@@ -205,3 +293,23 @@ class _RefreshMessage(Message):
 def _safe_id(agent_id: str) -> str:
     """Convert agent_id to a Textual-safe CSS id."""
     return agent_id.replace("-", "_").replace(".", "_")
+
+
+# Proposal 003 PR-5 — operator-facing one-line definitions for the
+# three governance categories.  Rendered alongside the raw counters
+# on the Soma / Dashboard screen so the operator gets context, not
+# just numbers.  Edit here, not in the view.
+GOVERNANCE_TAXONOMY: dict[str, str] = {
+    "cat_a": (
+        "constitutional — hard rules; "
+        "violation blocks the LLM call (e.g. A-017 skill outside allow-list)"
+    ),
+    "cat_b": (
+        "operational — soft setpoints; "
+        "deviation degrades compliance_health but does not block (e.g. token budget)"
+    ),
+    "cat_c": (
+        "learned — promoted from episodic patterns; "
+        "operator-reviewed before becoming Cat-A or Cat-B"
+    ),
+}

@@ -78,6 +78,31 @@ tag is the v0.2.0 cut.
 - **Snapshot fan-out** in `acc/tui/app.py:_apply_snapshot` now
   pushes the active snapshot into the Configuration screen too,
   so its live LLM-backends table refreshes per HEARTBEAT.  (PR-4.)
+- **TUI Performance: per-agent table extended.**  New columns
+  Cluster, Intent, Subagents, Active task.  Cluster cell shows
+  the short cluster_id when the agent is a member of an active
+  cluster (sourced from `snap.cluster_topology`); Intent shows
+  the first 80 chars of the agent's `task_progress_label`;
+  Subagents shows the cluster's total member count; Active task
+  shows `current/total` step + age since last heartbeat.
+  (PR-5 of proposal 003 — PR #58.)
+- **TUI Performance: CLUSTER OVERVIEW panel.**  Reuses the
+  ClusterPanel widget from the Prompt screen so the same
+  rendering produces consistent cluster_id / target_role /
+  members / skill_in_use info across screens.  (PR-5.)
+- **TUI Soma / Dashboard: governance counters get definitions.**
+  Each Cat-A / Cat-B / Cat-C counter row is paired with a
+  one-line definition pulled from a single
+  `GOVERNANCE_TAXONOMY` constant at `acc/tui/screens/dashboard.py`
+  module bottom (not view-hardcoded so the taxonomy text is
+  editable in one place).  (PR-5.)
+- **TUI Soma / Dashboard: TOKEN BUDGET BY CLUSTER panel.**  New
+  panel rolls up per-agent `token_budget_utilization` grouped by
+  `cluster_topology` membership; renders one row per active
+  cluster as `cluster_id · target_role · N agents · avg X% /
+  worst Y%` with colour coding (green < 75% / yellow < 90% /
+  red ≥ 90% on worst single agent).  Empty state shows a calm
+  placeholder.  (PR-5.)
 
 ### Fixed
 
