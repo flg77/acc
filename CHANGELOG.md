@@ -25,6 +25,19 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   for unmigrated roles.  Markdown section label flips between
   "Subroles (declared)" and "Subroles (directory-derived)" so
   operators see which surface populated the list.
+- **`acc/scheduler` package** — `Schedule` dataclass +
+  `ScheduleStore` (YAML round-trip) + `next_fire_time` cron
+  evaluator (subset: `* * * * *`, `*/N * * * *`, `M * * * *`,
+  `0 H * * *`, `M H * * *`).  Proposal 005.
+- **`acc-cli schedule` subcommand group** — `add` / `list` /
+  `remove` / `run-once`.  Run-once is the daemon entry-point;
+  operator wires it into cron / systemd-timer / Windows Task
+  Scheduler.  Fires due schedules as TASK_ASSIGN signals on
+  `acc.{cid}.task` with `from_agent=acc-scheduler`,
+  `task_type=SCHEDULED`, `plan_id=schedule-<name>`.
+- **`schedules/_example.yaml`** + `.gitignore` entry for
+  `schedules/*.yaml` (operator-local schedules stay out of git;
+  `_example.yaml` ships in-repo as a template).
 
 ## [0.2.0] — 2026-05-14 — TUI usability hardening (proposal 003)
 
