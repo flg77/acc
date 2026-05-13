@@ -8,6 +8,8 @@
 # =============================================================================
 
 role_definition:
+  # Proposal 004 — declared parent in the role hierarchy.
+  parent_role: coding_agent
   purpose: >
     Define interfaces, file layout, and module boundaries before any
     implementation begins.  Always single-instance per cluster — two

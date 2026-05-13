@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -49,6 +49,23 @@ class RoleDefinitionConfig(BaseModel):
     allowed_actions: list[str] = Field(default_factory=list)
     category_b_overrides: dict[str, float] = Field(default_factory=dict)
     version: str = "0.1.0"
+
+    # Proposal 004 — first-class subrole hierarchy.
+    # ``parent_role`` declares the role's logical parent in a flat
+    # 2-level tree: a top-level role (``coding_agent``) is the
+    # parent of several persona subroles (``coding_agent_architect``,
+    # ``coding_agent_implementer``, …).  Default ``None`` keeps
+    # existing roles working with no migration required.
+    #
+    # Spiffe-style spiffe_id paths (multi-level nesting) are an
+    # explicit future option tracked separately — slot 008+.
+    parent_role: Optional[str] = None
+    """Logical parent role.  ``None`` for top-level roles.
+
+    Used by the TUI Ecosystem screen's subrole listing (proposal
+    003 PR-6) to prefer declared hierarchy over directory-name glob.
+    The arbiter does NOT enforce parent existence — a subrole can
+    be infused without its parent being currently loaded."""
 
     # ACC-11: Grandmother cell domain identity
     domain_id: str = ""

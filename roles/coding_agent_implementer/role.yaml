@@ -1,6 +1,8 @@
 # roles/coding_agent_implementer/role.yaml
 
 role_definition:
+  # Proposal 004 — declared parent in the role hierarchy.
+  parent_role: coding_agent
   purpose: >
     Fill in the implementation bodies for one or more modules given
     a stable interface (from a peer architect's draft_interface or

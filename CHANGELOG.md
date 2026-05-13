@@ -9,9 +9,22 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
-## [Unreleased]
+## [Unreleased] — 0.3.0-dev cycle (slot 004+)
 
-(No changes yet — next development cycle starts here.)
+### Added
+
+- **`parent_role: str | None` on RoleDefinitionConfig** — proposal
+  004.  First-class subrole hierarchy.  Default `None` keeps every
+  existing role working with no migration.
+- **Migrated `coding_agent_*` roles** declare
+  `parent_role: coding_agent`.  Research roles stay flat
+  (no top-level `research` parent).
+- **Ecosystem subrole listing prefers declared parent_role.**  Two-
+  pass lookup in `_subrole_siblings`: declared (scans every
+  role.yaml's `parent_role`) → falls back to directory-name glob
+  for unmigrated roles.  Markdown section label flips between
+  "Subroles (declared)" and "Subroles (directory-derived)" so
+  operators see which surface populated the list.
 
 ## [0.2.0] — 2026-05-14 — TUI usability hardening (proposal 003)
 
