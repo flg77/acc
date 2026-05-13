@@ -47,6 +47,14 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   yaml purpose).  Warnings-only by default; `--strict` exits 1.
   Heuristic substring-match for shared morphology (`research`
   matches `researcher`).
+- **TUI Infuse form parity with CLI** — proposal 008.  The
+  TUI's `action_apply` now loads the selected role's full
+  `RoleDefinitionConfig.model_dump()` from disk and overlays the
+  9 form fields, so the published `role_definition` is a
+  superset of the CLI's wire shape (previously the TUI dropped
+  ~6 fields).  `category_b_overrides` preserves disk-only keys
+  and overlays only `token_budget` + `rate_limit_rpm`.  Closes
+  the known parity gap noted in v0.2.0.
 - **TUI Ecosystem: "Edit role.yaml" + "Edit role.md" buttons.**
   Proposal 007.  Spawns the operator's `$EDITOR` (resolved via
   env var with `$VISUAL` + platform fallback) on the selected

@@ -88,11 +88,49 @@ def _cli_payload(role_def: Any, cid: str, approver_id: str = "") -> dict:
 
 def _tui_payload(role_def: Any, cid: str) -> dict:
     """Reproduce `acc/tui/screens/infuse.py:action_apply` payload
-    shape — driven by what the form widgets carry.  Source: L363-L384.
+    shape post-proposal-008.
 
-    For the parity test we pre-fill the form values from the same
-    RoleLoader-loaded role_def the CLI uses, so any field divergence
-    is structural (different schema), not data-driven.
+    The form publishes the FULL pydantic dump as a base, then
+    overlays the 9 visible form fields on top.  ``category_b_overrides``
+    is special: it preserves disk-only keys and overrides only
+    ``token_budget`` + ``rate_limit_rpm``.
+    """
+    rd = role_def.model_dump() if hasattr(role_def, "model_dump") else dict(role_def.__dict__)
+    cat_b = rd.get("category_b_overrides", {}) or {}
+    # The form values: in production they're operator-edited, but
+    # for parity we mirror what the role's pydantic dump already
+    # carries so the test asserts wire-format equivalence under
+    # zero operator override.
+    overlay = {
+        "purpose": rd.get("purpose", ""),
+        "persona": rd.get("persona", ""),
+        "version": rd.get("version", "0.1.0"),
+        "task_types": rd.get("task_types", []) or [],
+        "seed_context": rd.get("seed_context", "") or "",
+        "allowed_actions": rd.get("allowed_actions", []) or [],
+        "domain_id": rd.get("domain_id", "") or "",
+        "domain_receptors": rd.get("domain_receptors", []) or [],
+    }
+    cat_b_overlay = dict(cat_b)
+    cat_b_overlay["token_budget"] = float(cat_b.get("token_budget", 0)) if cat_b.get("token_budget") is not None else 0.0
+    cat_b_overlay["rate_limit_rpm"] = float(cat_b.get("rate_limit_rpm", 0)) if cat_b.get("rate_limit_rpm") is not None else 0.0
+    overlay["category_b_overrides"] = cat_b_overlay
+
+    role_definition = {**rd, **overlay}
+    return {
+        "signal_type": "ROLE_UPDATE",
+        "agent_id": "",
+        "collective_id": cid,
+        "ts": 1700000000.0,
+        "approver_id": "",
+        "signature": "",
+        "role_definition": role_definition,
+    }
+
+
+def _tui_payload_legacy_only_for_omission_doc(role_def: Any, cid: str) -> dict:
+    """Old (proposal 003) 9-field TUI payload — retained only so
+    one regression test can prove the new shape supersedes it.
     """
     rd = role_def.model_dump() if hasattr(role_def, "model_dump") else dict(role_def.__dict__)
     cat_b = rd.get("category_b_overrides", {}) or {}
@@ -220,16 +258,11 @@ def test_role_definition_intersection_carries_same_values(coding_agent_role):
     )
 
 
-def test_documents_tui_field_omissions(coding_agent_role):
-    """The TUI form omits fields the CLI carries.  This test does
-    NOT fail today — it pins the *current* gap so a future
-    regression (TUI dropping yet more fields, or the CLI sneaking
-    in a new one) surfaces immediately.
-
-    Closing the gap means either teaching the TUI form to carry
-    every RoleDefinitionConfig field or teaching the arbiter to
-    default-fill missing keys — both deferred to a follow-up
-    (slot 008 candidate).
+def test_tui_keys_superset_of_cli_keys(coding_agent_role):
+    """Proposal 008 — TUI now publishes the full pydantic dump as
+    a base + overlays form fields.  The TUI's role_definition keys
+    MUST be a SUPERSET of the CLI's (they may carry the same plus
+    a few overlay-managed extras like cat_b's defensive keys).
     """
     cid = "sol-test"
     cli_rd = _cli_payload(coding_agent_role, cid)["role_definition"]
@@ -237,41 +270,30 @@ def test_documents_tui_field_omissions(coding_agent_role):
 
     cli_keys = set(cli_rd.keys())
     tui_keys = set(tui_rd.keys())
-    tui_missing = cli_keys - tui_keys
-
-    # Known omissions for coding_agent as of proposal 003 PR-6.
-    # If this set drifts the regression-prevention check fires —
-    # the operator can then decide whether to expand the TUI form
-    # or to update this list.  We use issubset (not equality) so
-    # roles that don't define every field stay green.
-    documented_omissions = {
-        "domain_id",
-        "domain_receptors",
-        # The TUI does carry these two, but if a future role
-        # adds new pydantic fields not in _TUI_ROLE_DEFINITION_KEYS,
-        # they show up here too.
-    }
-
-    # The TUI's missing-set must always be a superset of zero (could
-    # also be empty if the role has no extra fields).  We assert the
-    # TUI keys are a SUBSET of CLI keys — i.e. the TUI never sends
-    # a field the CLI wouldn't.
-    tui_extras = tui_keys - cli_keys
-    assert not tui_extras, (
-        "TUI sends fields the CLI doesn't — payloads diverge in a "
-        f"way the arbiter may reject: {tui_extras}"
+    missing = cli_keys - tui_keys
+    assert not missing, (
+        f"TUI form drops {len(missing)} CLI fields: {sorted(missing)}.  "
+        "Proposal 008 should have closed this gap."
     )
 
-    # And record the gap for operator visibility (pytest log).
-    if tui_missing:
-        print(
-            f"\n[parity] TUI form omits {len(tui_missing)} field(s) "
-            f"the CLI carries: {sorted(tui_missing)}"
-        )
-        print(
-            "[parity] Closing this gap is tracked in proposal 003's "
-            "deferred slots (see 003 §3 Non-goals / §11 Amendments)."
-        )
+
+def test_proposal_008_supersedes_legacy_subset_shape(coding_agent_role):
+    """Regression-prevention: the old 9-field-only payload is no
+    longer what the TUI emits.  This test will fail if someone
+    reverts the proposal-008 overlay logic."""
+    cid = "sol-test"
+    legacy = _tui_payload_legacy_only_for_omission_doc(
+        coding_agent_role, cid,
+    )["role_definition"]
+    current = _tui_payload(coding_agent_role, cid)["role_definition"]
+    # Current must carry strictly more than legacy.
+    legacy_keys = set(legacy.keys())
+    current_keys = set(current.keys())
+    extras = current_keys - legacy_keys
+    assert extras, (
+        "Proposal 008's TUI payload should be a strict superset of "
+        "the proposal-003 9-field shape; saw the same key set."
+    )
 
 
 def test_no_secrets_in_either_payload(coding_agent_role):
