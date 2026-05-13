@@ -57,3 +57,5 @@ operator/bin/
 # operator/internal/reconcilers/manifests/ can reach them. Repopulated
 # by `make sync-manifests`.
 operator/internal/reconcilers/manifests/data/
+schedules/*.yaml
+!schedules/_example.yaml

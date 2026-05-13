@@ -74,6 +74,7 @@ def _build_parser() -> argparse.ArgumentParser:
         trace_cmd,
         oversight_cmd,
         plan_cmd,
+        schedule_cmd,
     )
     role_cmd.register(sub)
     nats_cmd.register(sub)
@@ -81,6 +82,7 @@ def _build_parser() -> argparse.ArgumentParser:
     trace_cmd.register(sub)
     oversight_cmd.register(sub)
     plan_cmd.register(sub)
+    schedule_cmd.register_schedule_subparser(sub)
 
     return parser
 
