@@ -15,6 +15,9 @@ In-flight work for the **0.2.0** release.  Proposal 003 closes
 when PRs 1–6 of the TUI hardening series have all landed; that
 tag is the v0.2.0 cut.
 
+**PR-6 (closing) — landed.**  After PR #59 merges, all six PRs
+of proposal 003 are on `main` and the milestone is complete.
+
 ### Added
 
 - **TUI Ecosystem: `role.md` narrative surface.**  The role detail
@@ -103,6 +106,36 @@ tag is the v0.2.0 cut.
   worst Y%` with colour coding (green < 75% / yellow < 90% /
   red ≥ 90% on worst single agent).  Empty state shows a calm
   placeholder.  (PR-5.)
+- **TUI Ecosystem: directory-derived subrole listing.**  When the
+  selected role has sibling directories matching `<role>_*` glob
+  with a `role.yaml` (e.g. `coding_agent` → `coding_agent_architect`,
+  `coding_agent_implementer`, …), they're listed under a "Subroles
+  (directory-derived)" markdown section appended to the detail
+  pane's `role.md` view.  Labelled explicitly as directory-derived
+  because the first-class `parent_role` field is deferred to
+  proposal 004.  (PR-6 of proposal 003 — PR #59.)
+
+### Tests
+
+- **CLI ↔ TUI infuse parity** (`tests/test_infuse_parity.py`,
+  NEW, 7 cases).  Pins the ROLE_UPDATE payload envelope as
+  byte-equivalent across both surfaces (modulo `ts`), pins the
+  role_definition intersection-only parity (recursive — covers
+  nested `category_b_overrides`), documents the TUI form's
+  known field omissions vs the CLI's full pydantic
+  `model_dump()` so regression in either direction surfaces
+  immediately, and asserts that neither path leaks
+  secret-shaped tokens (`api_key=` / `password=` / …) in the
+  payload string form.  (PR-6.)
+
+### Known parity gap (deferred follow-up)
+
+The TUI Infuse form emits a 9-field subset of the full
+`RoleDefinitionConfig`.  The CLI emits the full pydantic
+`model_dump()`.  The test suite pins this state as the current
+reality; closing it (either by extending the TUI form or by
+teaching the arbiter to default-fill missing keys) is tracked
+as out-of-scope and deferred to a follow-up proposal.
 
 ### Fixed
 
