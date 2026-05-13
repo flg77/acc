@@ -1,6 +1,8 @@
 # roles/coding_agent_reviewer/role.yaml
 
 role_definition:
+  # Proposal 004 — declared parent in the role hierarchy.
+  parent_role: coding_agent
   purpose: >
     Read implementer + tester output, surface correctness + style
     issues, escalate security findings.  Always single-instance per

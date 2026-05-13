@@ -188,21 +188,61 @@ def _risk_cell(risk_level: str) -> str:
     return f"[{colour}]{risk_level}[/{colour}]"
 
 
-def _subrole_siblings(roles_root: Path, role_name: str) -> list[str]:
-    """Return sibling directories whose names start with ``<role>_``.
+def _subrole_siblings(
+    roles_root: Path, role_name: str,
+) -> tuple[list[str], str]:
+    """Return ``(siblings, source_label)`` for the role's children.
 
-    Proposal 003 PR-6 — read-only subrole surfacing.  Subroles today
-    are a directory-name convention (``coding_agent_architect``,
-    ``research_planner``) with no first-class ``parent_role`` field.
-    This helper recovers the implicit hierarchy by glob; first-class
-    hierarchy is deferred to proposal 004.
+    Two-pass lookup:
 
-    Excludes ``_base`` / ``TEMPLATE`` (same exclusion the role table
-    applies); excludes the parent itself.  Returns alphabetically
-    sorted; empty list when nothing matches.
+    1. **Declared** — scan every role.yaml; collect those whose
+       ``role_definition.parent_role`` equals ``role_name``.
+       Proposal 004 — first-class hierarchy.
+    2. **Directory-derived (legacy)** — if no role declares this
+       parent, fall back to the directory-name glob from
+       proposal 003 PR-6 so unmigrated roles still surface.
+
+    Returns ``([role_names…], "declared" | "directory-derived")``.
+    Empty list + label "" when nothing matches.
+
+    Excludes ``_base`` / ``TEMPLATE`` and the parent itself.
     """
     if not roles_root.is_dir() or not role_name:
-        return []
+        return [], ""
+
+    # Pass 1 — declared parent_role.
+    declared: list[str] = []
+    try:
+        import yaml  # noqa: PLC0415
+        for child in roles_root.iterdir():
+            if (
+                not child.is_dir()
+                or child.name in _EXCLUDED_NAMES
+                or child.name == role_name
+            ):
+                continue
+            yaml_path = child / "role.yaml"
+            if not yaml_path.exists():
+                continue
+            try:
+                with yaml_path.open("r", encoding="utf-8") as fh:
+                    doc = yaml.safe_load(fh)
+            except Exception:
+                continue
+            if not isinstance(doc, dict):
+                continue
+            role_def = doc.get("role_definition") or {}
+            if not isinstance(role_def, dict):
+                continue
+            if role_def.get("parent_role") == role_name:
+                declared.append(child.name)
+    except Exception:
+        logger.exception("ecosystem: declared-parent scan failed")
+
+    if declared:
+        return sorted(declared), "declared"
+
+    # Pass 2 — directory-name glob fallback (proposal 003 PR-6).
     prefix = f"{role_name}_"
     try:
         siblings = sorted(
@@ -215,36 +255,44 @@ def _subrole_siblings(roles_root: Path, role_name: str) -> list[str]:
             )
         )
     except OSError:
-        return []
-    return siblings
+        return [], ""
+    return siblings, ("directory-derived" if siblings else "")
 
 
-def _format_subrole_section(siblings: list[str], role_name: str) -> str:
-    """Render the "Subroles (directory-derived)" markdown section.
+def _format_subrole_section(
+    siblings: list[str], role_name: str, source: str = "declared",
+) -> str:
+    """Render the "Subroles" markdown section.
+
+    Proposal 004 — accepts a ``source`` label so the caller's
+    two-pass lookup (declared vs directory-derived) is reflected
+    in the rendered text.
 
     Empty list → returns empty string (caller skips appending).
-    Pending proposal 004 (first-class ``parent_role``), the section
-    is labelled as directory-derived so the operator knows the
-    convention is implicit.
     """
     if not siblings:
         return ""
-    lines = [
-        "",
-        "",
-        f"## Subroles of `{role_name}` (directory-derived)",
-        "",
-        (
+    if source == "declared":
+        heading = f"## Subroles of `{role_name}` (declared)"
+        note = (
+            "_Joined via `role_definition.parent_role` in each "
+            "subrole's role.yaml — first-class hierarchy per "
+            "proposal 004._"
+        )
+    else:
+        heading = f"## Subroles of `{role_name}` (directory-derived)"
+        note = (
             "_Listed by directory-name convention `"
             + role_name
-            + "_*`.  First-class `parent_role` field tracked in"
-            " proposal 004._"
-        ),
-        "",
-    ]
+            + "_*`.  Migrate to declared parent_role per proposal 004._"
+        )
+    lines = ["", "", heading, "", note, ""]
     for s in siblings:
-        suffix = s[len(role_name) + 1 :]
-        lines.append(f"- **{s}** — `{suffix}` persona")
+        if s.startswith(f"{role_name}_"):
+            suffix = s[len(role_name) + 1 :]
+            lines.append(f"- **{s}** — `{suffix}` persona")
+        else:
+            lines.append(f"- **{s}**")
     return "\n".join(lines)
 
 
@@ -902,8 +950,10 @@ class EcosystemScreen(Screen):
             # "Subroles" section so operators can see persona
             # hierarchies (coding_agent_*, research_*) without
             # an explicit parent_role field (deferred to 004).
-            siblings = _subrole_siblings(root, role_name)
-            subrole_section = _format_subrole_section(siblings, role_name)
+            siblings, source = _subrole_siblings(root, role_name)
+            subrole_section = _format_subrole_section(
+                siblings, role_name, source=source,
+            )
             md_widget.update(md_text + subrole_section)
 
         # role.yaml surface — verbatim render under a Collapsible.

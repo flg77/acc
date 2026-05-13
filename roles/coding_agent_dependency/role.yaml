@@ -1,6 +1,8 @@
 # roles/coding_agent_dependency/role.yaml
 
 role_definition:
+  # Proposal 004 — declared parent in the role hierarchy.
+  parent_role: coding_agent
   purpose: >
     Audit pyproject.toml / requirements.txt / package.json
     declarations for known-vulnerable versions and license

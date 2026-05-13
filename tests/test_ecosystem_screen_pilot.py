@@ -881,7 +881,7 @@ def test_subrole_siblings_finds_matching_prefix(tmp_path):
     ):
         _write_role_manifest(tmp_path, name)
 
-    siblings = _subrole_siblings(tmp_path, "coding_agent")
+    siblings, _src = _subrole_siblings(tmp_path, "coding_agent")
     assert siblings == [
         "coding_agent_architect",
         "coding_agent_implementer",
@@ -894,7 +894,7 @@ def test_subrole_siblings_excludes_parent_itself(tmp_path):
     sibling."""
     from acc.tui.screens.ecosystem import _subrole_siblings
     _write_role_manifest(tmp_path, "coding_agent")
-    siblings = _subrole_siblings(tmp_path, "coding_agent")
+    siblings, _src = _subrole_siblings(tmp_path, "coding_agent")
     assert "coding_agent" not in siblings
 
 
@@ -905,7 +905,7 @@ def test_subrole_siblings_excludes_base_and_template(tmp_path):
     _write_role_manifest(tmp_path, "test_role__base")
     _write_role_manifest(tmp_path, "test_role_TEMPLATE")  # not in exclude set
     _write_role_manifest(tmp_path, "test_role_real")
-    siblings = _subrole_siblings(tmp_path, "test_role")
+    siblings, _src = _subrole_siblings(tmp_path, "test_role")
     assert "test_role_real" in siblings
 
 
@@ -916,7 +916,7 @@ def test_subrole_siblings_skips_dirs_without_role_yaml(tmp_path):
     _write_role_manifest(tmp_path, "coding_agent_architect")
     # Plant a dir without role.yaml under the prefix.
     (tmp_path / "coding_agent_orphan").mkdir()
-    siblings = _subrole_siblings(tmp_path, "coding_agent")
+    siblings, _src = _subrole_siblings(tmp_path, "coding_agent")
     assert siblings == ["coding_agent_architect"]
 
 
@@ -924,7 +924,7 @@ def test_subrole_siblings_empty_when_nothing_matches(tmp_path):
     """No sibling matching the prefix → empty list."""
     from acc.tui.screens.ecosystem import _subrole_siblings
     _write_role_manifest(tmp_path, "loner_role")
-    assert _subrole_siblings(tmp_path, "loner_role") == []
+    assert _subrole_siblings(tmp_path, "loner_role") == ([], "")
 
 
 def test_format_subrole_section_empty_returns_blank():
@@ -933,19 +933,76 @@ def test_format_subrole_section_empty_returns_blank():
     assert _format_subrole_section([], "coding_agent") == ""
 
 
-def test_format_subrole_section_contains_directory_derived_label():
-    """The rendered section is explicitly labelled as
-    directory-derived + names proposal 004 as the follow-up."""
+def test_format_subrole_section_directory_derived_label():
+    """When source='directory-derived' the section is labelled as
+    such and names proposal 004 as the migration path."""
     from acc.tui.screens.ecosystem import _format_subrole_section
     out = _format_subrole_section(
         ["coding_agent_architect", "coding_agent_implementer"],
         "coding_agent",
+        source="directory-derived",
     )
     assert "directory-derived" in out
     assert "proposal 004" in out
     assert "coding_agent_architect" in out
     assert "coding_agent_implementer" in out
-    assert "architect" in out  # the suffix-as-persona label
+    assert "architect" in out
+
+
+def test_format_subrole_section_declared_label():
+    """Proposal 004 — when source='declared', section is labelled as
+    joined via role_definition.parent_role."""
+    from acc.tui.screens.ecosystem import _format_subrole_section
+    out = _format_subrole_section(
+        ["coding_agent_architect"],
+        "coding_agent",
+        source="declared",
+    )
+    assert "declared" in out
+    assert "parent_role" in out
+    assert "coding_agent_architect" in out
+
+
+def test_subrole_siblings_prefers_declared_over_glob(tmp_path):
+    """Proposal 004 — when a subrole declares parent_role, it shows
+    up even when its directory name doesn't match the glob prefix."""
+    from acc.tui.screens.ecosystem import _subrole_siblings
+    # Parent role.
+    _write_role_manifest(tmp_path, "coding_agent")
+    # A subrole with a non-conforming directory name that DECLARES
+    # parent_role: coding_agent.
+    sub_dir = tmp_path / "specialist"
+    sub_dir.mkdir()
+    (sub_dir / "role.yaml").write_text(
+        "role_definition:\n"
+        "  parent_role: coding_agent\n"
+        "  purpose: 'special'\n"
+        "  persona: 'concise'\n"
+        "  task_types: ['x']\n"
+        "  version: '0.1.0'\n",
+        encoding="utf-8",
+    )
+    # And a glob-only role (directory name matches but no parent_role).
+    _write_role_manifest(tmp_path, "coding_agent_legacy")
+
+    siblings, source = _subrole_siblings(tmp_path, "coding_agent")
+    # Declared wins — glob-only role is NOT in the list.
+    assert source == "declared"
+    assert "specialist" in siblings
+    assert "coding_agent_legacy" not in siblings
+
+
+def test_subrole_siblings_falls_back_to_glob_when_none_declared(tmp_path):
+    """Proposal 004 — with no declared parent_role, the legacy
+    directory-name glob still works (back-compat for unmigrated)."""
+    from acc.tui.screens.ecosystem import _subrole_siblings
+    _write_role_manifest(tmp_path, "research")
+    _write_role_manifest(tmp_path, "research_planner")
+    _write_role_manifest(tmp_path, "research_critic")
+
+    siblings, source = _subrole_siblings(tmp_path, "research")
+    assert source == "directory-derived"
+    assert set(siblings) == {"research_planner", "research_critic"}
 
 
 @pytest.mark.asyncio

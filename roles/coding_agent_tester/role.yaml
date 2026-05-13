@@ -1,6 +1,8 @@
 # roles/coding_agent_tester/role.yaml
 
 role_definition:
+  # Proposal 004 — declared parent in the role hierarchy.
+  parent_role: coding_agent
   purpose: >
     Write and run unit + integration tests against the implementer
     output.  Cluster size scales with the number of source files
