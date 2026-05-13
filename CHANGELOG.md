@@ -9,7 +9,11 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
-## [Unreleased] — 0.3.0-dev cycle (slot 004+)
+## [Unreleased]
+
+(No changes yet — next development cycle starts here.)
+
+## [0.3.0] — 2026-05-14 — Slots 004 → 009 (operator-requested follow-ups)
 
 ### Added
 
