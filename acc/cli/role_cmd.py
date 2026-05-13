@@ -99,6 +99,26 @@ def register(sub: argparse._SubParsersAction) -> None:
     lint_p.add_argument("path", help="Path to a role.md file.")
     lint_p.set_defaults(func=_cmd_lint)
 
+    # Proposal 006 — content-drift audit across role.yaml + role.md.
+    # Separate subcommand so the narrower `role lint <path>` doesn't
+    # change shape.
+    audit_p = role_sub.add_parser(
+        "audit",
+        help=(
+            "Cross-check role.yaml + role.md for boundary-doc drift "
+            "(proposal 006).  Warnings only by default; --strict "
+            "exits 1 on any warning."
+        ),
+    )
+    audit_p.add_argument(
+        "name", help="Role directory name under roles/ (e.g. coding_agent).",
+    )
+    audit_p.add_argument(
+        "--strict", action="store_true",
+        help="Exit 1 if any LINT* warning fires (default: exit 0).",
+    )
+    audit_p.set_defaults(func=_cmd_audit)
+
 
 # ---------------------------------------------------------------------------
 # Handlers
@@ -233,6 +253,144 @@ def _cmd_lint(args: argparse.Namespace) -> int:
     for issue in issues:
         print(f"{md_path}: {issue}", file=sys.stderr)
     return 1
+
+
+# Proposal 006 — content-drift audit codes.
+LINT_CODES = {
+    "LINT001": "role.yaml missing or unreadable",
+    "LINT002": "role.yaml `purpose` is empty",
+    "LINT003": "role.yaml `purpose` longer than 200 chars (boundary doc says one-liner)",
+    "LINT004": "role.md missing for a role with declared task_types",
+    "LINT005": "role.md H1 heading appears unrelated to role.yaml `purpose`",
+}
+
+
+def audit_role(
+    roles_root_path: Path, role_name: str,
+) -> list[tuple[str, str]]:
+    """Run the proposal-006 boundary-doc checks on a single role.
+
+    Returns a list of ``(code, detail)`` tuples.  Empty list = clean.
+    Pure-fn: no I/O outside the filesystem reads it explicitly does.
+
+    Codes (see ``LINT_CODES`` for the table):
+
+    * LINT001 — role.yaml missing or unreadable
+    * LINT002 — role.yaml ``purpose`` empty
+    * LINT003 — role.yaml ``purpose`` > 200 chars
+    * LINT004 — role.md missing but role declares task_types
+    * LINT005 — role.md H1 doesn't share a meaningful word with
+      role.yaml ``purpose`` (cheap drift heuristic)
+    """
+    findings: list[tuple[str, str]] = []
+    role_dir = Path(roles_root_path) / role_name
+    yaml_path = role_dir / "role.yaml"
+    md_path = role_dir / "role.md"
+
+    if not yaml_path.is_file():
+        findings.append(("LINT001", f"{yaml_path} not found"))
+        return findings
+
+    try:
+        import yaml as _yaml  # noqa: PLC0415
+        with yaml_path.open("r", encoding="utf-8") as fh:
+            doc = _yaml.safe_load(fh) or {}
+    except Exception as exc:
+        findings.append(("LINT001", f"{yaml_path}: {exc}"))
+        return findings
+
+    role_def = (doc.get("role_definition") or {}) if isinstance(doc, dict) else {}
+    purpose = str(role_def.get("purpose", "")).strip()
+    task_types = role_def.get("task_types") or []
+
+    if not purpose:
+        findings.append(("LINT002", str(yaml_path)))
+    elif len(purpose) > 200:
+        findings.append(("LINT003", f"{yaml_path}: {len(purpose)} chars"))
+
+    md_exists = md_path.is_file()
+    if not md_exists and task_types:
+        findings.append((
+            "LINT004",
+            f"{md_path} missing (task_types declared: {task_types!r})",
+        ))
+
+    if md_exists and purpose:
+        try:
+            md_body = md_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            findings.append(("LINT001", f"{md_path}: {exc}"))
+            return findings
+        h1 = _first_h1(md_body)
+        if h1 and not _heading_purpose_overlap(h1, purpose):
+            findings.append((
+                "LINT005",
+                f"{md_path}: H1 {h1!r} vs role.yaml purpose {purpose[:60]!r}",
+            ))
+
+    return findings
+
+
+def _first_h1(md: str) -> str:
+    """Return the first H1 heading in a markdown body, or empty."""
+    for line in md.splitlines():
+        line = line.strip()
+        if line.startswith("# ") and not line.startswith("## "):
+            return line[2:].strip()
+    return ""
+
+
+def _heading_purpose_overlap(h1: str, purpose: str) -> bool:
+    """Heuristic drift check.
+
+    Returns True iff ``h1`` and ``purpose`` share a meaningful
+    word *or* one is a substring/stem of the other (after
+    stripping stopwords + role boilerplate).  The substring pass
+    catches common morphology — "coding" matches "code",
+    "researcher" matches "research", etc. — without requiring a
+    stemmer dependency.
+    """
+    stopwords = {
+        "a", "an", "and", "are", "for", "from", "in", "is", "of",
+        "or", "that", "the", "this", "to", "with",
+        "role", "agent", "subagent", "task", "tasks",
+    }
+
+    def tokens(s: str) -> set[str]:
+        out: set[str] = set()
+        for word in s.lower().replace("_", " ").split():
+            cleaned = "".join(c for c in word if c.isalnum())
+            if cleaned and cleaned not in stopwords and len(cleaned) > 2:
+                out.add(cleaned)
+        return out
+
+    h1_tokens = tokens(h1)
+    p_tokens = tokens(purpose)
+    if h1_tokens & p_tokens:
+        return True
+    # Substring pass: any h1 token that contains or is contained
+    # by any purpose token (≥ 4 chars on the shorter side to
+    # avoid spurious matches like "be" ⊂ "becomes").
+    for h in h1_tokens:
+        for p in p_tokens:
+            shorter, longer = sorted([h, p], key=len)
+            if len(shorter) >= 4 and shorter in longer:
+                return True
+    return False
+
+
+def _cmd_audit(args: argparse.Namespace) -> int:
+    roots = Path(roles_root())
+    findings = audit_role(roots, args.name)
+    if not findings:
+        print(f"role {args.name}: clean")
+        return 0
+    for code, detail in findings:
+        print(
+            f"role {args.name}: [{code}] {LINT_CODES[code]} — {detail}",
+            file=sys.stderr,
+        )
+    return 1 if args.strict else 0
 
 
 # ---------------------------------------------------------------------------

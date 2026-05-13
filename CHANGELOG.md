@@ -38,6 +38,15 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 - **`schedules/_example.yaml`** + `.gitignore` entry for
   `schedules/*.yaml` (operator-local schedules stay out of git;
   `_example.yaml` ships in-repo as a template).
+- **`docs/role-authoring.md`** — boundary doc codifying the
+  proposal 003 §10 memo: role.md owns narrative, role.yaml owns
+  identity + defaults, Nucleus owns per-infusion deltas, Prompt
+  owns task content only.  Proposal 006.
+- **`acc-cli role audit <name>`** — content-drift linter.
+  Codes LINT001 (yaml missing) → LINT005 (md H1 unrelated to
+  yaml purpose).  Warnings-only by default; `--strict` exits 1.
+  Heuristic substring-match for shared morphology (`research`
+  matches `researcher`).
 
 ## [0.2.0] — 2026-05-14 — TUI usability hardening (proposal 003)
 
