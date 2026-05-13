@@ -121,8 +121,13 @@ async def test_ecosystem_role_detail_renders_coding_agent_seed():
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
+        # Proposal 003 PR-2 split the detail panel into two
+        # collapsibles (#role-md-content Markdown +
+        # #role-yaml-content Static).  The "purpose" + "persona"
+        # strings the assertions look for now land on the yaml
+        # surface.
         captured = _capture_static_updates(
-            screen.query_one("#role-detail-panel", Static),
+            screen.query_one("#role-yaml-content", Static),
         )
 
         role_table = screen.query_one("#role-table", DataTable)

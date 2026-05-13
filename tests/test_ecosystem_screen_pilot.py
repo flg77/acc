@@ -227,22 +227,42 @@ async def test_mcps_table_populated_when_manifests_exist(isolated_manifests):
 
 
 def _capture_panel_updates(screen) -> list[str]:
-    """Patch the role-detail Static's ``update`` to record every call.
+    """Patch every detail-panel surface's ``update`` to record calls.
 
-    Returns a list mutated in-place each time _show_role_detail writes
-    to the panel.  Avoids depending on Textual-version-specific
-    introspection (``Static.renderable`` exists on some versions and
-    not others); this approach works across the matrix.
+    Proposal 003 PR-2 split the role detail into two collapsibles:
+    a Markdown widget (``#role-md-content``) for ``role.md`` and a
+    Static (``#role-yaml-content``) for the raw yaml.  We monkey-
+    patch both so existing assertions on substrings (e.g. ``test_role``
+    in the yaml title, ``pilot fixture`` in the yaml body) keep
+    working regardless of which surface the test exercises.
     """
-    panel = screen.query_one("#role-detail-panel", Static)
+    from textual.widgets import Markdown
     captured: list[str] = []
-    real_update = panel.update
 
-    def recording_update(content="", **kwargs):
+    # role.yaml Static
+    yaml_widget = screen.query_one("#role-yaml-content", Static)
+    yaml_real = yaml_widget.update
+
+    def yaml_recording(content="", **kwargs):
         captured.append(str(content))
-        return real_update(content, **kwargs)
+        return yaml_real(content, **kwargs)
 
-    panel.update = recording_update  # type: ignore[assignment]
+    yaml_widget.update = yaml_recording  # type: ignore[assignment]
+
+    # role.md Markdown widget — also tap its update so md-only
+    # assertions can land here too.
+    try:
+        md_widget = screen.query_one("#role-md-content", Markdown)
+        md_real = md_widget.update
+
+        def md_recording(content="", **kwargs):
+            captured.append(str(content))
+            return md_real(content, **kwargs)
+
+        md_widget.update = md_recording  # type: ignore[assignment]
+    except Exception:
+        pass
+
     return captured
 
 
@@ -411,3 +431,177 @@ async def test_button_press_without_selection_notifies(
         assert severity == "warning"
         # No RolePreloadMessage dispatched.
         assert app.captured == []
+
+
+# ---------------------------------------------------------------------------
+# Proposal 003 PR-2 — role.md detail surface + role search filter
+# ---------------------------------------------------------------------------
+
+
+def _write_role_md(roles_root: Path, role_name: str, body: str) -> None:
+    """Drop a role.md alongside the existing role.yaml fixture."""
+    (roles_root / role_name / "role.md").write_text(body, encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_role_detail_renders_role_md_when_present(
+    isolated_manifests, tmp_path,
+):
+    """Proposal 003 PR-2 — when ``role.md`` exists alongside
+    ``role.yaml``, the Markdown widget renders its body.  Asserts
+    that selecting the row writes the md content into
+    ``#role-md-content``.
+    """
+    from textual.widgets import Markdown
+    roles_root = isolated_manifests["roles_root"]
+    _write_role_md(
+        roles_root,
+        "test_role",
+        "# Narrative\n\nThis role is for pilot testing.",
+    )
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        md_widget = screen.query_one("#role-md-content", Markdown)
+        captured_md: list[str] = []
+        real = md_widget.update
+
+        def recording(content="", **kwargs):
+            captured_md.append(str(content))
+            return real(content, **kwargs)
+
+        md_widget.update = recording  # type: ignore[assignment]
+
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        rendered = "\n".join(captured_md)
+        assert "Narrative" in rendered, captured_md
+        assert "pilot testing" in rendered, captured_md
+
+
+@pytest.mark.asyncio
+async def test_role_detail_md_placeholder_when_absent(isolated_manifests):
+    """Proposal 003 PR-2 — when ``role.md`` is missing, the Markdown
+    widget renders the operator-facing placeholder pointing at the
+    authoring convention."""
+    from textual.widgets import Markdown
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        md_widget = screen.query_one("#role-md-content", Markdown)
+        captured_md: list[str] = []
+        real = md_widget.update
+
+        def recording(content="", **kwargs):
+            captured_md.append(str(content))
+            return real(content, **kwargs)
+
+        md_widget.update = recording  # type: ignore[assignment]
+
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        rendered = "\n".join(captured_md)
+        assert "No `role.md` authored" in rendered, captured_md
+        assert "test_role" in rendered
+
+
+@pytest.mark.asyncio
+async def test_role_filter_input_narrows_table(isolated_manifests, tmp_path):
+    """Proposal 003 PR-2 — typing in the filter input keeps only rows
+    whose name / domain / persona contains the substring (case-
+    insensitive).  Empty / cleared input restores the full list."""
+    roles_root = isolated_manifests["roles_root"]
+    # Add two more roles so the filter has something to bite.
+    _write_role_manifest(roles_root, "alpha_role")
+    _write_role_manifest(roles_root, "beta_role")
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+
+        # Baseline: all three rows present.
+        names = [
+            getattr(k, "value", str(k)) for k in role_table.rows.keys()
+        ]
+        assert set(names) == {"alpha_role", "beta_role", "test_role"}
+
+        # Filter to alpha — only one row should remain.
+        screen._apply_filter("alpha")
+        await pilot.pause()
+        names = [
+            getattr(k, "value", str(k))
+            for k in role_table.rows.keys()
+        ]
+        assert names == ["alpha_role"], names
+
+        # Clear filter — full list restored.
+        screen._apply_filter("")
+        await pilot.pause()
+        names = [
+            getattr(k, "value", str(k))
+            for k in role_table.rows.keys()
+        ]
+        assert set(names) == {"alpha_role", "beta_role", "test_role"}
+
+
+@pytest.mark.asyncio
+async def test_role_filter_matches_persona_substring(
+    isolated_manifests, tmp_path,
+):
+    """The filter substring matches the persona column too — not just
+    the role name."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+
+        # Fixture's role has persona='concise'.  Filter on 'CISE' (mixed case).
+        screen._apply_filter("CISE")
+        await pilot.pause()
+
+        names = [
+            getattr(k, "value", str(k))
+            for k in role_table.rows.keys()
+        ]
+        assert names == ["test_role"], names
+
+
+@pytest.mark.asyncio
+async def test_role_filter_no_match_empties_table(isolated_manifests):
+    """A filter substring that matches nothing leaves the table empty."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+
+        screen._apply_filter("zzz-no-such-role")
+        await pilot.pause()
+
+        assert role_table.row_count == 0

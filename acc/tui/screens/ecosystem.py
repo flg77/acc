@@ -25,7 +25,16 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Label, Static
+from textual.widgets import (
+    Button,
+    Collapsible,
+    DataTable,
+    Footer,
+    Input,
+    Label,
+    Markdown,
+    Static,
+)
 
 from acc.role_loader import RoleLoader, list_roles
 from acc.tui.messages import RolePreloadMessage
@@ -55,6 +64,29 @@ def _skills_root() -> Path:
 def _mcps_root() -> Path:
     """Resolve the mcps/ directory.  Same fallback chain as :func:`_roles_root`."""
     return resolve_manifest_root("ACC_MCPS_ROOT", "mcps")
+
+
+def _read_role_md(md_path: Path, role_name: str) -> str:
+    """Return the role's ``role.md`` body, or a friendly placeholder.
+
+    Proposal 003 PR-2 helper.  Roles without a ``role.md`` show a
+    short note explaining that narrative authoring is optional and
+    pointing operators at the convention.  Read errors surface as
+    inline italics in the rendered Markdown (won't crash the
+    screen).
+    """
+    if not md_path.exists():
+        return (
+            f"_No `role.md` authored for **{role_name}** yet._\n\n"
+            "Add `roles/" + role_name + "/role.md` to surface "
+            "operator-facing narrative here: what this role is for, "
+            "when to pick it, example prompts, anti-patterns.  See "
+            "proposal 006 for the authoring guideline."
+        )
+    try:
+        return md_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return f"_Could not read `role.md`: `{exc}`._"
 
 
 # Risk-level → colour mapping for Skills + MCPs DataTables.  Same
@@ -101,6 +133,11 @@ class EcosystemScreen(Screen):
         # FileSelected handler knows whether to copy into skills/ or
         # mcps/.  ``""`` means no upload pending.
         self._pending_upload_kind: str = ""
+        # Proposal 003 PR-2 — cached role-row data so the search filter
+        # can repopulate the DataTable without re-reading disk on every
+        # keystroke.  Populated by _load_roles(); list of tuples
+        # (role_name, domain, persona, task_count_str).
+        self._all_role_rows: list[tuple[str, str, str, str]] = []
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="ecosystem", id="nav")
@@ -110,6 +147,13 @@ class EcosystemScreen(Screen):
             # Left: role table + roadmap placeholders
             with Vertical(id="ecosystem-left"):
                 yield Label("ROLE LIBRARY", classes="panel-label")
+                # Proposal 003 PR-2 — incremental substring filter on
+                # role name / domain / persona.  Empty input shows all
+                # rows; clearing restores the full list.
+                yield Input(
+                    placeholder="Filter roles (substring of name / domain / persona)…",
+                    id="role-filter",
+                )
                 yield DataTable(id="role-table")
 
                 # Phase 4.4 — live Skills table replaces the roadmap stub.
@@ -140,11 +184,27 @@ class EcosystemScreen(Screen):
             # Right: role detail panel + infusion action + LLM backends
             with Vertical(id="ecosystem-right"):
                 yield Label("ROLE DETAIL", classes="panel-label")
+                # Proposal 003 PR-2 — split detail into two collapsibles.
+                # role.md (narrative, human-authored) opens by default so
+                # the operator sees prose first; role.yaml (raw machine
+                # config) is opt-in.
                 with ScrollableContainer(id="role-detail-container"):
                     yield Static(
-                        "[dim]Select a role row to view its full definition.[/dim]",
-                        id="role-detail-panel",
+                        "[dim]Select a role row to view its definition.[/dim]",
+                        id="role-detail-placeholder",
                     )
+                    with Collapsible(
+                        title="role.md (narrative)",
+                        collapsed=False,
+                        id="role-md-collapsible",
+                    ):
+                        yield Markdown("", id="role-md-content")
+                    with Collapsible(
+                        title="role.yaml (raw)",
+                        collapsed=True,
+                        id="role-yaml-collapsible",
+                    ):
+                        yield Static("", id="role-yaml-content")
 
                 # Infusion action — bridge from Ecosystem (extracellular role
                 # catalogue) to Nucleus (intracellular role expression).
@@ -423,45 +483,119 @@ class EcosystemScreen(Screen):
     # ------------------------------------------------------------------
 
     def _load_roles(self) -> None:
-        """Scan roles/ directory and populate the DataTable (REQ-TUI-037)."""
+        """Scan roles/ directory + cache role rows (REQ-TUI-037).
+
+        Proposal 003 PR-2 — caches the loaded rows in
+        ``self._all_role_rows`` so the filter handler can re-populate
+        the table without re-reading disk on every keystroke.  Calls
+        ``_apply_filter()`` for the initial render.
+        """
         root = _roles_root()
         self._role_names = list_roles(root)
-        table = self.query_one("#role-table", DataTable)
+        self._all_role_rows = []
 
         for role_name in self._role_names:
             loader = RoleLoader(root, role_name)
             role_def = loader.load()
             if role_def is None:
                 # Role directory exists but failed to load — show minimal row
-                table.add_row(role_name, "—", "—", "—", key=role_name)
+                self._all_role_rows.append((role_name, "—", "—", "—"))
                 continue
 
             task_count = len(role_def.task_types) if role_def.task_types else 0
-            table.add_row(
+            self._all_role_rows.append((
                 role_name,
                 getattr(role_def, "domain_id", "") or "—",
                 role_def.persona or "—",
                 str(task_count),
-                key=role_name,
-            )
+            ))
+
+        self._apply_filter("")
+
+    def _apply_filter(self, query: str) -> None:
+        """Repopulate the role DataTable, keeping only rows whose
+        name / domain / persona contain ``query`` (case-insensitive).
+
+        Proposal 003 PR-2.  Empty / whitespace-only query → show every
+        cached row.
+        """
+        try:
+            table = self.query_one("#role-table", DataTable)
+        except Exception:
+            logger.exception("ecosystem: role table missing")
+            return
+        table.clear()
+        q = query.strip().lower()
+        for role_name, domain, persona, tasks in self._all_role_rows:
+            if q and not (
+                q in role_name.lower()
+                or q in domain.lower()
+                or q in persona.lower()
+            ):
+                continue
+            table.add_row(role_name, domain, persona, tasks, key=role_name)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Proposal 003 PR-2 — repopulate the role table on every
+        keystroke in the filter input.  Other Input widgets on the
+        screen (none today; future-proof) get a no-op."""
+        if (event.input.id or "") != "role-filter":
+            return
+        self._apply_filter(event.value or "")
 
     def _show_role_detail(self, role_name: str) -> None:
-        """Render the full role.yaml content in the detail panel (REQ-TUI-038)."""
+        """Render the role's narrative + raw definition in the detail
+        panel (REQ-TUI-038).
+
+        Proposal 003 PR-2 — splits into two surfaces:
+
+        * ``role-md-content`` (Markdown) renders ``role.md`` if
+          present; if missing, shows a "no role.md authored yet"
+          placeholder so the collapsible isn't deceptively empty.
+        * ``role-yaml-content`` (Static) renders ``role.yaml``
+          verbatim — same content the old single-pane render produced.
+
+        The placeholder Static above the collapsibles is hidden once
+        a role is selected.
+        """
         root = _roles_root()
-        role_path = Path(root) / role_name / "role.yaml"
+        yaml_path = Path(root) / role_name / "role.yaml"
+        md_path = Path(root) / role_name / "role.md"
 
-        panel = self.query_one("#role-detail-panel", Static)
-        if not role_path.exists():
-            panel.update(f"[red]role.yaml not found for {role_name}[/red]")
-            return
-
+        # Hide the "select a role" placeholder.
         try:
-            content = role_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            panel.update(f"[red]Read error: {exc}[/red]")
-            return
+            placeholder = self.query_one("#role-detail-placeholder", Static)
+            placeholder.update("")
+            placeholder.display = False
+        except Exception:
+            pass
 
-        panel.update(f"[bold]{role_name}/role.yaml[/bold]\n\n{content}")
+        # role.md surface.
+        try:
+            md_widget = self.query_one("#role-md-content", Markdown)
+        except Exception:
+            md_widget = None
+        if md_widget is not None:
+            md_text = _read_role_md(md_path, role_name)
+            md_widget.update(md_text)
+
+        # role.yaml surface — verbatim render under a Collapsible.
+        try:
+            yaml_widget = self.query_one("#role-yaml-content", Static)
+        except Exception:
+            yaml_widget = None
+        if yaml_widget is not None:
+            if not yaml_path.exists():
+                yaml_widget.update(f"[red]role.yaml not found for {role_name}[/red]")
+            else:
+                try:
+                    yaml_text = yaml_path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    yaml_widget.update(f"[red]Read error: {exc}[/red]")
+                else:
+                    yaml_widget.update(
+                        f"[bold]{role_name}/role.yaml[/bold]\n\n{yaml_text}"
+                    )
 
     # ------------------------------------------------------------------
     # Phase 4.4 — Skills + MCP table loading
