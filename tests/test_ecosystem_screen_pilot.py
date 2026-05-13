@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Input, Static
 
 from acc.tui.messages import RolePreloadMessage
 from acc.tui.path_resolution import resolve_manifest_root
@@ -605,3 +605,257 @@ async def test_role_filter_no_match_empties_table(isolated_manifests):
         await pilot.pause()
 
         assert role_table.row_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Proposal 003 PR-3 — file-watcher + selection lock
+# ---------------------------------------------------------------------------
+
+
+def test_fingerprint_picks_up_new_role(tmp_path):
+    """Adding a role directory changes the fingerprint."""
+    from acc.tui.screens.ecosystem import _fingerprint_roles_dir
+    _write_role_manifest(tmp_path, "role_a")
+    fp1 = _fingerprint_roles_dir(tmp_path)
+    _write_role_manifest(tmp_path, "role_b")
+    fp2 = _fingerprint_roles_dir(tmp_path)
+    assert fp1 != fp2
+    names1 = {name for name, *_rest in fp1}
+    names2 = {name for name, *_rest in fp2}
+    assert names1 == {"role_a"}
+    assert names2 == {"role_a", "role_b"}
+
+
+def test_fingerprint_picks_up_yaml_mtime_bump(tmp_path):
+    """Touching role.yaml changes its mtime so the fingerprint differs."""
+    import os
+    import time
+    from acc.tui.screens.ecosystem import _fingerprint_roles_dir
+    _write_role_manifest(tmp_path, "role_a")
+    fp1 = _fingerprint_roles_dir(tmp_path)
+    time.sleep(0.05)
+    yaml_path = tmp_path / "role_a" / "role.yaml"
+    os.utime(yaml_path, (time.time() + 1.0, time.time() + 1.0))
+    fp2 = _fingerprint_roles_dir(tmp_path)
+    assert fp1 != fp2
+
+
+def test_fingerprint_picks_up_md_addition(tmp_path):
+    """Adding role.md alongside an existing role.yaml flips its mtime
+    slot from 0.0, so the fingerprint changes."""
+    from acc.tui.screens.ecosystem import _fingerprint_roles_dir
+    _write_role_manifest(tmp_path, "role_a")
+    fp1 = _fingerprint_roles_dir(tmp_path)
+    (tmp_path / "role_a" / "role.md").write_text("# hello", encoding="utf-8")
+    fp2 = _fingerprint_roles_dir(tmp_path)
+    assert fp1 != fp2
+
+
+def test_fingerprint_excludes_base_and_template(tmp_path):
+    """_base and TEMPLATE directories are filtered out, same as list_roles."""
+    from acc.tui.screens.ecosystem import _fingerprint_roles_dir
+    _write_role_manifest(tmp_path, "_base")
+    _write_role_manifest(tmp_path, "TEMPLATE")
+    _write_role_manifest(tmp_path, "real_role")
+    fp = _fingerprint_roles_dir(tmp_path)
+    names = {name for name, *_rest in fp}
+    assert names == {"real_role"}
+
+
+def test_resolve_watch_interval_default(monkeypatch):
+    from acc.tui.screens.ecosystem import (
+        WATCH_POLL_INTERVAL_S,
+        _resolve_watch_interval,
+    )
+    monkeypatch.delenv("ACC_TUI_ROLE_WATCH_INTERVAL_S", raising=False)
+    assert _resolve_watch_interval() == WATCH_POLL_INTERVAL_S
+
+
+def test_resolve_watch_interval_reads_env(monkeypatch):
+    from acc.tui.screens.ecosystem import _resolve_watch_interval
+    monkeypatch.setenv("ACC_TUI_ROLE_WATCH_INTERVAL_S", "0.1")
+    assert _resolve_watch_interval() == 0.1
+
+
+def test_resolve_watch_interval_ignores_garbage(monkeypatch):
+    from acc.tui.screens.ecosystem import (
+        WATCH_POLL_INTERVAL_S,
+        _resolve_watch_interval,
+    )
+    monkeypatch.setenv("ACC_TUI_ROLE_WATCH_INTERVAL_S", "not-a-number")
+    assert _resolve_watch_interval() == WATCH_POLL_INTERVAL_S
+
+
+def test_resolve_watch_interval_ignores_non_positive(monkeypatch):
+    from acc.tui.screens.ecosystem import (
+        WATCH_POLL_INTERVAL_S,
+        _resolve_watch_interval,
+    )
+    monkeypatch.setenv("ACC_TUI_ROLE_WATCH_INTERVAL_S", "-1")
+    assert _resolve_watch_interval() == WATCH_POLL_INTERVAL_S
+
+
+@pytest.mark.asyncio
+async def test_watcher_repopulates_role_table_after_external_add(
+    isolated_manifests, monkeypatch,
+):
+    """Adding a role.yaml on disk while the Ecosystem screen is
+    mounted triggers a re-load of the role table."""
+    monkeypatch.setenv("ACC_TUI_ROLE_WATCH_INTERVAL_S", "0.05")
+
+    roles_root = isolated_manifests["roles_root"]
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+
+        baseline_names = {
+            getattr(k, "value", str(k)) for k in role_table.rows.keys()
+        }
+        assert baseline_names == {"test_role"}
+
+        _write_role_manifest(roles_root, "new_role")
+
+        for _ in range(40):
+            await pilot.pause()
+            names = {
+                getattr(k, "value", str(k))
+                for k in role_table.rows.keys()
+            }
+            if "new_role" in names:
+                break
+
+        names = {
+            getattr(k, "value", str(k))
+            for k in role_table.rows.keys()
+        }
+        assert names == {"test_role", "new_role"}, names
+
+
+@pytest.mark.asyncio
+async def test_watcher_handler_preserves_filter_substring(
+    isolated_manifests, monkeypatch,
+):
+    """After a watcher-driven reload, the operator's current filter
+    substring is preserved (not reset to empty)."""
+    monkeypatch.setenv("ACC_TUI_ROLE_WATCH_INTERVAL_S", "0.05")
+    roles_root = isolated_manifests["roles_root"]
+    _write_role_manifest(roles_root, "alpha_role")
+    _write_role_manifest(roles_root, "beta_role")
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        screen.query_one("#role-filter", Input).value = "alpha"
+        screen._apply_filter("alpha")
+        await pilot.pause()
+
+        _write_role_manifest(roles_root, "gamma_role")
+
+        for _ in range(40):
+            await pilot.pause()
+            cached = {n for n, *_ in screen._all_role_rows}
+            if "gamma_role" in cached:
+                break
+
+        assert screen.query_one("#role-filter", Input).value == "alpha"
+        role_table = screen.query_one("#role-table", DataTable)
+        visible = {
+            getattr(k, "value", str(k))
+            for k in role_table.rows.keys()
+        }
+        assert visible == {"alpha_role"}
+
+
+@pytest.mark.asyncio
+async def test_row_selection_acquires_filelock(isolated_manifests):
+    """Selecting a row takes an advisory lock on the role's role.yaml."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        assert screen._selection_lock is not None
+        assert screen._selection_lock_role == "test_role"
+
+
+@pytest.mark.asyncio
+async def test_lock_released_on_screen_unmount(isolated_manifests):
+    """Unmounting the screen drops the held selection lock."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+        assert screen._selection_lock is not None
+
+        screen.on_unmount()
+        assert screen._selection_lock is None
+        assert screen._selection_lock_role == ""
+
+
+@pytest.mark.asyncio
+async def test_lock_busy_path_notifies_without_crash(
+    isolated_manifests, monkeypatch,
+):
+    """When the lock is already held by another process, the screen
+    notifies the operator instead of crashing."""
+    import filelock
+    from filelock import Timeout
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        notifications = []
+
+        def fake_notify(message, severity="information", timeout=4.0, **_kw):
+            notifications.append((message, severity))
+
+        monkeypatch.setattr(screen, "notify", fake_notify)
+
+        def acquire_busy(self, *args, **kwargs):
+            raise Timeout(str(getattr(self, "lock_file", "lock")))
+
+        monkeypatch.setattr(filelock.FileLock, "acquire", acquire_busy)
+
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        assert screen._selection_lock is None
+        assert any(
+            "locked by another process" in m for m, _ in notifications
+        ), notifications
+        severities = [s for _, s in notifications]
+        assert "warning" in severities, severities

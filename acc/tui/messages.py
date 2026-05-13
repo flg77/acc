@@ -35,6 +35,31 @@ class RolePreloadMessage(Message):
         self.role_name = role_name
 
 
+class RolesChangedMessage(Message):
+    """Posted by the Ecosystem screen's file-watcher when an external
+    edit to the ``roles/`` directory is detected (a role.yaml or
+    role.md added, removed, or modified).
+
+    The Ecosystem screen handles this by re-running ``_load_roles()``
+    + re-applying the current filter.  Detail-pane content stays in
+    sync because ``_show_role_detail()`` reads from disk each time.
+
+    Posted by the polling task ``_watch_roles_loop()``; routed back to
+    the UI thread via Textual's message bus.  Proposal 003 PR-3.
+
+    Attributes:
+        reason: One of ``"added"``, ``"removed"``, ``"modified"``,
+            ``"initial"``.  ``"initial"`` lets the watcher post a
+            first-pass event harmlessly so the handler is exercised
+            even when no operator-side change happened — useful in
+            tests.
+    """
+
+    def __init__(self, reason: str = "modified") -> None:
+        super().__init__()
+        self.reason = reason
+
+
 class HelpRequestMessage(Message):
     """Request the App show a help overlay for the current screen.
 
