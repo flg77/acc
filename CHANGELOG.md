@@ -15,6 +15,23 @@ In-flight work for the **0.2.0** release.  Proposal 003 closes
 when PRs 1–6 of the TUI hardening series have all landed; that
 tag is the v0.2.0 cut.
 
+### Added
+
+- **TUI Ecosystem: `role.md` narrative surface.**  The role detail
+  panel now reads `roles/<name>/role.md` alongside `role.yaml` and
+  renders it in a `Markdown` widget at the top of a two-section
+  collapsible.  The raw yaml is preserved under a second
+  collapsible (closed by default).  Roles without a `role.md`
+  show a friendly placeholder pointing operators at the
+  forthcoming authoring guideline (slot 006).  (PR-2 of proposal
+  003 — PR #55.)
+- **TUI Ecosystem: role search filter.**  An `Input` widget above
+  the ROLE LIBRARY DataTable narrows the visible rows by
+  case-insensitive substring match against name / domain /
+  persona.  Clearing the input restores the full list.  Backed by
+  an in-memory cache (`_all_role_rows`) so the filter doesn't
+  re-read disk per keystroke.  (PR-2.)
+
 ### Fixed
 
 - **TUI Prompt: cancel-on-timeout.**  The Prompt screen now
