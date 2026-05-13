@@ -288,6 +288,137 @@ async def test_invocations_render_as_trace_lines_in_transcript():
 
 
 @pytest.mark.asyncio
+async def test_timeout_publishes_task_cancel(monkeypatch):
+    """Proposal 003 PR-1 — when the prompt receive times out, the
+    screen MUST publish TASK_CANCEL on ``acc.{cid}.task.cancel`` so
+    the agent (and its downstream LLM backend) stops generating.
+    Without this the operator's work is silently abandoned while
+    vLLM keeps producing tokens against a dropped task.
+    """
+    # Force a tiny timeout so the test finishes in milliseconds.
+    monkeypatch.setenv("ACC_PROMPT_TIMEOUT_S", "0.05")
+
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        screen.query_one("#prompt-textarea", TextArea).text = "ping"
+        screen.action_send()
+
+        # Wait for the send to register, then for the timeout to fire
+        # and the cancel publish to land.
+        for _ in range(40):
+            await pilot.pause()
+            cancel_calls = [
+                p for p in app.observer.published
+                if p[0].endswith(".task.cancel")
+            ]
+            if cancel_calls:
+                break
+
+        # Two publishes expected: the TASK_ASSIGN + the timeout-fired
+        # TASK_CANCEL.
+        subjects = [s for s, _ in app.observer.published]
+        assert any(s.endswith(".task.cancel") for s in subjects), \
+            f"no cancel publish; got subjects={subjects}"
+
+        # The cancel payload must carry the same task_id as the assign.
+        assign_payload = next(
+            p for s, p in app.observer.published if s.endswith(".task")
+        )
+        cancel_payload = next(
+            p for s, p in app.observer.published if s.endswith(".task.cancel")
+        )
+        assert cancel_payload["task_id"] == assign_payload["task_id"]
+        assert cancel_payload["signal_type"] == "TASK_CANCEL"
+        assert cancel_payload["collective_id"] == "sol-test"
+
+
+@pytest.mark.asyncio
+async def test_timeout_records_cancelled_task_id(monkeypatch):
+    """Proposal 003 PR-1 — the screen tracks cancelled-on-timeout
+    task_ids in a FIFO-capped set so late TASK_COMPLETE replies can
+    be suppressed downstream."""
+    monkeypatch.setenv("ACC_PROMPT_TIMEOUT_S", "0.05")
+
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        screen.query_one("#prompt-textarea", TextArea).text = "ping"
+        screen.action_send()
+
+        for _ in range(40):
+            await pilot.pause()
+            if screen._cancelled_task_ids:
+                break
+
+        assert screen._cancelled_task_ids, \
+            "timeout did not record the cancelled task_id"
+
+        task_id = screen._cancelled_task_ids[0]
+        assert screen._is_cancelled(task_id) is True
+        assert screen._is_cancelled("never-seen-task-id") is False
+
+
+@pytest.mark.asyncio
+async def test_timeout_transcript_says_cancelled_not_timed_out(monkeypatch):
+    """The operator-visible transcript message must read 'cancelled'
+    (not 'timed out') after proposal 003 PR-1 — the system DID
+    cancel, not just give up."""
+    monkeypatch.setenv("ACC_PROMPT_TIMEOUT_S", "0.05")
+
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        screen.query_one("#prompt-textarea", TextArea).text = "ping"
+        screen.action_send()
+
+        for _ in range(40):
+            await pilot.pause()
+            if any(e.get("role") == "system" for e in screen.history):
+                break
+
+        sys_entries = [e for e in screen.history if e.get("role") == "system"]
+        assert sys_entries, "no system entry after timeout"
+        text = sys_entries[-1]["text"].lower()
+        assert "cancel" in text, f"transcript should say 'cancel', got: {text}"
+        assert "task_cancel" in text or "published" in text
+
+
+def test_resolve_timeout_default(monkeypatch):
+    """Defaults to ``_RECEIVE_TIMEOUT_S`` when the env var is unset."""
+    from acc.tui.screens.prompt import _resolve_timeout, _RECEIVE_TIMEOUT_S
+    monkeypatch.delenv("ACC_PROMPT_TIMEOUT_S", raising=False)
+    assert _resolve_timeout() == _RECEIVE_TIMEOUT_S
+
+
+def test_resolve_timeout_reads_env(monkeypatch):
+    """A valid positive ACC_PROMPT_TIMEOUT_S overrides the default."""
+    from acc.tui.screens.prompt import _resolve_timeout
+    monkeypatch.setenv("ACC_PROMPT_TIMEOUT_S", "42.5")
+    assert _resolve_timeout() == 42.5
+
+
+def test_resolve_timeout_ignores_garbage(monkeypatch):
+    """Non-numeric env values fall back to the default + log a warning."""
+    from acc.tui.screens.prompt import _resolve_timeout, _RECEIVE_TIMEOUT_S
+    monkeypatch.setenv("ACC_PROMPT_TIMEOUT_S", "not-a-number")
+    assert _resolve_timeout() == _RECEIVE_TIMEOUT_S
+
+
+def test_resolve_timeout_ignores_non_positive(monkeypatch):
+    """Zero / negative env values fall back to the default."""
+    from acc.tui.screens.prompt import _resolve_timeout, _RECEIVE_TIMEOUT_S
+    monkeypatch.setenv("ACC_PROMPT_TIMEOUT_S", "-1")
+    assert _resolve_timeout() == _RECEIVE_TIMEOUT_S
+
+
+@pytest.mark.asyncio
 async def test_clear_history_empties_the_pane():
     app = _PromptHarness()
     async with app.run_test() as pilot:
