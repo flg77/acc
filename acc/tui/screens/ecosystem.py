@@ -16,10 +16,11 @@ acc.role_loader, and acc.config (REQ-TUI-051).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -37,7 +38,7 @@ from textual.widgets import (
 )
 
 from acc.role_loader import RoleLoader, list_roles
-from acc.tui.messages import RolePreloadMessage
+from acc.tui.messages import RolePreloadMessage, RolesChangedMessage
 from acc.tui.path_resolution import resolve_manifest_root
 from acc.tui.widgets.file_picker import FilePickerModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
@@ -64,6 +65,88 @@ def _skills_root() -> Path:
 def _mcps_root() -> Path:
     """Resolve the mcps/ directory.  Same fallback chain as :func:`_roles_root`."""
     return resolve_manifest_root("ACC_MCPS_ROOT", "mcps")
+
+
+# Proposal 003 PR-3 — directory-level watcher.  Polls the roles/ tree
+# every WATCH_POLL_INTERVAL_S seconds and posts a RolesChangedMessage
+# when the fingerprint (set of role names + per-file mtimes) changes.
+#
+# Polling-only (no watchdog) — keeps the dependency surface small,
+# matches the existing role_loader's polling fallback semantics
+# (acc/role_loader.py:L25–L30), and is portable across Windows / POSIX
+# without an external lib.  The fingerprint is a sorted tuple so
+# additions, removals, and modifications all produce distinct values.
+WATCH_POLL_INTERVAL_S: float = 2.0
+WATCH_POLL_INTERVAL_ENV: str = "ACC_TUI_ROLE_WATCH_INTERVAL_S"
+
+
+def _resolve_watch_interval() -> float:
+    """Return the configured role-watch poll interval in seconds.
+
+    Reads ``ACC_TUI_ROLE_WATCH_INTERVAL_S`` from the environment when
+    set; falls back to ``WATCH_POLL_INTERVAL_S``.  Tests use this
+    hook to drive the watcher fast.
+    """
+    import os  # noqa: PLC0415
+    raw = os.environ.get(WATCH_POLL_INTERVAL_ENV, "")
+    if not raw:
+        return WATCH_POLL_INTERVAL_S
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "ecosystem: %s=%r is not a number; using default %.1fs",
+            WATCH_POLL_INTERVAL_ENV, raw, WATCH_POLL_INTERVAL_S,
+        )
+        return WATCH_POLL_INTERVAL_S
+    if value <= 0:
+        logger.warning(
+            "ecosystem: %s=%.1f must be > 0; using default %.1fs",
+            WATCH_POLL_INTERVAL_ENV, value, WATCH_POLL_INTERVAL_S,
+        )
+        return WATCH_POLL_INTERVAL_S
+    return value
+
+
+def _fingerprint_roles_dir(roles_root: Path) -> tuple:
+    """Cheap fingerprint of the roles/ tree.
+
+    Returns a sorted tuple of ``(role_name, role.yaml mtime,
+    role.md mtime)`` per existing role directory.  ``mtime`` is 0.0
+    when the file is absent — so adding a role.md is reflected, not
+    silently identical to "role had no role.md before."
+
+    Errors short-circuit to an empty tuple so a transient stat
+    failure doesn't spam the bus with spurious changes.
+    """
+    if not roles_root.is_dir():
+        return tuple()
+    out: list[tuple[str, float, float]] = []
+    try:
+        for child in roles_root.iterdir():
+            if not child.is_dir() or child.name in _EXCLUDED_NAMES:
+                continue
+            yaml_path = child / "role.yaml"
+            md_path = child / "role.md"
+            if not yaml_path.exists():
+                continue
+            try:
+                yaml_mtime = yaml_path.stat().st_mtime
+            except OSError:
+                yaml_mtime = 0.0
+            try:
+                md_mtime = md_path.stat().st_mtime if md_path.exists() else 0.0
+            except OSError:
+                md_mtime = 0.0
+            out.append((child.name, yaml_mtime, md_mtime))
+    except OSError:
+        return tuple()
+    return tuple(sorted(out))
+
+
+# Mirrors role_loader._EXCLUDED_ROLE_NAMES — duplicated here to avoid
+# a cross-module import path for one constant.
+_EXCLUDED_NAMES = frozenset({"_base", "TEMPLATE"})
 
 
 def _read_role_md(md_path: Path, role_name: str) -> str:
@@ -138,6 +221,18 @@ class EcosystemScreen(Screen):
         # keystroke.  Populated by _load_roles(); list of tuples
         # (role_name, domain, persona, task_count_str).
         self._all_role_rows: list[tuple[str, str, str, str]] = []
+
+        # Proposal 003 PR-3 — file-watcher state.
+        # Background polling task; cancelled in on_unmount.
+        self._watch_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
+        # Last fingerprint we observed; used by the poll loop to decide
+        # whether to post a RolesChangedMessage.
+        self._last_role_fingerprint: tuple = tuple()
+        # Advisory file lock on the currently-selected role's yaml +
+        # md.  ``filelock.FileLock``-shaped (or ``None`` when no lock
+        # is held / lock library unavailable).
+        self._selection_lock: Any = None
+        self._selection_lock_role: str = ""
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="ecosystem", id="nav")
@@ -248,6 +343,25 @@ class EcosystemScreen(Screen):
         self._load_skills()
         self._load_mcps()
 
+        # Proposal 003 PR-3 — start the roles/ directory watcher.
+        # Captures the initial fingerprint synchronously so the very
+        # first poll tick doesn't post a spurious change message.
+        self._last_role_fingerprint = _fingerprint_roles_dir(_roles_root())
+        self._watch_task = asyncio.create_task(
+            self._watch_roles_loop(),
+            name="ecosystem-role-watch",
+        )
+
+    def on_unmount(self) -> None:
+        """Stop the watcher + release any held selection lock.
+
+        Proposal 003 PR-3.  Idempotent — safe to call multiple times.
+        """
+        if self._watch_task is not None and not self._watch_task.done():
+            self._watch_task.cancel()
+        self._watch_task = None
+        self._release_selection_lock()
+
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
 
@@ -277,6 +391,8 @@ class EcosystemScreen(Screen):
         self._selected_role = role_name
         self._arm_infusion_button(role_name)
         self._show_role_detail(role_name)
+        # Proposal 003 PR-3 — advisory lock on the selected role's files.
+        self._acquire_selection_lock(role_name)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter pressed on a role row — pin the selection.
@@ -293,6 +409,8 @@ class EcosystemScreen(Screen):
         self._selected_role = role_name
         self._arm_infusion_button(role_name)
         self._show_role_detail(role_name)
+        # Proposal 003 PR-3 — advisory lock on the selected role's files.
+        self._acquire_selection_lock(role_name)
 
     @staticmethod
     def _extract_role_name(row_key) -> str:
@@ -542,6 +660,148 @@ class EcosystemScreen(Screen):
         if (event.input.id or "") != "role-filter":
             return
         self._apply_filter(event.value or "")
+
+    # ------------------------------------------------------------------
+    # Proposal 003 PR-3 — file-watcher + selection lock
+    # ------------------------------------------------------------------
+
+    async def _watch_roles_loop(self) -> None:
+        """Periodically diff the roles/ tree fingerprint and post a
+        :class:`RolesChangedMessage` on change.
+
+        Posting via the Textual message bus keeps the actual reload
+        on the UI thread, where DataTable mutation is safe.  The
+        loop runs until the screen unmounts or the task is cancelled.
+        """
+        interval = _resolve_watch_interval()
+        roles_root = _roles_root()
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                fp = _fingerprint_roles_dir(roles_root)
+                if fp != self._last_role_fingerprint:
+                    self._last_role_fingerprint = fp
+                    try:
+                        self.post_message(RolesChangedMessage("modified"))
+                    except Exception:
+                        logger.exception("ecosystem: post RolesChanged failed")
+        except asyncio.CancelledError:
+            logger.debug("ecosystem: role watcher cancelled")
+            raise
+        except Exception:
+            # Defensive: a transient OSError in fingerprint shouldn't
+            # take the whole screen down.  Log + exit the loop; the
+            # operator can reopen the screen to restart watching.
+            logger.exception("ecosystem: role watcher crashed")
+
+    def on_roles_changed_message(
+        self, message: RolesChangedMessage,
+    ) -> None:
+        """React to filesystem changes by reloading the cache + re-
+        applying the current filter.
+
+        Proposal 003 PR-3.  Detail-pane content stays in sync because
+        ``_show_role_detail()`` reads role files directly each call.
+        Status bar gets a small note so the operator knows a refresh
+        happened (helps debugging external-edit workflows).
+        """
+        try:
+            # Preserve the operator's current filter substring across
+            # the refresh.
+            current_query = ""
+            try:
+                current_query = self.query_one(
+                    "#role-filter", Input,
+                ).value or ""
+            except Exception:
+                pass
+
+            self._load_roles()
+            self._apply_filter(current_query)
+
+            # If the operator had a role selected and it still exists
+            # post-refresh, re-render its detail pane.  Otherwise leave
+            # the placeholder visible.
+            if self._selected_role and self._selected_role in (
+                row[0] for row in self._all_role_rows
+            ):
+                self._show_role_detail(self._selected_role)
+
+            # Best-effort operator note — non-fatal if the panel widget
+            # changes shape later.
+            try:
+                self.notify(
+                    f"Roles directory changed ({message.reason}); "
+                    "table refreshed.",
+                    severity="information",
+                    timeout=3.0,
+                )
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("ecosystem: on_roles_changed handler failed")
+
+    def _acquire_selection_lock(self, role_name: str) -> None:
+        """Take a best-effort advisory file lock on the selected role's
+        ``role.yaml`` (and ``role.md`` if present).
+
+        Proposal 003 PR-3 — protects against two TUI sessions stomping
+        on the same file when both have a row selected.  Does NOT
+        block the operator's external ``$EDITOR``; the lock is
+        advisory and most editors (vim, notepad, …) ignore it.
+
+        Lock library is :mod:`filelock` (already a project dependency).
+        Failure modes:
+
+        * ``filelock`` import fails → no lock; quiet (logged).
+        * Lock acquisition raises → status-bar notification; no lock
+          held.  Operator can still proceed.
+        """
+        # Release any prior lock first.
+        self._release_selection_lock()
+        if not role_name:
+            return
+        try:
+            from filelock import FileLock, Timeout  # noqa: PLC0415
+        except Exception:
+            logger.debug("ecosystem: filelock unavailable; selection lock skipped")
+            return
+
+        yaml_path = _roles_root() / role_name / "role.yaml"
+        lock_path = yaml_path.with_suffix(yaml_path.suffix + ".lock")
+        try:
+            lock = FileLock(str(lock_path), timeout=0.1)
+            lock.acquire()
+            self._selection_lock = lock
+            self._selection_lock_role = role_name
+        except Timeout:
+            self._selection_lock = None
+            self._selection_lock_role = ""
+            try:
+                self.notify(
+                    f"role.yaml for {role_name} is locked by another process; "
+                    "edits made now may be lost.",
+                    severity="warning",
+                    timeout=4.0,
+                )
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("ecosystem: selection lock acquire failed")
+            self._selection_lock = None
+            self._selection_lock_role = ""
+
+    def _release_selection_lock(self) -> None:
+        """Release the selection lock (idempotent)."""
+        lock = self._selection_lock
+        self._selection_lock = None
+        self._selection_lock_role = ""
+        if lock is None:
+            return
+        try:
+            lock.release()
+        except Exception:
+            logger.exception("ecosystem: selection lock release failed")
 
     def _show_role_detail(self, role_name: str) -> None:
         """Render the role's narrative + raw definition in the detail

@@ -31,6 +31,25 @@ tag is the v0.2.0 cut.
   persona.  Clearing the input restores the full list.  Backed by
   an in-memory cache (`_all_role_rows`) so the filter doesn't
   re-read disk per keystroke.  (PR-2.)
+- **TUI Ecosystem: roles/ directory watcher.**  A polling task
+  (default 2 s; configurable via `ACC_TUI_ROLE_WATCH_INTERVAL_S`)
+  diffs a fingerprint of role names + per-file mtimes and posts
+  a `RolesChangedMessage` when external edits to `role.yaml` or
+  `role.md` are detected.  The handler reloads the role cache +
+  re-applies the current filter substring (preserved across
+  refresh) + re-renders the detail pane for the active row.
+  Operator gets a 3-second toast confirming the refresh.
+  (PR-3 of proposal 003 — PR #56.)
+- **TUI Ecosystem: advisory selection lock.**  Selecting a role
+  row takes an advisory `filelock.FileLock` on the role's
+  `role.yaml`.lock; released on row change, screen unmount, or
+  process exit.  Lock failure (another process holds it) surfaces
+  as a warning toast — the operator can still proceed.  Most
+  external editors ignore advisory locks, so this primarily
+  protects against two TUI sessions stomping on each other.
+  (PR-3.)
+- **`RolesChangedMessage`** public message added to
+  `acc/tui/messages.py` (PR-3).
 
 ### Fixed
 
