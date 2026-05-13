@@ -1005,6 +1005,159 @@ def test_subrole_siblings_falls_back_to_glob_when_none_declared(tmp_path):
     assert set(siblings) == {"research_planner", "research_critic"}
 
 
+# ---------------------------------------------------------------------------
+# Proposal 007 — in-pane role editing
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_editor_command_respects_EDITOR(monkeypatch):
+    from acc.tui.screens.ecosystem import _resolve_editor_command
+    monkeypatch.setenv("EDITOR", "vim")
+    monkeypatch.delenv("VISUAL", raising=False)
+    cmd = _resolve_editor_command("/tmp/x.yaml")
+    assert cmd == ["vim", "/tmp/x.yaml"]
+
+
+def test_resolve_editor_command_splits_args(monkeypatch):
+    """``$EDITOR='code --wait'`` produces ['code','--wait',path]."""
+    from acc.tui.screens.ecosystem import _resolve_editor_command
+    monkeypatch.setenv("EDITOR", "code --wait")
+    monkeypatch.delenv("VISUAL", raising=False)
+    cmd = _resolve_editor_command("/tmp/x.yaml")
+    assert cmd == ["code", "--wait", "/tmp/x.yaml"]
+
+
+def test_resolve_editor_command_falls_back_to_VISUAL(monkeypatch):
+    from acc.tui.screens.ecosystem import _resolve_editor_command
+    monkeypatch.delenv("EDITOR", raising=False)
+    monkeypatch.setenv("VISUAL", "nano")
+    cmd = _resolve_editor_command("/tmp/x.yaml")
+    assert cmd == ["nano", "/tmp/x.yaml"]
+
+
+def test_resolve_editor_command_platform_fallback(monkeypatch):
+    import os
+    from acc.tui.screens.ecosystem import _resolve_editor_command
+    monkeypatch.delenv("EDITOR", raising=False)
+    monkeypatch.delenv("VISUAL", raising=False)
+    cmd = _resolve_editor_command("/tmp/x.yaml")
+    expected = "notepad" if os.name == "nt" else "vi"
+    assert cmd == [expected, "/tmp/x.yaml"]
+
+
+@pytest.mark.asyncio
+async def test_edit_buttons_armed_on_row_select(isolated_manifests):
+    """Proposal 007 — selecting a role enables both edit buttons."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        # Pre-condition — buttons disabled before any selection.
+        assert screen.query_one("#btn-edit-yaml", Button).disabled is True
+        assert screen.query_one("#btn-edit-md",   Button).disabled is True
+
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        assert screen.query_one("#btn-edit-yaml", Button).disabled is False
+        assert screen.query_one("#btn-edit-md",   Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_edit_yaml_button_spawns_editor(
+    isolated_manifests, monkeypatch,
+):
+    """Pressing the Edit role.yaml button invokes the spawn helper
+    with the expected argv."""
+    from acc.tui.screens import ecosystem as eco
+
+    captured: list[list[str]] = []
+
+    def fake_spawn(cmd):
+        captured.append(cmd)
+
+    monkeypatch.setattr(eco, "_spawn_editor", fake_spawn)
+    monkeypatch.setenv("EDITOR", "echo")
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        btn = screen.query_one("#btn-edit-yaml", Button)
+        btn.press()
+        await pilot.pause()
+
+        assert len(captured) == 1
+        cmd = captured[0]
+        assert cmd[0] == "echo"
+        assert cmd[-1].endswith("role.yaml")
+        assert "test_role" in cmd[-1]
+
+
+@pytest.mark.asyncio
+async def test_edit_md_button_creates_missing_role_md_and_spawns(
+    isolated_manifests, monkeypatch,
+):
+    """If role.md is missing, pressing Edit role.md auto-creates a
+    stub before spawning the editor so the file isn't empty on
+    open."""
+    from acc.tui.screens import ecosystem as eco
+    captured: list[list[str]] = []
+    monkeypatch.setattr(eco, "_spawn_editor", lambda cmd: captured.append(cmd))
+    monkeypatch.setenv("EDITOR", "echo")
+
+    roles_root = isolated_manifests["roles_root"]
+    md_path = roles_root / "test_role" / "role.md"
+    assert not md_path.exists()
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        screen.query_one("#btn-edit-md", Button).press()
+        await pilot.pause()
+
+        # role.md now exists with a placeholder body.
+        assert md_path.exists()
+        body = md_path.read_text(encoding="utf-8")
+        assert "test_role" in body
+        # And spawn was invoked with that path.
+        assert captured
+        assert captured[0][-1].endswith("role.md")
+
+
 @pytest.mark.asyncio
 async def test_role_detail_md_appends_subrole_section(
     isolated_manifests,

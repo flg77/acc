@@ -149,6 +149,51 @@ def _fingerprint_roles_dir(roles_root: Path) -> tuple:
 _EXCLUDED_NAMES = frozenset({"_base", "TEMPLATE"})
 
 
+# Proposal 007 — $EDITOR resolution for in-pane role editing.
+
+import os  # noqa: PLC0415,E402
+import shlex  # noqa: PLC0415,E402
+import subprocess  # noqa: PLC0415,E402
+
+
+def _resolve_editor_command(file_path: str) -> list[str]:
+    """Return the argv list to spawn an editor on ``file_path``.
+
+    Resolution order:
+
+    1. ``$EDITOR`` from the environment, split via :func:`shlex.split`
+       so values like ``"code --wait"`` work.
+    2. ``$VISUAL`` (POSIX convention) as a fallback.
+    3. Platform default — ``notepad`` on Windows, ``vi`` otherwise.
+
+    The file path is appended as the final argument.
+    """
+    editor = os.environ.get("EDITOR", "").strip()
+    if not editor:
+        editor = os.environ.get("VISUAL", "").strip()
+    if not editor:
+        editor = "notepad" if os.name == "nt" else "vi"
+    cmd = shlex.split(editor)
+    cmd.append(file_path)
+    return cmd
+
+
+def _spawn_editor(cmd: list[str]) -> None:
+    """Spawn the editor without blocking the TUI.
+
+    Uses ``Popen`` with detached I/O so the editor process is fully
+    independent — the operator can switch terminals / close the
+    editor without the TUI being aware.
+    """
+    subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
+
+
 def _read_role_md(md_path: Path, role_name: str) -> str:
     """Return the role's ``role.md`` body, or a friendly placeholder.
 
@@ -426,6 +471,23 @@ class EcosystemScreen(Screen):
                         id="infusion-hint",
                     )
 
+                # Proposal 007 — operator can edit the selected role's
+                # files directly in $EDITOR.  PR-3's file-watcher
+                # auto-refreshes the detail pane when the editor saves.
+                with Horizontal(id="row-edit-actions"):
+                    yield Button(
+                        "Edit role.yaml",
+                        id="btn-edit-yaml",
+                        variant="default",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Edit role.md",
+                        id="btn-edit-md",
+                        variant="default",
+                        disabled=True,
+                    )
+
                 yield Label("ACTIVE LLM BACKENDS", classes="panel-label")
                 yield DataTable(id="llm-table", show_cursor=False)
 
@@ -539,12 +601,16 @@ class EcosystemScreen(Screen):
         return str(candidate) if candidate else ""
 
     def _arm_infusion_button(self, role_name: str) -> None:
-        """Enable the Schedule-infusion button + update the hint label.
+        """Enable the Schedule-infusion button + the Edit buttons +
+        update the hint label.
 
-        Split out so both row-highlight and row-select paths reuse the
-        same logic.  Logs (rather than swallows) any widget-lookup
-        failure so future regressions are debuggable from the TUI log
-        file rather than invisible.
+        Split out so both row-highlight and row-select paths reuse
+        the same logic.  Logs (rather than swallows) any widget-
+        lookup failure so future regressions are debuggable from the
+        TUI log file rather than invisible.
+
+        Proposal 007 — also arms the role.yaml / role.md edit
+        buttons since they live in the same selection state.
         """
         try:
             btn = self.query_one("#btn-schedule-infusion", Button)
@@ -557,6 +623,12 @@ class EcosystemScreen(Screen):
                 "for role=%r",
                 role_name,
             )
+        # Proposal 007 — arm the edit buttons too.
+        for btn_id in ("btn-edit-yaml", "btn-edit-md"):
+            try:
+                self.query_one(f"#{btn_id}", Button).disabled = False
+            except Exception:
+                logger.exception("ecosystem: failed to arm %s", btn_id)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Dispatch by button id.
@@ -583,6 +655,63 @@ class EcosystemScreen(Screen):
                 kind="mcp",
                 target_filename="mcp.yaml",
                 title="Upload an MCP server — pick the directory's mcp.yaml",
+            )
+        elif bid == "btn-edit-yaml":
+            self._handle_edit_in_editor("role.yaml")
+        elif bid == "btn-edit-md":
+            self._handle_edit_in_editor("role.md")
+
+    def _handle_edit_in_editor(self, filename: str) -> None:
+        """Spawn $EDITOR on the selected role's ``filename``.
+
+        Proposal 007.  Non-blocking ``Popen`` — the operator's
+        editor opens in a sibling terminal / window; PR-3's
+        file-watcher refreshes the detail pane when they save.
+        """
+        if not self._selected_role:
+            self.notify(
+                "Highlight or click a role row first",
+                severity="warning",
+                timeout=4.0,
+            )
+            return
+        path = _roles_root() / self._selected_role / filename
+        if not path.exists() and filename == "role.md":
+            # Create an empty role.md on demand so the editor opens
+            # a non-empty buffer rather than silently failing on
+            # some editors.
+            try:
+                path.write_text(
+                    f"# {self._selected_role}\n\n"
+                    "<!-- Authored per docs/role-authoring.md -->\n",
+                    encoding="utf-8",
+                )
+            except OSError:
+                logger.exception("ecosystem: could not create %s", path)
+                self.notify(
+                    f"Could not create {path}",
+                    severity="error", timeout=4.0,
+                )
+                return
+        if not path.exists():
+            self.notify(
+                f"{filename} not found for {self._selected_role}",
+                severity="error", timeout=4.0,
+            )
+            return
+        try:
+            cmd = _resolve_editor_command(str(path))
+            _spawn_editor(cmd)
+            self.notify(
+                f"Opened {filename} for {self._selected_role} in "
+                + " ".join(cmd[:-1]),
+                severity="information", timeout=3.0,
+            )
+        except Exception as exc:
+            logger.exception("ecosystem: spawn editor failed")
+            self.notify(
+                f"Could not launch editor: {exc}",
+                severity="error", timeout=4.0,
             )
 
     def _handle_schedule_infusion(self) -> None:
