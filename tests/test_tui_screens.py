@@ -350,14 +350,13 @@ class TestEcosystemScreen:
             table = tables.first(DataTable)
             assert len(table.columns) >= 1
 
-    @pytest.mark.asyncio
-    async def test_roadmap_labels_visible(self):
-        """Skills and MCPs sections marked as roadmap must be visible (REQ-TUI-039)."""
-        app = _make_app_for(EcosystemScreen)
-        async with app.run_test(headless=True) as pilot:
-            await pilot.pause(0.15)
-            labels = app.screen.query(".roadmap-label")
-            assert len(labels) >= 1
+    # ``test_roadmap_labels_visible`` — removed in proposal 009.
+    # The ``.roadmap-label`` class was a phase-4-era placeholder that
+    # the live Skills + MCPs widgets (added in PR-4.4) already
+    # superseded; the live widgets themselves moved to the
+    # Configuration pane in proposal 003 PR-4 + were deleted from
+    # Ecosystem in proposal 009.  Coverage now lives in
+    # tests/test_configuration_screen_pilot.py.
 
 
 # ---------------------------------------------------------------------------

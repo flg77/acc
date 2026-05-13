@@ -191,39 +191,11 @@ def test_path_resolution_missing_env_path_falls_back(tmp_path, monkeypatch, capl
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_skills_table_populated_when_manifests_exist(isolated_manifests):
-    """Bug 1: SKILLS table now reads from the fixture's skills/ dir."""
-    app = _Harness()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        screen = app.screen
-        assert isinstance(screen, EcosystemScreen)
-
-        skills_table = screen.query_one("#skills-table", DataTable)
-        # Exactly one row, and its key is 'echo' — NOT the empty-state
-        # guidance row.
-        assert skills_table.row_count == 1, (
-            f"expected 1 skill row, got {skills_table.row_count} "
-            "— empty-state fallback would also produce 1 row but "
-            "with a different key, see next assertion"
-        )
-        first_row_key = list(skills_table.rows.keys())[0]
-        assert getattr(first_row_key, "value", str(first_row_key)) == "echo"
-
-
-@pytest.mark.asyncio
-async def test_mcps_table_populated_when_manifests_exist(isolated_manifests):
-    """Bug 1: MCP SERVERS table now reads from the fixture's mcps/ dir."""
-    app = _Harness()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        screen = app.screen
-
-        mcps_table = screen.query_one("#mcps-table", DataTable)
-        assert mcps_table.row_count == 1
-        first_row_key = list(mcps_table.rows.keys())[0]
-        assert getattr(first_row_key, "value", str(first_row_key)) == "echo_server"
+# Proposal 009 — Skills + MCPs tables moved off the Ecosystem
+# screen; their coverage now lives in
+# tests/test_configuration_screen_pilot.py.  The previous PR-A
+# pilot tests (``test_skills_table_populated_when_manifests_exist``,
+# ``test_mcps_table_populated_when_manifests_exist``) are removed.
 
 
 def _capture_panel_updates(screen) -> list[str]:
