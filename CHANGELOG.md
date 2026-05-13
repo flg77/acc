@@ -47,6 +47,13 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   yaml purpose).  Warnings-only by default; `--strict` exits 1.
   Heuristic substring-match for shared morphology (`research`
   matches `researcher`).
+- **TUI Ecosystem: "Edit role.yaml" + "Edit role.md" buttons.**
+  Proposal 007.  Spawns the operator's `$EDITOR` (resolved via
+  env var with `$VISUAL` + platform fallback) on the selected
+  role's files.  Non-blocking `Popen`; file-watcher from
+  proposal 003 PR-3 catches the save and refreshes the detail
+  pane.  Missing `role.md` is auto-created with a stub
+  template + pointer at `docs/role-authoring.md`.
 
 ## [0.2.0] — 2026-05-14 — TUI usability hardening (proposal 003)
 
