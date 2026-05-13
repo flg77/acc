@@ -74,7 +74,41 @@ _TARGET_ROLES: list[tuple[str, str]] = [
 
 # Per-task wait cap.  Long-running tasks should split via PLAN, not
 # block the prompt pane.
-_RECEIVE_TIMEOUT_S: float = 60.0
+#
+# Default raised from 60 → 180 s for slow local backends (vLLM /
+# llama.cpp on consumer hardware).  Operators on faster
+# infrastructure can lower this via the ``ACC_PROMPT_TIMEOUT_S``
+# environment variable, read at screen mount.
+_RECEIVE_TIMEOUT_S: float = 180.0
+_RECEIVE_TIMEOUT_ENV: str = "ACC_PROMPT_TIMEOUT_S"
+
+
+def _resolve_timeout() -> float:
+    """Return the configured prompt timeout in seconds.
+
+    Reads ``ACC_PROMPT_TIMEOUT_S`` from the environment when set;
+    falls back to ``_RECEIVE_TIMEOUT_S``.  Malformed values are
+    logged and ignored.
+    """
+    import os  # noqa: PLC0415
+    raw = os.environ.get(_RECEIVE_TIMEOUT_ENV, "")
+    if not raw:
+        return _RECEIVE_TIMEOUT_S
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning(
+            "prompt: %s=%r is not a number; using default %.0fs",
+            _RECEIVE_TIMEOUT_ENV, raw, _RECEIVE_TIMEOUT_S,
+        )
+        return _RECEIVE_TIMEOUT_S
+    if value <= 0:
+        logger.warning(
+            "prompt: %s=%.1f must be > 0; using default %.0fs",
+            _RECEIVE_TIMEOUT_ENV, value, _RECEIVE_TIMEOUT_S,
+        )
+        return _RECEIVE_TIMEOUT_S
+    return value
 
 # History FIFO cap.  Chat panes accumulate fast; 200 entries gives
 # ~50 prompt round-trips with traces before the oldest fall off.
@@ -178,6 +212,13 @@ class PromptScreen(Screen):
         super().__init__(**kwargs)
         # Track in-flight workers so screen unmount cancels them.
         self._workers: set[asyncio.Task] = set()
+        # Task ids the screen has already cancelled (timeout path).
+        # Cap at 256 entries so the set can't grow unboundedly under
+        # a flood of timeouts; oldest entries fall off via FIFO eviction
+        # in _mark_cancelled().  Used by the late-TASK_COMPLETE path
+        # (proposal 003 PR-1 §6 risk row 1) to suppress replies that
+        # arrive after the operator has moved on.
+        self._cancelled_task_ids: list[str] = []
 
     # ------------------------------------------------------------------
     # Compose / mount / lifecycle
@@ -460,6 +501,29 @@ class PromptScreen(Screen):
         self._workers.add(worker)
         worker.add_done_callback(self._workers.discard)
 
+    def _mark_cancelled(self, task_id: str) -> None:
+        """Record a task_id as cancelled-on-timeout.
+
+        FIFO-capped at 256 entries.  Used by the late-TASK_COMPLETE
+        suppression path (proposal 003 PR-1 §6 risk row 1): if a
+        reply arrives after the timeout fired, downstream renderers
+        can check this list and refuse to surface a stale answer
+        the operator no longer expects.
+        """
+        if not task_id:
+            return
+        try:
+            self._cancelled_task_ids.append(task_id)
+            if len(self._cancelled_task_ids) > 256:
+                # Drop the oldest entry; keep the cap stable.
+                del self._cancelled_task_ids[:32]
+        except Exception:
+            logger.exception("prompt: _mark_cancelled failed")
+
+    def _is_cancelled(self, task_id: str) -> bool:
+        """Return True iff this task_id was cancelled-on-timeout."""
+        return bool(task_id) and task_id in self._cancelled_task_ids
+
     def _render_cluster_show(self, cluster_id: str) -> None:
         """Append a system entry summarising current cluster topology."""
         snap = self.snapshot
@@ -599,18 +663,30 @@ class PromptScreen(Screen):
         # Clear the prompt textarea so the operator can start the next one.
         self.query_one("#prompt-textarea", TextArea).clear()
 
+        timeout_s = _resolve_timeout()
         try:
-            reply = await channel.receive(task_id, timeout=_RECEIVE_TIMEOUT_S)
+            reply = await channel.receive(task_id, timeout=timeout_s)
         except asyncio.TimeoutError:
+            # Publish TASK_CANCEL so the agent stops generating.
+            # Without this the LLM backend (vLLM, llama.cpp, …) keeps
+            # running, finishes long after the operator gave up, and
+            # the late TASK_COMPLETE lands on a screen the operator
+            # has moved past.  See proposal 003 PR-1 in the operator's
+            # Obsidian vault for the full rationale.
+            self._publish_cancel(task_id=task_id)
+            self._mark_cancelled(task_id)
             self._append_history({
                 "role": "system",
                 "task_id": task_id,
-                "text": f"(timeout after {_RECEIVE_TIMEOUT_S:.0f}s — no reply)",
+                "text": (
+                    f"(cancelled after {timeout_s:.0f}s — no reply; "
+                    "TASK_CANCEL published)"
+                ),
                 "ts": time.time(),
                 "blocked": True,
             })
             self.query_one("#prompt-status", Static).update(
-                "[red]Timed out waiting for reply.[/red]"
+                f"[red]Cancelled after {timeout_s:.0f}s — no reply received.[/red]"
             )
             return
         except Exception as exc:
