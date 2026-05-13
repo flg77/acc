@@ -154,40 +154,12 @@ async def test_ecosystem_role_detail_renders_coding_agent_seed():
         assert "analytical" in rendered
 
 
-@pytest.mark.asyncio
-async def test_ecosystem_skills_table_shows_echo_for_coding_agent_role():
-    """SKILLS table contains the ``echo`` skill row — the only entry
-    in coding_agent's allowed_skills.  Verifies the path-resolution
-    fix from PR-A loads the repo skills/ correctly."""
-    app = _EcoHarness()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        screen = app.screen
-        skills_table = screen.query_one("#skills-table", DataTable)
-
-        skill_keys = [
-            getattr(k, "value", str(k)) for k in skills_table.rows.keys()
-        ]
-        assert "echo" in skill_keys, (
-            f"echo missing from SKILLS table (saw {skill_keys})"
-        )
-
-
-@pytest.mark.asyncio
-async def test_ecosystem_mcps_table_shows_echo_server_for_coding_agent_role():
-    """MCP SERVERS table contains the ``echo_server`` row."""
-    app = _EcoHarness()
-    async with app.run_test() as pilot:
-        await pilot.pause()
-        screen = app.screen
-        mcps_table = screen.query_one("#mcps-table", DataTable)
-
-        mcp_keys = [
-            getattr(k, "value", str(k)) for k in mcps_table.rows.keys()
-        ]
-        assert "echo_server" in mcp_keys, (
-            f"echo_server missing from MCP SERVERS table (saw {mcp_keys})"
-        )
+# Proposal 009 — the Skills + MCPs tables moved off the Ecosystem
+# screen to the Configuration pane.  Coverage for those tables now
+# lives in tests/test_configuration_screen_pilot.py
+# (test_skills_table_populated_from_fixture, …mcps…).  The PR-A
+# pilot tests that targeted #skills-table / #mcps-table on
+# Ecosystem are removed.
 
 
 @pytest.mark.asyncio

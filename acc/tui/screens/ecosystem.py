@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
+# shutil removed in proposal 009 (upload flow moved to Configuration pane).
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -40,7 +40,8 @@ from textual.widgets import (
 from acc.role_loader import RoleLoader, list_roles
 from acc.tui.messages import RolePreloadMessage, RolesChangedMessage
 from acc.tui.path_resolution import resolve_manifest_root
-from acc.tui.widgets.file_picker import FilePickerModal
+# FilePickerModal import removed in proposal 009 (upload flow moved
+# to acc/tui/screens/configuration.py).
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
 if TYPE_CHECKING:
@@ -365,11 +366,8 @@ class EcosystemScreen(Screen):
         # The "Schedule infusion" button reads this to decide which role
         # to pre-load into the Nucleus form.
         self._selected_role: str = ""
-        # PR-A2 — which upload kind is currently in-flight, set by the
-        # button handler before pushing the FilePickerModal so the
-        # FileSelected handler knows whether to copy into skills/ or
-        # mcps/.  ``""`` means no upload pending.
-        self._pending_upload_kind: str = ""
+        # Proposal 009 — _pending_upload_kind state removed (Upload
+        # flow moved to the Configuration pane).
         # Proposal 003 PR-2 — cached role-row data so the search filter
         # can repopulate the DataTable without re-reading disk on every
         # keystroke.  Populated by _load_roles(); list of tuples
@@ -405,32 +403,12 @@ class EcosystemScreen(Screen):
                 )
                 yield DataTable(id="role-table")
 
-                # Phase 4.4 — live Skills table replaces the roadmap stub.
-                # Sourced from SkillRegistry().load_from(_skills_root())
-                # at mount time; one row per loaded skill manifest.
-                # PR-A2: header row with an Upload button next to the title.
-                with Horizontal(classes="panel-header-row"):
-                    yield Label("SKILLS", classes="panel-label")
-                    yield Button(
-                        "Upload skill",
-                        id="btn-upload-skill",
-                        variant="default",
-                        classes="panel-header-button",
-                    )
-                yield DataTable(id="skills-table")
+                # Proposal 009 — Skills + MCPs widgets moved to the
+                # Configuration pane (pane 8) in proposal 003 PR-4.
+                # Removed from the Ecosystem screen here after the
+                # one-release migration window.
 
-                # Phase 4.4 — live MCP servers table replaces the roadmap.
-                with Horizontal(classes="panel-header-row"):
-                    yield Label("MCP SERVERS", classes="panel-label")
-                    yield Button(
-                        "Upload MCP",
-                        id="btn-upload-mcp",
-                        variant="default",
-                        classes="panel-header-button",
-                    )
-                yield DataTable(id="mcps-table")
-
-            # Right: role detail panel + infusion action + LLM backends
+            # Right: role detail panel + infusion + edit actions
             with Vertical(id="ecosystem-right"):
                 yield Label("ROLE DETAIL", classes="panel-label")
                 # Proposal 003 PR-2 — split detail into two collapsibles.
@@ -488,8 +466,8 @@ class EcosystemScreen(Screen):
                         disabled=True,
                     )
 
-                yield Label("ACTIVE LLM BACKENDS", classes="panel-label")
-                yield DataTable(id="llm-table", show_cursor=False)
+                # Proposal 009 — Active LLM Backends moved to the
+                # Configuration pane (pane 8).
 
         yield Footer()
 
@@ -498,21 +476,11 @@ class EcosystemScreen(Screen):
         role_table = self.query_one("#role-table", DataTable)
         role_table.add_columns("Role", "Domain", "Persona", "Tasks")
 
-        llm_table = self.query_one("#llm-table", DataTable)
-        llm_table.add_columns("Agent", "Backend", "Model", "Health", "p50ms")
-
-        # Phase 4.4 — Skills + MCP servers tables.
-        skills_table = self.query_one("#skills-table", DataTable)
-        skills_table.add_columns("Skill", "Version", "Risk", "Requires")
-        skills_table.cursor_type = "row"
-
-        mcps_table = self.query_one("#mcps-table", DataTable)
-        mcps_table.add_columns("Server", "Transport", "Risk", "Tools")
-        mcps_table.cursor_type = "row"
+        # Proposal 009 — Skills / MCPs / LLM tables removed from
+        # Ecosystem.  Their canonical home is the Configuration
+        # pane (pane 8) since proposal 003 PR-4.
 
         self._load_roles()
-        self._load_skills()
-        self._load_mcps()
 
         # Proposal 003 PR-3 — start the roles/ directory watcher.
         # Captures the initial fingerprint synchronously so the very
@@ -644,22 +612,12 @@ class EcosystemScreen(Screen):
         bid = event.button.id or ""
         if bid == "btn-schedule-infusion":
             self._handle_schedule_infusion()
-        elif bid == "btn-upload-skill":
-            self._open_upload_picker(
-                kind="skill",
-                target_filename="skill.yaml",
-                title="Upload a skill — pick the directory's skill.yaml",
-            )
-        elif bid == "btn-upload-mcp":
-            self._open_upload_picker(
-                kind="mcp",
-                target_filename="mcp.yaml",
-                title="Upload an MCP server — pick the directory's mcp.yaml",
-            )
         elif bid == "btn-edit-yaml":
             self._handle_edit_in_editor("role.yaml")
         elif bid == "btn-edit-md":
             self._handle_edit_in_editor("role.md")
+        # Proposal 009 — Upload skill / Upload MCP buttons moved to
+        # the Configuration pane (pane 8).
 
     def _handle_edit_in_editor(self, filename: str) -> None:
         """Spawn $EDITOR on the selected role's ``filename``.
@@ -727,112 +685,16 @@ class EcosystemScreen(Screen):
         self.app.post_message(RolePreloadMessage(self._selected_role))
 
     # ------------------------------------------------------------------
-    # PR-A2 — Upload flow
+    # Proposal 009 — Upload flow + snapshot LLM render moved to the
+    # Configuration pane (pane 8).  EcosystemScreen no longer reacts
+    # to ``watch_snapshot`` for LLM telemetry.
     # ------------------------------------------------------------------
 
-    def _open_upload_picker(
-        self, *, kind: str, target_filename: str, title: str,
-    ) -> None:
-        """Push a :class:`FilePickerModal` and remember which kind is pending.
-
-        Args:
-            kind: ``"skill"`` or ``"mcp"`` — read by
-                :meth:`on_file_picker_modal_file_selected` to decide
-                which manifest root to copy into.
-            target_filename: Filename the modal requires
-                (``skill.yaml`` or ``mcp.yaml``).
-            title: Header text rendered inside the modal.
-        """
-        self._pending_upload_kind = kind
-        modal = FilePickerModal(
-            target_filename=target_filename,
-            title=title,
-        )
-        self.app.push_screen(modal)
-
-    def on_file_picker_modal_file_selected(
-        self, message: FilePickerModal.FileSelected
-    ) -> None:
-        """Receive the picker's confirm and copy the parent directory.
-
-        The operator selects e.g. ``~/my_new_skill/skill.yaml``; we
-        copy the ENTIRE parent directory (``~/my_new_skill``) into the
-        target manifest root, preserving co-resident files like
-        ``adapter.py``.  Skills + MCPs follow the same workflow even
-        though MCPs typically have only the manifest file.
-
-        After the copy succeeds we re-run the corresponding loader so
-        the table refreshes without a full screen reload.  Errors are
-        surfaced as warning toasts AND logged so the operator sees a
-        diagnostic and the rotating TUI log keeps the trace.
-        """
-        kind = self._pending_upload_kind
-        self._pending_upload_kind = ""  # consume; reset for next round
-        if not kind:
-            logger.warning(
-                "ecosystem: file_selected with no pending upload kind — "
-                "ignoring (path=%s)",
-                message.path,
-            )
-            return
-
-        source_dir = message.path.parent
-        if kind == "skill":
-            target_root = _skills_root()
-        elif kind == "mcp":
-            target_root = _mcps_root()
-        else:
-            logger.error("ecosystem: unknown upload kind %r", kind)
-            return
-
-        # Refuse uploads that would clobber existing manifests rather
-        # than risk silent data loss.  The operator can delete + retry
-        # if they really mean to overwrite — explicit beats implicit.
-        target_dir = target_root / source_dir.name
-        if target_dir.exists():
-            self.notify(
-                f"{kind} '{source_dir.name}' already exists at {target_dir} — "
-                f"remove it first to overwrite",
-                severity="warning",
-                timeout=6.0,
-            )
-            return
-
-        try:
-            target_root.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(source_dir, target_dir)
-        except Exception:
-            logger.exception(
-                "ecosystem: copytree %s → %s failed", source_dir, target_dir,
-            )
-            self.notify(
-                f"Upload failed — see TUI log for details",
-                severity="error",
-                timeout=6.0,
-            )
-            return
-
-        logger.info(
-            "ecosystem: uploaded %s '%s' to %s", kind, source_dir.name, target_dir,
-        )
-        self.notify(
-            f"Uploaded {kind} '{source_dir.name}'",
-            severity="information",
-            timeout=4.0,
-        )
-
-        # Refresh just the affected table rather than re-running every
-        # loader.  ``_load_skills`` / ``_load_mcps`` are idempotent
-        # post-PR-A2 (they clear the table before repopulating).
-        if kind == "skill":
-            self._load_skills()
-        else:
-            self._load_mcps()
-
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
-        if snap is None:
-            return
-        self._render_llm_backends(snap)
+        # No-op kept so existing app-level snapshot fan-out doesn't
+        # crash on AttributeError; future Ecosystem-side renderers can
+        # live here.
+        return
 
     # ------------------------------------------------------------------
     # Role loading
@@ -1103,115 +965,10 @@ class EcosystemScreen(Screen):
                         f"[bold]{role_name}/role.yaml[/bold]\n\n{yaml_text}"
                     )
 
-    # ------------------------------------------------------------------
-    # Phase 4.4 — Skills + MCP table loading
-    # ------------------------------------------------------------------
-
-    def _load_skills(self) -> None:
-        """Discover loaded skills and render them in the Skills table.
-
-        Idempotent post-PR-A2: clears the table first so the upload
-        flow can call this to refresh after copying a new manifest in.
-
-        Lazy import keeps the TUI startup time unchanged when the
-        skills package is absent (e.g. minimal CLI image).  Errors
-        are surfaced as a single guidance row so an empty skills/
-        directory doesn't crash the screen.
-        """
-        table = self.query_one("#skills-table", DataTable)
-        table.clear()
-        try:
-            from acc.skills import SkillRegistry  # noqa: PLC0415
-        except Exception:
-            table.add_row("[dim]acc.skills not available[/dim]", "—", "—", "—")
-            return
-
-        try:
-            reg = SkillRegistry()
-            reg.load_from(_skills_root())
-        except Exception as exc:
-            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—")
-            return
-
-        manifests = reg.manifests()
-        if not manifests:
-            table.add_row(
-                "[dim]no skills loaded — see docs/howto-skills.md[/dim]",
-                "—", "—", "—",
-            )
-            return
-
-        for skill_id in sorted(manifests.keys()):
-            manifest = manifests[skill_id]
-            table.add_row(
-                skill_id,
-                manifest.version,
-                _risk_cell(manifest.risk_level),
-                ", ".join(manifest.requires_actions) or "—",
-                key=skill_id,
-            )
-
-    def _load_mcps(self) -> None:
-        """Discover loaded MCP servers and render them in the MCP table.
-
-        Idempotent post-PR-A2: clears the table first so the upload
-        flow can call this to refresh after copying a new manifest in.
-        """
-        table = self.query_one("#mcps-table", DataTable)
-        table.clear()
-        try:
-            from acc.mcp import MCPRegistry  # noqa: PLC0415
-        except Exception:
-            table.add_row("[dim]acc.mcp not available[/dim]", "—", "—", "—")
-            return
-
-        try:
-            reg = MCPRegistry()
-            reg.load_from(_mcps_root())
-        except Exception as exc:
-            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—")
-            return
-
-        manifests = reg.manifests()
-        if not manifests:
-            table.add_row(
-                "[dim]no MCP servers loaded — see docs/howto-mcp.md[/dim]",
-                "—", "—", "—",
-            )
-            return
-
-        for server_id in sorted(manifests.keys()):
-            manifest = manifests[server_id]
-            allowed = manifest.allowed_tools
-            tools_cell = ", ".join(allowed) if allowed else "all"
-            table.add_row(
-                server_id,
-                manifest.transport,
-                _risk_cell(manifest.risk_level),
-                tools_cell,
-                key=server_id,
-            )
-
-    # ------------------------------------------------------------------
-    # LLM backend rendering
-    # ------------------------------------------------------------------
-
-    def _render_llm_backends(self, snap: "CollectiveSnapshot") -> None:
-        """Show active LLM backend info per agent (REQ-TUI-040)."""
-        table = self.query_one("#llm-table", DataTable)
-        table.clear()
-
-        for agent_id, agent in snap.agents.items():
-            if not agent.llm_backend:
-                continue
-            health_colour = "green" if agent.llm_health == "ok" else "red"
-            table.add_row(
-                agent_id[:14],
-                agent.llm_backend[:10],
-                agent.llm_model[:20],
-                f"[{health_colour}]{agent.llm_health}[/{health_colour}]",
-                f"{agent.llm_p50_latency_ms:.0f}",
-            )
+    # Proposal 009 — Skills / MCPs / LLM-backends rendering moved
+    # entirely to the Configuration pane (acc/tui/screens/configuration.py).
+    # The methods that lived here previously (_load_skills,
+    # _load_mcps, _render_llm_backends) are removed.
 
     def action_navigate(self, screen_name: str) -> None:
         self.app.switch_screen(screen_name)

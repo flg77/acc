@@ -63,6 +63,17 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   pane.  Missing `role.md` is auto-created with a stub
   template + pointer at `docs/role-authoring.md`.
 
+### Removed
+
+- **TUI Ecosystem: Skills + MCPs + Active LLM Backends widgets.**
+  Proposal 009.  These three tables (kept on Ecosystem for one
+  release as a back-compat migration aid in proposal 003 PR-4)
+  are removed.  Canonical home is the Configuration pane
+  (pane 8) since v0.2.0.  Upload buttons (`Upload skill` /
+  `Upload MCP`) move along with them.  Tests targeting the
+  removed widgets are deleted; coverage lives in
+  `tests/test_configuration_screen_pilot.py`.
+
 ## [0.2.0] — 2026-05-14 — TUI usability hardening (proposal 003)
 
 Closes proposal 003 (operator's Obsidian vault — `ACC
