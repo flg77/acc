@@ -12,9 +12,12 @@ ACC-TUI-Evolution updates (REQ-TUI-020 – REQ-TUI-022):
 
 from __future__ import annotations
 
+import logging
 import os
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger("acc.tui.screens.infuse")
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, ScrollableContainer
@@ -360,6 +363,48 @@ class InfuseScreen(Screen):
             self.status_text = "⚠ Invalid Cat-B override values"
             return
 
+        # Proposal 008 — parity with CLI infuse.
+        # Load the role's full pydantic dump from disk (same path the
+        # CLI uses) so the published role_definition is the SUPERSET
+        # of what's on disk; the 9 visible form values overlay the
+        # operator's per-infusion edits.  The arbiter previously
+        # accepted the TUI's 9-field subset OK, but the divergence
+        # was a latent regression risk surfaced by the proposal 003
+        # PR-6 parity test.
+        role_name = str(self.query_one("#select-role", Select).value or "")
+        try:
+            root = _roles_root()
+            loaded = RoleLoader(root, role_name).load() if role_name else None
+        except Exception:
+            logger.exception("infuse: full-dump load failed for %r", role_name)
+            loaded = None
+        if loaded is not None and hasattr(loaded, "model_dump"):
+            full_role_def: dict[str, Any] = loaded.model_dump()
+        else:
+            full_role_def = {}
+
+        # Overlay the form's per-infusion edits.  We preserve any
+        # disk-only fields (allowed_skills, max_skill_risk_level,
+        # parent_role, …) through verbatim.
+        form_overlay: dict[str, Any] = {
+            "purpose": purpose,
+            "persona": persona,
+            "version": version,
+            "task_types": task_types,
+            "seed_context": seed,
+            "allowed_actions": allowed_actions,
+            "domain_id": domain_id,
+            "domain_receptors": domain_receptors,
+        }
+        # category_b_overrides: keep the disk's keys but override
+        # token_budget + rate_limit_rpm with the form's values.
+        cat_b_overlay = dict(full_role_def.get("category_b_overrides", {}) or {})
+        cat_b_overlay["token_budget"] = token_budget
+        cat_b_overlay["rate_limit_rpm"] = rate_rpm
+        form_overlay["category_b_overrides"] = cat_b_overlay
+
+        merged_role_def = {**full_role_def, **form_overlay}
+
         payload = {
             "signal_type": "ROLE_UPDATE",
             "agent_id": "",
@@ -367,20 +412,7 @@ class InfuseScreen(Screen):
             "ts": time.time(),
             "approver_id": "",
             "signature": "",
-            "role_definition": {
-                "purpose": purpose,
-                "persona": persona,
-                "version": version,
-                "task_types": task_types,
-                "seed_context": seed,
-                "allowed_actions": allowed_actions,
-                "domain_id": domain_id,
-                "domain_receptors": domain_receptors,
-                "category_b_overrides": {
-                    "token_budget": token_budget,
-                    "rate_limit_rpm": rate_rpm,
-                },
-            },
+            "role_definition": merged_role_def,
         }
 
         self.app.post_message(_PublishMessage(subject_role_update(collective_id), payload))
