@@ -859,3 +859,142 @@ async def test_lock_busy_path_notifies_without_crash(
         ), notifications
         severities = [s for _, s in notifications]
         assert "warning" in severities, severities
+
+
+# ---------------------------------------------------------------------------
+# Proposal 003 PR-6 — subrole sibling listing (directory-derived)
+# ---------------------------------------------------------------------------
+
+
+def test_subrole_siblings_finds_matching_prefix(tmp_path):
+    """``_subrole_siblings(roles_root, 'coding_agent')`` returns
+    every sibling directory matching ``coding_agent_*`` that carries
+    a role.yaml, sorted alphabetically."""
+    from acc.tui.screens.ecosystem import _subrole_siblings
+
+    for name in (
+        "coding_agent",
+        "coding_agent_architect",
+        "coding_agent_implementer",
+        "coding_agent_tester",
+        "research_planner",  # different prefix
+    ):
+        _write_role_manifest(tmp_path, name)
+
+    siblings = _subrole_siblings(tmp_path, "coding_agent")
+    assert siblings == [
+        "coding_agent_architect",
+        "coding_agent_implementer",
+        "coding_agent_tester",
+    ], siblings
+
+
+def test_subrole_siblings_excludes_parent_itself(tmp_path):
+    """The parent role's own directory is NOT listed as its
+    sibling."""
+    from acc.tui.screens.ecosystem import _subrole_siblings
+    _write_role_manifest(tmp_path, "coding_agent")
+    siblings = _subrole_siblings(tmp_path, "coding_agent")
+    assert "coding_agent" not in siblings
+
+
+def test_subrole_siblings_excludes_base_and_template(tmp_path):
+    """``_base`` / ``TEMPLATE`` are excluded."""
+    from acc.tui.screens.ecosystem import _subrole_siblings
+    _write_role_manifest(tmp_path, "test_role")
+    _write_role_manifest(tmp_path, "test_role__base")
+    _write_role_manifest(tmp_path, "test_role_TEMPLATE")  # not in exclude set
+    _write_role_manifest(tmp_path, "test_role_real")
+    siblings = _subrole_siblings(tmp_path, "test_role")
+    assert "test_role_real" in siblings
+
+
+def test_subrole_siblings_skips_dirs_without_role_yaml(tmp_path):
+    """A sibling directory without role.yaml is not a role."""
+    from acc.tui.screens.ecosystem import _subrole_siblings
+    _write_role_manifest(tmp_path, "coding_agent")
+    _write_role_manifest(tmp_path, "coding_agent_architect")
+    # Plant a dir without role.yaml under the prefix.
+    (tmp_path / "coding_agent_orphan").mkdir()
+    siblings = _subrole_siblings(tmp_path, "coding_agent")
+    assert siblings == ["coding_agent_architect"]
+
+
+def test_subrole_siblings_empty_when_nothing_matches(tmp_path):
+    """No sibling matching the prefix → empty list."""
+    from acc.tui.screens.ecosystem import _subrole_siblings
+    _write_role_manifest(tmp_path, "loner_role")
+    assert _subrole_siblings(tmp_path, "loner_role") == []
+
+
+def test_format_subrole_section_empty_returns_blank():
+    """Empty list → empty string (caller skips append)."""
+    from acc.tui.screens.ecosystem import _format_subrole_section
+    assert _format_subrole_section([], "coding_agent") == ""
+
+
+def test_format_subrole_section_contains_directory_derived_label():
+    """The rendered section is explicitly labelled as
+    directory-derived + names proposal 004 as the follow-up."""
+    from acc.tui.screens.ecosystem import _format_subrole_section
+    out = _format_subrole_section(
+        ["coding_agent_architect", "coding_agent_implementer"],
+        "coding_agent",
+    )
+    assert "directory-derived" in out
+    assert "proposal 004" in out
+    assert "coding_agent_architect" in out
+    assert "coding_agent_implementer" in out
+    assert "architect" in out  # the suffix-as-persona label
+
+
+@pytest.mark.asyncio
+async def test_role_detail_md_appends_subrole_section(
+    isolated_manifests,
+):
+    """Proposal 003 PR-6 — selecting a parent role renders its
+    sibling subroles under a "Subroles" markdown section after the
+    role.md body."""
+    from textual.widgets import Markdown
+
+    roles_root = isolated_manifests["roles_root"]
+    # Plant a parent + two subrole siblings.
+    _write_role_manifest(roles_root, "coding_agent")
+    _write_role_manifest(roles_root, "coding_agent_architect")
+    _write_role_manifest(roles_root, "coding_agent_implementer")
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        md_widget = screen.query_one("#role-md-content", Markdown)
+        captured: list[str] = []
+        real = md_widget.update
+
+        def recording(content="", **kwargs):
+            captured.append(str(content))
+            return real(content, **kwargs)
+
+        md_widget.update = recording  # type: ignore[assignment]
+
+        role_table = screen.query_one("#role-table", DataTable)
+        coding_key = next(
+            k for k in role_table.rows.keys()
+            if getattr(k, "value", str(k)) == "coding_agent"
+        )
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=coding_key,
+            )
+        )
+        await pilot.pause()
+
+        rendered = "\n".join(captured)
+        # Both siblings appear in the subrole section.
+        assert "coding_agent_architect" in rendered, rendered
+        assert "coding_agent_implementer" in rendered, rendered
+        # The "directory-derived" disclaimer is present so the
+        # operator knows it's convention, not first-class data.
+        assert "directory-derived" in rendered

@@ -188,6 +188,66 @@ def _risk_cell(risk_level: str) -> str:
     return f"[{colour}]{risk_level}[/{colour}]"
 
 
+def _subrole_siblings(roles_root: Path, role_name: str) -> list[str]:
+    """Return sibling directories whose names start with ``<role>_``.
+
+    Proposal 003 PR-6 — read-only subrole surfacing.  Subroles today
+    are a directory-name convention (``coding_agent_architect``,
+    ``research_planner``) with no first-class ``parent_role`` field.
+    This helper recovers the implicit hierarchy by glob; first-class
+    hierarchy is deferred to proposal 004.
+
+    Excludes ``_base`` / ``TEMPLATE`` (same exclusion the role table
+    applies); excludes the parent itself.  Returns alphabetically
+    sorted; empty list when nothing matches.
+    """
+    if not roles_root.is_dir() or not role_name:
+        return []
+    prefix = f"{role_name}_"
+    try:
+        siblings = sorted(
+            child.name for child in roles_root.iterdir()
+            if (
+                child.is_dir()
+                and child.name.startswith(prefix)
+                and child.name not in _EXCLUDED_NAMES
+                and (child / "role.yaml").exists()
+            )
+        )
+    except OSError:
+        return []
+    return siblings
+
+
+def _format_subrole_section(siblings: list[str], role_name: str) -> str:
+    """Render the "Subroles (directory-derived)" markdown section.
+
+    Empty list → returns empty string (caller skips appending).
+    Pending proposal 004 (first-class ``parent_role``), the section
+    is labelled as directory-derived so the operator knows the
+    convention is implicit.
+    """
+    if not siblings:
+        return ""
+    lines = [
+        "",
+        "",
+        f"## Subroles of `{role_name}` (directory-derived)",
+        "",
+        (
+            "_Listed by directory-name convention `"
+            + role_name
+            + "_*`.  First-class `parent_role` field tracked in"
+            " proposal 004._"
+        ),
+        "",
+    ]
+    for s in siblings:
+        suffix = s[len(role_name) + 1 :]
+        lines.append(f"- **{s}** — `{suffix}` persona")
+    return "\n".join(lines)
+
+
 class EcosystemScreen(Screen):
     """Genome browser — roles, LLM backends, Skills/MCP roadmap (REQ-TUI-037 – REQ-TUI-040)."""
 
@@ -838,7 +898,13 @@ class EcosystemScreen(Screen):
             md_widget = None
         if md_widget is not None:
             md_text = _read_role_md(md_path, role_name)
-            md_widget.update(md_text)
+            # Proposal 003 PR-6 — append a directory-derived
+            # "Subroles" section so operators can see persona
+            # hierarchies (coding_agent_*, research_*) without
+            # an explicit parent_role field (deferred to 004).
+            siblings = _subrole_siblings(root, role_name)
+            subrole_section = _format_subrole_section(siblings, role_name)
+            md_widget.update(md_text + subrole_section)
 
         # role.yaml surface — verbatim render under a Collapsible.
         try:
