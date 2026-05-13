@@ -50,6 +50,34 @@ tag is the v0.2.0 cut.
   (PR-3.)
 - **`RolesChangedMessage`** public message added to
   `acc/tui/messages.py` (PR-3).
+- **TUI: Configuration pane (pane 8).**  New `ConfigurationScreen`
+  at `acc/tui/screens/configuration.py` with three tabs:
+  *LLM Endpoints*, *Skills*, *MCPs*.  Reachable via the new `8`
+  keybinding from any screen.  (PR-4 of proposal 003 — PR #57.)
+- **TUI: LLM Endpoints tab.**  Shows the configured
+  `ACCConfig.llm` summary (backend, model, base_url, timeout) as
+  read-only text plus a live per-agent table fed from snapshots.
+  *Test connection* button HEAD-pings the configured `base_url`
+  via stdlib `urllib.request` (no new dependency) and surfaces
+  latency + status / unreachable reason.  Writing back to
+  role.yaml under a new `llm_endpoint` key is deferred to a
+  follow-up.  (PR-4.)
+- **TUI: Skills + MCPs tabs (canonical home).**  The Skills and
+  MCP-servers tables (plus their *Upload skill* / *Upload MCP*
+  file-picker flows) now have their canonical home on the
+  Configuration pane.  The Ecosystem copies remain for one
+  release as a migration aid; a follow-up PR will remove them.
+  (PR-4.)
+
+### Changed
+
+- **NavigationBar extended to 8 panes.**  Module docstring + key
+  list + `BINDINGS` updated; every screen's local BINDINGS list
+  now includes `("8", "navigate('configuration')",
+  "Configuration")`.  (PR-4.)
+- **Snapshot fan-out** in `acc/tui/app.py:_apply_snapshot` now
+  pushes the active snapshot into the Configuration screen too,
+  so its live LLM-backends table refreshes per HEARTBEAT.  (PR-4.)
 
 ### Fixed
 
