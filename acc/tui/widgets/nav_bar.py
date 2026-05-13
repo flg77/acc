@@ -1,7 +1,11 @@
-"""ACC TUI NavigationBar widget — persistent 6-screen navigation.
+"""ACC TUI NavigationBar widget — persistent 8-screen navigation.
 
-Displays six named screen buttons; the active screen is highlighted.
-Keys ``1``–``6`` navigate directly from any screen (REQ-TUI-004).
+Displays eight named screen buttons; the active screen is highlighted.
+Keys ``1``–``8`` navigate directly from any screen (REQ-TUI-004).
+
+Pane 8 (Configuration) was added by proposal 003 PR-4; it absorbs
+the LLM endpoints + Skills + MCPs surfaces that previously crowded
+the Ecosystem screen.
 
 Emits :class:`NavigateTo` message on button press or numeric key,
 which the parent app handles via ``on_navigate_to`` (REQ-TUI-003).
@@ -19,13 +23,14 @@ from textual.widgets import Button
 
 # Ordered screen definitions: (key, screen_name, display_label)
 _SCREENS: list[tuple[str, str, str]] = [
-    ("1", "soma",        "1 Soma"),
-    ("2", "nucleus",     "2 Nucleus"),
-    ("3", "compliance",  "3 Compliance"),
-    ("4", "comms",       "4 Comms"),
-    ("5", "performance", "5 Performance"),
-    ("6", "ecosystem",   "6 Ecosystem"),
-    ("7", "prompt",      "7 Prompt"),
+    ("1", "soma",          "1 Soma"),
+    ("2", "nucleus",       "2 Nucleus"),
+    ("3", "compliance",    "3 Compliance"),
+    ("4", "comms",         "4 Comms"),
+    ("5", "performance",   "5 Performance"),
+    ("6", "ecosystem",     "6 Ecosystem"),
+    ("7", "prompt",        "7 Prompt"),
+    ("8", "configuration", "8 Configuration"),
 ]
 
 
@@ -75,13 +80,14 @@ class NavigationBar(Widget):
     """
 
     BINDINGS = [
-        ("1", "navigate('soma')",        "Soma"),
-        ("2", "navigate('nucleus')",     "Nucleus"),
-        ("3", "navigate('compliance')",  "Compliance"),
-        ("4", "navigate('comms')",       "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')",   "Ecosystem"),
-        ("7", "navigate('prompt')",      "Prompt"),
+        ("1", "navigate('soma')",          "Soma"),
+        ("2", "navigate('nucleus')",       "Nucleus"),
+        ("3", "navigate('compliance')",    "Compliance"),
+        ("4", "navigate('comms')",         "Comms"),
+        ("5", "navigate('performance')",   "Performance"),
+        ("6", "navigate('ecosystem')",     "Ecosystem"),
+        ("7", "navigate('prompt')",        "Prompt"),
+        ("8", "navigate('configuration')", "Configuration"),
     ]
 
     def __init__(self, active_screen: str = "soma", **kwargs) -> None:  # type: ignore[override]

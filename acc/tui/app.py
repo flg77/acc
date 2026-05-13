@@ -35,6 +35,7 @@ from acc.tui.messages import RolePreloadMessage
 from acc.tui.models import CollectiveSnapshot
 from acc.tui.screens.compliance import ComplianceScreen, _OversightAction
 from acc.tui.screens.comms import CommunicationsScreen
+from acc.tui.screens.configuration import ConfigurationScreen
 from acc.tui.screens.dashboard import DashboardScreen, _RefreshMessage
 from acc.tui.screens.ecosystem import EcosystemScreen
 from acc.tui.screens.infuse import InfuseScreen, _PublishMessage
@@ -79,18 +80,20 @@ class ACCTUIApp(App):
         ("question_mark", "show_help", "Help"),
     ]
 
-    # Seven screens — six biological + PR-B prompt pane (REQ-TUI-003)
+    # Eight screens — six biological + PR-B prompt pane +
+    # proposal-003 PR-4 configuration pane (REQ-TUI-003).
     SCREENS = {
-        "soma":        DashboardScreen,
-        "nucleus":     InfuseScreen,
-        "compliance":  ComplianceScreen,
-        "comms":       CommunicationsScreen,
-        "performance": PerformanceScreen,
-        "ecosystem":   EcosystemScreen,
-        "prompt":      PromptScreen,    # PR-B
+        "soma":          DashboardScreen,
+        "nucleus":       InfuseScreen,
+        "compliance":    ComplianceScreen,
+        "comms":         CommunicationsScreen,
+        "performance":   PerformanceScreen,
+        "ecosystem":     EcosystemScreen,
+        "prompt":        PromptScreen,    # PR-B
+        "configuration": ConfigurationScreen,  # proposal 003 PR-4
         # Legacy aliases so existing code using "dashboard"/"infuse" still works
-        "dashboard":   DashboardScreen,
-        "infuse":      InfuseScreen,
+        "dashboard":     DashboardScreen,
+        "infuse":        InfuseScreen,
     }
 
     def __init__(
@@ -284,6 +287,7 @@ class ACCTUIApp(App):
             ("comms", CommunicationsScreen),
             ("performance", PerformanceScreen),
             ("ecosystem", EcosystemScreen),
+            ("configuration", ConfigurationScreen),  # proposal 003 PR-4
         ]
         for screen_name, screen_cls in _SNAPSHOT_SCREENS:
             try:
