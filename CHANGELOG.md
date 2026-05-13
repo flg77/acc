@@ -9,14 +9,16 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
-## [Unreleased] — proposal 003 development cycle
+## [Unreleased]
 
-In-flight work for the **0.2.0** release.  Proposal 003 closes
-when PRs 1–6 of the TUI hardening series have all landed; that
-tag is the v0.2.0 cut.
+(No changes yet — next development cycle starts here.)
 
-**PR-6 (closing) — landed.**  After PR #59 merges, all six PRs
-of proposal 003 are on `main` and the milestone is complete.
+## [0.2.0] — 2026-05-14 — TUI usability hardening (proposal 003)
+
+Closes proposal 003 (operator's Obsidian vault — `ACC
+Implementation/003 - ACC TUI usability hardening.md`).  Six PRs
+landed on main between 2026-05-13 and 2026-05-14: #54 (PR-1),
+#55 (PR-2), #56 (PR-3), #57 (PR-4), #58 (PR-5), #59 (PR-6).
 
 ### Added
 
