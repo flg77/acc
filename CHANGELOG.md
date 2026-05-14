@@ -13,6 +13,40 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Proposal 010 wire-up — projector ↔ detector ↔ listener ↔ TUI badge.**
+  Connects the building blocks that landed inert in PR-3 / PR-4 / PR-5
+  so they actually fire end-to-end:
+
+  - `RoleCRDProjector.__init__` gains an optional
+    `conflict_detector` kwarg.  When supplied, every successful
+    `project_one()` calls `detector.record_our_write(role_id, body)`,
+    so subsequent file-watcher events for that role classify as
+    `echo` (within `conflict_window_s` with matching content) instead
+    of false-positive conflicts.  Detector exceptions are caught + logged
+    so a misbehaving detector never breaks the projector's hot loop.
+
+  - `ACCTUIApp` instantiates a single shared `RoleSyncListener`
+    (`app._role_sync_listener`) and subscribes the first connected
+    NATS client to `acc.role.sync.>`.  Every received event routes
+    through `listener.handle_event` and broadcasts a `_RoleSyncEvent`
+    message so screens re-render without polling.  Subscription
+    failures log + degrade gracefully (badge stays empty).
+
+  - `EcosystemScreen` gains a `#role-sync-badge` Static widget at the
+    top of the role detail panel.  Refreshes on row select and on
+    every `_RoleSyncEvent` broadcast.  Three rendering tiers from
+    PR-5's `render_badge()`: fresh conflict (red), aged conflict
+    (dim), applied-only (dim), missing-state (empty / hidden).
+
+  - 5 new integration tests in `tests/test_role_sync_wireup.py`
+    cover projector→detector recording, projector backwards-compat
+    when no detector is supplied, detector exception isolation, and
+    a detector→listener round-trip that proves the on-wire JSON
+    payload is the same on both sides of the NATS hop.
+
+  This is the closing piece of proposal 010 — bi-directional file ↔
+  CRD sync is now operator-observable end-to-end.
+
 - **TUI role-sync listener + comprehensive docs (proposal 010 PR-5).**
   Closes proposal 010 — the role-sync feature is now operator-facing.
 

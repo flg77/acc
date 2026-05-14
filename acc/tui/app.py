@@ -26,8 +26,10 @@ import logging
 import logging.handlers
 import os
 from pathlib import Path
+from typing import Any
 
 from textual.app import App, ComposeResult
+from textual.message import Message
 from textual.widgets import Label
 
 from acc.tui.client import NATSObserver
@@ -51,6 +53,16 @@ _DEFAULT_COLLECTIVE_ID = "sol-01"
 _CONNECT_RETRIES = 3
 _RETRY_BASE_S = 2.0
 _QUEUE_MAX = 50
+
+
+class _RoleSyncEvent(Message):
+    """Broadcast when a new ``acc.role.sync.*`` NATS event arrives.
+
+    Screens that render role-sync state (currently Ecosystem) listen
+    for this to refresh their badges without polling.  No payload —
+    screens read the up-to-date state from
+    ``self.app._role_sync_listener``.
+    """
 
 
 class ConnectionErrorScreen(App):
@@ -131,6 +143,15 @@ class ACCTUIApp(App):
         self._web_port = int(os.environ.get("ACC_TUI_WEB_PORT", "0"))
         self._web_bridge_task: asyncio.Task | None = None  # type: ignore[type-arg]
 
+        # Role-sync event listener (proposal 010 PR-5 + wire-up).
+        # Subject `acc.role.sync.>` is global (not per-collective), so
+        # it can't ride on the existing CollectiveObserver subscription.
+        # The listener accumulates state from every conflict/applied
+        # event; screens read it via app._role_sync_listener.
+        from acc.tui.role_sync_listener import RoleSyncListener
+        self._role_sync_listener = RoleSyncListener()
+        self._role_sync_subscription: Any = None
+
         self._build_observers()
 
     def _build_observers(self) -> None:
@@ -175,6 +196,11 @@ class ACCTUIApp(App):
                 name=f"drain-{obs._collective_id}",
             )
             self._drain_tasks.append(task)
+
+        # Subscribe to the global role-sync subject on the first
+        # connected observer's NATS client.  Subject is intentionally
+        # NOT per-collective — role definitions are corpus-wide.
+        await self._subscribe_role_sync()
 
         # Start WebBridge if configured (REQ-TUI-041)
         if self._web_port > 0:
@@ -230,6 +256,55 @@ class ACCTUIApp(App):
                     await asyncio.sleep(delay)
                     delay *= 2
         return False
+
+    # ------------------------------------------------------------------
+    # Role-sync subscription (proposal 010 wire-up)
+    # ------------------------------------------------------------------
+
+    async def _subscribe_role_sync(self) -> None:
+        """Subscribe the active NATS client to ``acc.role.sync.>``.
+
+        Routes every conflict / applied event through
+        :meth:`RoleSyncListener.handle_event`.  Reuses the first
+        connected observer's NATS client — no second TCP connection.
+        Failures here log but never crash the TUI; the badge simply
+        stays empty until the next mount.
+        """
+        if not self._observers:
+            return
+        # Use the first connected observer's `_nc`.  Multi-collective
+        # mode still gets exactly one role-sync subscription because
+        # the subject isn't collective-scoped.
+        nc = None
+        for obs in self._observers:
+            if obs._nc is not None:
+                nc = obs._nc
+                break
+        if nc is None:
+            logger.warning(
+                "app: no connected NATS client — role-sync subscription skipped"
+            )
+            return
+
+        async def _on_role_sync_msg(msg: Any) -> None:
+            try:
+                self._role_sync_listener.handle_event(msg.subject, msg.data)
+            except Exception:
+                logger.exception("app: role-sync event handler failed")
+            # Wake screens so they re-render badges.  Cheap broadcast
+            # via the standard message bus.
+            try:
+                self.post_message(_RoleSyncEvent())
+            except Exception:
+                pass
+
+        try:
+            self._role_sync_subscription = await nc.subscribe(
+                "acc.role.sync.>", cb=_on_role_sync_msg,
+            )
+            logger.info("app: subscribed to acc.role.sync.> (proposal 010)")
+        except Exception:
+            logger.exception("app: role-sync subscribe failed")
 
     # ------------------------------------------------------------------
     # Background queue drain
