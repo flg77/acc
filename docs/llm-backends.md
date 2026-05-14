@@ -110,6 +110,32 @@ Pinned in the operator's `~/.config/vllmpunch/models.json`:
 | 8008 | `qwen3-tts-1.7-custom` | |
 | 8011–8015 | reserved by ACC for `llama-3b-fp8`, `llama-8b-fp8`, `qwen-coder-7b-awq`, `qwen-7b-gptq`, `mistral-7b-w8a8` | operator adds to vllmpunch-models.json when needed |
 
+## Capacity status — pass/fail per model
+
+The operator's `~/.config/vllmpunch/models.json` on lighthouse is
+annotated with `acc_status` / `acc_status_note` / `acc_last_tested`
+fields per entry (vllmpunch tolerates unknown keys).  To see the
+status without grepping JSON:
+
+```bash
+./scripts/vllmpunch-status.py            # coloured table
+./scripts/vllmpunch-status.py --no-color # for piping
+./scripts/vllmpunch-status.py --json     # raw merged data
+```
+
+The wrapper reads the annotated `models.json` and merges in a
+fallback map for the 7 entries that live only in vllmpunch's
+bundled `example.json` catalogue.  Entries marked `*` in the
+output are catalogue-only.
+
+Status taxonomy: `pass` boots + smoke succeeds; `fail-config` is
+KV-cache-headroom-fixable; `fail-oom` exceeds 12 GB capacity;
+`fail-unknown` needs follow-up; `untested` skipped (speech / TTS).
+
+Source of truth for the full report:
+[`test/history/vllmpunch-capacity-report-20260514.md`](../test/history/vllmpunch-capacity-report-20260514.md)
+(operator-local, gitignored).
+
 ## See also
 
 * [`deploy/host-configs/README.md`](../deploy/host-configs/README.md)
