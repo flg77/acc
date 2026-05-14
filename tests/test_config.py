@@ -8,7 +8,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from acc.config import ACCConfig, RoleDefinitionConfig, WorkingMemoryConfig, load_config, _apply_env
+from acc.config import (
+    ACCConfig,
+    RoleDefinitionConfig,
+    RoleSyncConfig,
+    WorkingMemoryConfig,
+    _apply_env,
+    _ROLE_SOURCE_BY_DEPLOY_MODE,
+    load_config,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +131,106 @@ class TestApplyEnv:
         monkeypatch.setenv("ACC_ROLE_VERSION", "1.2.3")
         data = _apply_env({})
         assert data["role_definition"]["version"] == "1.2.3"
+
+    def test_role_source_env_var(self, monkeypatch):
+        monkeypatch.setenv("ACC_ROLE_SOURCE", "mirror")
+        data = _apply_env({})
+        assert data["role_sync"]["role_source"] == "mirror"
+
+    def test_role_sync_conflict_window_env_var(self, monkeypatch):
+        monkeypatch.setenv("ACC_ROLE_SYNC_CONFLICT_WINDOW_S", "5.0")
+        data = _apply_env({})
+        # _apply_env stores the raw string; Pydantic coerces to float
+        # at model_validate time.
+        assert data["role_sync"]["conflict_window_s"] == "5.0"
+
+
+# ---------------------------------------------------------------------------
+# RoleSyncConfig + role_source resolution (proposal 010)
+# ---------------------------------------------------------------------------
+
+
+class TestRoleSyncDefaults:
+    """Resolver: `role_source: auto` becomes the deploy-mode default."""
+
+    def test_default_is_auto(self):
+        rs = RoleSyncConfig()
+        assert rs.role_source == "auto"
+        assert rs.conflict_window_s == 2.0
+        assert rs.events_subject == "acc.role.sync"
+
+    def test_standalone_resolves_to_files(self):
+        config = ACCConfig()  # deploy_mode defaults to standalone
+        assert config.role_sync.role_source == "files"
+
+    def test_edge_resolves_to_mirror(self):
+        config = ACCConfig.model_validate({"deploy_mode": "edge"})
+        assert config.role_sync.role_source == "mirror"
+
+    def test_rhoai_resolves_to_crd(self):
+        config = ACCConfig.model_validate({
+            "deploy_mode": "rhoai",
+            "vector_db": {"milvus_uri": "http://milvus:19530"},
+            "llm": {"vllm_inference_url": "http://vllm:8000"},
+        })
+        assert config.role_sync.role_source == "crd"
+
+    def test_explicit_value_preserved(self):
+        """Operator's explicit override beats the deploy-mode default."""
+        config = ACCConfig.model_validate({
+            "deploy_mode": "standalone",
+            "role_sync": {"role_source": "crd"},
+        })
+        assert config.role_sync.role_source == "crd"
+
+    def test_explicit_mirror_in_rhoai(self):
+        """Operators can pick `mirror` in any deploy mode."""
+        config = ACCConfig.model_validate({
+            "deploy_mode": "rhoai",
+            "vector_db": {"milvus_uri": "http://milvus:19530"},
+            "llm": {"vllm_inference_url": "http://vllm:8000"},
+            "role_sync": {"role_source": "mirror"},
+        })
+        assert config.role_sync.role_source == "mirror"
+
+    def test_invalid_role_source_rejected(self):
+        with pytest.raises(ValidationError, match="role_source"):
+            ACCConfig.model_validate({
+                "role_sync": {"role_source": "configmap"},
+            })
+
+    def test_resolution_table_covers_all_deploy_modes(self):
+        """If a new deploy_mode is added, this test fails until the
+        resolver table is updated."""
+        from acc.config import DeployMode
+        from typing import get_args
+        for mode in get_args(DeployMode):
+            assert mode in _ROLE_SOURCE_BY_DEPLOY_MODE, (
+                f"deploy_mode {mode!r} missing from "
+                "_ROLE_SOURCE_BY_DEPLOY_MODE — update proposal 010 §4 table"
+            )
+
+    def test_env_var_overrides_yaml(self, tmp_path: Path, monkeypatch):
+        cfg_file = tmp_path / "acc-config.yaml"
+        cfg_file.write_text(
+            "deploy_mode: standalone\n"
+            "role_sync:\n  role_source: files\n"
+        )
+        monkeypatch.setenv("ACC_ROLE_SOURCE", "crd")
+        config = load_config(cfg_file)
+        assert config.role_sync.role_source == "crd"
+
+    def test_conflict_window_is_float(self):
+        config = ACCConfig.model_validate({
+            "role_sync": {"conflict_window_s": "3.5"},  # string coerced
+        })
+        assert config.role_sync.conflict_window_s == 3.5
+
+    def test_events_subject_customisable(self):
+        config = ACCConfig.model_validate({
+            "role_sync": {"events_subject": "custom.role.sync"},
+        })
+        assert config.role_sync.events_subject == "custom.role.sync"
 
 
 # ---------------------------------------------------------------------------

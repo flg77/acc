@@ -11,6 +11,37 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased] — 0.3.1-dev cycle
 
+### Added
+
+- **`role_sync` config section + `role_source` flag (proposal 010
+  PR-1).**  New top-level `role_sync:` block in `acc-config.yaml`
+  with three fields:
+
+  | Field | Type | Default |
+  |---|---|---|
+  | `role_source` | `files \| crd \| mirror \| auto` | `auto` |
+  | `conflict_window_s` | float | `2.0` |
+  | `events_subject` | str | `acc.role.sync` |
+
+  When `role_source` is `auto` (the default) it resolves at
+  validation time to a per-`deploy_mode` value:
+
+  | `deploy_mode` | resolved `role_source` |
+  |---|---|
+  | `standalone` | `files` |
+  | `edge` | `mirror` |
+  | `rhoai` | `crd` |
+
+  Environment overrides: `ACC_ROLE_SOURCE`,
+  `ACC_ROLE_SYNC_CONFLICT_WINDOW_S`,
+  `ACC_ROLE_SYNC_EVENTS_SUBJECT`.
+
+  **PR-1 is inert** — no behaviour change in the operator
+  reconciler or `role_loader`.  This PR only lands the flag and
+  its resolution so PR-2/PR-3/PR-4 can switch on it.  The TUI's
+  Configuration screen surfaces the resolved value read-only
+  (`Role sync: files (deploy_mode=standalone; proposal 010)`).
+
 ### Fixed
 
 - **TUI repo-root discovery for pip-installed acc-tui.**  The

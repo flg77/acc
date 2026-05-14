@@ -402,6 +402,67 @@ class ComplianceConfig(BaseModel):
     """List of guardrail codes to disable entirely, e.g. ``['LLM02', 'LLM04']``."""
 
 
+RoleSource = Literal["files", "crd", "mirror", "auto"]
+"""How the agent reconciles role definitions across surfaces.
+
+- ``files``: ``roles/<id>/role.yaml`` on disk is the source of truth.
+  CRDs (if any) are projections written *from* files.  Default for
+  ``deploy_mode: standalone``.
+- ``crd``: the ``AgentCollective`` CRD in the K8s API is the source of
+  truth.  Files (if mounted) are read-only projections written *from*
+  CRDs by the agent's role loader.  Default for ``deploy_mode: rhoai``.
+- ``mirror``: both directions active; last writer wins by wall-clock
+  timestamp.  Conflicts (writes within ``conflict_window_s``) emit a
+  NATS event on ``events_subject``.  Default for ``deploy_mode: edge``.
+- ``auto``: the literal placeholder requesting the deploy-mode default
+  be applied at validation time.  After ``ACCConfig`` validation, the
+  resolved value is one of ``files`` / ``crd`` / ``mirror``.  Operators
+  never need to write ``auto`` — it's the implicit value when no
+  ``role_sync.role_source`` is specified.
+
+See proposal 010 in the operator's Obsidian vault for the design.
+"""
+
+
+# Default ``role_source`` per ``deploy_mode``.  Centralised so the
+# resolution rule is observable (rather than buried in a validator).
+_ROLE_SOURCE_BY_DEPLOY_MODE: dict[str, str] = {
+    "standalone": "files",
+    "edge":       "mirror",
+    "rhoai":      "crd",
+}
+
+
+class RoleSyncConfig(BaseModel):
+    """Cross-surface role-definition sync settings (proposal 010).
+
+    Inert in PR-1 — this PR only adds the flag and resolves its default;
+    no behaviour change.  PR-2/PR-3/PR-4 wire the file ↔ CRD plumbing.
+
+    Example::
+
+        role_sync:
+          role_source: mirror
+          conflict_window_s: 2.0
+          events_subject: acc.role.sync
+    """
+
+    role_source: RoleSource = "auto"
+    """Source of truth for role definitions.  ``auto`` (the default)
+    resolves to the value in ``_ROLE_SOURCE_BY_DEPLOY_MODE`` for the
+    active ``deploy_mode``; operators can override explicitly."""
+
+    conflict_window_s: float = 2.0
+    """Time window (seconds) within which a file write and a CRD patch
+    are treated as a sync conflict.  Only meaningful when the resolved
+    ``role_source`` is ``mirror``."""
+
+    events_subject: str = "acc.role.sync"
+    """NATS subject prefix for sync events.  Conflicts publish on
+    ``<events_subject>.conflict``; successful round-trips on
+    ``<events_subject>.applied``.  Reserved for PR-4."""
+
+
 class ACCConfig(BaseModel):
     deploy_mode: DeployMode = "standalone"
     agent: AgentConfig = Field(default_factory=AgentConfig)
@@ -410,6 +471,7 @@ class ACCConfig(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     role_definition: RoleDefinitionConfig = Field(default_factory=RoleDefinitionConfig)
+    role_sync: RoleSyncConfig = Field(default_factory=RoleSyncConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     working_memory: WorkingMemoryConfig = Field(default_factory=WorkingMemoryConfig)
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
@@ -425,6 +487,20 @@ class ACCConfig(BaseModel):
                 )
         # edge: no required fields — hub_url and peer_collectives are optional
         # (agent operates locally when disconnected from hub).
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_role_source(self) -> "ACCConfig":
+        """Replace ``role_sync.role_source='auto'`` with the deploy-mode
+        default so downstream consumers never have to perform the
+        lookup themselves.  Idempotent — explicit values pass through.
+        """
+        if self.role_sync.role_source == "auto":
+            resolved = _ROLE_SOURCE_BY_DEPLOY_MODE.get(self.deploy_mode, "files")
+            # Pydantic v2 models are immutable by default unless
+            # ``model_config['frozen'] = False`` (which is the default).
+            # The nested model permits direct assignment.
+            self.role_sync.role_source = resolved  # type: ignore[assignment]
         return self
 
 
@@ -459,6 +535,10 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_ROLE_PURPOSE":             ("role_definition", "purpose"),
     "ACC_ROLE_PERSONA":             ("role_definition", "persona"),
     "ACC_ROLE_VERSION":             ("role_definition", "version"),
+    # Role-sync source-of-truth (proposal 010)
+    "ACC_ROLE_SOURCE":              ("role_sync", "role_source"),
+    "ACC_ROLE_SYNC_CONFLICT_WINDOW_S": ("role_sync", "conflict_window_s"),
+    "ACC_ROLE_SYNC_EVENTS_SUBJECT": ("role_sync", "events_subject"),
     # ACC_ROLE_CONFIG_PATH is consumed by RoleStore.load_at_startup(), not here
     # Security (Phase 0a)
     "ACC_ARBITER_VERIFY_KEY":       ("security", "arbiter_verify_key"),
