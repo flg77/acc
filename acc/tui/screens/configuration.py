@@ -136,13 +136,26 @@ def _load_acc_config_summary() -> dict[str, str]:
     summary so the screen never crashes on import.
     """
     try:
-        from acc.config import LLMConfig  # noqa: PLC0415
+        from acc.config import ACCConfig, LLMConfig  # noqa: PLC0415
         cfg = LLMConfig()
+        # Resolve role_source via the full ACCConfig so the deploy-mode
+        # default (proposal 010) is applied.  Best-effort: if ACCConfig
+        # validation fails (e.g. rhoai mode missing milvus_uri in a
+        # smoke harness), fall back to "—".
+        try:
+            full = ACCConfig()
+            role_source = full.role_sync.role_source
+            deploy_mode = full.deploy_mode
+        except Exception:
+            role_source = "—"
+            deploy_mode = "—"
         return {
             "backend": str(cfg.backend),
             "model": getattr(cfg, "model", "—") or "—",
             "base_url": getattr(cfg, "base_url", "—") or "—",
             "request_timeout_s": str(getattr(cfg, "request_timeout_s", "—")),
+            "role_source": role_source,
+            "deploy_mode": deploy_mode,
         }
     except Exception:
         logger.exception("configuration: LLMConfig() failed")
@@ -151,6 +164,8 @@ def _load_acc_config_summary() -> dict[str, str]:
             "model": "—",
             "base_url": "—",
             "request_timeout_s": "—",
+            "role_source": "—",
+            "deploy_mode": "—",
         }
 
 
@@ -378,6 +393,10 @@ class ConfigurationScreen(Screen):
             f"[bold]Model:[/bold] {summary['model']}\n"
             f"[bold]Base URL:[/bold] {summary['base_url']}\n"
             f"[bold]Timeout (s):[/bold] {summary['request_timeout_s']}\n"
+            "\n"
+            f"[bold]Role sync:[/bold] {summary['role_source']} "
+            f"[dim](deploy_mode={summary['deploy_mode']}; "
+            "proposal 010)[/dim]\n"
             "\n[dim]Values reflect ACCConfig.llm + the documented "
             "ACC_LLM_* env-var overrides.  Read-only for now — "
             "edit the underlying acc-config.yaml or the env vars; "

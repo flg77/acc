@@ -178,6 +178,9 @@ async def test_llm_summary_renders_at_mount(isolated_manifests):
         assert "Backend" in rendered
         assert "Model" in rendered
         assert "Base URL" in rendered
+        # Proposal 010 — resolved role_source surfaced in the summary.
+        assert "Role sync" in rendered
+        assert "proposal 010" in rendered
 
 
 @pytest.mark.asyncio
@@ -200,6 +203,8 @@ async def test_test_button_updates_result_widget(
             "model": "llama-3",
             "base_url": "http://localhost:11434",
             "request_timeout_s": "120",
+            "role_source": "files",
+            "deploy_mode": "standalone",
         }
 
     monkeypatch.setattr(cfg, "_load_acc_config_summary", fake_summary)
@@ -240,6 +245,8 @@ async def test_test_button_handles_missing_base_url(
         "model": "—",
         "base_url": "—",
         "request_timeout_s": "120",
+        "role_source": "files",
+        "deploy_mode": "standalone",
     })
 
     app = _Harness()
