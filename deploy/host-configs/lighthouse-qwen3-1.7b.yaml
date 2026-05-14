@@ -1,0 +1,38 @@
+# acc-config.yaml — lighthouse / qwen3-1.7b
+#
+# Qwen3 1.7B — small but Qwen-3 family is sharper than Llama-3.2-1B on instruction following.
+#
+# Launch on lighthouse:
+#   cd /git/infrastructure/containers/vllm/vllmpunch
+#   ./vllmpunch run -d qwen3
+#
+# Sync to the test host:
+#   ./scripts/sync-host-config.sh lighthouse qwen3-1.7b
+
+deploy_mode: standalone
+
+agent:
+  role: ingester
+  collective_id: sol-01
+  heartbeat_interval_s: 30
+
+signaling:
+  backend: nats
+  nats_url: nats://localhost:4222
+
+vector_db:
+  backend: lancedb
+  lancedb_path: /app/data/lancedb
+  milvus_uri: ""
+  milvus_collection_prefix: acc_
+
+llm:
+  backend: openai_compat
+  base_url: http://host.containers.internal:8006/v1
+  model: Qwen/Qwen3-1.7B
+  request_timeout_s: 120
+  max_retries: 2
+
+observability:
+  log_level: INFO
+  metrics_backend: none
