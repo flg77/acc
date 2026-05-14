@@ -741,11 +741,13 @@ class EcosystemScreen(Screen):
         if not self._all_role_rows:
             try:
                 self.notify(
-                    f"No roles loaded from {root}.  Set ACC_ROLES_ROOT to "
-                    "your agentic-cell-corpus checkout (or run acc-tui "
-                    "from there).",
+                    f"No roles loaded from {root}.  Either set "
+                    "ACC_REPO_ROOT to your agentic-cell-corpus checkout, "
+                    "set ACC_ROLES_ROOT directly, or run acc-tui from "
+                    "the repo (or any subdirectory — walk-up finds "
+                    "acc-deploy.sh automatically).",
                     severity="warning",
-                    timeout=8.0,
+                    timeout=10.0,
                 )
             except Exception:
                 logger.exception("ecosystem: empty-roles notify failed")

@@ -162,6 +162,117 @@ def test_path_resolution_falls_back_to_cwd_when_repo_anchor_misses(
     )
 
 
+# ---------------------------------------------------------------------------
+# 1b. Repo discovery — the actual fix for the operator's failure mode
+# ---------------------------------------------------------------------------
+
+
+def test_acc_repo_root_env_var_resolves_roles(tmp_path, monkeypatch):
+    """**Operator review issue 1 — primary fix.**
+
+    Setting ``ACC_REPO_ROOT=<path>`` MUST cause the resolver to
+    find ``<path>/roles/`` even when no per-dir env vars are set
+    and cwd is unrelated.  This is the recommended fix for the
+    operator's pip-installed-from-non-repo-cwd failure.
+    """
+    # Plant a fake repo layout.
+    fake_repo = tmp_path / "myrepo"
+    (fake_repo / "roles" / "alpha_role").mkdir(parents=True)
+    (fake_repo / "roles" / "alpha_role" / "role.yaml").write_text(
+        "role_definition: {purpose: x, persona: concise}\n",
+        encoding="utf-8",
+    )
+    (fake_repo / "acc-deploy.sh").write_text("#!/bin/sh", encoding="utf-8")
+
+    # Strip the per-dir env vars + chdir somewhere unrelated so the
+    # module-anchor + cwd tiers both miss this layout.
+    for var in ("ACC_ROLES_ROOT", "ACC_SKILLS_ROOT", "ACC_MCPS_ROOT"):
+        monkeypatch.delenv(var, raising=False)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    # Repo-anchored fallback wins because acc/ ships with this repo
+    # in the test environment — pin against that by patching
+    # ``_repo_root`` to a non-existent location.
+    from acc.tui import path_resolution as pr
+    monkeypatch.setattr(pr, "_repo_root", lambda: tmp_path / "no_such_anchor")
+
+    monkeypatch.setenv("ACC_REPO_ROOT", str(fake_repo))
+
+    resolved = resolve_manifest_root("ACC_ROLES_ROOT", "roles")
+    assert resolved == (fake_repo / "roles").resolve()
+    assert (resolved / "alpha_role" / "role.yaml").is_file()
+
+
+def test_cwd_walkup_finds_repo_via_acc_deploy_marker(tmp_path, monkeypatch):
+    """**Operator review issue 1 — secondary fix.**
+
+    When ACC_REPO_ROOT is unset, the resolver walks up from cwd
+    looking for ``acc-deploy.sh``.  Anyone who ``cd``'s into a
+    subdirectory of the repo (a common operator workflow) gets
+    the repo's roles/ surfaced automatically.
+    """
+    fake_repo = tmp_path / "myrepo"
+    (fake_repo / "roles").mkdir(parents=True)
+    (fake_repo / "acc-deploy.sh").write_text("#!/bin/sh", encoding="utf-8")
+    deep = fake_repo / "sub" / "directory" / "tree"
+    deep.mkdir(parents=True)
+
+    for var in ("ACC_REPO_ROOT", "ACC_ROLES_ROOT"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.chdir(deep)
+
+    from acc.tui import path_resolution as pr
+    monkeypatch.setattr(pr, "_repo_root", lambda: tmp_path / "no_such_anchor")
+
+    resolved = resolve_manifest_root("ACC_ROLES_ROOT", "roles")
+    assert resolved == (fake_repo / "roles").resolve()
+
+
+def test_discovery_falls_back_when_no_marker_found(tmp_path, monkeypatch):
+    """When neither env var nor walk-up finds a repo, the resolver
+    must still return SOMETHING — the cwd fallback.  Caller-side
+    code (the ``_load_roles`` diagnostic) then surfaces the
+    missing-data state."""
+    for var in ("ACC_REPO_ROOT", "ACC_ROLES_ROOT"):
+        monkeypatch.delenv(var, raising=False)
+    elsewhere = tmp_path / "nowhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    from acc.tui import path_resolution as pr
+    monkeypatch.setattr(pr, "_repo_root", lambda: tmp_path / "no_such_anchor")
+
+    resolved = resolve_manifest_root("ACC_ROLES_ROOT", "roles")
+    # Falls back to cwd-relative — a Path that doesn't exist but
+    # is at least canonical.
+    assert resolved.is_absolute()
+    assert not resolved.is_dir()
+
+
+def test_discovery_ignores_acc_repo_root_when_directory_missing(
+    tmp_path, monkeypatch,
+):
+    """A typo'd ACC_REPO_ROOT should not silently break — the
+    walk-up still runs."""
+    fake_repo = tmp_path / "myrepo"
+    (fake_repo / "roles").mkdir(parents=True)
+    (fake_repo / "acc-deploy.sh").write_text("#!/bin/sh", encoding="utf-8")
+
+    monkeypatch.delenv("ACC_ROLES_ROOT", raising=False)
+    # Typo: ACC_REPO_ROOT points at a non-existent path.
+    monkeypatch.setenv("ACC_REPO_ROOT", str(tmp_path / "nonexistent"))
+    monkeypatch.chdir(fake_repo)
+
+    from acc.tui import path_resolution as pr
+    monkeypatch.setattr(pr, "_repo_root", lambda: tmp_path / "no_such_anchor")
+
+    resolved = resolve_manifest_root("ACC_ROLES_ROOT", "roles")
+    # Walk-up from fake_repo finds the acc-deploy.sh marker.
+    assert resolved == (fake_repo / "roles").resolve()
+
+
 @pytest.mark.asyncio
 async def test_ecosystem_shows_diagnostic_when_roles_root_unresolvable(
     tmp_path, monkeypatch,

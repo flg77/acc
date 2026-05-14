@@ -9,9 +9,50 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
-## [Unreleased]
+## [Unreleased] — 0.3.1-dev cycle
 
-(No changes yet — next development cycle starts here.)
+### Fixed
+
+- **TUI repo-root discovery for pip-installed acc-tui.**  The
+  Ecosystem + Configuration screens silently rendered empty
+  Role / Skills / MCPs tables when ``acc-tui`` was run from
+  outside the repo with no env vars set — the operator's actual
+  failure mode from ``ACC TUI / ACC REVIEW 14.5.md``.
+
+  ``acc/tui/path_resolution.py`` gains a new discovery tier
+  between the module-anchored fallback and the cwd fallback:
+
+  1. ``$ACC_REPO_ROOT`` env var (new) — if set, the directory's
+     ``roles/`` / ``skills/`` / ``mcps/`` are used.
+  2. Cwd walk-up — up to 8 ancestors are scanned for an
+     ``acc-deploy.sh`` marker (or ``pyproject.toml`` + an ``acc/``
+     subdirectory).  An operator who ``cd``'s anywhere inside
+     their checkout gets the repo's manifests surfaced
+     automatically.
+
+  Existing env-var-per-dir (``ACC_ROLES_ROOT`` etc.) and
+  module-anchored paths still take precedence, so nothing breaks
+  in development or container layouts.
+
+- **Empty-roles diagnostic on the Ecosystem screen.**  When the
+  resolver can't find any roles (all four tiers miss), the
+  screen now surfaces an operator-facing warning notify listing
+  the env-var options + the walk-up convention, instead of
+  silently rendering an empty table.
+
+### Added
+
+- **`tests/test_tui_user_experience.py`** — 19 UX-flow tests
+  that exercise the operator's actual workflow against the
+  repo's real ``roles/`` / ``skills/`` / ``mcps/`` (not synthetic
+  ``tmp_path`` fixtures).  Covers all six issues from
+  ``ACC REVIEW 14.5.md``: roles load, row-highlight populates
+  detail, Schedule infusion button arms and fires, Edit
+  role.yaml / role.md buttons invoke spawn, Skills + MCPs
+  surface on Configuration, LLM Endpoints documents the config
+  path.  Plus four new tests pinning the repo-discovery fix
+  (env-var override, cwd walk-up, graceful fallback, typo'd
+  env-var tolerance).
 
 ## [0.3.0] — 2026-05-14 — Slots 004 → 009 (operator-requested follow-ups)
 
