@@ -468,6 +468,12 @@ services:
       ACC_TUI_LOG_DIR: /app/logs
     volumes:
       - acc-tui-logs:/app/logs:U,z
+      # Mount the host's acc-config.yaml so the Configuration screen
+      # reflects the same backend / model / base_url the agent
+      # containers actually use.  Without this, the TUI falls back to
+      # the image's built-in defaults (typically backend=ollama) and
+      # silently misleads the operator about what's running.
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     # Uncomment when WebBridge is enabled (ACC_TUI_WEB_PORT=8765):
     # ports:
     #   - "8765:8765"
