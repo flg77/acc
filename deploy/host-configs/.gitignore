@@ -1,0 +1,11 @@
+# Per-host, per-model acc-config.yaml overlays.  Local-only — these
+# files target the operator's specific test hosts (lighthouse, etc.)
+# and the vllmpunch port assignments on each.  Never commit.
+#
+# Tracked: this .gitignore, README.md, template.yaml.
+# Everything else is excluded.
+
+*
+!.gitignore
+!README.md
+!template.yaml
