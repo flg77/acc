@@ -13,6 +13,33 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Agent-side CRD → file projection (proposal 010 PR-3).**  The Python
+  mirror of PR-2's Go-side watcher.  When `role_sync.role_source` is
+  `crd` or `mirror`, the new `acc.role_crd_loader.RoleCRDProjector`
+  polls the Kubernetes API for `AgentCollective` resources and writes
+  their `spec.roleDefinition` block to `roles/<id>/role.yaml`.  The
+  existing `acc.role_loader.RoleLoader` file watcher then picks up the
+  write naturally — no new code path inside the agent's hot loop.
+
+  - New module `acc/role_crd_loader.py` (~330 LOC):
+    - `CRDClient` Protocol so tests can supply a fake without a real
+      cluster.
+    - `KubernetesCRDClient` lazy-imports `kubernetes` only when
+      `role_source` requires it — agents in the `files` default mode
+      don't pay the dependency cost.
+    - `RoleCRDProjector` polls every `poll_interval_s` (default 30),
+      writes files atomically (`*.tmp` + `os.replace`), and is fully
+      idempotent: in-memory cache + on-disk content check both
+      short-circuit no-op rewrites.
+    - Generated files carry a sentinel comment naming the source CRD
+      so operators can `cat` and understand the origin.
+  - 19 new unit tests in `tests/test_role_crd_loader.py` covering
+    sentinel-strip, idempotency, atomic writes, exception swallowing,
+    polling lifecycle, and field-translation.
+
+  Production `KubernetesCRDClient` exercised only by integration
+  tests on acc1 (no live-cluster requirement in CI).
+
 - **Operator-side file → CRD projection (proposal 010 PR-2).**  When
   the operator binary is started with `--role-source files` (or
   `mirror`), it watches `<roles-root>/<id>/role.yaml` on disk and
