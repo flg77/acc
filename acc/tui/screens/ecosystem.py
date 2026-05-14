@@ -707,6 +707,13 @@ class EcosystemScreen(Screen):
         ``self._all_role_rows`` so the filter handler can re-populate
         the table without re-reading disk on every keystroke.  Calls
         ``_apply_filter()`` for the initial render.
+
+        TUI Review 14.5 — when the resolved roles/ path yields zero
+        entries (the operator's primary failure mode: pip-installed
+        acc-tui from non-repo cwd → repo anchor misses → empty
+        table), surface an actionable diagnostic via ``notify()``
+        so the operator sees what to fix instead of staring at an
+        empty pane.
         """
         root = _roles_root()
         self._role_names = list_roles(root)
@@ -727,6 +734,21 @@ class EcosystemScreen(Screen):
                 role_def.persona or "—",
                 str(task_count),
             ))
+
+        # Empty roster diagnostic (TUI Review 14.5).  We don't notify
+        # when rows DO load — too noisy on every refresh tick.  Only
+        # the operator-facing "nothing loaded, here's why" case.
+        if not self._all_role_rows:
+            try:
+                self.notify(
+                    f"No roles loaded from {root}.  Set ACC_ROLES_ROOT to "
+                    "your agentic-cell-corpus checkout (or run acc-tui "
+                    "from there).",
+                    severity="warning",
+                    timeout=8.0,
+                )
+            except Exception:
+                logger.exception("ecosystem: empty-roles notify failed")
 
         self._apply_filter("")
 
