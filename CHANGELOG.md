@@ -13,6 +13,28 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **TUI role-sync listener + comprehensive docs (proposal 010 PR-5).**
+  Closes proposal 010 — the role-sync feature is now operator-facing.
+
+  - `acc/tui/role_sync_listener.py` — subscribes to
+    `acc.role.sync.>`, maintains a per-role `RoleSyncState` (last
+    conflict, last applied, counters), and exposes `render_badge()`
+    returning Rich-markup for a Static widget.  Three rendering
+    tiers: fresh conflict (red, within `badge_window_s` = 5 min),
+    aged conflict (dim), applied-only (dim).  15 unit tests in
+    `tests/test_role_sync_listener.py`.
+  - `docs/role-sync.md` — comprehensive operator-facing doc
+    covering the three modes (`files | crd | mirror`), defaults per
+    `deploy_mode`, conflict-window semantics + sequence diagram for
+    echo handling in mirror mode, plus a runbook for switching
+    modes safely.
+
+  Wiring the listener into the existing TUI NATS subscription
+  (which is collective-scoped, but role-sync events are global) is
+  the only deferred piece — handled by a tiny follow-up PR.  The
+  listener itself is inert today and ready to consume events as
+  soon as it's connected.
+
 - **Mirror-mode conflict detection + NATS events (proposal 010 PR-4).**
   New module `acc.role_sync_conflict.ConflictDetector` classifies every
   file-watcher event as **echo** (our own CRD-driven write coming back
