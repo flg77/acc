@@ -5,11 +5,14 @@ Operator-local templates for the test hosts in our LAN
 [`vllmpunch`](https://github.com/flg77/vllmpunch) wrapper can
 launch on each.
 
-The yamls themselves are **gitignored** — they encode
-host-specific bits (port assignments, container DNS,
-`host.containers.internal` mappings) that don't belong in the
-public repo.  Only this README, the `.gitignore`, and
-`template.yaml` are tracked.
+The yamls are **tracked in git** so a `git pull` on a test
+host brings the right overlays with it.  Each file is already
+host-scoped (`<host>-<slug>.yaml`) so committing them is safe
+for a single-operator project.
+
+Do **not** commit secrets into these files — use
+`ACC_LLM_API_KEY_ENV` to point at an env var (set via
+`deploy/.env`, which **is** gitignored).
 
 ## Naming
 

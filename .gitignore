@@ -49,12 +49,9 @@ test/history/*
 !test/history/.gitignore
 !test/history/README.md
 
-# Operator-local per-host acc-config.yaml overlays — see
-# deploy/host-configs/.gitignore.  Same belt-and-braces.
-deploy/host-configs/*
-!deploy/host-configs/.gitignore
-!deploy/host-configs/README.md
-!deploy/host-configs/template.yaml
+# Per-host acc-config.yaml overlays are now tracked (see
+# deploy/host-configs/README.md).  Only sync backups are excluded —
+# the in-tree deploy/host-configs/.gitignore handles those.
 
 # Autoresearcher per-run outputs (E5).  Each run lands at
 # runs/<topic-slug>-<YYYYMMDD>/ — gitignored so report drafts never

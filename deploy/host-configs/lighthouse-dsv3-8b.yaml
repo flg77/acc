@@ -1,0 +1,38 @@
+# acc-config.yaml — lighthouse / dsv3-8b
+#
+# DeepSeek V3 distill 8B (BF16).  ~16 GB — won't fit at full BF16; vllmpunch entry sets gpu_memory_utilization 0.75.  Likely OOM at 12 GB; included for completeness.
+#
+# Launch on lighthouse:
+#   cd /git/infrastructure/containers/vllm/vllmpunch
+#   ./vllmpunch run -d dsv3
+#
+# Sync to the test host:
+#   ./scripts/sync-host-config.sh lighthouse dsv3-8b
+
+deploy_mode: standalone
+
+agent:
+  role: ingester
+  collective_id: sol-01
+  heartbeat_interval_s: 30
+
+signaling:
+  backend: nats
+  nats_url: nats://localhost:4222
+
+vector_db:
+  backend: lancedb
+  lancedb_path: /app/data/lancedb
+  milvus_uri: ""
+  milvus_collection_prefix: acc_
+
+llm:
+  backend: openai_compat
+  base_url: http://host.containers.internal:8004/v1
+  model: deepseek-ai/DeepSeek-V3-Distill-Llama-8B
+  request_timeout_s: 120
+  max_retries: 2
+
+observability:
+  log_level: INFO
+  metrics_backend: none

@@ -1,0 +1,38 @@
+# acc-config.yaml — lighthouse / mistral-7b-w8a8
+#
+# Mistral 7B W8A8, ~7 GB.  Strong on instruction-following.
+#
+# Launch on lighthouse:
+#   cd /git/infrastructure/containers/vllm/vllmpunch
+#   ./vllmpunch run -d mistral-7b
+#
+# Sync to the test host:
+#   ./scripts/sync-host-config.sh lighthouse mistral-7b-w8a8
+
+deploy_mode: standalone
+
+agent:
+  role: ingester
+  collective_id: sol-01
+  heartbeat_interval_s: 30
+
+signaling:
+  backend: nats
+  nats_url: nats://localhost:4222
+
+vector_db:
+  backend: lancedb
+  lancedb_path: /app/data/lancedb
+  milvus_uri: ""
+  milvus_collection_prefix: acc_
+
+llm:
+  backend: openai_compat
+  base_url: http://host.containers.internal:8015/v1
+  model: neuralmagic/Mistral-7B-Instruct-v0.3-quantized.w8a8
+  request_timeout_s: 120
+  max_retries: 2
+
+observability:
+  log_level: INFO
+  metrics_backend: none
