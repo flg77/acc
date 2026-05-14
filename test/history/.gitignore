@@ -1,0 +1,9 @@
+# Operator-local LLM test-result archive.  Gitignored —
+# each test run produces a row in <test-name>.jsonl that
+# only makes sense in the operator's LAN context.
+#
+# Tracked: this .gitignore + README.md.
+
+*
+!.gitignore
+!README.md

@@ -1,0 +1,50 @@
+# acc-config.yaml — TEMPLATE for per-host overlays.
+#
+# Copy to `<host>-<model-slug>.yaml` and fill in the four `<…>`
+# placeholders.  Files are gitignored — local-test only.
+
+deploy_mode: standalone
+
+agent:
+  role: ingester
+  collective_id: sol-01
+  heartbeat_interval_s: 30
+
+signaling:
+  backend: nats
+  nats_url: nats://localhost:4222
+
+vector_db:
+  backend: lancedb
+  lancedb_path: /app/data/lancedb
+  milvus_uri: ""
+  milvus_collection_prefix: acc_
+
+llm:
+  # ── Backend: OpenAI-compatible (vLLM / vllmpunch) ────────────────────
+  backend: openai_compat
+
+  # `host.containers.internal` resolves to the host's gateway from
+  # inside a podman container — so this works whether the operator
+  # runs the agent containerised (deploy/podman-compose.yml) or
+  # directly on the host.  Replace the port with the vllmpunch
+  # `host_port` for this model.
+  base_url: http://host.containers.internal:<PORT>/v1
+
+  # Canonical HF model id — must match what vllmpunch passes via
+  # --model.
+  model: <HF_MODEL_ID>
+
+  # Generous timeout for large prompts / cold start; tighten to 30s
+  # once the model is warm.
+  request_timeout_s: 120
+  max_retries: 2
+
+  # Override only the fields above — everything else inherits from
+  # acc/config.py defaults.
+
+observability:
+  log_level: INFO
+  metrics_backend: none
+
+# Cat-B / security / compliance blocks omitted — inherit defaults.
