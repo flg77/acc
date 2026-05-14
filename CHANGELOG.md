@@ -13,6 +13,35 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Operator-side file → CRD projection (proposal 010 PR-2).**  When
+  the operator binary is started with `--role-source files` (or
+  `mirror`), it watches `<roles-root>/<id>/role.yaml` on disk and
+  patches the matching `AgentCollective.spec.roleDefinition` whenever
+  the file changes.  Default behaviour is unchanged: `--role-source`
+  defaults to `crd` so existing deployments see no difference.
+
+  - New `operator/internal/filewatch/` package: `Watcher` wraps
+    `fsnotify` with debouncing (500 ms default — collapses
+    editor write-rename storms); `ParseRoleFile` reads the on-disk
+    snake_case YAML and translates to the camelCase CRD shape;
+    `RoleDefinitionsEqual` short-circuits no-op patches.
+  - `AgentCollectiveReconciler` gains `RoleSource`, `RolesRoot`,
+    `Namespace` fields and a public `ProjectRoleFile(ctx, roleID)`
+    method called by the file-watcher goroutine.
+  - `operator/cmd/main.go` adds `--role-source`, `--roles-root`,
+    `--role-sync-namespace` flags (each fall back to the matching
+    `ACC_*` env var) and registers the watcher as a `manager.Runnable`
+    so it joins the manager's start/stop lifecycle.
+  - CR patches are tagged with annotation
+    `acc.io/role-sync-source: file-mirror@<RFC3339-ts>` so observers
+    can attribute the change.  PR-4's conflict detector will use this.
+  - On operator startup the watcher does a one-shot sweep of every
+    existing `<id>/role.yaml` so CR state catches up to whatever was
+    edited while the operator was down.
+
+  PR-3 (CRD → file projection) and PR-4 (mirror-mode conflict
+  events) build on this foundation.
+
 - **`role_sync` config section + `role_source` flag (proposal 010
   PR-1).**  New top-level `role_sync:` block in `acc-config.yaml`
   with three fields:
