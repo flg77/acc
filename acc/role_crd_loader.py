@@ -217,6 +217,7 @@ class RoleCRDProjector:
         namespace: str,
         client: CRDClient,
         poll_interval_s: float = 30.0,
+        conflict_detector: Optional[Any] = None,
     ) -> None:
         self._roles_root = Path(roles_root)
         self._namespace = namespace
@@ -226,6 +227,12 @@ class RoleCRDProjector:
         # Track the last canonical YAML we wrote per role so we can
         # short-circuit no-op rewrites without re-reading every poll.
         self._last_written: dict[str, str] = {}
+        # Optional ConflictDetector (proposal 010 PR-4 wire-up).
+        # When supplied, every successful project_one() call records
+        # the write so the detector can classify subsequent file
+        # events as echo / applied / conflict.  Untyped here to avoid
+        # importing acc.role_sync_conflict at module load.
+        self._conflict_detector = conflict_detector
 
     async def start(self) -> None:
         """Begin polling.  Safe to call multiple times."""
@@ -332,6 +339,17 @@ class RoleCRDProjector:
         tmp_path.write_text(header + body, encoding="utf-8")
         os.replace(tmp_path, target_path)
         self._last_written[role_id] = body
+
+        # Tell the conflict detector we just wrote.  The detector
+        # records the body hash so subsequent file-watcher events
+        # for this role within conflict_window_s can be classified
+        # as echo (matching content) or conflict (differing content).
+        if self._conflict_detector is not None:
+            try:
+                self._conflict_detector.record_our_write(role_id, body)
+            except Exception:  # noqa: BLE001
+                logger.exception("RoleCRDProjector: detector.record_our_write failed")
+
         logger.info(
             "RoleCRDProjector: wrote %s (CRD %s/%s)",
             target_path, self._namespace, role_id,

@@ -416,6 +416,11 @@ class EcosystemScreen(Screen):
                 # the operator sees prose first; role.yaml (raw machine
                 # config) is opt-in.
                 with ScrollableContainer(id="role-detail-container"):
+                    # Proposal 010 PR-5 — role-sync badge.  Empty by
+                    # default; populated from
+                    # app._role_sync_listener.render_badge() on row
+                    # select + on every _RoleSyncEvent broadcast.
+                    yield Static("", id="role-sync-badge")
                     yield Static(
                         "[dim]Select a role row to view its definition.[/dim]",
                         id="role-detail-placeholder",
@@ -954,6 +959,11 @@ class EcosystemScreen(Screen):
         except Exception:
             pass
 
+        # Proposal 010 PR-5 — refresh the role-sync badge for the
+        # newly-selected role.  Empty when the listener has no events
+        # recorded for this role (typical fresh-boot state).
+        self._refresh_role_sync_badge(role_name)
+
         # role.md surface.
         try:
             md_widget = self.query_one("#role-md-content", Markdown)
@@ -993,6 +1003,41 @@ class EcosystemScreen(Screen):
     # entirely to the Configuration pane (acc/tui/screens/configuration.py).
     # The methods that lived here previously (_load_skills,
     # _load_mcps, _render_llm_backends) are removed.
+
+    # ------------------------------------------------------------------
+    # Proposal 010 PR-5 — role-sync badge
+    # ------------------------------------------------------------------
+
+    def _refresh_role_sync_badge(self, role_name: str) -> None:
+        """Re-render the badge for *role_name* from the App-wide
+        :class:`RoleSyncListener`.
+
+        Safe to call even when the listener isn't reachable (test
+        harnesses, ConnectionErrorScreen path) — the badge silently
+        stays empty.
+        """
+        try:
+            listener = getattr(self.app, "_role_sync_listener", None)
+            if listener is None:
+                return
+            badge_widget = self.query_one("#role-sync-badge", Static)
+        except Exception:
+            return
+        try:
+            badge_widget.update(listener.render_badge(role_name) or "")
+        except Exception:
+            logger.exception("ecosystem: render_badge failed for %r", role_name)
+
+    def on__role_sync_event(self, _message: Any) -> None:
+        """App-broadcast event: a new role-sync NATS message landed.
+
+        If a role is currently selected, refresh its badge — operators
+        see conflicts appear without re-clicking the row.  The
+        underscore prefix matches Textual's convention for app-level
+        message routing (see ``app.py`` `_RoleSyncEvent`).
+        """
+        if self._selected_role:
+            self._refresh_role_sync_badge(self._selected_role)
 
     def action_navigate(self, screen_name: str) -> None:
         self.app.switch_screen(screen_name)
