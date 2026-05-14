@@ -13,6 +13,34 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Mirror-mode conflict detection + NATS events (proposal 010 PR-4).**
+  New module `acc.role_sync_conflict.ConflictDetector` classifies every
+  file-watcher event as **echo** (our own CRD-driven write coming back
+  through the watcher), **applied** (genuine operator edit propagating
+  forward), or **conflict** (concurrent file + CRD write within the
+  `conflict_window_s` window).  Conflicts publish on
+  `<events_subject>.conflict` carrying enough payload (winner/loser
+  source, loser snippet, RFC3339 timestamp) for an audit log + the
+  PR-5 TUI badge.
+
+  - Last-writer-wins semantics — no three-way merge.  Operators see
+    the conflict event; correction is the next edit.
+  - Time source injectable (`now=` kwarg) so unit tests drive the
+    window deterministically without `time.sleep`.
+  - NATS publisher injectable — production wires
+    `acc.backends.signaling_nats`; tests inject a recording fake.
+  - Counters (`applied_count`, `echo_count`, `conflict_count`)
+    exposed for future `/metrics` integration.
+
+  12 new unit tests in `tests/test_role_sync_conflict.py` cover all
+  three classification outcomes, per-role isolation, counter
+  increments, publisher absence + exception swallowing, and subject
+  normalisation.
+
+  Wiring into `RoleCRDProjector` is intentionally deferred to a
+  separate small PR so the classifier can land + be reviewed in
+  isolation.  The detector is currently inert in production builds.
+
 - **Agent-side CRD → file projection (proposal 010 PR-3).**  The Python
   mirror of PR-2's Go-side watcher.  When `role_sync.role_source` is
   `crd` or `mirror`, the new `acc.role_crd_loader.RoleCRDProjector`
