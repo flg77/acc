@@ -465,3 +465,217 @@ class TestSpiffeDefaults:
         data = _apply_env({})
         cfg = ACCConfig.model_validate(data)
         assert cfg.security.spiffe.allow_ed25519_fallback is False
+
+
+# ---------------------------------------------------------------------------
+# Edge SPIFFE topology + cross-field validators (proposal 012 PR-1)
+# ---------------------------------------------------------------------------
+
+
+class TestSpiffeEdgeDefaults:
+    """Edge-specific fields on SpiffeConfig + cross-field validators."""
+
+    def test_edge_field_defaults(self):
+        sp = SpiffeConfig()
+        assert sp.edge_topology == "nested"
+        assert sp.edge_site_id == ""
+        assert sp.parent_spire_url == ""
+        assert sp.federation_peers == []
+        assert sp.offline_bundle_cache_path == "/run/spire/cache/bundle.pem"
+        assert sp.offline_max_age_h == 72.0
+        assert sp.bundle_refresh_h == 6.0
+        assert sp.offline_action == "rotate"
+        assert sp.parent_unreachable_action == "degrade"
+        assert sp.nats_mtls_cert_path == ""
+        assert sp.nats_mtls_key_path == ""
+
+    def test_inert_spiffe_on_edge_no_topology_check(self):
+        """SPIFFE off in edge mode: no edge_topology validation fires."""
+        cfg = ACCConfig.model_validate({"deploy_mode": "edge"})
+        assert cfg.security.spiffe.enabled is False
+
+    def test_signing_mode_ed25519_on_edge_skips_topology_check(self):
+        """spiffe.enabled=True but signing_mode=ed25519: the
+        edge_topology constraints do not fire because the operator
+        explicitly chose not to consume SPIFFE."""
+        cfg = ACCConfig.model_validate({
+            "deploy_mode": "edge",
+            "security": {
+                "signing_mode": "ed25519",
+                "spiffe": {"enabled": True, "edge_topology": "nested"},
+            },
+        })
+        assert cfg.security.signing_mode == "ed25519"
+
+    def test_nested_requires_parent_spire_url(self):
+        with pytest.raises(ValidationError, match="parent_spire_url"):
+            ACCConfig.model_validate({
+                "deploy_mode": "edge",
+                "security": {
+                    "signing_mode": "spiffe",
+                    "spiffe": {
+                        "enabled": True,
+                        "edge_topology": "nested",
+                        "edge_site_id": "factory-a",
+                    },
+                },
+            })
+
+    def test_nested_requires_edge_site_id(self):
+        with pytest.raises(ValidationError, match="edge_site_id"):
+            ACCConfig.model_validate({
+                "deploy_mode": "edge",
+                "security": {
+                    "signing_mode": "spiffe",
+                    "spiffe": {
+                        "enabled": True,
+                        "edge_topology": "nested",
+                        "parent_spire_url": "spire:8081",
+                    },
+                },
+            })
+
+    def test_nested_happy_path(self):
+        cfg = ACCConfig.model_validate({
+            "deploy_mode": "edge",
+            "security": {
+                "signing_mode": "spiffe",
+                "spiffe": {
+                    "enabled": True,
+                    "edge_topology": "nested",
+                    "edge_site_id": "factory-a",
+                    "parent_spire_url": "spire-server.acc-system:8081",
+                },
+            },
+        })
+        assert cfg.security.spiffe.edge_topology == "nested"
+        assert cfg.security.spiffe.edge_site_id == "factory-a"
+
+    def test_federated_requires_peers(self):
+        with pytest.raises(ValidationError, match="federation_peers"):
+            ACCConfig.model_validate({
+                "deploy_mode": "edge",
+                "security": {
+                    "signing_mode": "spiffe",
+                    "spiffe": {
+                        "enabled": True,
+                        "edge_topology": "federated",
+                    },
+                },
+            })
+
+    def test_federated_happy_path(self):
+        # Federated topology + rotate is rejected (see test_rotate_requires_nested);
+        # use degrade instead.
+        cfg = ACCConfig.model_validate({
+            "deploy_mode": "edge",
+            "security": {
+                "signing_mode": "spiffe",
+                "spiffe": {
+                    "enabled": True,
+                    "edge_topology": "federated",
+                    "federation_peers": ["https://factory-b.example.com/bundle"],
+                    "offline_action": "degrade",
+                },
+            },
+        })
+        assert cfg.security.spiffe.federation_peers == [
+            "https://factory-b.example.com/bundle",
+        ]
+
+    def test_rotate_requires_nested(self):
+        """offline_action=rotate is only meaningful with a local edge
+        SPIRE server, i.e. nested topology."""
+        with pytest.raises(ValidationError, match="rotate.*nested"):
+            ACCConfig.model_validate({
+                "deploy_mode": "edge",
+                "security": {
+                    "signing_mode": "spiffe",
+                    "spiffe": {
+                        "enabled": True,
+                        "edge_topology": "federated",
+                        "federation_peers": ["https://x/bundle"],
+                        "offline_action": "rotate",
+                    },
+                },
+            })
+
+    def test_degrade_works_with_federated(self):
+        """offline_action=degrade is topology-agnostic."""
+        cfg = ACCConfig.model_validate({
+            "deploy_mode": "edge",
+            "security": {
+                "signing_mode": "spiffe",
+                "spiffe": {
+                    "enabled": True,
+                    "edge_topology": "federated",
+                    "federation_peers": ["https://x/bundle"],
+                    "offline_action": "degrade",
+                },
+            },
+        })
+        assert cfg.security.spiffe.offline_action == "degrade"
+
+    def test_non_edge_deploy_mode_skips_topology_check(self):
+        """Standalone + rhoai deployments do not care about
+        edge_topology constraints even when they enable SPIFFE."""
+        for mode_kwargs in [
+            {"deploy_mode": "standalone"},
+            {
+                "deploy_mode": "rhoai",
+                "vector_db": {"milvus_uri": "http://milvus:19530"},
+                "llm": {"vllm_inference_url": "http://vllm:8000"},
+            },
+        ]:
+            cfg = ACCConfig.model_validate({
+                **mode_kwargs,
+                "security": {
+                    "signing_mode": "spiffe",
+                    "spiffe": {
+                        "enabled": True,
+                        "edge_topology": "nested",
+                    },
+                },
+            })
+            assert cfg.security.spiffe.enabled is True
+
+    def test_invalid_edge_topology_rejected(self):
+        with pytest.raises(ValidationError, match="edge_topology"):
+            SpiffeConfig.model_validate({"edge_topology": "lightning_grid"})
+
+    def test_invalid_offline_action_rejected(self):
+        with pytest.raises(ValidationError, match="offline_action"):
+            SpiffeConfig.model_validate({"offline_action": "implode"})
+
+    def test_env_var_overrides_edge_topology(self, monkeypatch):
+        monkeypatch.setenv("ACC_SPIFFE_EDGE_TOPOLOGY", "federated")
+        data = _apply_env({})
+        assert data["security"]["spiffe"]["edge_topology"] == "federated"
+
+    def test_env_var_overrides_edge_site_id(self, monkeypatch):
+        monkeypatch.setenv("ACC_SPIFFE_EDGE_SITE_ID", "plant-mke")
+        data = _apply_env({})
+        assert data["security"]["spiffe"]["edge_site_id"] == "plant-mke"
+
+    def test_env_var_overrides_offline_action(self, monkeypatch):
+        monkeypatch.setenv("ACC_SPIFFE_OFFLINE_ACTION", "shutdown")
+        data = _apply_env({})
+        assert data["security"]["spiffe"]["offline_action"] == "shutdown"
+
+    def test_env_var_overrides_parent_unreachable_action(self, monkeypatch):
+        monkeypatch.setenv("ACC_SPIFFE_PARENT_UNREACHABLE_ACTION", "block")
+        data = _apply_env({})
+        assert data["security"]["spiffe"]["parent_unreachable_action"] == "block"
+
+    def test_env_var_overrides_nats_mtls_paths(self, monkeypatch):
+        monkeypatch.setenv("ACC_NATS_MTLS_CERT_PATH", "/etc/acc/nats.crt")
+        monkeypatch.setenv("ACC_NATS_MTLS_KEY_PATH", "/etc/acc/nats.key")
+        data = _apply_env({})
+        assert data["security"]["spiffe"]["nats_mtls_cert_path"] == "/etc/acc/nats.crt"
+        assert data["security"]["spiffe"]["nats_mtls_key_path"] == "/etc/acc/nats.key"
+
+    def test_env_var_overrides_offline_max_age_h(self, monkeypatch):
+        monkeypatch.setenv("ACC_SPIFFE_OFFLINE_MAX_AGE_H", "168.0")
+        data = _apply_env({})
+        cfg = ACCConfig.model_validate(data)
+        assert cfg.security.spiffe.offline_max_age_h == 168.0
