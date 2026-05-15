@@ -1,0 +1,45 @@
+# ClusterFederatedTrustDomain — example (proposal 012 PR-3).
+#
+# In FEDERATED topology two edge sites own DISTINCT trust domains and
+# cross-trust each other's SVIDs by exchanging trust bundles.  ACC's
+# operator generates one ClusterFederatedTrustDomain per
+# `spec.spiffe.federationPeers` entry automatically — this file is a
+# REFERENCE showing what the operator produces, for operators who want
+# to hand-tune the bundleEndpointProfile.
+#
+# The operator generates entries with profile `https_web` (the peer's
+# bundle endpoint is served over standard web PKI TLS).  If your peer
+# runs a SPIFFE-authenticated bundle endpoint, hand-edit the generated
+# resource to the `https_spiffe` profile shown in the commented block
+# below.
+#
+# federationPeers entry format (in acc-config.yaml + the AgentCollective
+# spec):  <trust-domain>@<bundle-endpoint-url>
+#   e.g.  factory-b.acc.local@https://factory-b.example.com:8443/bundle
+---
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterFederatedTrustDomain
+metadata:
+  # Operator-generated name: acc-<namespace>-<collective>-fed-<peer-td-dashed>
+  name: acc-acc-edge-research-fed-factory-b-acc-local
+  labels:
+    app.kubernetes.io/part-of: acc
+    app.kubernetes.io/component: spiffe-federation
+spec:
+  # The PEER edge site's trust domain.
+  trustDomain: factory-b.acc.local
+  # The peer's SPIFFE bundle endpoint.
+  bundleEndpointURL: https://factory-b.example.com:8443/bundle
+  # Web-PKI profile — what the ACC operator generates.  Simplest:
+  # the peer's bundle endpoint just needs a valid TLS cert.
+  bundleEndpointProfile:
+    type: https_web
+  # ---------------------------------------------------------------
+  # Alternative — SPIFFE-authenticated bundle endpoint.  Replace the
+  # `bundleEndpointProfile` above with this if the peer authenticates
+  # its bundle endpoint with its own SPIFFE identity:
+  #
+  # bundleEndpointProfile:
+  #   type: https_spiffe
+  #   endpointSPIFFEID: spiffe://factory-b.acc.local/spire/server
+  # ---------------------------------------------------------------

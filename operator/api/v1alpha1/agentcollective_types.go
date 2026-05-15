@@ -102,6 +102,15 @@ type SpiffeSpec struct {
 	// deployMode=edge and edgeTopology=nested; ignored otherwise.
 	// +optional
 	EdgeSiteID string `json:"edgeSiteID,omitempty"`
+
+	// FederationPeers lists SPIFFE bundle-endpoint URLs to federate
+	// with (proposal 012 PR-3).  Required (>= 1 entry) when
+	// edgeTopology=federated — each peer becomes a
+	// ClusterFederatedTrustDomain custom resource so this edge's
+	// SPIRE trusts SVIDs issued by the peer's trust domain.  Ignored
+	// for nested / ed25519 topologies.
+	// +optional
+	FederationPeers []string `json:"federationPeers,omitempty"`
 }
 
 // RoleDefinition mirrors RoleDefinitionConfig from acc/config.py.

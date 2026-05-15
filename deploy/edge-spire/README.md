@@ -108,5 +108,51 @@ Two options:
 ## Federated topology
 
 For edge sites with **no rhoai parent** (`edgeTopology: federated`),
-the SPIRE install + federation peer config differ — that path lands
-in proposal 012 PR-3 alongside the offline-action implementation.
+each site owns a **distinct** trust domain and cross-trusts its peers
+by exchanging trust bundles.
+
+1. Install SPIRE per site with that site's own trust domain (no
+   `upstreamAuthority` — each site is its own root):
+
+   ```bash
+   helm upgrade --install spire spiffe/spire \
+     --namespace spire-system --create-namespace \
+     --set-string global.spire.trustDomain="factory-a.acc.local"
+   ```
+
+2. List each peer in `acc-config.yaml` + the `AgentCollective` spec
+   as `<trust-domain>@<bundle-endpoint-url>` pairs:
+
+   ```yaml
+   spec:
+     spiffe:
+       enabled: true
+       edgeTopology: federated
+       federationPeers:
+         - factory-b.acc.local@https://factory-b.example.com:8443/bundle
+   ```
+
+3. The ACC operator issues one `ClusterFederatedTrustDomain` per
+   peer (profile `https_web`).  See `federation-peer.yaml.example`
+   for the generated shape + how to switch to the `https_spiffe`
+   profile.
+
+A malformed `federationPeers` entry (missing the `@`) is skipped and
+surfaced in `status.spiffeError` — the other peers still federate.
+
+## Offline survival — `offline_action`
+
+When an edge is partitioned from its parent / peers, the
+`spiffe-helper` sidecar can no longer refresh the trust bundle.  When
+the cached bundle's age crosses `security.spiffe.offline_max_age_h`
+(default 72h), the agent applies `security.spiffe.offline_action`:
+
+| `offline_action` | Behaviour |
+|---|---|
+| `rotate` (default) | The edge-local SPIRE server rotates its own signing material from its long-lived attested credential; the agent keeps serving.  Requires `nested` topology. |
+| `degrade` | The agent enters read-only mode — existing tasks finish, new TASK_ASSIGNs get a CONFLICT response. |
+| `shutdown` | The agent pods exit non-zero (fail-safe). |
+
+The agent's `acc.spiffe_offline.OfflineBundleMonitor` polls bundle
+freshness, emits an `acc.spiffe.offline` NATS audit event on each
+stale detection, and invokes the configured action.

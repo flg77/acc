@@ -13,6 +13,44 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Edge federation + configurable offline action (proposal 012
+  PR-3).**  Completes the edge SPIFFE story: cross-trust between
+  federated edge sites, and a configurable response to a partitioned
+  (stale) trust bundle.
+
+  - `SpiffeSpec` gains `federationPeers []string`.  When
+    `edgeTopology: federated`, `SpiffeReconciler` issues one
+    `ClusterFederatedTrustDomain` custom resource per peer so this
+    edge's SPIRE trusts SVIDs from the peer trust domains.  Peer
+    entries are `<trust-domain>@<bundle-endpoint-url>` pairs;
+    malformed entries are skipped + surfaced in `status.spiffeError`
+    (one bad peer doesn't block the others).  Operator RBAC gains
+    `clusterfederatedtrustdomains`.
+  - New `acc/spiffe_offline.py` — `OfflineBundleMonitor` watches the
+    SPIRE trust-bundle file age and, when it crosses
+    `offline_max_age_h`, applies the configured `offline_action`:
+    `rotate` (keep serving — the edge SPIRE rotates), `degrade`
+    (read-only), or `shutdown` (fail-safe exit).  It is a building
+    block — `check()` classifies + `start()` runs a poll loop that
+    emits an `acc.spiffe.offline` audit event and invokes a handler;
+    the agent bootstrap wires the handler that performs the actual
+    degrade/shutdown (same module-then-wire-up split as proposal
+    010's `RoleSyncListener`).
+  - New `deploy/edge-spire/federation-peer.yaml.example` +
+    expanded `README.md` (federated-topology install runbook +
+    the `offline_action` behaviour table).
+  - 31 new tests — 15 Go in `spiffe_federation_test.go` /
+    extensions (per-peer CR issuance, no-peers + malformed-peer
+    error paths, nested-ignores-federation) + 16 Python in
+    `tests/test_spiffe_offline.py` (freshness classification,
+    missing-bundle, all three actions, event publication, poll
+    loop with handler).
+
+  Inert by design — no behaviour change until an operator sets
+  `deployMode: edge` + `edgeTopology: federated` (or wires the
+  offline monitor).  012 PR-4 (docs + cross-mode e2e) closes the
+  proposal.
+
 - **Agent-side SPIFFE JWT-SVID verification (proposal 011 PR-4).**
   When `security.signing_mode` is `spiffe`, a ROLE_UPDATE carries the
   arbiter's JWT-SVID in its `signature` field; the agent verifies it

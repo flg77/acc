@@ -842,6 +842,16 @@ spec:
                       Enabled is the master switch.  When false the operator issues
                       no ClusterSPIFFEID and the collective keeps the Ed25519 model.
                     type: boolean
+                  federationPeers:
+                    description: |-
+                      FederationPeers lists SPIFFE bundle-endpoint URLs to federate
+                      with (proposal 012 PR-3).  Required (>= 1 entry) when
+                      edgeTopology=federated — each peer becomes a
+                      ClusterFederatedTrustDomain custom resource.  Entry format:
+                      <trust-domain>@<bundle-endpoint-url>.
+                    items:
+                      type: string
+                    type: array
                   trustDomain:
                     description: |-
                       TrustDomain is the SPIFFE trust domain, e.g. acc-prod.example.com.

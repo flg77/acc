@@ -70,6 +70,11 @@ func spiffeClient(t *testing.T, objs ...client.Object) client.Client {
 	listGVK := clusterSPIFFEIDGVK
 	listGVK.Kind = "ClusterSPIFFEIDList"
 	s.AddKnownTypeWithName(listGVK, &unstructured.UnstructuredList{})
+	// Federation CRD (proposal 012 PR-3).
+	s.AddKnownTypeWithName(clusterFederatedTDGVK, &unstructured.Unstructured{})
+	fedListGVK := clusterFederatedTDGVK
+	fedListGVK.Kind = "ClusterFederatedTrustDomainList"
+	s.AddKnownTypeWithName(fedListGVK, &unstructured.UnstructuredList{})
 	return fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(objs...).
