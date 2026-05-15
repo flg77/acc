@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12-blue)](pyproject.toml)
-[![Go](https://img.shields.io/badge/Go-1.22-00ADD8)](operator/go.mod)
+[![Go](https://img.shields.io/badge/Go-1.23-00ADD8)](operator/go.mod)
 [![OLM Maturity](https://img.shields.io/badge/OLM-Level_3_Seamless_Upgrades-green)](operator/bundle/manifests/acc-operator.clusterserviceversion.yaml)
 [![OpenShift](https://img.shields.io/badge/OpenShift-4.14%2B-red)](docs/operator-install-local.md)
 
@@ -43,6 +43,20 @@ See [`docs/value-proposition.md`](docs/value-proposition.md) for a detailed comp
 | `rhoai` | OpenShift datacenter | OpenShift 4.14+ + RHOAI | vLLM / Llama Stack | Milvus | OTel Collector |
 
 The `deploy_mode` field in `acc-config.yaml` (or `spec.deployMode` in the `AgentCorpus` CRD) is the only switch. No Python code branches on deploy mode — the `build_backends()` factory in `acc/config.py` is the single dispatch point.
+
+---
+
+## Recent updates
+
+Highlights from the current `0.3.1-dev` cycle — see [`CHANGELOG.md`](CHANGELOG.md) for the full list. Everything below ships **additive and opt-in**; existing `acc-config.yaml` files and deployments are byte-for-byte unchanged.
+
+| Feature | What it is | Status |
+|---|---|---|
+| **SPIFFE workload identity** | Agents authenticate `ROLE_UPDATE` signatures with SPIRE-issued JWT-SVIDs instead of a static Ed25519 key — operator-issued `ClusterSPIFFEID` resources, a `spiffe-helper` sidecar, agent-side verification, edge nested/federated topologies with offline survival. Opt-in via `security.signing_mode: spiffe`. | ✅ Landed (proposals 011 + 012) |
+| **Bi-directional role-definition sync** | `role_sync.role_source: files \| crd \| mirror` keeps `roles/<id>/role.yaml` and the `AgentCollective` CRD in step, with mirror-mode conflict detection over NATS. | ✅ Landed (proposal 010) |
+| **TUI usability hardening** | Prompt cancel-on-timeout, `role.md` narrative rendering, role-directory file-watcher, the Configuration pane (pane 8). | ✅ Landed (proposal 003, v0.2.0) |
+
+**Planned next**: the v0.5.0 `rhoai` default flip to `signing_mode: spiffe`; NATS mTLS using the X.509-SVID; the offline-action agent wire-up. ACC remains pre-1.0.
 
 ---
 
@@ -249,23 +263,28 @@ ACC's security hardening follows a phased approach. The first two phases are imp
 |-------|----------|--------|
 | **0a** — Ed25519 verification | `RoleStore.apply_update()` cryptographically verifies arbiter signatures; unsigned ROLE_UPDATE rejected | ✅ Implemented |
 | **0b** — Redis auth | `requirepass` + per-agent Secret injection; `ACC_REDIS_PASSWORD` wired into all Redis clients | ✅ Implemented |
+| **2** — SPIFFE workload identity | SPIRE-issued JWT-SVIDs sign/verify `ROLE_UPDATE`; operator-issued `ClusterSPIFFEID`s; `spiffe-helper` sidecar; edge nested/federated topologies + offline survival.  Opt-in via `signing_mode: spiffe` (NATS/Redis mTLS via the X.509-SVID still to come) | ✅ Implemented (opt-in) |
 | **0c** — NATS NKeys | Per-role NKey authentication; publish/subscribe permission matrix including bridge subjects | 🔲 Planned |
 | **1** — Cilium L7 NetworkPolicy | eBPF-enforced agent egress rules (NATS, Redis, LLM backends, NATS leaf port 7422) | 🔲 Planned |
-| **2** — SPIFFE/SPIRE mTLS | Stable cryptographic agent identity; mTLS between NATS/Redis/agents; auto-rotating SVIDs | 🔲 Planned |
 | **3** — Tetragon Cat-A | Kernel eBPF event stream → real WASM Cat-A evaluation; `execve`/`connect` governance triggers | 🔲 Planned |
 | **4** — Hardened Standalone | NKeys + self-signed CA mTLS for Podman mode; no SPIRE/Tetragon dependency | 🔲 Planned |
 
 Quick setup for the implemented phases:
 ```bash
-# Phase 0a — Ed25519 arbiter verify key
+# Phase 0a — Ed25519 arbiter verify key (the default trust model)
 export ACC_ARBITER_VERIFY_KEY=<base64-encoded-raw-32-byte-ed25519-public-key>
 
 # Phase 0b — Redis auth
 export ACC_REDIS_URL=redis://localhost:6379
 export ACC_REDIS_PASSWORD=$(openssl rand -hex 32)
+
+# Phase 2 — SPIFFE workload identity (opt-in; requires SPIRE in-cluster)
+export ACC_SIGNING_MODE=spiffe
+export ACC_SPIFFE_ENABLED=true
+export ACC_SPIFFE_TRUST_DOMAIN=acc-prod.example.com
 ```
 
-See [`docs/security-hardening.md`](docs/security-hardening.md) for the complete security architecture, governance layer (Cat-A/B/C Rego rules), and phase-by-phase implementation plan.
+See [`docs/spiffe.md`](docs/spiffe.md) (+ [`docs/spiffe-edge.md`](docs/spiffe-edge.md) for edge topologies) for the SPIFFE setup, the three-stage `ed25519 → spiffe` migration, and the v0.5.0 default-flip plan.  See [`docs/security-hardening.md`](docs/security-hardening.md) for the complete security architecture, governance layer (Cat-A/B/C Rego rules), and phase-by-phase implementation plan.
 
 ---
 
@@ -307,11 +326,17 @@ or `export ACC_LLM_BACKEND=anthropic`. No other code changes required.
 | `ACC_ROLE_PURPOSE` | `role_definition.purpose` | _(empty)_ | Role purpose override |
 | `ACC_ROLE_PERSONA` | `role_definition.persona` | `concise` | Persona style |
 | `ACC_ARBITER_VERIFY_KEY` | `security.arbiter_verify_key` | _(empty)_ | Base64 Ed25519 public key |
+| `ACC_SIGNING_MODE` | `security.signing_mode` | `auto` → `ed25519` | ROLE_UPDATE signing model: `ed25519` \| `spiffe` |
+| `ACC_SPIFFE_ENABLED` | `security.spiffe.enabled` | `false` | Master switch for SPIFFE workload identity |
+| `ACC_SPIFFE_TRUST_DOMAIN` | `security.spiffe.trust_domain` | _(empty)_ | SPIFFE trust domain |
 | `ACC_REDIS_URL` | `working_memory.url` | _(empty)_ | Redis connection URL |
 | `ACC_REDIS_PASSWORD` | `working_memory.password` | _(empty)_ | Redis password |
+| `ACC_ROLE_SOURCE` | `role_sync.role_source` | `auto` | Role-definition source of truth: `files` \| `crd` \| `mirror` |
 | `ACC_PEER_COLLECTIVES` | `agent.peer_collectives` | _(empty)_ | Comma-separated delegation targets |
 | `ACC_HUB_COLLECTIVE_ID` | `agent.hub_collective_id` | _(empty)_ | Hub collective ID (edge) |
 | `ACC_BRIDGE_ENABLED` | `agent.bridge_enabled` | `false` | Enable cross-collective delegation |
+
+The full SPIFFE / edge / role-sync env-var sets (`ACC_SPIFFE_*`, `ACC_ROLE_SYNC_*`) are documented in [`docs/spiffe.md`](docs/spiffe.md), [`docs/spiffe-edge.md`](docs/spiffe-edge.md), and [`docs/role-sync.md`](docs/role-sync.md).
 
 ---
 
@@ -407,6 +432,9 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 | [`docs/howto-rhoai.md`](docs/howto-rhoai.md) | OpenShift operator install, CRD reference, GPU inference, KEDA/Gatekeeper/OTel |
 | [`docs/howto-role-infusion.md`](docs/howto-role-infusion.md) | Role definition schema, 4-tier load order, ROLE_UPDATE hot-reload, Ed25519 signing |
 | [`docs/howto-tui.md`](docs/howto-tui.md) | Terminal UI: dashboard screen, infuse screen, container deployment, keyboard shortcuts |
+| [`docs/spiffe.md`](docs/spiffe.md) | SPIFFE workload identity: prerequisites, config, the `ed25519 → spiffe` migration, v0.5.0 default-flip plan |
+| [`docs/spiffe-edge.md`](docs/spiffe-edge.md) | SPIFFE at the edge: nested / federated / ed25519 topologies, offline survival, the compatibility matrix |
+| [`docs/role-sync.md`](docs/role-sync.md) | Bi-directional `roles/<id>/role.yaml` ↔ `AgentCollective` CRD sync; the three `role_source` modes |
 | [`docs/security-hardening.md`](docs/security-hardening.md) | Complete security architecture: Cat-A/B/C Rego rules, Phase 0a–4 implementation plan |
 | [`docs/value-proposition.md`](docs/value-proposition.md) | Comparison with LangChain, CrewAI, AutoGen, Haystack |
 | [`docs/operator-install-local.md`](docs/operator-install-local.md) | Detailed operator deployment (Kustomize, OLM bundle, CatalogSource) |
