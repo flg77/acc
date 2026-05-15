@@ -1,0 +1,80 @@
+# Helm values — nested SPIRE server for an ACC edge site (proposal 012 PR-2).
+#
+# This is a *values overlay* for the upstream SPIFFE Helm chart, NOT a
+# from-scratch manifest.  ACC does not vendor SPIRE — operators install
+# it from upstream and ACC's operator issues ClusterSPIFFEID CRs on top.
+#
+# Install (per edge cluster):
+#
+#   helm upgrade --install spire spiffe/spire \
+#     --namespace spire-system --create-namespace \
+#     --values deploy/edge-spire/nested-spire-server.values.yaml \
+#     --set-string global.spire.trustDomain="<TRUST_DOMAIN>" \
+#     --set-string spire-server.upstreamAuthority.spire.server.address="<PARENT_SPIRE_HOST>" \
+#     --set spire-server.upstreamAuthority.spire.server.port=8081
+#
+# Replace:
+#   <TRUST_DOMAIN>      — the SHARED trust domain (same string the rhoai
+#                         parent uses, e.g. acc-prod.example.com).  Must
+#                         match security.spiffe.trust_domain in
+#                         acc-config.yaml AND the AgentCollective
+#                         spec.spiffe.trustDomain.
+#   <PARENT_SPIRE_HOST> — the rhoai datacenter's SPIRE server, reachable
+#                         from this edge site (typically via the NATS
+#                         leaf node's network path / a VPN).
+#
+# After install, set on every edge AgentCollective:
+#   spec.spiffe.enabled:      true
+#   spec.spiffe.trustDomain:  <TRUST_DOMAIN>
+#   spec.spiffe.edgeTopology: nested
+#   spec.spiffe.edgeSiteID:   <this-site-id>      # e.g. factory-a
+#
+# The ACC operator then issues a ClusterSPIFFEID with the site-qualified
+# path  spiffe://<TRUST_DOMAIN>/edge/<site-id>/role/<collective>.
+
+global:
+  spire:
+    # Overridden by --set-string at install time (see above).
+    trustDomain: "REPLACE_ME.acc.local"
+    clusterName: acc-edge
+
+spire-server:
+  # Nested topology — this edge server delegates its signing identity
+  # UP to the rhoai parent SPIRE server.  The parent issues an
+  # intermediate CA to this server; workloads attested here chain back
+  # to the parent's root.  This is what makes a rhoai-issued ROLE_UPDATE
+  # verifiable on an edge agent without bundle translation.
+  upstreamAuthority:
+    spire:
+      enabled: true
+      server:
+        # Overridden by --set at install time.
+        address: "REPLACE_ME_PARENT_SPIRE_HOST"
+        port: 8081
+
+  # Edge sites are small — one replica.  HA is a datacenter concern.
+  replicaCount: 1
+
+  # File-backed CA key.  Operators wanting HSM-backed keys override
+  # `spire-server.caKeyType` + the keymanager plugin here; out of scope
+  # for proposal 012 (see §3 Non-goals).
+  caKeyType: rsa-2048
+
+  # Persist the server's datastore so a pod restart doesn't re-attest
+  # every workload from scratch.
+  persistence:
+    enabled: true
+    size: 1Gi
+
+spiffe-csi-driver:
+  # The CSI driver mounts the SPIRE Agent Workload API socket into agent
+  # pods — required by the spiffe-helper sidecar (proposal 011 PR-3).
+  enabled: true
+
+spire-agent:
+  # One agent per node; attests pods on that node.
+  # workloadAttestors.k8s enables pod-label-based attestation, which is
+  # how ClusterSPIFFEID's podSelector resolves.
+  workloadAttestors:
+    k8s:
+      enabled: true
