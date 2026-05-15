@@ -46,7 +46,7 @@ type SpiffeResult struct {
 	EdgeSiteID string
 }
 
-// +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids;clusterfederatedtrustdomains,verbs=get;list;watch;create;update;patch;delete
 
 // SpiffeReconciler issues a ClusterSPIFFEID custom resource per
 // SPIFFE-enabled AgentCollective so spire-controller-manager attests
@@ -126,11 +126,131 @@ func (r *SpiffeReconciler) ReconcileCollective(
 		)
 	}
 
+	// Edge + federated topology — issue a ClusterFederatedTrustDomain
+	// per peer so this edge's SPIRE trusts SVIDs from the peer trust
+	// domains (proposal 012 PR-3).
+	if corpus.Spec.DeployMode == accv1alpha1.DeployModeEdge &&
+		spiffe.EdgeTopology == "federated" {
+		if err := r.reconcileFederation(ctx, corpus, collective, spiffe); err != nil {
+			return SpiffeResult{
+				SpiffeID: spiffeID, EdgeSiteID: edgeSiteID, Issued: true,
+				Err: fmt.Sprintf("federation: %v", err),
+			}, nil
+		}
+	}
+
 	return SpiffeResult{
 		SpiffeID:   spiffeID,
 		EdgeSiteID: edgeSiteID,
 		Issued:     true,
 	}, nil
+}
+
+// reconcileFederation issues one ClusterFederatedTrustDomain custom
+// resource per entry in spiffe.FederationPeers (proposal 012 PR-3).
+//
+// Each FederationPeers entry is a `<trust-domain>@<bundle-endpoint-url>`
+// pair, e.g. `factory-b.acc.local@https://factory-b.example.com:8443/bundle`.
+// A malformed entry (no `@`) is skipped with a returned error so the
+// operator sees it in status.spiffeError — one bad peer does not block
+// the others.
+//
+// The bundleEndpointProfile is `https_web` (standard web PKI on the
+// peer's bundle endpoint) — the simplest profile.  Operators who run
+// SPIFFE-authenticated bundle endpoints can switch the generated CR to
+// `https_spiffe` by hand; documented in deploy/edge-spire/README.md.
+func (r *SpiffeReconciler) reconcileFederation(
+	ctx context.Context,
+	corpus *accv1alpha1.AgentCorpus,
+	collective *accv1alpha1.AgentCollective,
+	spiffe *accv1alpha1.SpiffeSpec,
+) error {
+	if len(spiffe.FederationPeers) == 0 {
+		return fmt.Errorf(
+			"edgeTopology=federated requires at least one " +
+				"spiffe.federationPeers entry",
+		)
+	}
+
+	var malformed []string
+	for _, peer := range spiffe.FederationPeers {
+		td, url, ok := splitFederationPeer(peer)
+		if !ok {
+			malformed = append(malformed, peer)
+			continue
+		}
+		ftd := r.buildFederatedTrustDomain(corpus, collective, td, url)
+		if _, err := util.Upsert(
+			ctx, r.Client, r.Scheme, nil, ftd,
+			func(existing client.Object) error {
+				desiredU := ftd.(*unstructured.Unstructured)
+				existingU := existing.(*unstructured.Unstructured)
+				spec, _, _ := unstructured.NestedMap(desiredU.Object, "spec")
+				return unstructured.SetNestedMap(existingU.Object, spec, "spec")
+			},
+		); err != nil {
+			return fmt.Errorf("upsert ClusterFederatedTrustDomain %s: %w", td, err)
+		}
+	}
+	if len(malformed) > 0 {
+		return fmt.Errorf(
+			"federationPeers entries are not <trust-domain>@<url> pairs: %v",
+			malformed,
+		)
+	}
+	return nil
+}
+
+// splitFederationPeer parses a `<trust-domain>@<bundle-endpoint-url>`
+// entry.  Returns ok=false when the `@` separator is absent or either
+// half is blank.
+func splitFederationPeer(peer string) (trustDomain, url string, ok bool) {
+	at := strings.Index(peer, "@")
+	if at < 0 {
+		return "", "", false
+	}
+	td := strings.TrimSpace(peer[:at])
+	u := strings.TrimSpace(peer[at+1:])
+	if td == "" || u == "" {
+		return "", "", false
+	}
+	return td, u, true
+}
+
+// sanitizeTrustDomain turns a trust domain into a DNS-label-safe
+// fragment for use in a resource name (dots → dashes).
+func sanitizeTrustDomain(td string) string {
+	return strings.ReplaceAll(td, ".", "-")
+}
+
+func (r *SpiffeReconciler) buildFederatedTrustDomain(
+	corpus *accv1alpha1.AgentCorpus,
+	collective *accv1alpha1.AgentCollective,
+	peerTrustDomain, bundleURL string,
+) client.Object {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "spire.spiffe.io",
+		Version: "v1alpha1",
+		Kind:    "ClusterFederatedTrustDomain",
+	})
+	u.SetName(fmt.Sprintf(
+		"acc-%s-%s-fed-%s",
+		corpus.Namespace, collective.Name, sanitizeTrustDomain(peerTrustDomain),
+	))
+	u.SetLabels(util.CollectiveLabels(
+		corpus.Name, collective.Spec.CollectiveID,
+		"spiffe-federation", corpus.Spec.Version,
+	))
+	spec := map[string]interface{}{
+		"trustDomain":       peerTrustDomain,
+		"bundleEndpointURL": bundleURL,
+		"bundleEndpointProfile": map[string]interface{}{
+			"type": "https_web",
+		},
+	}
+	_ = unstructured.SetNestedMap(u.Object, spec, "spec")
+	return u
 }
 
 // computeSpiffeID derives the workload SPIFFE ID for a collective.
