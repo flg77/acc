@@ -13,6 +13,37 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Agent-side SPIFFE JWT-SVID verification (proposal 011 PR-4).**
+  When `security.signing_mode` is `spiffe`, a ROLE_UPDATE carries the
+  arbiter's JWT-SVID in its `signature` field; the agent verifies it
+  against the SPIRE trust bundle the `spiffe-helper` sidecar writes
+  to disk.
+
+  - New `acc/spiffe_verify.py` — `verify_jwt_svid()` checks signature
+    (against the JWKS bundle), `aud`, `exp`, optionally `sub`;
+    `SpiffeVerifier` re-reads the bundle each call so SPIRE bundle
+    rotation is honoured without an agent restart.  `PyJWT` is a new
+    dependency (small, pure-Python, reuses the existing
+    `cryptography` dep).
+  - `acc/role_store.py` — `apply_update` dispatches verification
+    through `_verify_signature`, switching on `signing_mode`:
+    `spiffe` → `_verify_spiffe`, `ed25519` → the existing path.
+    When `security.spiffe.allow_ed25519_fallback` is true a SPIFFE
+    failure degrades to the Ed25519 path — a transient SPIRE problem
+    doesn't strand the collective during the migration window.
+  - New `security.spiffe.arbiter_spiffe_id` config field
+    (`ACC_SPIFFE_ARBITER_ID` env) — when set, the verifier enforces
+    the JWT `sub` claim; when blank, arbiter identity rests on the
+    existing `approver_id` check.
+  - `RenderSpiffeHelperConfig` (operator) emits `jwt_bundle_file_name`
+    so spiffe-helper writes the JWKS bundle the verifier needs.
+  - 25 new tests — 20 in `tests/test_spiffe_verify.py`, 5 in
+    `tests/test_role_store.py::TestApplyUpdateSpiffe`.
+
+  A JWT-SVID attests arbiter identity + audience, not ROLE_UPDATE
+  content integrity (that stays the `approver_id` + role-version
+  checks) — see the `acc/spiffe_verify.py` module docstring.
+
 - **Nested SPIRE topology + edge-qualified SPIFFE IDs (proposal 012
   PR-2).**  Extends the operator-side SPIFFE provisioning to edge
   deployments.

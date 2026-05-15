@@ -299,17 +299,9 @@ class RoleStore:
             )
             raise RoleUpdateRejectedError("ROLE_UPDATE rejected: signature is empty")
 
-        # Ed25519 cryptographic verification (Phase 0a)
-        verify_key_b64 = self._config.security.arbiter_verify_key
-        if verify_key_b64:
-            self._verify_ed25519(payload, new_role, approver_id, signature, verify_key_b64)
-        else:
-            logger.warning(
-                "role_store: ACC_ARBITER_VERIFY_KEY not configured — "
-                "signature presence check only; cryptographic verification skipped "
-                "(agent_id=%s)",
-                self._agent_id,
-            )
+        # Signature verification — Ed25519 (Phase 0a) or SPIFFE
+        # JWT-SVID (proposal 011 PR-4), selected by signing_mode.
+        self._verify_signature(payload, new_role, approver_id, signature)
 
         expected_arbiter = self._get_arbiter_id()
         if expected_arbiter and approver_id != expected_arbiter:
@@ -366,6 +358,108 @@ class RoleStore:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _verify_signature(
+        self,
+        payload: dict,
+        new_role: RoleDefinitionConfig,
+        approver_id: str,
+        signature: str,
+    ) -> None:
+        """Dispatch ROLE_UPDATE signature verification by signing_mode.
+
+        - ``ed25519``: the Phase-0a static-key path (``_verify_ed25519``).
+        - ``spiffe``:  the SPIFFE JWT-SVID path (``_verify_spiffe``).
+          When ``security.spiffe.allow_ed25519_fallback`` is True, a
+          SPIFFE failure falls back to the Ed25519 path so a transient
+          SPIRE problem doesn't strand the collective during the
+          migration window (proposal 011 §2 G5).
+
+        ``signing_mode`` has already been resolved away from ``auto``
+        by ACCConfig validation, so only the two concrete values
+        reach here.
+        """
+        signing_mode = self._config.security.signing_mode
+
+        if signing_mode == "spiffe":
+            try:
+                self._verify_spiffe(payload, new_role, approver_id, signature)
+                return
+            except RoleUpdateRejectedError:
+                if not self._config.security.spiffe.allow_ed25519_fallback:
+                    raise
+                logger.warning(
+                    "role_store: SPIFFE verification failed — falling back "
+                    "to ed25519 (allow_ed25519_fallback=true, agent_id=%s)",
+                    self._agent_id,
+                )
+                # fall through to the ed25519 path below
+
+        # ed25519 (default) — or the spiffe fallback path.
+        verify_key_b64 = self._config.security.arbiter_verify_key
+        if verify_key_b64:
+            self._verify_ed25519(payload, new_role, approver_id, signature, verify_key_b64)
+        else:
+            logger.warning(
+                "role_store: ACC_ARBITER_VERIFY_KEY not configured — "
+                "signature presence check only; cryptographic verification skipped "
+                "(agent_id=%s)",
+                self._agent_id,
+            )
+
+    def _verify_spiffe(
+        self,
+        payload: dict,
+        new_role: RoleDefinitionConfig,
+        approver_id: str,
+        signature: str,
+    ) -> None:
+        """Verify a SPIFFE JWT-SVID carried in the ROLE_UPDATE.
+
+        ``signature`` holds the arbiter's compact JWT-SVID.  It is
+        verified against the SPIRE trust bundle the spiffe-helper
+        sidecar materialised at ``security.spiffe.svid_mount_path``.
+
+        What this proves + what it does not: see the module docstring
+        of :mod:`acc.spiffe_verify`.  Arbiter identity is additionally
+        enforced by the ``approver_id`` check that runs after this in
+        :meth:`apply_update`, and — when
+        ``security.spiffe.arbiter_spiffe_id`` is set — by the JWT
+        ``sub`` claim check inside the verifier.
+
+        Raises:
+            RoleUpdateRejectedError: on any verification failure.
+        """
+        from acc.spiffe_verify import (  # noqa: PLC0415
+            SpiffeVerifier,
+            SpiffeVerificationError,
+        )
+
+        spiffe_cfg = self._config.security.spiffe
+        verifier = SpiffeVerifier(
+            svid_mount_path=spiffe_cfg.svid_mount_path,
+            jwt_audience=spiffe_cfg.jwt_audience,
+        )
+        expected_id = spiffe_cfg.arbiter_spiffe_id or None
+        try:
+            verifier.verify(signature, expected_spiffe_id=expected_id)
+        except SpiffeVerificationError as exc:
+            self._append_audit(
+                "rejected",
+                self._current.version,
+                new_role.version,
+                f"spiffe_invalid_svid: {exc}",
+                approver_id,
+            )
+            raise RoleUpdateRejectedError(
+                f"ROLE_UPDATE rejected: SPIFFE JWT-SVID verification failed: {exc}"
+            ) from exc
+
+        logger.debug(
+            "role_store: SPIFFE JWT-SVID verified (agent_id=%s approver=%s)",
+            self._agent_id,
+            approver_id,
+        )
 
     def _verify_ed25519(
         self,
