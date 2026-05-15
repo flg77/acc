@@ -1143,6 +1143,12 @@ spec:
                     description: RHOAIInstalled is true when the ODH/RHOAI API group
                       is registered.
                     type: boolean
+                  spireInstalled:
+                    description: |-
+                      SpireInstalled is true when the spire.spiffe.io API group is
+                      registered (spire-controller-manager present).  Gates SPIFFE
+                      workload-identity provisioning — proposal 011.
+                    type: boolean
                 type: object
             type: object
         type: object

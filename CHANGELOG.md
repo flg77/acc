@@ -13,6 +13,36 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Operator-side SPIFFE provisioning — `ClusterSPIFFEID` issuance
+  (proposal 011 PR-2).**  When an `AgentCollective` carries
+  `spec.spiffe.enabled: true`, the operator issues a matching
+  `ClusterSPIFFEID` custom resource so spire-controller-manager
+  attests the collective's agent pods.
+
+  - New `SpiffeSpec` on `AgentCollectiveSpec` (`enabled`,
+    `trustDomain`) + three status fields (`spiffeID`,
+    `spiffeIssued`, `spiffeError`).  CRD bases + deepcopy
+    hand-updated to match.
+  - New `SpireInstalled` prerequisite — `PrerequisiteReconciler`
+    detects the `spire.spiffe.io` API group via the new
+    `APIGroupChecker.SpireInstalled()` helper.
+  - New `collective.SpiffeReconciler` issues / updates one
+    `ClusterSPIFFEID` per SPIFFE-enabled collective.  SPIFFE ID
+    format `spiffe://<trust-domain>/role/<collective-name>`;
+    trust domain defaults to `<corpus>.acc.local` when blank;
+    `podSelector` targets pods by the `acc.io/collective` label.
+  - Strict no-op when `spec.spiffe` is absent/disabled or when
+    spire-controller-manager is not installed — the latter
+    surfaces a reason in `status.spiffeError` rather than
+    failing reconciliation.  SPIFFE stays opt-in.
+  - RBAC: operator ClusterRole gains
+    `spire.spiffe.io/clusterspiffeids` (full verbs).
+  - 7 unit tests in `operator/test/unit/spiffe_reconciler_test.go`.
+
+  Inert by design — no `AgentCollective` carries `spec.spiffe`
+  until an operator opts in.  PR-3 mounts the `spiffe-helper`
+  sidecar; PR-4 wires the agent-side verifier.
+
 - **`security.spiffe` edge fields + cross-field validators
   (proposal 012 PR-1).**  Extends proposal 011's `SpiffeConfig`
   with 11 fields covering the edge-deployment topology, offline

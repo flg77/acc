@@ -810,6 +810,26 @@ spec:
                 required:
                 - enabled
                 type: object
+              spiffe:
+                description: |-
+                  Spiffe configures SPIFFE workload identity for this collective
+                  (proposal 011).  When enabled, the operator issues a matching
+                  ClusterSPIFFEID custom resource so spire-controller-manager
+                  attests the collective's agent pods.  Omitted / disabled keeps
+                  the legacy Ed25519 trust model.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled is the master switch.  When false the operator issues
+                      no ClusterSPIFFEID and the collective keeps the Ed25519 model.
+                    type: boolean
+                  trustDomain:
+                    description: |-
+                      TrustDomain is the SPIFFE trust domain, e.g. acc-prod.example.com.
+                      Empty means the operator derives <corpus-name>.acc.local.
+                    type: string
+                type: object
             required:
             - agents
             - collectiveId
@@ -911,6 +931,24 @@ spec:
               scaledObjectsActive:
                 description: ScaledObjectsActive is true when KEDA ScaledObjects are
                   in effect.
+                type: boolean
+              spiffeError:
+                description: |-
+                  SpiffeError carries an operator-readable reason when SPIFFE
+                  provisioning could not complete (e.g. SPIRE not installed).
+                  Empty on success or when spiffe is disabled.
+                type: string
+              spiffeID:
+                description: |-
+                  SpiffeID is the workload identity the operator computed for this
+                  collective, e.g. spiffe://acc-prod.example.com/role/research.
+                  Empty when spiffe is disabled.  (Proposal 011 PR-2.)
+                type: string
+              spiffeIssued:
+                description: |-
+                  SpiffeIssued is true when a matching ClusterSPIFFEID custom
+                  resource has been successfully created/updated.  False when
+                  spiffe is disabled or spire-controller-manager is absent.
                 type: boolean
             type: object
         type: object

@@ -49,6 +49,7 @@ func (r *CollectiveReconciler) Reconcile(ctx context.Context, corpus *accv1alpha
 	agentRec := &AgentDeploymentReconciler{Client: r.Client, Scheme: r.Scheme}
 	kedaRec := &KEDAScaledObjectReconciler{Client: r.Client, Scheme: r.Scheme}
 	kserveRec := &KServeReconciler{Client: r.Client, Scheme: r.Scheme}
+	spiffeRec := &SpiffeReconciler{Client: r.Client, Scheme: r.Scheme}
 
 	anyProgressing := false
 	allReady := true
@@ -86,6 +87,17 @@ func (r *CollectiveReconciler) Reconcile(ctx context.Context, corpus *accv1alpha
 		kserveRes, err := kserveRec.ReconcileCollective(ctx, corpus, collective)
 		if err != nil {
 			return reconcilers.SubResult{}, fmt.Errorf("collective %s kserve: %w", ref.Name, err)
+		}
+
+		// SPIFFE ClusterSPIFFEID (skipped if spiffe disabled or SPIRE
+		// absent — proposal 011 PR-2).  The outcome is written onto the
+		// AgentCollective's own status sub-resource below.
+		spiffeRes, err := spiffeRec.ReconcileCollective(ctx, corpus, collective)
+		if err != nil {
+			return reconcilers.SubResult{}, fmt.Errorf("collective %s spiffe: %w", ref.Name, err)
+		}
+		if err := r.patchSpiffeStatus(ctx, collective, spiffeRes); err != nil {
+			return reconcilers.SubResult{}, fmt.Errorf("collective %s spiffe status: %w", ref.Name, err)
 		}
 
 		// Compute collective phase.
@@ -143,6 +155,27 @@ func collectivesReadyMessage(allReady bool) string {
 func needsKServe(collective *accv1alpha1.AgentCollective) bool {
 	b := collective.Spec.LLM.Backend
 	return b == accv1alpha1.LLMBackendVLLM || b == accv1alpha1.LLMBackendLlamaStack
+}
+
+// patchSpiffeStatus writes the SpiffeReconciler outcome onto the
+// AgentCollective's status sub-resource (proposal 011 PR-2).  It only
+// patches when something actually changed, so a disabled-SPIFFE
+// collective never generates spurious status writes.
+func (r *CollectiveReconciler) patchSpiffeStatus(
+	ctx context.Context,
+	collective *accv1alpha1.AgentCollective,
+	res SpiffeResult,
+) error {
+	if collective.Status.SpiffeID == res.SpiffeID &&
+		collective.Status.SpiffeIssued == res.Issued &&
+		collective.Status.SpiffeError == res.Err {
+		return nil // no-op — nothing to patch
+	}
+	original := collective.DeepCopy()
+	collective.Status.SpiffeID = res.SpiffeID
+	collective.Status.SpiffeIssued = res.Issued
+	collective.Status.SpiffeError = res.Err
+	return r.Client.Status().Patch(ctx, collective, client.MergeFrom(original))
 }
 
 // reconcileRoleConfigMap creates or updates the acc-role-{collectiveId} ConfigMap

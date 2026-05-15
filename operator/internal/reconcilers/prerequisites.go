@@ -72,6 +72,13 @@ func (r *PrerequisiteReconciler) Reconcile(ctx context.Context, corpus *accv1alp
 	}
 	pre.PrometheusRulesSupported = promOK
 
+	// ---------- SPIRE (spire-controller-manager) ---------------------------
+	spireOK, err := checker.SpireInstalled()
+	if err != nil {
+		spireOK = false
+	}
+	pre.SpireInstalled = spireOK
+
 	// ---------- Kafka (TCP probe) ------------------------------------------
 	kafkaReachable := false
 	if corpus.Spec.Kafka != nil && corpus.Spec.Kafka.BootstrapServers != "" {
