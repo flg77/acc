@@ -13,6 +13,32 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **`spiffe-helper` sidecar injection (proposal 011 PR-3).**  When an
+  `AgentCollective` has `spec.spiffe.enabled: true`, every agent pod
+  gains a `spiffe-helper` sidecar that materialises the pod's
+  X.509-SVID + JWT-SVID into a shared `emptyDir`.  The agent container
+  reads the SVID files from there — no agent code change beyond the
+  env vars the operator now sets.
+
+  - New `operator/internal/reconcilers/collective/spiffe_sidecar.go`:
+    `ApplySpiffeSidecar` mutates a built agent `Deployment` to add the
+    sidecar + three volumes (`spiffe-svids` emptyDir,
+    `spiffe-workload-api` CSI volume for the SPIRE Workload API socket,
+    `spiffe-helper-config` ConfigMap) + the
+    `spiffe.io/spire-managed-identity` pod annotation.  No-op when
+    SPIFFE is disabled.
+  - `RenderSpiffeHelperConfig` produces the `helper.conf` HCL;
+    `AgentDeploymentReconciler` upserts it as a per-collective
+    ConfigMap (`<collective>-spiffe-helper`).
+  - Agent container gets a read-only `/run/spire/sockets` mount plus
+    `ACC_SPIFFE_SVID_MOUNT_PATH`, `ACC_SVID_X509_PATH`,
+    `ACC_SVID_JWT_PATH` env vars.
+  - 6 unit tests in `operator/test/unit/spiffe_sidecar_test.go`.
+
+  Inert by design — pods are unchanged until an operator sets
+  `spec.spiffe.enabled`.  PR-4 wires the agent-side verifier that
+  consumes these SVID files.
+
 - **Operator-side SPIFFE provisioning — `ClusterSPIFFEID` issuance
   (proposal 011 PR-2).**  When an `AgentCollective` carries
   `spec.spiffe.enabled: true`, the operator issues a matching

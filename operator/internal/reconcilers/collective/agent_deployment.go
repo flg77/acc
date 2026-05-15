@@ -83,6 +83,31 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 	}
 
 	// -----------------------------------------------------------------------
+	// SPIFFE helper.conf ConfigMap (proposal 011 PR-3) — only when the
+	// collective opted into SPIFFE.  Mounted into the spiffe-helper
+	// sidecar that ApplySpiffeSidecar() adds to each agent pod.
+	// -----------------------------------------------------------------------
+	if SpiffeEnabled(collective) {
+		helperCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      SpiffeHelperConfigMapName(collective),
+				Namespace: ns,
+				Labels: util.CollectiveLabels(
+					corpus.Name, collective.Spec.CollectiveID,
+					"spiffe-helper", corpus.Spec.Version,
+				),
+			},
+			Data: map[string]string{spiffeHelperConfigKey: RenderSpiffeHelperConfig()},
+		}
+		if _, err := util.Upsert(ctx, r.Client, r.Scheme, collective, helperCM, func(existing client.Object) error {
+			existing.(*corev1.ConfigMap).Data = helperCM.Data
+			return nil
+		}); err != nil {
+			return result, fmt.Errorf("upsert spiffe-helper ConfigMap: %w", err)
+		}
+	}
+
+	// -----------------------------------------------------------------------
 	// One Deployment per agent role.
 	// -----------------------------------------------------------------------
 	for _, roleSpec := range collective.Spec.Agents {
@@ -206,6 +231,12 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 			},
 		},
 	}
+
+	// Proposal 011 PR-3 — inject the spiffe-helper sidecar + supporting
+	// volumes/mounts/env when the collective has SPIFFE enabled.  No-op
+	// otherwise.  Applied after the base Deployment is built so the
+	// agent container is already at index 0.
+	ApplySpiffeSidecar(deploy, collective, SpiffeHelperConfigMapName(collective))
 
 	upsertResult, err := util.Upsert(ctx, r.Client, r.Scheme, collective, deploy, func(existing client.Object) error {
 		existingDeploy := existing.(*appsv1.Deployment)
