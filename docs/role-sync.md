@@ -239,3 +239,8 @@ This proposal explicitly does **not** address:
 - `acc/role_crd_loader.py` — Python-side CRD projector (PR-3)
 - `acc/role_sync_conflict.py` — mirror-mode conflict detector (PR-4)
 - `acc/tui/role_sync_listener.py` — TUI badge state (PR-5)
+- [`docs/spiffe.md`](./spiffe.md) — SPIFFE workload identity
+  (proposal 011).  Orthogonal to role-sync, but both touch
+  `ROLE_UPDATE`: role-sync decides *what* the role definition is;
+  SPIFFE (`signing_mode: spiffe`) decides *how the ROLE_UPDATE that
+  carries it is authenticated*.
