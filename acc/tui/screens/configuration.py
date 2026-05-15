@@ -146,9 +146,13 @@ def _load_acc_config_summary() -> dict[str, str]:
             full = ACCConfig()
             role_source = full.role_sync.role_source
             deploy_mode = full.deploy_mode
+            signing_mode = full.security.signing_mode
+            spiffe_enabled = full.security.spiffe.enabled
         except Exception:
             role_source = "—"
             deploy_mode = "—"
+            signing_mode = "—"
+            spiffe_enabled = False
         return {
             "backend": str(cfg.backend),
             "model": getattr(cfg, "model", "—") or "—",
@@ -156,6 +160,8 @@ def _load_acc_config_summary() -> dict[str, str]:
             "request_timeout_s": str(getattr(cfg, "request_timeout_s", "—")),
             "role_source": role_source,
             "deploy_mode": deploy_mode,
+            "signing_mode": signing_mode,
+            "spiffe_enabled": "yes" if spiffe_enabled else "no",
         }
     except Exception:
         logger.exception("configuration: LLMConfig() failed")
@@ -166,6 +172,8 @@ def _load_acc_config_summary() -> dict[str, str]:
             "request_timeout_s": "—",
             "role_source": "—",
             "deploy_mode": "—",
+            "signing_mode": "—",
+            "spiffe_enabled": "—",
         }
 
 
@@ -397,6 +405,9 @@ class ConfigurationScreen(Screen):
             f"[bold]Role sync:[/bold] {summary['role_source']} "
             f"[dim](deploy_mode={summary['deploy_mode']}; "
             "proposal 010)[/dim]\n"
+            f"[bold]Signing mode:[/bold] {summary['signing_mode']} "
+            f"[dim](spiffe.enabled={summary['spiffe_enabled']}; "
+            "proposal 011)[/dim]\n"
             "\n[dim]Values reflect ACCConfig.llm + the documented "
             "ACC_LLM_* env-var overrides.  Read-only for now — "
             "edit the underlying acc-config.yaml or the env vars; "

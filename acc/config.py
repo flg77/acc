@@ -321,6 +321,86 @@ class WorkingMemoryConfig(BaseModel):
     password: str = ""  # Redis AUTH password; empty = no authentication
 
 
+SigningMode = Literal["ed25519", "spiffe", "auto"]
+"""ROLE_UPDATE signing model (proposal 011).
+
+- ``ed25519``: legacy static-keypair via
+  :class:`SecurityConfig.arbiter_verify_key`.  Default for every
+  ``deploy_mode`` in v0.4.x; stays the supported path for laptop dev
+  forever — SPIRE is not a sensible laptop dependency.
+- ``spiffe``: SPIFFE workload identity (JWT-SVID, audience
+  ``acc-role-update``).  Opt-in throughout v0.4.x; ``rhoai`` default
+  flips here in v0.5.0 (proposal 011 §2 G6).
+- ``auto``: placeholder requesting the deploy-mode default.  After
+  ``ACCConfig`` validation the resolved value is one of ``ed25519``
+  / ``spiffe``.  Operators never write ``auto`` — it's the implicit
+  value when no ``security.signing_mode`` is specified.
+"""
+
+
+# Default ``signing_mode`` per ``deploy_mode``.  Centralised so the
+# resolution rule is observable + testable (mirrors proposal 010's
+# ``_ROLE_SOURCE_BY_DEPLOY_MODE`` pattern).
+#
+# Every default is ``ed25519`` in v0.4.x.  v0.5.0 flips the ``rhoai``
+# row to ``spiffe`` once 011 PR-2..PR-5 land.
+_SIGNING_MODE_BY_DEPLOY_MODE: dict[str, str] = {
+    "standalone": "ed25519",
+    "edge":       "ed25519",
+    "rhoai":      "ed25519",
+}
+
+
+class SpiffeConfig(BaseModel):
+    """SPIFFE workload identity settings (proposal 011 PR-1).
+
+    Inert in PR-1 — this PR ships the config surface only.  Proposal
+    011's PR-2 (operator integration), PR-3 (sidecar injection),
+    PR-4 (agent-side verifier) consume these fields.  Proposal 012's
+    PR-1 extends the model with edge-specific fields.
+
+    All fields default to safe values that disable SPIFFE entirely
+    (``enabled: False``).  Operators who haven't read proposal 011
+    see no behaviour change.
+
+    Example::
+
+        security:
+          signing_mode: spiffe          # opt in
+          spiffe:
+            enabled: true
+            trust_domain: acc-prod.example.com
+            allow_ed25519_fallback: true   # belt-and-braces during migration
+    """
+
+    enabled: bool = False
+    """Master switch.  When False every other field is ignored."""
+
+    trust_domain: str = ""
+    """SPIFFE trust domain, e.g. ``acc-prod.example.com``.  Empty
+    means "use the deployment-supplied default" — typically
+    ``<corpus_name>.acc.local`` from the operator's pod template
+    (proposal 011 PR-3).  Operators with multi-cluster federation
+    override here."""
+
+    svid_mount_path: str = "/run/spire/sockets"
+    """Filesystem path where ``spiffe-helper`` (proposal 011 PR-3)
+    mounts the X.509-SVID and JWT-SVID.  Matches the upstream
+    Kagenti convention."""
+
+    jwt_audience: str = "acc-role-update"
+    """JWT-SVID audience claim required on every signed ROLE_UPDATE.
+    Distinct from any other audience the same trust domain might
+    issue tokens for — prevents token confusion attacks."""
+
+    allow_ed25519_fallback: bool = True
+    """When True and ``signing_mode: spiffe``, ROLE_UPDATE verification
+    tries SPIFFE first and falls back to Ed25519 on SPIFFE error
+    (SPIRE socket unreachable, JWT expired, bundle rotation gap).
+    Default True for the v0.4.x migration window; operators tighten
+    to False once the SPIFFE path is proven stable."""
+
+
 class SecurityConfig(BaseModel):
     """Cryptographic security settings (Phase 0a onwards).
 
@@ -334,9 +414,24 @@ class SecurityConfig(BaseModel):
     This preserves backward compatibility with test fixtures that use
     placeholder signatures and with environments where the arbiter key has not
     yet been provisioned.
+
+    ``signing_mode`` + ``spiffe`` (proposal 011) layer a SPIFFE
+    workload-identity option on top.  In the default ``ed25519`` mode
+    this subtree is inert — existing deployments see no behaviour
+    change.
     """
 
     arbiter_verify_key: str = ""
+
+    signing_mode: SigningMode = "auto"
+    """How ROLE_UPDATE payloads are signed + verified.  ``auto``
+    resolves to the deploy-mode default at validation time (see
+    ``_SIGNING_MODE_BY_DEPLOY_MODE``); explicit values pass through
+    unchanged."""
+
+    spiffe: SpiffeConfig = Field(default_factory=SpiffeConfig)
+    """SPIFFE workload identity settings.  Inert until
+    ``signing_mode: spiffe`` is set AND ``spiffe.enabled: true``."""
 
 
 class ComplianceConfig(BaseModel):
@@ -503,6 +598,20 @@ class ACCConfig(BaseModel):
             self.role_sync.role_source = resolved  # type: ignore[assignment]
         return self
 
+    @model_validator(mode="after")
+    def _resolve_signing_mode(self) -> "ACCConfig":
+        """Replace ``security.signing_mode='auto'`` with the deploy-mode
+        default (proposal 011 PR-1).  Same pattern as
+        ``_resolve_role_source`` — idempotent, explicit values pass
+        through.
+        """
+        if self.security.signing_mode == "auto":
+            resolved = _SIGNING_MODE_BY_DEPLOY_MODE.get(
+                self.deploy_mode, "ed25519",
+            )
+            self.security.signing_mode = resolved  # type: ignore[assignment]
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Environment variable overlay
@@ -539,6 +648,13 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_ROLE_SOURCE":              ("role_sync", "role_source"),
     "ACC_ROLE_SYNC_CONFLICT_WINDOW_S": ("role_sync", "conflict_window_s"),
     "ACC_ROLE_SYNC_EVENTS_SUBJECT": ("role_sync", "events_subject"),
+    # SPIFFE workload identity (proposal 011 PR-1)
+    "ACC_SIGNING_MODE":             ("security", "signing_mode"),
+    "ACC_SPIFFE_ENABLED":           ("security", "spiffe", "enabled"),
+    "ACC_SPIFFE_TRUST_DOMAIN":      ("security", "spiffe", "trust_domain"),
+    "ACC_SPIFFE_SVID_MOUNT_PATH":   ("security", "spiffe", "svid_mount_path"),
+    "ACC_SPIFFE_JWT_AUDIENCE":      ("security", "spiffe", "jwt_audience"),
+    "ACC_SPIFFE_ALLOW_ED25519_FALLBACK": ("security", "spiffe", "allow_ed25519_fallback"),
     # ACC_ROLE_CONFIG_PATH is consumed by RoleStore.load_at_startup(), not here
     # Security (Phase 0a)
     "ACC_ARBITER_VERIFY_KEY":       ("security", "arbiter_verify_key"),

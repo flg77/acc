@@ -13,6 +13,44 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **`security.signing_mode` + `security.spiffe` config surface
+  (proposal 011 PR-1).**  Foundational PR for SPIFFE workload
+  identity.  Inert by design — every existing deployment sees
+  zero behaviour change because every `deploy_mode` still defaults
+  to `signing_mode: ed25519` in v0.4.x.
+
+  New fields under `security:` in `acc-config.yaml`:
+
+  | Field | Type | Default |
+  |---|---|---|
+  | `signing_mode` | `ed25519 \| spiffe \| auto` | `auto` |
+  | `spiffe.enabled` | bool | `false` |
+  | `spiffe.trust_domain` | str | `""` |
+  | `spiffe.svid_mount_path` | str | `/run/spire/sockets` |
+  | `spiffe.jwt_audience` | str | `acc-role-update` |
+  | `spiffe.allow_ed25519_fallback` | bool | `true` |
+
+  `signing_mode: auto` resolves to a per-`deploy_mode` default via
+  `_SIGNING_MODE_BY_DEPLOY_MODE` (mirrors proposal 010's
+  `_ROLE_SOURCE_BY_DEPLOY_MODE` pattern).  Resolver entry exists
+  for every deploy_mode in v0.4.x.  v0.5.0 flips the `rhoai` row
+  from `ed25519` → `spiffe` once 011 PR-2..PR-5 land.
+
+  Six env-var overrides: `ACC_SIGNING_MODE`, `ACC_SPIFFE_ENABLED`,
+  `ACC_SPIFFE_TRUST_DOMAIN`, `ACC_SPIFFE_SVID_MOUNT_PATH`,
+  `ACC_SPIFFE_JWT_AUDIENCE`, `ACC_SPIFFE_ALLOW_ED25519_FALLBACK`.
+
+  TUI Configuration screen surfaces the resolved values read-only
+  ("Signing mode: ed25519 (spiffe.enabled=no; proposal 011)").
+  Existing `arbiter_verify_key` (the legacy Ed25519 static key)
+  is untouched and remains fully functional.
+
+  15 new tests in `tests/test_config.py::TestSpiffeDefaults`
+  covering defaults, per-deploy-mode resolution, explicit
+  overrides, env-var roundtrip, invalid-value rejection, and a
+  meta-test that fails if a future `deploy_mode` is added
+  without updating `_SIGNING_MODE_BY_DEPLOY_MODE`.
+
 - **Proposal 010 wire-up — projector ↔ detector ↔ listener ↔ TUI badge.**
   Connects the building blocks that landed inert in PR-3 / PR-4 / PR-5
   so they actually fire end-to-end:
