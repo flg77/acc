@@ -400,6 +400,16 @@ class SpiffeConfig(BaseModel):
     Default True for the v0.4.x migration window; operators tighten
     to False once the SPIFFE path is proven stable."""
 
+    arbiter_spiffe_id: str = ""
+    """Expected SPIFFE ID of the collective's arbiter, e.g.
+    ``spiffe://acc-prod.example.com/role/research``.  When set, the
+    JWT-SVID verifier (proposal 011 PR-4) enforces that the token's
+    ``sub`` claim equals this value — proving the ROLE_UPDATE came
+    from the arbiter specifically, not merely from some attested
+    workload in the trust domain.  When blank, the ``sub`` check is
+    skipped and arbiter identity rests on the existing
+    ``approver_id`` application-layer check."""
+
     # ------------------------------------------------------------------
     # Edge-specific fields (proposal 012 PR-1)
     # ------------------------------------------------------------------
@@ -820,6 +830,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_SPIFFE_SVID_MOUNT_PATH":   ("security", "spiffe", "svid_mount_path"),
     "ACC_SPIFFE_JWT_AUDIENCE":      ("security", "spiffe", "jwt_audience"),
     "ACC_SPIFFE_ALLOW_ED25519_FALLBACK": ("security", "spiffe", "allow_ed25519_fallback"),
+    "ACC_SPIFFE_ARBITER_ID":        ("security", "spiffe", "arbiter_spiffe_id"),
     # Edge SPIRE topology (proposal 012 PR-1)
     "ACC_SPIFFE_EDGE_TOPOLOGY":     ("security", "spiffe", "edge_topology"),
     "ACC_SPIFFE_EDGE_SITE_ID":      ("security", "spiffe", "edge_site_id"),

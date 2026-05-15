@@ -49,6 +49,10 @@ const (
 	// paths via the ACC_SVID_* env vars.
 	spiffeX509File = "svid.pem"
 	spiffeJWTFile  = "jwt_svid.token"
+	// spiffeJWTBundleFile is the JWKS the agent verifies JWT-SVIDs
+	// against (proposal 011 PR-4).  Must match
+	// acc.spiffe_verify.DEFAULT_JWT_BUNDLE_FILE.
+	spiffeJWTBundleFile = "jwt_bundle.json"
 
 	// jwtAudience is the audience claim required on ROLE_UPDATE
 	// JWT-SVIDs.  Matches acc/config.py SpiffeConfig.jwt_audience's
@@ -104,6 +108,9 @@ jwt_svids = [
     jwt_svid_file_name = "` + spiffeJWTFile + `"
   }
 ]
+# JWT trust bundle (JWKS) — the agent's acc.spiffe_verify reads this
+# to verify ROLE_UPDATE JWT-SVIDs (proposal 011 PR-4).
+jwt_bundle_file_name = "` + spiffeJWTBundleFile + `"
 `
 }
 

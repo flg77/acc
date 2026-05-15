@@ -109,6 +109,8 @@ func TestRenderSpiffeHelperConfig(t *testing.T) {
 		`jwt_audience = "acc-role-update"`,
 		`svid_file_name = "svid.pem"`,
 		`jwt_svid_file_name = "jwt_svid.token"`,
+		// proposal 011 PR-4 — the JWT trust bundle the agent verifies against.
+		`jwt_bundle_file_name = "jwt_bundle.json"`,
 	} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("helper.conf missing %q\n--- got ---\n%s", want, cfg)

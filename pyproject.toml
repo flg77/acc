@@ -39,6 +39,9 @@ dependencies = [
     "pyyaml>=6.0,<7.0",
     # Cryptography (Ed25519 arbiter signature verification — Phase 0a)
     "cryptography>=46.0.7,<47",
+    # JWT-SVID verification for signing_mode=spiffe (proposal 011 PR-4).
+    # Small pure-Python lib; reuses the cryptography dep above.
+    "pyjwt>=2.8,<3.0",
     # Working memory (Redis — Phase 0b)
     "redis>=5.0,<6.0",
     # Wire serialization

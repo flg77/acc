@@ -32,16 +32,22 @@ def _make_store(
     vector=None,
     role_def: dict | None = None,
     roles_root: str = "/nonexistent/roles",
+    security: dict | None = None,
 ) -> RoleStore:
     """Build a RoleStore with an in-config role definition.
 
     Pass ``roles_root="/nonexistent/roles"`` (default) to skip tier-0
     (file-system role directory) so tests can verify tiers 1–4 in isolation.
     Pass a real path to include tier-0 in the test.
+
+    ``security`` overlays the ``security:`` config block — used by the
+    SPIFFE signature-verification tests (proposal 011 PR-4).
     """
     config_data: dict = {}
     if role_def:
         config_data["role_definition"] = role_def
+    if security:
+        config_data["security"] = security
     config = ACCConfig.model_validate(config_data)
     return RoleStore(
         config=config,
@@ -398,3 +404,122 @@ class TestEd25519Validation:
 
         audit_calls = [str(c) for c in vector.insert.call_args_list]
         assert any("role_audit" in c for c in audit_calls)
+
+
+# ---------------------------------------------------------------------------
+# apply_update — SPIFFE JWT-SVID verification (proposal 011 PR-4)
+# ---------------------------------------------------------------------------
+
+import time as _time  # noqa: E402
+
+import jwt as _jwt  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric import ec as _ec  # noqa: E402
+from jwt.algorithms import ECAlgorithm as _ECAlg  # noqa: E402
+
+
+class TestApplyUpdateSpiffe:
+    """signing_mode=spiffe: ROLE_UPDATE.signature carries a JWT-SVID."""
+
+    _ARBITER_SPIFFE_ID = "spiffe://acc-prod.example.com/role/research"
+
+    def _keypair(self, kid: str):
+        priv = _ec.generate_private_key(_ec.SECP256R1())
+        pub = json.loads(_ECAlg(_ECAlg.SHA256).to_jwk(priv.public_key()))
+        pub["kid"] = kid
+        return priv, pub
+
+    def _mint(self, priv, kid: str, *, sub: str, aud: str = "acc-role-update",
+              exp_offset: float = 300.0) -> str:
+        now = _time.time()
+        return _jwt.encode(
+            {"sub": sub, "aud": aud, "iat": int(now), "exp": int(now + exp_offset)},
+            priv, algorithm="ES256", headers={"kid": kid},
+        )
+
+    def _spiffe_dir(self, tmp_path, pub_jwk) -> str:
+        """Write a jwt_bundle.json into tmp_path; return its path."""
+        (tmp_path / "jwt_bundle.json").write_text(
+            json.dumps({"keys": [pub_jwk]}), encoding="utf-8")
+        return str(tmp_path)
+
+    def _security(self, mount: str, *, fallback: bool = True,
+                  arbiter_id: str = "") -> dict:
+        return {
+            "signing_mode": "spiffe",
+            "spiffe": {
+                "enabled": True,
+                "svid_mount_path": mount,
+                "jwt_audience": "acc-role-update",
+                "allow_ed25519_fallback": fallback,
+                "arbiter_spiffe_id": arbiter_id,
+            },
+        }
+
+    def _payload(self, signature: str, approver_id: str = "arbiter-7e3a") -> dict:
+        return {
+            "approver_id": approver_id,
+            "signature": signature,
+            "role_definition": {
+                "purpose": "spiffe-verified update",
+                "version": "0.2.0",
+                "persona": "formal",
+            },
+        }
+
+    def _store(self, tmp_path, security: dict):
+        registry = json.dumps({"arbiter_id": "arbiter-7e3a"})
+        redis = _mock_redis(registry_json=registry)
+        return _make_store(redis_client=redis, vector=_mock_vector(),
+                           security=security)
+
+    def test_valid_jwt_svid_accepted(self, tmp_path):
+        priv, pub = self._keypair("k1")
+        mount = self._spiffe_dir(tmp_path, pub)
+        store = self._store(tmp_path, self._security(mount))
+        token = self._mint(priv, "k1", sub=self._ARBITER_SPIFFE_ID)
+        store.apply_update(self._payload(token))
+        assert store.get_current().version == "0.2.0"
+
+    def test_invalid_jwt_svid_rejected_no_fallback(self, tmp_path):
+        priv, pub = self._keypair("k1")
+        mount = self._spiffe_dir(tmp_path, pub)
+        store = self._store(tmp_path, self._security(mount, fallback=False))
+        # Sign with a key NOT in the bundle → bad signature.
+        other, _ = self._keypair("k1")
+        token = self._mint(other, "k1", sub=self._ARBITER_SPIFFE_ID)
+        with pytest.raises(RoleUpdateRejectedError, match="SPIFFE"):
+            store.apply_update(self._payload(token))
+
+    def test_invalid_jwt_svid_falls_back_to_ed25519(self, tmp_path):
+        """allow_ed25519_fallback=true + no arbiter_verify_key → a
+        SPIFFE failure degrades to the presence-check-only path, so
+        the update still applies (migration-window behaviour)."""
+        priv, pub = self._keypair("k1")
+        mount = self._spiffe_dir(tmp_path, pub)
+        store = self._store(tmp_path, self._security(mount, fallback=True))
+        other, _ = self._keypair("k1")
+        token = self._mint(other, "k1", sub=self._ARBITER_SPIFFE_ID)
+        # SPIFFE verification fails; fallback path finds no
+        # arbiter_verify_key → presence check only → update applies.
+        store.apply_update(self._payload(token))
+        assert store.get_current().version == "0.2.0"
+
+    def test_arbiter_spiffe_id_enforced(self, tmp_path):
+        priv, pub = self._keypair("k1")
+        mount = self._spiffe_dir(tmp_path, pub)
+        store = self._store(tmp_path, self._security(
+            mount, fallback=False, arbiter_id=self._ARBITER_SPIFFE_ID))
+        # Token sub is a different SPIFFE ID → rejected.
+        token = self._mint(priv, "k1",
+                            sub="spiffe://acc-prod.example.com/role/imposter")
+        with pytest.raises(RoleUpdateRejectedError, match="SPIFFE"):
+            store.apply_update(self._payload(token))
+
+    def test_expired_jwt_svid_rejected(self, tmp_path):
+        priv, pub = self._keypair("k1")
+        mount = self._spiffe_dir(tmp_path, pub)
+        store = self._store(tmp_path, self._security(mount, fallback=False))
+        token = self._mint(priv, "k1", sub=self._ARBITER_SPIFFE_ID,
+                            exp_offset=-3600)
+        with pytest.raises(RoleUpdateRejectedError, match="SPIFFE"):
+            store.apply_update(self._payload(token))
