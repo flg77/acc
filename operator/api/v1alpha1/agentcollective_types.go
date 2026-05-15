@@ -52,6 +52,34 @@ type AgentCollectiveSpec struct {
 	// Agents load this as the highest-priority role source on startup.
 	// +optional
 	RoleDefinition *RoleDefinition `json:"roleDefinition,omitempty"`
+
+	// Spiffe configures SPIFFE workload identity for this collective
+	// (proposal 011).  When enabled, the operator issues a matching
+	// ClusterSPIFFEID custom resource so spire-controller-manager
+	// attests the collective's agent pods.  Omitted / disabled keeps
+	// the legacy Ed25519 trust model.
+	// +optional
+	Spiffe *SpiffeSpec `json:"spiffe,omitempty"`
+}
+
+// SpiffeSpec mirrors the SPIFFE-relevant subset of acc/config.py's
+// SpiffeConfig.  Only the fields the operator reconciler needs to
+// issue a ClusterSPIFFEID live here — the agent-side fields
+// (svid_mount_path, jwt_audience, …) stay in acc-config.yaml.
+//
+// Proposal 012 PR-2 extends this struct with the edge-topology
+// fields (edge_topology, parent_spire_url, …).
+type SpiffeSpec struct {
+	// Enabled is the master switch.  When false the operator issues
+	// no ClusterSPIFFEID and the collective keeps the Ed25519 model.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// TrustDomain is the SPIFFE trust domain, e.g. acc-prod.example.com.
+	// Empty means the operator derives <corpus-name>.acc.local.
+	// +optional
+	TrustDomain string `json:"trustDomain,omitempty"`
 }
 
 // RoleDefinition mirrors RoleDefinitionConfig from acc/config.py.
@@ -281,6 +309,24 @@ type AgentCollectiveStatus struct {
 	// KServeReady is true when the InferenceService is in ready state.
 	// +optional
 	KServeReady bool `json:"kserveReady,omitempty"`
+
+	// SpiffeID is the workload identity the operator computed for this
+	// collective, e.g. spiffe://acc-prod.example.com/role/research.
+	// Empty when spiffe is disabled.  (Proposal 011 PR-2.)
+	// +optional
+	SpiffeID string `json:"spiffeID,omitempty"`
+
+	// SpiffeIssued is true when a matching ClusterSPIFFEID custom
+	// resource has been successfully created/updated.  False when
+	// spiffe is disabled or spire-controller-manager is absent.
+	// +optional
+	SpiffeIssued bool `json:"spiffeIssued,omitempty"`
+
+	// SpiffeError carries an operator-readable reason when SPIFFE
+	// provisioning could not complete (e.g. SPIRE not installed).
+	// Empty on success or when spiffe is disabled.
+	// +optional
+	SpiffeError string `json:"spiffeError,omitempty"`
 }
 
 // -----------------------------------------------------------------------

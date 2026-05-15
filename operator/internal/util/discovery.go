@@ -29,6 +29,10 @@ const (
 	APIVersionKServe    = "serving.kserve.io/v1beta1"
 	APIGroupMonitoring  = "monitoring.coreos.com"
 	APIVersionPrometheusRule = "monitoring.coreos.com/v1"
+	// spire-controller-manager registers the ClusterSPIFFEID +
+	// ClusterFederatedTrustDomain CRDs under this group (proposal 011).
+	APIGroupSpire       = "spire.spiffe.io"
+	APIVersionSpire     = "spire.spiffe.io/v1alpha1"
 
 	tcpDialTimeout = 3 * time.Second
 )
@@ -105,6 +109,14 @@ func (c *APIGroupChecker) KServeInstalled() (bool, error) {
 // are present (Prometheus Operator installed).
 func (c *APIGroupChecker) PrometheusRulesSupported() (bool, error) {
 	return c.HasAPIGroup(APIGroupMonitoring)
+}
+
+// SpireInstalled returns true when the spire.spiffe.io API group is
+// registered — i.e. spire-controller-manager (and its ClusterSPIFFEID
+// CRD) is present.  Required for SPIFFE workload identity (proposal
+// 011); the SpiffeReconciler is a no-op when this is false.
+func (c *APIGroupChecker) SpireInstalled() (bool, error) {
+	return c.HasAPIGroup(APIGroupSpire)
 }
 
 // TCPReachable dials addr (host:port) and returns true when the connection

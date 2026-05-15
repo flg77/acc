@@ -524,6 +524,11 @@ type PrerequisiteStatus struct {
 	// KafkaReachable is true when the configured Kafka bootstrap servers are TCP-reachable.
 	KafkaReachable bool `json:"kafkaReachable,omitempty"`
 
+	// SpireInstalled is true when the spire.spiffe.io API group is
+	// registered (spire-controller-manager present).  Gates SPIFFE
+	// workload-identity provisioning — proposal 011.
+	SpireInstalled bool `json:"spireInstalled,omitempty"`
+
 	// AllMet is true when every required prerequisite is satisfied.
 	AllMet bool `json:"allMet,omitempty"`
 }

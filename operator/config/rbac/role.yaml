@@ -43,6 +43,10 @@ rules:
 - apiGroups: ["monitoring.coreos.com"]
   resources: ["prometheusrules"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# SPIRE (spire-controller-manager) — proposal 011 PR-2
+- apiGroups: ["spire.spiffe.io"]
+  resources: ["clusterspiffeids"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # API discovery (for prerequisite detection)
 - nonResourceURLs: ["/healthz", "/readyz", "/livez"]
   verbs: ["get"]
