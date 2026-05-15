@@ -168,13 +168,15 @@ func (r *CollectiveReconciler) patchSpiffeStatus(
 ) error {
 	if collective.Status.SpiffeID == res.SpiffeID &&
 		collective.Status.SpiffeIssued == res.Issued &&
-		collective.Status.SpiffeError == res.Err {
+		collective.Status.SpiffeError == res.Err &&
+		collective.Status.EdgeSiteID == res.EdgeSiteID {
 		return nil // no-op — nothing to patch
 	}
 	original := collective.DeepCopy()
 	collective.Status.SpiffeID = res.SpiffeID
 	collective.Status.SpiffeIssued = res.Issued
 	collective.Status.SpiffeError = res.Err
+	collective.Status.EdgeSiteID = res.EdgeSiteID
 	return r.Client.Status().Patch(ctx, collective, client.MergeFrom(original))
 }
 

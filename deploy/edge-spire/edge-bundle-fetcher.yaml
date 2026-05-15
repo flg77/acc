@@ -1,0 +1,103 @@
+# Edge trust-bundle fetcher CronJob (proposal 012 PR-2).
+#
+# Periodically fetches the rhoai PARENT SPIRE server's trust bundle and
+# caches it on a shared PVC.  Edge agents read the cached bundle when
+# the live SPIRE socket is unreachable (offline survival — proposal 012
+# §2 G4 + PR-3's offline_action handling).
+#
+# Apply per edge cluster, AFTER nested-spire-server.values.yaml is
+# installed:
+#
+#   # 1. Edit the placeholders below (namespace, parent bundle URL,
+#   #    refresh cadence) to match acc-config.yaml security.spiffe.*.
+#   kubectl apply -f deploy/edge-spire/edge-bundle-fetcher.yaml
+#
+# Placeholders:
+#   <PARENT_BUNDLE_URL> — the parent SPIRE server's bundle endpoint,
+#                         e.g. https://spire.dc.example.com:8443/bundle
+#                         (matches acc-config.yaml's parent_spire_url
+#                         host).
+#   schedule            — defaults to every 6h; matches SpiffeConfig
+#                         .bundle_refresh_h's 6.0 default.  Tighten for
+#                         sites with short partitions.
+#
+# The cached bundle lands at /run/spire/cache/bundle.pem (matching
+# SpiffeConfig.offline_bundle_cache_path) on the acc-spiffe-bundle PVC.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: acc-spiffe-bundle
+  namespace: spire-system
+  labels:
+    app.kubernetes.io/part-of: acc
+    app.kubernetes.io/component: spiffe-bundle-cache
+spec:
+  accessModes:
+    # ReadWriteMany so the fetcher CronJob writes while agent pods on
+    # other nodes read.  Edge clusters without an RWX storage class
+    # should run the fetcher as a DaemonSet writing a hostPath instead
+    # — documented in deploy/edge-spire/README.md.
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 16Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: acc-spiffe-bundle-fetcher
+  namespace: spire-system
+  labels:
+    app.kubernetes.io/part-of: acc
+    app.kubernetes.io/component: spiffe-bundle-cache
+spec:
+  # Every 6h — matches SpiffeConfig.bundle_refresh_h default (6.0).
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # Give up after 5 min; the next tick retries.  A failed fetch is
+      # not fatal — the previously cached bundle stays valid until
+      # offline_max_age_h (default 72h).
+      activeDeadlineSeconds: 300
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: acc
+            app.kubernetes.io/component: spiffe-bundle-cache
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+          containers:
+            - name: fetch
+              # curl on a minimal UBI base — swap for an operator-preferred
+              # image; only curl + coreutils are needed.
+              image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  PARENT_BUNDLE_URL="<PARENT_BUNDLE_URL>"
+                  DEST=/run/spire/cache/bundle.pem
+                  TMP="${DEST}.tmp"
+                  echo "fetching parent trust bundle from ${PARENT_BUNDLE_URL}"
+                  # --fail: non-2xx is an error.  --max-time: bounded.
+                  curl --fail --silent --show-error --max-time 30 \
+                       "${PARENT_BUNDLE_URL}" -o "${TMP}"
+                  # Atomic swap so a reader never sees a half-written file.
+                  mv "${TMP}" "${DEST}"
+                  echo "cached parent bundle at ${DEST} ($(wc -c < "${DEST}") bytes)"
+              volumeMounts:
+                - name: bundle-cache
+                  mountPath: /run/spire/cache
+          volumes:
+            - name: bundle-cache
+              persistentVolumeClaim:
+                claimName: acc-spiffe-bundle

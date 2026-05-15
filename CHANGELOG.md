@@ -13,6 +13,34 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Nested SPIRE topology + edge-qualified SPIFFE IDs (proposal 012
+  PR-2).**  Extends the operator-side SPIFFE provisioning to edge
+  deployments.
+
+  - `SpiffeSpec` gains `edgeTopology` (`nested | federated | ed25519`,
+    default `nested`) + `edgeSiteID`.  `AgentCollectiveStatus` gains
+    `edgeSiteID`.  CRD bases hand-updated to match.
+  - `SpiffeReconciler` now site-qualifies the SPIFFE ID when the
+    owning `AgentCorpus` has `deployMode: edge` **and**
+    `spiffe.edgeTopology: nested`:
+    `spiffe://<trust-domain>/edge/<site-id>/role/<collective>`.
+    Federated / ed25519 topologies and all non-edge deploy modes keep
+    the flat `spiffe://<trust-domain>/role/<collective>` form.
+    `nested` without an `edgeSiteID` reports a config error via
+    `status.spiffeError` rather than failing reconciliation.
+  - New `deploy/edge-spire/` manifests: `nested-spire-server.values.yaml`
+    (Helm values overlay for the upstream `spiffe/spire` chart in
+    nested mode), `edge-bundle-fetcher.yaml` (PVC + CronJob caching
+    the parent trust bundle for offline survival), and a `README.md`
+    install runbook.
+  - 5 unit tests in `operator/test/unit/spiffe_edge_test.go` —
+    site-qualified ID, missing-site-id error, federated plain ID,
+    non-edge topology ignored, ed25519 topology plain ID.
+
+  Inert by design — no behaviour change until an operator sets
+  `deployMode: edge` + `spec.spiffe`.  012 PR-3 adds federation +
+  the configurable offline action.
+
 - **`spiffe-helper` sidecar injection (proposal 011 PR-3).**  When an
   `AgentCollective` has `spec.spiffe.enabled: true`, every agent pod
   gains a `spiffe-helper` sidecar that materialises the pod's

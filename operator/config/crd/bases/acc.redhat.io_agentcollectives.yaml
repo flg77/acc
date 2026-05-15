@@ -818,6 +818,24 @@ spec:
                   attests the collective's agent pods.  Omitted / disabled keeps
                   the legacy Ed25519 trust model.
                 properties:
+                  edgeSiteID:
+                    description: |-
+                      EdgeSiteID qualifies the SPIFFE path so multiple edge sites
+                      under a shared trust domain can never collide
+                      (spiffe://<td>/edge/<site-id>/role/<id>).  Required when
+                      deployMode=edge and edgeTopology=nested; ignored otherwise.
+                    type: string
+                  edgeTopology:
+                    default: nested
+                    description: |-
+                      EdgeTopology selects the edge SPIRE deployment topology
+                      (proposal 012).  Only consulted when the owning AgentCorpus
+                      has deployMode=edge.
+                    enum:
+                    - nested
+                    - federated
+                    - ed25519
+                    type: string
                   enabled:
                     default: false
                     description: |-
@@ -905,6 +923,12 @@ spec:
                   type: integer
                 description: DesiredAgents maps role → desired replica count.
                 type: object
+              edgeSiteID:
+                description: |-
+                  EdgeSiteID echoes the site qualifier baked into SpiffeID when
+                  the collective runs under deployMode=edge with edgeTopology=
+                  nested (proposal 012 PR-2).  Empty for non-edge / non-nested.
+                type: string
               kserveReady:
                 description: KServeReady is true when the InferenceService is in ready
                   state.

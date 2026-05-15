@@ -40,6 +40,10 @@ type SpiffeResult struct {
 	// Err is an operator-readable reason when provisioning could not
 	// complete (e.g. SPIRE absent).  Empty on success / when disabled.
 	Err string
+	// EdgeSiteID is the site qualifier baked into SpiffeID when the
+	// collective runs deployMode=edge + edgeTopology=nested.  Empty
+	// for non-edge / non-nested (proposal 012 PR-2).
+	EdgeSiteID string
 }
 
 // +kubebuilder:rbac:groups=spire.spiffe.io,resources=clusterspiffeids,verbs=get;list;watch;create;update;patch;delete
@@ -94,7 +98,16 @@ func (r *SpiffeReconciler) ReconcileCollective(
 	}
 
 	trustDomain := r.resolveTrustDomain(corpus, spiffe)
-	spiffeID := fmt.Sprintf("spiffe://%s/role/%s", trustDomain, collective.Name)
+
+	// Compute the SPIFFE ID.  Edge + nested topology qualifies the
+	// path with the site ID so multiple edge sites under one trust
+	// domain never collide (proposal 012 PR-2).
+	spiffeID, edgeSiteID, err := r.computeSpiffeID(corpus, collective, spiffe, trustDomain)
+	if err != nil {
+		// Misconfiguration (e.g. nested topology without an edge_site_id)
+		// — report it, don't fail reconciliation.
+		return SpiffeResult{Err: err.Error()}, nil
+	}
 
 	desired := r.buildClusterSPIFFEID(corpus, collective, spiffeID)
 	if _, err := util.Upsert(
@@ -108,12 +121,52 @@ func (r *SpiffeReconciler) ReconcileCollective(
 			return unstructured.SetNestedMap(existingU.Object, spec, "spec")
 		},
 	); err != nil {
-		return SpiffeResult{SpiffeID: spiffeID}, fmt.Errorf(
+		return SpiffeResult{SpiffeID: spiffeID, EdgeSiteID: edgeSiteID}, fmt.Errorf(
 			"upsert ClusterSPIFFEID for %s: %w", collective.Name, err,
 		)
 	}
 
-	return SpiffeResult{SpiffeID: spiffeID, Issued: true}, nil
+	return SpiffeResult{
+		SpiffeID:   spiffeID,
+		EdgeSiteID: edgeSiteID,
+		Issued:     true,
+	}, nil
+}
+
+// computeSpiffeID derives the workload SPIFFE ID for a collective.
+//
+// rhoai / standalone, or edge with a non-nested topology:
+//
+//	spiffe://<trust-domain>/role/<collective-name>
+//
+// edge + nested topology — qualified with the site ID:
+//
+//	spiffe://<trust-domain>/edge/<site-id>/role/<collective-name>
+//
+// Returns (spiffeID, edgeSiteID, error).  edgeSiteID is non-empty
+// only in the nested-edge case.  An error is returned when
+// edgeTopology=nested but edge_site_id is blank — the caller turns
+// that into a SpiffeResult.Err (config problem, not a hard failure).
+func (r *SpiffeReconciler) computeSpiffeID(
+	corpus *accv1alpha1.AgentCorpus,
+	collective *accv1alpha1.AgentCollective,
+	spiffe *accv1alpha1.SpiffeSpec,
+	trustDomain string,
+) (spiffeID, edgeSiteID string, err error) {
+	isEdge := corpus.Spec.DeployMode == accv1alpha1.DeployModeEdge
+	if isEdge && spiffe.EdgeTopology == "nested" {
+		site := strings.TrimSpace(spiffe.EdgeSiteID)
+		if site == "" {
+			return "", "", fmt.Errorf(
+				"spiffe.edgeTopology=nested requires spiffe.edgeSiteID " +
+					"to be set (deployMode=edge)",
+			)
+		}
+		return fmt.Sprintf(
+			"spiffe://%s/edge/%s/role/%s", trustDomain, site, collective.Name,
+		), site, nil
+	}
+	return fmt.Sprintf("spiffe://%s/role/%s", trustDomain, collective.Name), "", nil
 }
 
 // resolveTrustDomain returns the explicit spec value, or derives the

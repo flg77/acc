@@ -80,6 +80,28 @@ type SpiffeSpec struct {
 	// Empty means the operator derives <corpus-name>.acc.local.
 	// +optional
 	TrustDomain string `json:"trustDomain,omitempty"`
+
+	// EdgeTopology selects the edge SPIRE deployment topology
+	// (proposal 012).  Only consulted when the owning AgentCorpus
+	// has deployMode=edge.
+	//   nested    — edge SPIRE server downstream of an rhoai parent;
+	//               identities are site-qualified
+	//               (spiffe://<td>/edge/<site>/role/<id>).
+	//   federated — edge SPIRE owns its trust domain, federated with
+	//               peers; no site-qualifier (the trust domain IS the
+	//               scope).
+	//   ed25519   — no edge SPIRE; legacy trust model.
+	// +kubebuilder:validation:Enum=nested;federated;ed25519
+	// +kubebuilder:default=nested
+	// +optional
+	EdgeTopology string `json:"edgeTopology,omitempty"`
+
+	// EdgeSiteID qualifies the SPIFFE path so multiple edge sites
+	// under a shared trust domain can never collide
+	// (spiffe://<td>/edge/<site-id>/role/<id>).  Required when
+	// deployMode=edge and edgeTopology=nested; ignored otherwise.
+	// +optional
+	EdgeSiteID string `json:"edgeSiteID,omitempty"`
 }
 
 // RoleDefinition mirrors RoleDefinitionConfig from acc/config.py.
@@ -327,6 +349,12 @@ type AgentCollectiveStatus struct {
 	// Empty on success or when spiffe is disabled.
 	// +optional
 	SpiffeError string `json:"spiffeError,omitempty"`
+
+	// EdgeSiteID echoes the site qualifier baked into SpiffeID when
+	// the collective runs under deployMode=edge with edgeTopology=
+	// nested (proposal 012 PR-2).  Empty for non-edge / non-nested.
+	// +optional
+	EdgeSiteID string `json:"edgeSiteID,omitempty"`
 }
 
 // -----------------------------------------------------------------------
