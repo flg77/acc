@@ -13,6 +13,61 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **`security.spiffe` edge fields + cross-field validators
+  (proposal 012 PR-1).**  Extends proposal 011's `SpiffeConfig`
+  with 11 fields covering the edge-deployment topology, offline
+  survival, and NATS-mTLS fallback (Q1–Q6 resolutions from
+  proposal 012 §8).  Inert by design — every existing deployment
+  still defaults to `signing_mode: ed25519` so the new fields are
+  ignored.
+
+  New fields on `SpiffeConfig`:
+
+  | Field | Type | Default |
+  |---|---|---|
+  | `edge_topology` | `nested \| federated \| ed25519` | `nested` |
+  | `edge_site_id` | str | `""` |
+  | `parent_spire_url` | str | `""` |
+  | `federation_peers` | list[str] | `[]` |
+  | `offline_bundle_cache_path` | str | `/run/spire/cache/bundle.pem` |
+  | `offline_max_age_h` | float | `72.0` |
+  | `bundle_refresh_h` | float | `6.0` |
+  | `offline_action` | `rotate \| degrade \| shutdown` | `rotate` |
+  | `parent_unreachable_action` | `block \| degrade` | `degrade` |
+  | `nats_mtls_cert_path` | str | `""` |
+  | `nats_mtls_key_path` | str | `""` |
+
+  New `ACCConfig._validate_edge_spiffe_fields` model validator
+  enforces topology-specific requirements **only when
+  `deploy_mode: edge` AND SPIFFE is enabled AND `signing_mode: spiffe`**:
+
+  - `edge_topology: nested` requires `parent_spire_url` +
+    `edge_site_id` (Q5 resolution: operator-supplied,
+    consistency with `trust_domain` + `parent_spire_url`).
+  - `edge_topology: federated` requires ≥ 1 `federation_peers` entry.
+  - `offline_action: rotate` requires `edge_topology: nested`
+    (rotation needs a local SPIRE server).
+
+  Non-edge deploy modes ignore the edge fields entirely.
+  Operators who run `deploy_mode: edge` with `signing_mode: ed25519`
+  also skip the topology checks — SPIFFE-aware fields stay
+  advisory until SPIFFE is actually consumed.
+
+  Nine new env-var overrides for the 9 string/scalar edge fields
+  (`ACC_SPIFFE_EDGE_TOPOLOGY`, `ACC_SPIFFE_EDGE_SITE_ID`,
+  `ACC_SPIFFE_PARENT_URL`, `ACC_SPIFFE_OFFLINE_MAX_AGE_H`,
+  `ACC_SPIFFE_BUNDLE_REFRESH_H`, `ACC_SPIFFE_OFFLINE_ACTION`,
+  `ACC_SPIFFE_PARENT_UNREACHABLE_ACTION`,
+  `ACC_NATS_MTLS_CERT_PATH`, `ACC_NATS_MTLS_KEY_PATH`).
+  `federation_peers` (list) stays YAML-only since `_apply_env`
+  writes scalar strings.
+
+  19 new tests in `tests/test_config.py::TestSpiffeEdgeDefaults`
+  covering defaults, every cross-field validator path, non-edge
+  topology skip, all three `edge_topology` happy paths, env-var
+  roundtrip on every scalar override, and invalid-value rejection
+  for both new `Literal` types.
+
 - **`security.signing_mode` + `security.spiffe` config surface
   (proposal 011 PR-1).**  Foundational PR for SPIFFE workload
   identity.  Inert by design — every existing deployment sees

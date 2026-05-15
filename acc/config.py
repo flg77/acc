@@ -400,6 +400,115 @@ class SpiffeConfig(BaseModel):
     Default True for the v0.4.x migration window; operators tighten
     to False once the SPIFFE path is proven stable."""
 
+    # ------------------------------------------------------------------
+    # Edge-specific fields (proposal 012 PR-1)
+    # ------------------------------------------------------------------
+    # These fields are only meaningful when ``deploy_mode: edge``.  They
+    # default to the nested-SPIRE topology because that's the
+    # SPIRE-canonical hierarchical pattern for edge ↔ datacenter trust.
+    # Sites without an rhoai parent set ``edge_topology: federated``;
+    # sites that won't run SPIRE at all set ``edge_topology: ed25519``.
+    # See proposal 012 §4 for the topology trade-off table.
+
+    edge_topology: Literal["nested", "federated", "ed25519"] = "nested"
+    """Edge-side SPIFFE topology.  Only consulted when
+    ``deploy_mode: edge``.
+
+    - ``nested``: edge SPIRE server is downstream of an rhoai parent
+      (the SPIRE-canonical pattern; default for edge).  Edge identities
+      live under the shared trust domain at
+      ``spiffe://<trust-domain>/edge/<site-id>/role/<id>``.
+    - ``federated``: edge SPIRE owns its own trust domain, federated
+      with peers via the SPIFFE bundle-endpoint API.  Industrial
+      multi-site deployments without a datacenter dependency.
+    - ``ed25519``: no edge SPIRE — the entire edge keeps using the
+      legacy Ed25519 model regardless of ``signing_mode``.  Reserved
+      for constrained hardware (RPi fleets, etc.).
+    """
+
+    edge_site_id: str = ""
+    """Operator-supplied site identifier — qualifies the SPIFFE path
+    so edge sites can never issue colliding workload IDs (e.g.
+    ``factory-a`` vs ``plant-mke``).  Required when
+    ``edge_topology: nested``; ignored (with a warning) when
+    ``federated`` (the trust domain itself plays the scoping role);
+    unused when ``ed25519``.
+
+    Proposal 012 §8 Q5 resolution: operator-supplied in
+    ``acc-config.yaml`` rather than derived from a K8s node label —
+    consistency with ``trust_domain`` + ``parent_spire_url``.  PR-2
+    adds a cluster-scoped uniqueness check + ``acc-cli validate``
+    placeholder-name warning to catch copy-paste collisions.
+    """
+
+    parent_spire_url: str = ""
+    """gRPC URL of the parent SPIRE server.  Required when
+    ``edge_topology: nested``.  Typical value:
+    ``spire-server.acc-system.svc.cluster.local:8081`` reached via
+    the NATS leaf node's network path."""
+
+    federation_peers: list[str] = Field(default_factory=list)
+    """List of SPIFFE bundle-endpoint URLs to federate with.
+    Required (≥ 1) when ``edge_topology: federated``.  Each peer
+    becomes a ``ClusterFederatedTrustDomain`` CR in PR-3."""
+
+    offline_bundle_cache_path: str = "/run/spire/cache/bundle.pem"
+    """Filesystem path where the bundle-fetcher CronJob caches the
+    latest trust bundle.  Agent's SPIFFE verifier falls back to this
+    file when the live SPIRE socket is unreachable."""
+
+    offline_max_age_h: float = 72.0
+    """Maximum age (hours) of the cached trust bundle before
+    ``offline_action`` fires.  Default 72h gives operators 3 days of
+    air-gap tolerance — comfortably beyond typical maintenance
+    windows."""
+
+    bundle_refresh_h: float = 6.0
+    """How often the bundle-fetcher CronJob polls the parent (or
+    federation peers) for a fresh bundle.  Default 6h means 12+
+    failed fetches before ``offline_max_age_h`` expires — generous
+    margin for transient network blips."""
+
+    offline_action: Literal["rotate", "degrade", "shutdown"] = "rotate"
+    """What happens when the cached bundle approaches expiry
+    (proposal 012 §8 Q2 resolution).
+
+    - ``rotate``: edge-local SPIRE server uses its long-lived
+      attested credential to issue a fresh bundle.  Air-gapped sites
+      stay operational indefinitely.  Requires nested topology.
+    - ``degrade``: agent enters read-only mode — existing tasks
+      finish, new TASK_ASSIGN gets a CONFLICT response.
+    - ``shutdown``: agent pods exit non-zero (fail-safe posture for
+      sites that prefer "broken loudly" over "running with stale
+      trust").
+    """
+
+    parent_unreachable_action: Literal["block", "degrade"] = "degrade"
+    """What the operator reconciler does when the parent SPIRE is
+    unreachable at AgentCollective Ready-check time (proposal 012
+    §8 Q4 resolution).
+
+    - ``degrade``: surface a degraded ``Status.Condition`` but allow
+      the AgentCollective to reach Ready.  Matches edge's
+      offline-first contract.
+    - ``block``: hold the AgentCollective in a NotReady state until
+      parent SPIRE is reachable.  Fail-safe posture.
+    """
+
+    nats_mtls_cert_path: str = ""
+    """PEM-encoded X.509 cert path for NATS mTLS.  Used when SPIFFE
+    isn't supplying the X.509-SVID — proposal 012 §8 Q6 resolution:
+    NATS mTLS is default-on regardless of ``signing_mode``, with this
+    field as the manual-cert fallback.  Empty + ``signing_mode:
+    spiffe`` means "use the live SVID at ``svid_mount_path``"."""
+
+    nats_mtls_key_path: str = ""
+    """Private-key counterpart to ``nats_mtls_cert_path``."""
+
+    # Cross-field validation lives on ``ACCConfig`` because the edge
+    # topology constraints are only meaningful when ``deploy_mode:
+    # edge`` — see ``ACCConfig._validate_edge_spiffe_fields`` below.
+
 
 class SecurityConfig(BaseModel):
     """Cryptographic security settings (Phase 0a onwards).
@@ -612,6 +721,62 @@ class ACCConfig(BaseModel):
             self.security.signing_mode = resolved  # type: ignore[assignment]
         return self
 
+    @model_validator(mode="after")
+    def _validate_edge_spiffe_fields(self) -> "ACCConfig":
+        """Topology-specific field requirements for edge SPIFFE
+        (proposal 012 PR-1).
+
+        Only fires when ``deploy_mode: edge`` AND SPIFFE is enabled
+        AND the resolved ``signing_mode`` actually consumes SPIFFE.
+        Non-edge deployments aren't subject to the edge_topology
+        constraints even if they happen to enable SPIFFE — the edge
+        fields are simply ignored.
+
+        - ``nested`` needs ``parent_spire_url`` + ``edge_site_id``.
+        - ``federated`` needs ≥ 1 ``federation_peers`` entry.
+        - ``offline_action == "rotate"`` requires ``nested`` topology.
+        """
+        if self.deploy_mode != "edge":
+            return self
+        if not self.security.spiffe.enabled:
+            return self
+        # ``signing_mode: ed25519`` means the operator explicitly chose
+        # not to use SPIFFE even on edge — edge_topology fields stay
+        # advisory; don't reject.
+        if self.security.signing_mode == "ed25519":
+            return self
+
+        sp = self.security.spiffe
+
+        if sp.edge_topology == "nested":
+            missing = []
+            if not sp.parent_spire_url:
+                missing.append("parent_spire_url")
+            if not sp.edge_site_id:
+                missing.append("edge_site_id")
+            if missing:
+                raise ValueError(
+                    f"deploy_mode=edge + spiffe.edge_topology='nested' "
+                    f"requires {', '.join(missing)} to be set in "
+                    "security.spiffe"
+                )
+
+        if sp.edge_topology == "federated" and not sp.federation_peers:
+            raise ValueError(
+                "deploy_mode=edge + spiffe.edge_topology='federated' "
+                "requires at least one entry in "
+                "security.spiffe.federation_peers"
+            )
+
+        if sp.offline_action == "rotate" and sp.edge_topology != "nested":
+            raise ValueError(
+                "security.spiffe.offline_action='rotate' requires "
+                "edge_topology='nested' (rotation is only meaningful "
+                "when the edge has a local SPIRE server)"
+            )
+
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Environment variable overlay
@@ -655,6 +820,19 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_SPIFFE_SVID_MOUNT_PATH":   ("security", "spiffe", "svid_mount_path"),
     "ACC_SPIFFE_JWT_AUDIENCE":      ("security", "spiffe", "jwt_audience"),
     "ACC_SPIFFE_ALLOW_ED25519_FALLBACK": ("security", "spiffe", "allow_ed25519_fallback"),
+    # Edge SPIRE topology (proposal 012 PR-1)
+    "ACC_SPIFFE_EDGE_TOPOLOGY":     ("security", "spiffe", "edge_topology"),
+    "ACC_SPIFFE_EDGE_SITE_ID":      ("security", "spiffe", "edge_site_id"),
+    "ACC_SPIFFE_PARENT_URL":        ("security", "spiffe", "parent_spire_url"),
+    "ACC_SPIFFE_OFFLINE_MAX_AGE_H": ("security", "spiffe", "offline_max_age_h"),
+    "ACC_SPIFFE_BUNDLE_REFRESH_H":  ("security", "spiffe", "bundle_refresh_h"),
+    "ACC_SPIFFE_OFFLINE_ACTION":    ("security", "spiffe", "offline_action"),
+    "ACC_SPIFFE_PARENT_UNREACHABLE_ACTION": ("security", "spiffe", "parent_unreachable_action"),
+    "ACC_NATS_MTLS_CERT_PATH":      ("security", "spiffe", "nats_mtls_cert_path"),
+    "ACC_NATS_MTLS_KEY_PATH":       ("security", "spiffe", "nats_mtls_key_path"),
+    # Note: ACC_SPIFFE_FEDERATION_PEERS handled separately — list type
+    # needs comma-split that _apply_env's flat string assignment doesn't
+    # do.  Operators set this field in acc-config.yaml directly.
     # ACC_ROLE_CONFIG_PATH is consumed by RoleStore.load_at_startup(), not here
     # Security (Phase 0a)
     "ACC_ARBITER_VERIFY_KEY":       ("security", "arbiter_verify_key"),
