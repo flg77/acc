@@ -179,6 +179,18 @@ kubectl exec <agent-pod> -c agent -- ls -l /run/spire/sockets
 | Agent logs `SPIFFE verification failed — falling back to ed25519` | transient SPIRE issue, `allow_ed25519_fallback: true` | expected during stage 2; investigate if persistent |
 | `PyJWT is required for signing_mode=spiffe` | dependency stripped | `pip install pyjwt` (it is a declared dep — only a custom slim build hits this) |
 
+## Edge interoperability
+
+When ACC runs at the edge (`deploy_mode: edge`), SPIFFE works the
+same way but the *trust topology* differs — an edge site is nested
+under an rhoai parent, federated with peer edges, or stays on
+Ed25519.  In the **nested** topology the edge shares the rhoai
+trust domain, so a rhoai-issued `ROLE_UPDATE` verifies on an edge
+agent (and vice versa) with no bundle translation — the SPIFFE ID
+just carries an extra `/edge/<site-id>/` segment.  Full detail —
+topology decision tree, offline survival, the bi-directional
+compatibility matrix — is in [`docs/spiffe-edge.md`](./spiffe-edge.md).
+
 ## See also
 
 - [`docs/spiffe-edge.md`](./spiffe-edge.md) — edge topologies

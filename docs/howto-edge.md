@@ -57,6 +57,16 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
 Use the standalone Podman setup with `deploy_mode: edge` in `acc-config.yaml`. The NATS leaf node configuration is applied via the rendered NATS config template — in Podman mode you manage `nats.conf` directly.
 
+### Optional — SPIFFE workload identity
+
+Edge deployments can opt into SPIFFE workload identity for
+`ROLE_UPDATE` authentication (`signing_mode: spiffe`).  Three
+topologies are supported — `nested` (downstream of an rhoai
+parent), `federated` (peer edge sites), and `ed25519` (the legacy
+escape valve for constrained hardware).  Edge stays on `ed25519` by
+default; SPIFFE is opt-in per site.  See
+[`docs/spiffe-edge.md`](./spiffe-edge.md).
+
 ---
 
 ## Step 1 — Install the ACC Operator (MicroShift / K3s)

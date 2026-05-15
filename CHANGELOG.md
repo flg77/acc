@@ -13,6 +13,30 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Edge SPIFFE guide + cross-mode compatibility e2e (proposal 012
+  PR-4).**  Closes proposal 012.  New `docs/spiffe-edge.md` — the
+  edge SPIFFE guide: the topology decision tree (nested / federated
+  / ed25519), per-topology config, offline survival + the
+  `offline_action` table, the ed25519→spiffe migration path,
+  troubleshooting, and the six-direction bi-directional
+  compatibility matrix.  `docs/howto-edge.md` gains a SPIFFE
+  optional section; `docs/spiffe.md` gains an edge-interoperability
+  section.
+
+  New `tests/integration/test_spiffe_edge_e2e.py` — a crypto-level
+  e2e that models each trust topology with synthetic SPIRE
+  keypairs, mints JWT-SVIDs as a SPIRE workload API would, and
+  verifies them through the production `acc.spiffe_verify` path.
+  13 tests cover all six matrix directions (rhoai↔rhoai,
+  rhoai↔edge, edge↔rhoai, edge↔edge same/different nested sites,
+  edge↔edge federated), the federation negative control (cross-
+  trust fails without a bundle exchange), strict subject binding,
+  and the offline partition→degrade/rotate→recovery timeline.
+  No cluster required — runs unattended in CI.
+
+  Proposal 012 status with this PR: all four PRs landed.  Edge
+  SPIFFE ships as opt-in; edge stays on `ed25519` by default.
+
 - **SPIFFE operator guide + v0.5.0 default-flip plan (proposal 011
   PR-5).**  Closes proposal 011.  New `docs/spiffe.md` — the
   operator-facing guide for SPIFFE workload identity: prerequisites
