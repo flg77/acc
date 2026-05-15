@@ -49,6 +49,10 @@ OpenShift 4.14+ Cluster
 - OPA Gatekeeper — for ConstraintTemplate enforcement
 - Prometheus Operator — for PrometheusRule CRs
 - Kafka — for audit bridge
+- SPIRE + spire-controller-manager — for SPIFFE workload identity
+  (`signing_mode: spiffe`).  Optional in v0.4.x; the `rhoai`
+  signing-mode default flips to `spiffe` in v0.5.0.  See
+  [`docs/spiffe.md`](./spiffe.md) for the setup + migration path.
 
 ---
 

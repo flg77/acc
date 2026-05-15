@@ -13,6 +13,24 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **SPIFFE operator guide + v0.5.0 default-flip plan (proposal 011
+  PR-5).**  Closes proposal 011.  New `docs/spiffe.md` — the
+  operator-facing guide for SPIFFE workload identity: prerequisites
+  (SPIRE / spire-controller-manager / SPIFFE CSI driver), the
+  `security.signing_mode` + `security.spiffe.*` config surface,
+  trust-domain naming, the three-stage migration
+  (`ed25519` → `spiffe`+fallback → `spiffe` strict), an end-to-end
+  flow diagram, verification commands, and a troubleshooting table.
+  `docs/howto-rhoai.md` gains a SPIFFE optional-prerequisite entry;
+  `docs/role-sync.md` cross-links it.
+
+  **Planned for v0.5.0**: the `rhoai` row of
+  `_SIGNING_MODE_BY_DEPLOY_MODE` flips from `ed25519` to `spiffe`,
+  so a fresh rhoai operator gets SPIFFE by default
+  (`allow_ed25519_fallback` still defaults true, so the flip is
+  safe).  `standalone` + `edge` stay on `ed25519`.  Operators pin
+  `signing_mode: ed25519` explicitly to opt out.
+
 - **Edge federation + configurable offline action (proposal 012
   PR-3).**  Completes the edge SPIFFE story: cross-trust between
   federated edge sites, and a configurable response to a partitioned
