@@ -12,9 +12,12 @@ from acc.config import (
     ACCConfig,
     RoleDefinitionConfig,
     RoleSyncConfig,
+    SecurityConfig,
+    SpiffeConfig,
     WorkingMemoryConfig,
     _apply_env,
     _ROLE_SOURCE_BY_DEPLOY_MODE,
+    _SIGNING_MODE_BY_DEPLOY_MODE,
     load_config,
 )
 
@@ -330,3 +333,135 @@ class TestWorkingMemoryConfig:
             "working_memory": {"url": "", "password": "somepass"},
         })
         assert config.working_memory.password == "somepass"
+
+
+# ---------------------------------------------------------------------------
+# SpiffeConfig + signing_mode resolver (proposal 011 PR-1)
+# ---------------------------------------------------------------------------
+
+
+class TestSpiffeDefaults:
+    """SpiffeConfig defaults + signing_mode auto-resolution."""
+
+    def test_spiffe_defaults_are_inert(self):
+        sp = SpiffeConfig()
+        assert sp.enabled is False
+        assert sp.trust_domain == ""
+        assert sp.svid_mount_path == "/run/spire/sockets"
+        assert sp.jwt_audience == "acc-role-update"
+        assert sp.allow_ed25519_fallback is True
+
+    def test_security_default_signing_mode_is_auto(self):
+        sec = SecurityConfig()
+        assert sec.signing_mode == "auto"
+        # Spiffe block is present + inert.
+        assert isinstance(sec.spiffe, SpiffeConfig)
+        assert sec.spiffe.enabled is False
+
+    def test_standalone_resolves_to_ed25519(self):
+        cfg = ACCConfig()  # deploy_mode defaults to standalone
+        assert cfg.security.signing_mode == "ed25519"
+
+    def test_edge_resolves_to_ed25519(self):
+        cfg = ACCConfig.model_validate({"deploy_mode": "edge"})
+        assert cfg.security.signing_mode == "ed25519"
+
+    def test_rhoai_resolves_to_ed25519_in_v04x(self):
+        """v0.4.x: every deploy_mode still defaults to ed25519.
+        v0.5.0 flips the rhoai row to 'spiffe' (proposal 011 §2 G6)."""
+        cfg = ACCConfig.model_validate({
+            "deploy_mode": "rhoai",
+            "vector_db": {"milvus_uri": "http://milvus:19530"},
+            "llm": {"vllm_inference_url": "http://vllm:8000"},
+        })
+        assert cfg.security.signing_mode == "ed25519"
+
+    def test_explicit_spiffe_preserved(self):
+        """Operator's explicit override beats the deploy-mode default."""
+        cfg = ACCConfig.model_validate({
+            "security": {"signing_mode": "spiffe"},
+        })
+        assert cfg.security.signing_mode == "spiffe"
+
+    def test_explicit_ed25519_preserved(self):
+        """Even when rhoai eventually defaults to spiffe, operators
+        who pick ed25519 explicitly stay on it."""
+        cfg = ACCConfig.model_validate({
+            "deploy_mode": "rhoai",
+            "vector_db": {"milvus_uri": "http://milvus:19530"},
+            "llm": {"vllm_inference_url": "http://vllm:8000"},
+            "security": {"signing_mode": "ed25519"},
+        })
+        assert cfg.security.signing_mode == "ed25519"
+
+    def test_invalid_signing_mode_rejected(self):
+        with pytest.raises(ValidationError, match="signing_mode"):
+            ACCConfig.model_validate({
+                "security": {"signing_mode": "x509"},
+            })
+
+    def test_spiffe_block_propagates(self):
+        """All five SpiffeConfig fields round-trip through ACCConfig."""
+        cfg = ACCConfig.model_validate({
+            "security": {
+                "signing_mode": "spiffe",
+                "spiffe": {
+                    "enabled": True,
+                    "trust_domain": "acc-prod.example.com",
+                    "svid_mount_path": "/var/run/spire",
+                    "jwt_audience": "custom-audience",
+                    "allow_ed25519_fallback": False,
+                },
+            },
+        })
+        assert cfg.security.spiffe.enabled is True
+        assert cfg.security.spiffe.trust_domain == "acc-prod.example.com"
+        assert cfg.security.spiffe.svid_mount_path == "/var/run/spire"
+        assert cfg.security.spiffe.jwt_audience == "custom-audience"
+        assert cfg.security.spiffe.allow_ed25519_fallback is False
+
+    def test_arbiter_verify_key_still_works(self):
+        """Existing v0.3.x deployments with arbiter_verify_key set
+        but no SPIFFE config must keep working unchanged."""
+        cfg = ACCConfig.model_validate({
+            "security": {"arbiter_verify_key": "BASE64ED25519KEY="},
+        })
+        assert cfg.security.arbiter_verify_key == "BASE64ED25519KEY="
+        assert cfg.security.signing_mode == "ed25519"
+
+    def test_signing_mode_resolver_covers_all_deploy_modes(self):
+        """Meta-test: if a new deploy_mode is added, this fails until
+        _SIGNING_MODE_BY_DEPLOY_MODE is updated (proposal 011 §5)."""
+        from acc.config import DeployMode
+        from typing import get_args
+        for mode in get_args(DeployMode):
+            assert mode in _SIGNING_MODE_BY_DEPLOY_MODE, (
+                f"deploy_mode {mode!r} missing from "
+                "_SIGNING_MODE_BY_DEPLOY_MODE — update proposal 011 plan"
+            )
+
+    def test_env_var_overrides_signing_mode(self, tmp_path: Path, monkeypatch):
+        cfg_file = tmp_path / "acc-config.yaml"
+        cfg_file.write_text("deploy_mode: standalone\n")
+        monkeypatch.setenv("ACC_SIGNING_MODE", "spiffe")
+        cfg = load_config(cfg_file)
+        assert cfg.security.signing_mode == "spiffe"
+
+    def test_env_var_overrides_spiffe_enabled(self, monkeypatch):
+        monkeypatch.setenv("ACC_SPIFFE_ENABLED", "true")
+        data = _apply_env({})
+        assert data["security"]["spiffe"]["enabled"] == "true"
+        # Pydantic coerces the string to bool at validate time.
+        cfg = ACCConfig.model_validate(data)
+        assert cfg.security.spiffe.enabled is True
+
+    def test_env_var_overrides_trust_domain(self, monkeypatch):
+        monkeypatch.setenv("ACC_SPIFFE_TRUST_DOMAIN", "acc-prod.example.com")
+        data = _apply_env({})
+        assert data["security"]["spiffe"]["trust_domain"] == "acc-prod.example.com"
+
+    def test_env_var_overrides_allow_ed25519_fallback(self, monkeypatch):
+        monkeypatch.setenv("ACC_SPIFFE_ALLOW_ED25519_FALLBACK", "false")
+        data = _apply_env({})
+        cfg = ACCConfig.model_validate(data)
+        assert cfg.security.spiffe.allow_ed25519_fallback is False
