@@ -97,7 +97,7 @@ async def test_send_publishes_task_assign_with_form_values():
 
         assert len(app.observer.published) == 1
         subject, payload = app.observer.published[0]
-        assert subject == "acc.sol-test.task"
+        assert subject == "acc.sol-test.task.assign"
         assert payload["signal_type"] == "TASK_ASSIGN"
         assert payload["target_role"] == "coding_agent"
         assert payload["target_agent_id"] == "coding_agent-aaa"
@@ -325,7 +325,7 @@ async def test_timeout_publishes_task_cancel(monkeypatch):
 
         # The cancel payload must carry the same task_id as the assign.
         assign_payload = next(
-            p for s, p in app.observer.published if s.endswith(".task")
+            p for s, p in app.observer.published if s.endswith(".task.assign")
         )
         cancel_payload = next(
             p for s, p in app.observer.published if s.endswith(".task.cancel")

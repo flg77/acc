@@ -54,7 +54,12 @@ from typing import TYPE_CHECKING, Any
 import msgpack
 
 from acc.channels.base import PromptResponse
-from acc.signals import SIG_TASK_ASSIGN, SIG_TASK_COMPLETE, subject_task
+from acc.signals import (
+    SIG_TASK_ASSIGN,
+    SIG_TASK_COMPLETE,
+    subject_task_assign,
+    subject_task_complete,
+)
 
 if TYPE_CHECKING:
     pass
@@ -113,13 +118,12 @@ class SlackPromptChannel:
     # ------------------------------------------------------------------
 
     async def connect(self) -> None:
-        """Open NATS connection + subscribe to the task subject.
+        """Open NATS connection + subscribe to the task-complete subject.
 
-        The subscription receives every signal on ``acc.{cid}.task`` —
-        including this channel's own TASK_ASSIGN echoes plus the agent's
-        TASK_COMPLETE replies.  We dispatch on ``signal_type`` to fan
-        out only TASK_COMPLETE to the per-task_id Future registry; the
-        echoes are silently ignored.
+        The subscription receives TASK_COMPLETE replies on
+        ``acc.{cid}.task.complete``.  We still dispatch on
+        ``signal_type`` defensively and fan out only TASK_COMPLETE to
+        the per-task_id Future registry.
 
         Idempotent — calling twice is a no-op.
         """
@@ -128,7 +132,7 @@ class SlackPromptChannel:
         import nats  # noqa: PLC0415 — optional dep, deferred
         self._nc = await nats.connect(self._nats_url)
         self._sub = await self._nc.subscribe(
-            subject_task(self._collective_id),
+            subject_task_complete(self._collective_id),
             cb=self._on_message,
         )
         logger.info(
@@ -187,7 +191,7 @@ class SlackPromptChannel:
             payload["target_agent_id"] = target_agent_id
 
         try:
-            await self._publish(subject_task(self._collective_id), payload)
+            await self._publish(subject_task_assign(self._collective_id), payload)
         except Exception:
             self._inflight.pop(task_id, None)
             raise

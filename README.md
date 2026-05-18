@@ -52,11 +52,15 @@ Highlights from the current `0.3.1-dev` cycle — see [`CHANGELOG.md`](CHANGELOG
 
 | Feature | What it is | Status |
 |---|---|---|
+| **acc-webgui** | An optional FastAPI + React web frontend — feature parity with the `acc-tui` terminal UI plus enhanced tracing views (task-step waterfall, PLAN DAG, tamper-evident audit-chain timeline). Reuses the TUI's data layer; capability-tiered auth (oauth-proxy / OIDC / token). Opt-in: a separate container + compose profile. | ✅ Landed (proposal acc-webgui) |
+| **Runtime-evidence Cat-A** | Provider-agnostic kernel-event governance — the operator detects whichever runtime-security tool the cluster runs (RHACS / Falco / Tetragon) plus NetObserv for network flows, a bridge normalises `execve`/`openat`/`connect` events onto NATS, and CognitiveCore folds them into Category-A. Observe-by-default. Opt-in via `governance.runtimeEvidence.enabled`. | ✅ Landed (proposal 015) |
+| **L7 / eBPF NetworkPolicy** | Capability-tiered network isolation for agent pods — Tier 1 standard `NetworkPolicy` (the portable L3/L4 must-have), Tier 2 FQDN egress (OVN `EgressFirewall` or Cilium), Tier 3 Cilium L7. The operator emits the highest tier the cluster's CNI can enforce; honest `CNIDoesNotEnforce` status on K3s/Flannel. Opt-in via `networkPolicy.enabled`. | ✅ Landed (proposal 014) |
+| **NATS NKeys** | Per-role NKey authentication with a server-enforced publish/subscribe permission matrix (six agent roles + `tui` + `leaf` identities); the `acc.{cid}.task` subject split into `.task.assign` / `.task.complete`. Opt-in via `security.nkey.enabled`. | ✅ Landed (proposal 013) |
 | **SPIFFE workload identity** | Agents authenticate `ROLE_UPDATE` signatures with SPIRE-issued JWT-SVIDs instead of a static Ed25519 key — operator-issued `ClusterSPIFFEID` resources, a `spiffe-helper` sidecar, agent-side verification, edge nested/federated topologies with offline survival. Opt-in via `security.signing_mode: spiffe`. | ✅ Landed (proposals 011 + 012) |
 | **Bi-directional role-definition sync** | `role_sync.role_source: files \| crd \| mirror` keeps `roles/<id>/role.yaml` and the `AgentCollective` CRD in step, with mirror-mode conflict detection over NATS. | ✅ Landed (proposal 010) |
 | **TUI usability hardening** | Prompt cancel-on-timeout, `role.md` narrative rendering, role-directory file-watcher, the Configuration pane (pane 8). | ✅ Landed (proposal 003, v0.2.0) |
 
-**Planned next**: the v0.5.0 `rhoai` default flip to `signing_mode: spiffe`; NATS mTLS using the X.509-SVID; the offline-action agent wire-up. ACC remains pre-1.0.
+**Planned next**: Phase 4 (hardened standalone — NKeys + self-signed CA mTLS for Podman); the v0.5.0 `rhoai` default flip to `signing_mode: spiffe`; NATS mTLS using the X.509-SVID; the offline-action agent wire-up. ACC remains pre-1.0.
 
 ---
 
@@ -257,17 +261,37 @@ See [`docs/howto-tui.md`](docs/howto-tui.md) for the full guide including deploy
 
 ## Security
 
-ACC's security hardening follows a phased approach. The first two phases are implemented:
+ACC's security hardening follows a phased approach. Phases 0a, 0b, 0c, 1, 2, and 3 are implemented (0c, 1, 2, and 3 ship opt-in); phase 4 is planned:
+
+Phases marked _opt-in_ are additive — they change no behaviour until
+explicitly enabled, so the Status column reports `Implemented` for all
+of them; the "opt-in" switch is named in each row's Controls cell.
 
 | Phase | Controls | Status |
-|-------|----------|--------|
+|:------|:---------|:------:|
 | **0a** — Ed25519 verification | `RoleStore.apply_update()` cryptographically verifies arbiter signatures; unsigned ROLE_UPDATE rejected | ✅ Implemented |
 | **0b** — Redis auth | `requirepass` + per-agent Secret injection; `ACC_REDIS_PASSWORD` wired into all Redis clients | ✅ Implemented |
-| **2** — SPIFFE workload identity | SPIRE-issued JWT-SVIDs sign/verify `ROLE_UPDATE`; operator-issued `ClusterSPIFFEID`s; `spiffe-helper` sidecar; edge nested/federated topologies + offline survival.  Opt-in via `signing_mode: spiffe` (NATS/Redis mTLS via the X.509-SVID still to come) | ✅ Implemented (opt-in) |
-| **0c** — NATS NKeys | Per-role NKey authentication; publish/subscribe permission matrix including bridge subjects | 🔲 Planned |
-| **1** — Cilium L7 NetworkPolicy | eBPF-enforced agent egress rules (NATS, Redis, LLM backends, NATS leaf port 7422) | 🔲 Planned |
-| **3** — Tetragon Cat-A | Kernel eBPF event stream → real WASM Cat-A evaluation; `execve`/`connect` governance triggers | 🔲 Planned |
+| **0c** — NATS NKeys | Per-role NKey authentication; server-enforced publish/subscribe permission matrix including bridge subjects; `tui` + `leaf` identities. _Opt-in_ via `security.nkey.enabled` | ✅ Implemented |
+| **1** — L7 / eBPF NetworkPolicy | Capability-tiered network isolation for agent pods: Tier 1 standard `NetworkPolicy` (L3/L4, the portable must-have), Tier 2 FQDN egress (OVN `EgressFirewall` or Cilium), Tier 3 Cilium L7. _Opt-in_ via `networkPolicy.enabled` | ✅ Implemented |
+| **2** — SPIFFE workload identity | SPIRE-issued JWT-SVIDs sign/verify `ROLE_UPDATE`; operator-issued `ClusterSPIFFEID`s; `spiffe-helper` sidecar; edge nested/federated topologies + offline survival. _Opt-in_ via `signing_mode: spiffe` (NATS/Redis mTLS via the X.509-SVID still to come) | ✅ Implemented |
+| **3** — Runtime-evidence Cat-A | Provider-agnostic kernel-event evidence (`execve`/`openat`/`connect`) folded into Cat-A — detects RHACS / Falco / Tetragon (process+file) and NetObserv (network); a bridge normalises events onto NATS.  Opt-in via `governance.runtimeEvidence.enabled` | ✅ Implemented (opt-in) |
 | **4** — Hardened Standalone | NKeys + self-signed CA mTLS for Podman mode; no SPIRE/Tetragon dependency | 🔲 Planned |
+
+> **Phase 1 design decision — Cilium is _not_ ACC's prime mechanism.**
+> The roadmap item was originally sketched as "Cilium L7 NetworkPolicy",
+> but Cilium is not the default CNI in any ACC deploy scenario —
+> OpenShift/RHOAI and MicroShift default to OVN-Kubernetes, K3s uses
+> Flannel, and standalone has no Kubernetes at all. The ACC operator is
+> a namespaced workload and cannot install or replace a cluster CNI.
+> Phase 1 therefore ships a **capability-tiered** design: the portable
+> **must-have is standard Kubernetes `NetworkPolicy`** (Tier 1, L3/L4),
+> which every policy-enforcing CNI honours. FQDN egress (Tier 2) is
+> satisfied by OVN-Kubernetes `EgressFirewall` _or_ Cilium; full L7
+> (Tier 3) is the _only_ tier that requires Cilium. The operator emits
+> the highest tier the running cluster can enforce — Cilium is an
+> optional enhancement backend, never a prerequisite. ACC consumes
+> eBPF-backed policy engines; it does not write its own eBPF.
+> See [`docs/network-policy.md`](docs/network-policy.md).
 
 Quick setup for the implemented phases:
 ```bash
@@ -282,9 +306,30 @@ export ACC_REDIS_PASSWORD=$(openssl rand -hex 32)
 export ACC_SIGNING_MODE=spiffe
 export ACC_SPIFFE_ENABLED=true
 export ACC_SPIFFE_TRUST_DOMAIN=acc-prod.example.com
+
+# Phase 0c — NATS NKey authentication (opt-in)
+./scripts/acc-nkeys generate --out-dir ./nkeys     # standalone
+export ACC_NKEY_ENABLED=true
+export ACC_NKEY_SEED_PATH=./nkeys/seed-arbiter     # per-process role seed
 ```
 
-See [`docs/spiffe.md`](docs/spiffe.md) (+ [`docs/spiffe-edge.md`](docs/spiffe-edge.md) for edge topologies) for the SPIFFE setup, the three-stage `ed25519 → spiffe` migration, and the v0.5.0 default-flip plan.  See [`docs/security-hardening.md`](docs/security-hardening.md) for the complete security architecture, governance layer (Cat-A/B/C Rego rules), and phase-by-phase implementation plan.
+```yaml
+# Phase 1 — L7 / eBPF NetworkPolicy (opt-in; operator-managed, edge/rhoai)
+# Phase 3 — Runtime-evidence Cat-A (opt-in; operator-managed, rhoai/edge)
+# Both are set on the AgentCorpus CR — the operator emits the objects:
+spec:
+  networkPolicy:
+    enabled: true
+    maxTier: 1            # 1 = L4 floor; 2 = FQDN egress; 3 = Cilium L7
+    mode: enforce         # use "audit" to canary without dropping traffic
+  governance:
+    runtimeEvidence:
+      enabled: true
+      enforce: false      # observe baseline; flip true after the observe window
+      preferredBackend: auto   # auto = RHACS > Falco > Tetragon
+```
+
+See [`docs/spiffe.md`](docs/spiffe.md) (+ [`docs/spiffe-edge.md`](docs/spiffe-edge.md) for edge topologies) for the SPIFFE setup, the three-stage `ed25519 → spiffe` migration, and the v0.5.0 default-flip plan.  See [`docs/nats-nkeys.md`](docs/nats-nkeys.md) for the NATS NKey setup (per-role identities, the permission matrix, the three deploy modes).  See [`docs/network-policy.md`](docs/network-policy.md) for the capability-tiered network isolation (the four deploy scenarios, the rollout procedure).  See [`docs/runtime-evidence.md`](docs/runtime-evidence.md) for the runtime-evidence Cat-A setup (the RHACS/Falco/Tetragon/NetObserv backends, the observe→enforce rollout).  See [`docs/security-hardening.md`](docs/security-hardening.md) for the complete security architecture, governance layer (Cat-A/B/C Rego rules), and phase-by-phase implementation plan.
 
 ---
 
@@ -329,6 +374,9 @@ or `export ACC_LLM_BACKEND=anthropic`. No other code changes required.
 | `ACC_SIGNING_MODE` | `security.signing_mode` | `auto` → `ed25519` | ROLE_UPDATE signing model: `ed25519` \| `spiffe` |
 | `ACC_SPIFFE_ENABLED` | `security.spiffe.enabled` | `false` | Master switch for SPIFFE workload identity |
 | `ACC_SPIFFE_TRUST_DOMAIN` | `security.spiffe.trust_domain` | _(empty)_ | SPIFFE trust domain |
+| `ACC_NKEY_ENABLED` | `security.nkey.enabled` | `false` | Master switch for NATS NKey authentication |
+| `ACC_NKEY_SEED_PATH` | `security.nkey.seed_path` | `/run/acc/nkeys/seed` | Path to this process's NKey seed file |
+| `ACC_NKEY_ROLE` | `security.nkey.role` | _(empty)_ | NKey identity (defaults to `agent.role`) |
 | `ACC_REDIS_URL` | `working_memory.url` | _(empty)_ | Redis connection URL |
 | `ACC_REDIS_PASSWORD` | `working_memory.password` | _(empty)_ | Redis password |
 | `ACC_ROLE_SOURCE` | `role_sync.role_source` | `auto` | Role-definition source of truth: `files` \| `crd` \| `mirror` |
@@ -432,8 +480,12 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 | [`docs/howto-rhoai.md`](docs/howto-rhoai.md) | OpenShift operator install, CRD reference, GPU inference, KEDA/Gatekeeper/OTel |
 | [`docs/howto-role-infusion.md`](docs/howto-role-infusion.md) | Role definition schema, 4-tier load order, ROLE_UPDATE hot-reload, Ed25519 signing |
 | [`docs/howto-tui.md`](docs/howto-tui.md) | Terminal UI: dashboard screen, infuse screen, container deployment, keyboard shortcuts |
+| [`docs/webgui.md`](docs/webgui.md) | acc-webgui — the optional FastAPI + React web frontend: architecture, auth tiers, per-mode deployment, the tracing views |
 | [`docs/spiffe.md`](docs/spiffe.md) | SPIFFE workload identity: prerequisites, config, the `ed25519 → spiffe` migration, v0.5.0 default-flip plan |
 | [`docs/spiffe-edge.md`](docs/spiffe-edge.md) | SPIFFE at the edge: nested / federated / ed25519 topologies, offline survival, the compatibility matrix |
+| [`docs/nats-nkeys.md`](docs/nats-nkeys.md) | NATS NKey authentication: per-role identities, the publish/subscribe permission matrix, per-deploy-mode setup |
+| [`docs/network-policy.md`](docs/network-policy.md) | L7 / eBPF NetworkPolicy: the capability tiers, the four deploy scenarios, the audit→enforce rollout |
+| [`docs/runtime-evidence.md`](docs/runtime-evidence.md) | Runtime-evidence Cat-A: the RHACS/Falco/Tetragon/NetObserv backends, the evidence bridge, the observe→enforce rollout |
 | [`docs/role-sync.md`](docs/role-sync.md) | Bi-directional `roles/<id>/role.yaml` ↔ `AgentCollective` CRD sync; the three `role_source` modes |
 | [`docs/security-hardening.md`](docs/security-hardening.md) | Complete security architecture: Cat-A/B/C Rego rules, Phase 0a–4 implementation plan |
 | [`docs/value-proposition.md`](docs/value-proposition.md) | Comparison with LangChain, CrewAI, AutoGen, Haystack |

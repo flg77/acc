@@ -34,7 +34,11 @@ class TestBuildBackendsSignaling:
         mock_nats = MagicMock()
         with patch("acc.backends.signaling_nats.NATSBackend", return_value=mock_nats) as MockNATS:
             bundle = build_backends(config)
-        MockNATS.assert_called_once_with("nats://localhost:4222")
+        # Proposal 013 — build_backends threads the NKey seed path;
+        # None when nkey auth is disabled (the default).
+        MockNATS.assert_called_once_with(
+            "nats://localhost:4222", nkey_seed_path=None,
+        )
 
     def test_unknown_signaling_raises(self):
         config = _make_config()

@@ -382,7 +382,7 @@ class TestAgentDelegateTask:
         assert subject_bridge_delegate(collective_id, "sol-02") in published_subjects
 
     def test_delegate_task_publishes_task_complete_on_success(self):
-        from acc.signals import subject_task
+        from acc.signals import subject_task_complete
         agent, mock_signaling = _make_agent_bridge()
         collective_id = agent.config.agent.collective_id
 
@@ -397,11 +397,11 @@ class TestAgentDelegateTask:
         published_subjects = [
             call.args[0] for call in mock_signaling.publish.call_args_list
         ]
-        assert subject_task(collective_id) in published_subjects
+        assert subject_task_complete(collective_id) in published_subjects
 
     def test_delegate_task_timeout_publishes_blocked_complete(self):
         """On timeout, TASK_COMPLETE with blocked=True and ALERT_ESCALATE are published."""
-        from acc.signals import subject_task, subject_alert
+        from acc.signals import subject_task_complete, subject_alert
         agent, mock_signaling = _make_agent_bridge()
         collective_id = agent.config.agent.collective_id
         task_payload = {"task_id": "t-timeout", "content": "task"}
@@ -417,13 +417,13 @@ class TestAgentDelegateTask:
         ]
         # BRIDGE_DELEGATE + TASK_COMPLETE (blocked) + ALERT_ESCALATE
         assert subject_bridge_delegate(collective_id, "sol-02") in published_subjects
-        assert subject_task(collective_id) in published_subjects
+        assert subject_task_complete(collective_id) in published_subjects
         assert subject_alert(collective_id) in published_subjects
 
         # Find the TASK_COMPLETE payload and verify blocked=True
         task_complete_calls = [
             call for call in mock_signaling.publish.call_args_list
-            if call.args[0] == subject_task(collective_id)
+            if call.args[0] == subject_task_complete(collective_id)
         ]
         assert len(task_complete_calls) == 1
         payload = json.loads(task_complete_calls[0].args[1])

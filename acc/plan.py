@@ -45,7 +45,7 @@ from acc.signals import (
     SIG_PLAN,
     SIG_TASK_ASSIGN,
     subject_plan,
-    subject_task,
+    subject_task_assign,
 )
 
 logger = logging.getLogger("acc.plan")
@@ -946,7 +946,7 @@ class PlanExecutor:
                 body["prompt_patch"] = dict(step.last_prompt_patch)
 
         await self._publish(
-            subject_task(plan.collective_id),
+            subject_task_assign(plan.collective_id),
             json.dumps(body).encode("utf-8"),
         )
 

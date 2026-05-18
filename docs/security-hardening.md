@@ -146,44 +146,56 @@ export ACC_REDIS_PASSWORD=$(openssl rand -hex 32)
 
 ---
 
-## Phase 1 — Cilium L4/L7 NetworkPolicy 🔲 Planned
+## Phase 1 — L7 / eBPF NetworkPolicy ✅ Implemented (opt-in)
 
-**Problem:** Standard Kubernetes `NetworkPolicy` objects provide L4 (IP + port) isolation only. There is no enforcement at the NATS protocol level.
+> Designed and delivered by **proposal 014** ("L7 / eBPF NetworkPolicy
+> for ACC agents"). This section was originally a Cilium-centric sketch;
+> proposal 014 superseded it after finding that **Cilium is not the
+> default CNI in any ACC deploy scenario** (OpenShift/RHOAI and
+> MicroShift default to OVN-Kubernetes; K3s uses Flannel). See
+> [`docs/network-policy.md`](./network-policy.md) for the operator guide.
 
-**Solution:** Cilium replaces kube-proxy with an eBPF data plane that supports L7-aware policies and per-pod egress control with FQDN matching.
+**Problem:** ACC agent pods have no network isolation — any pod that can
+route to `NATS:4222` or `Redis:6379` reads every agent signal. NKeys
+(Phase 0c) authenticate the NATS *connection*; this phase controls which
+pods may *reach* the bus at all.
 
-**Prerequisite:** Cilium must be installed in the cluster. The operator detects it via the `cilium.io/v2` API group. If absent, the operator falls back to standard `NetworkPolicy` and emits a `NetworkPolicyReady=False` condition.
+**Solution — the capability-tiered model.** The operator emits the
+highest-tier policy the running cluster's CNI can enforce, capped by
+`spec.networkPolicy.maxTier`:
 
-**Planned policies (per component):**
+| Tier | Mechanism | Substrate |
+|---|---|---|
+| 0 | none (no-op) | standalone / no Kubernetes |
+| 1 | standard K8s `NetworkPolicy` (L3/L4) | any policy-enforcing CNI (OVN-Kubernetes) — **the committed must-have** |
+| 2 | FQDN egress: OVN `EgressFirewall` *or* Cilium `CiliumNetworkPolicy` | OVN-Kubernetes *or* Cilium |
+| 3 | full L7 (HTTP method/path) | Cilium only |
 
-```yaml
-# Agent pods — ingress from same collective only; egress to NATS + Redis + LLM
-egress:
-  - toEndpoints:
-      - matchLabels: {acc.redhat.io/component: nats}
-    toPorts: [{port: "4222"}]
-  - toEndpoints:
-      - matchLabels: {acc.redhat.io/component: redis}
-    toPorts: [{port: "6379"}]
-  - toFQDNs:
-      - matchPattern: "*.anthropic.com"    # Anthropic LLM backend
-  - toEndpoints:
-      - matchLabels: {acc.redhat.io/component: ollama}
-    toPorts: [{port: "11434"}]
-```
+Cilium is **one optional Tier-2/3 backend**, never a prerequisite.
+"eBPF" is the mechanism Cilium/Tetragon implement — ACC consumes
+eBPF-backed engines, it does not write its own.
 
-**Edge mode — NATS leaf port 7422:** Edge agent pods need an additional egress rule to the hub's leaf node port:
-```yaml
-  - toCIDR: [{cidr: "0.0.0.0/0"}]   # hub may be external
-    toPorts: [{port: "7422"}]         # NATS leaf protocol
-```
+**Opt-in.** `spec.networkPolicy.enabled` defaults to `false` — upgrading
+the operator never drops traffic. `mode: audit` emits the policies
+without the default-deny (a safe canary) before `mode: enforce`.
 
-**Files to create:**
-- `operator/internal/reconcilers/security/cilium.go` — New sub-reconciler; creates `CiliumNetworkPolicy` CRs
-- `operator/internal/util/discovery.go` — Add Cilium API group detection
-- `operator/api/v1alpha1/agentcorpus_types.go` — Add `SecuritySpec` struct
+**Per-deploy-mode behaviour:**
 
-**Edge mode behavior:** Cilium policies are NOT deployed in edge mode. Edge uses standard `NetworkPolicy` only (no eBPF at MicroShift by default).
+- **standalone** — Tier 0 no-op; `NetworkPolicyReady=True/NotApplicableStandalone`.
+- **edge-MicroShift** / **rhoai** — OVN-Kubernetes enforces Tier 1; Tier 2
+  via `EgressFirewall`; Tier 3 only if Cilium is installed.
+- **edge-K3s** — Flannel does **not** enforce `NetworkPolicy`; the
+  operator still emits the objects but reports
+  `NetworkPolicyReady=False/CNIDoesNotEnforce` rather than give false
+  assurance.
+
+**Files (delivered by proposal 014):**
+- `operator/internal/reconcilers/security/networkpolicy.go` — the sub-reconciler
+- `operator/internal/reconcilers/security/networkpolicy_rules.go` — Tier 1 rule builders
+- `operator/internal/reconcilers/security/fqdn_egress.go` — Tier 2 backends
+- `operator/internal/reconcilers/security/l7_policy.go` — Tier 3 Cilium L7
+- `operator/internal/util/discovery.go` — Cilium / OVN capability detection
+- `operator/api/v1alpha1/agentcorpus_types.go` — `NetworkPolicySpec`
 
 ---
 
@@ -236,33 +248,51 @@ tls {
 
 ---
 
-## Phase 3 — Tetragon Kernel-Level Cat-A 🔲 Planned
+## Phase 3 — Runtime-evidence Cat-A ✅ Implemented (opt-in)
 
-**Problem:** The Cat-A WASM OPA evaluator currently returns `True` unconditionally (`_cat_a_allow = True` in `acc/governance.py`). Real Cat-A enforcement requires actual WASM evaluation and, for production clusters, kernel-level observability that application code cannot bypass.
+> Designed and delivered by **proposal 015** ("Runtime-evidence Cat-A").
+> This section was originally a Tetragon-centric sketch with two flawed
+> premises — see [`docs/runtime-evidence.md`](./runtime-evidence.md) for
+> the operator guide.
 
-**Solution:** Tetragon attaches eBPF programs to kernel hooks (`execve`, `connect`, file `openat`) and emits structured `ProcessEvent` JSON on a gRPC stream. `CognitiveCore` subscribes to this stream and includes kernel events in Cat-A evaluation alongside real WASM OPA evaluation.
+**Two corrections to the original sketch.** First, Cat-A is **already
+real** — `acc/governance.py` has a 3-mode `CatAEvaluator` (subprocess
+`opa eval` on the 21-rule `constitutional_rhoai.rego`); the "returns
+`True` unconditionally" claim was false. Second, the sketch named
+Tetragon as *the* mechanism — but Tetragon is not Cilium-coupled, and
+more importantly ACC should not bake in one ecosystem tool.
 
-**TracingPolicy targets (planned):**
+**Problem:** Cat-A judges *signal metadata the agent process itself
+supplies* — forgeable by a compromised or drifted agent. Phase 3 adds a
+**kernel-level evidence source the agent cannot falsify.**
 
-| Hook | Event | Cat-A response |
-|------|-------|----------------|
-| `execve` | Unexpected binary execution (outside known paths) | `ALERT_ESCALATE` Cat-A; observe-only in first 4 weeks |
-| `connect` | Outbound TCP to non-approved CIDRs | `ALERT_ESCALATE` Cat-A |
-| `openat` | `/proc/*/mem` reads by agent process | `ALERT_ESCALATE` Cat-A; potential kill (Phase 3 enforce mode) |
+**Solution — provider-agnostic.** ACC *consumes* whichever
+runtime-security tool the cluster runs. The operator detects the
+backend; a single operator-deployed bridge (`acc-runtime-evidence-bridge`)
+normalises events into a `KERNEL_EVENT` NATS signal; each agent's
+`CognitiveCore` folds events about its own pod into Cat-A.
 
-**Observe-only first:** `ACC_TETRAGON_ENFORCE=false` (default). Tetragon runs for 4 weeks logging events without triggering Cat-A responses. Once a baseline is established, `ACC_TETRAGON_ENFORCE=true` gates Cat-A decisions on kernel events.
+| Evidence | Source(s) | Hook |
+|---|---|---|
+| process exec / file open | RHACS (preferred) · Falco · Tetragon | `execve`, `openat` |
+| outbound network connect | OpenShift NetObserv (eBPF flow logs, OVN-aware) | `connect` |
 
-**Files to create:**
-- `operator/internal/reconcilers/security/tetragon.go` — Creates `TracingPolicy` CRs
-- `acc/tetragon_bridge.py` — gRPC stream → NATS `ALERT_ESCALATE` bridge
-- `acc/cognitive_core.py` — Replace `_cat_a_allow = True` with real WASM + Tetragon event evaluation
-- `acc/config.py` — Add `ACC_TETRAGON_ENFORCE`, `ACC_TETRAGON_GRPC_ADDR`
+**Observe-only first:** `ACC_RUNTIME_ENFORCE=false` (default) — a
+4-week observe baseline; kernel violations log as `OBSERVED:kernel:*`
+but never block. Then `enforce: true` → `BLOCK:kernel:*` + `ALERT_ESCALATE`.
 
-**Prerequisite:** Tetragon installed (operator detects via `cilium.io/v1alpha1 TracingPolicy` CRD).
+**Detection — the `cilium.io` collision:** Tetragon's `TracingPolicy`
+CRD shares the `cilium.io` group with the Cilium CNI (Phase 1), so
+Tetragon is detected at the **resource level** (`TracingPolicy` kind),
+never by the group.
 
-**Edge mode:** Tetragon is NOT available at edge. eBPF programs require kernel access that is not available in standard MicroShift / Podman container environments. Cat-A falls back to WASM-only at edge.
+**Per deploy mode:** rhoai full; edge opt-in where a backend is
+detected; standalone N/A (no privileged-DaemonSet eBPF attach). Cat-A
+subprocess evaluation remains the always-available fallback.
 
-**What Tetragon is NOT used for:** NATS subject-level ACL enforcement. Tetragon sees raw TCP bytes, not NATS protocol messages. Use NATS NKeys (Phase 0c) for subject ACLs.
+**What runtime evidence is NOT used for:** NATS subject-level ACL
+enforcement. Kernel/flow evidence sees raw TCP, not NATS protocol
+messages. Use NATS NKeys (Phase 0c) for subject ACLs.
 
 ---
 
@@ -299,13 +329,14 @@ tls {
 |---------|-----------|------|-------|
 | Ed25519 ROLE_UPDATE verify | ✅ Implemented | ✅ Implemented | ✅ Implemented |
 | Redis password | ✅ Implemented | ✅ Implemented | ✅ Implemented |
-| NATS NKeys | 🔲 Phase 0c | 🔲 Phase 0c | 🔲 Phase 0c |
-| Standard NetworkPolicy | 🔲 Phase 1 | 🔲 Phase 1 | 🔲 Phase 1 |
-| Cilium L7 NetworkPolicy | 🔲 Phase 1 | ❌ Not available | 🔲 Phase 1 |
+| NATS NKeys | ✅ Phase 0c (opt-in) | ✅ Phase 0c (opt-in) | ✅ Phase 0c (opt-in) |
+| Tier 1 NetworkPolicy (L4) | ❌ no Kubernetes | ✅ Phase 1 (OVN-K) / ⚠️ K3s-Flannel non-enforcing | ✅ Phase 1 (OVN-K) |
+| Tier 2 FQDN egress | ❌ no Kubernetes | ✅ Phase 1 (OVN `EgressFirewall`) | ✅ Phase 1 (`EgressFirewall` / Cilium) |
+| Tier 3 Cilium L7 | ❌ no Kubernetes | ⚠️ only if Cilium installed | ⚠️ only if Cilium installed |
 | SPIFFE/SPIRE stable identity | 🔲 Phase 4 (manual CA) | ❌ Not available | 🔲 Phase 2 |
 | NATS/Redis mTLS (SVID) | 🔲 Phase 4 (self-signed) | ❌ Not available | 🔲 Phase 2 |
-| Tetragon Cat-A | ❌ Not available | ❌ Not available | 🔲 Phase 3 |
-| Real WASM Cat-A eval | 🔲 Phase 3 | 🔲 Phase 3 | 🔲 Phase 3 |
+| Runtime-evidence Cat-A | ❌ no eBPF attach | ⚠️ Phase 3 (opt-in, if a backend is detected) | ✅ Phase 3 (opt-in) |
+| Real Cat-A eval (OPA `opa eval`) | ✅ Implemented | ✅ Implemented | ✅ Implemented |
 
 ---
 

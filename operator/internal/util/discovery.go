@@ -34,6 +34,24 @@ const (
 	APIGroupSpire       = "spire.spiffe.io"
 	APIVersionSpire     = "spire.spiffe.io/v1alpha1"
 
+	// Cilium registers CiliumNetworkPolicy etc. under this group;
+	// OVN-Kubernetes registers EgressFirewall under k8s.ovn.org.
+	// Calico (a policy-enforcing CNI) uses projectcalico.org.  All
+	// three feed the proposal-014 network-policy capability tiers.
+	APIGroupCilium  = "cilium.io"
+	APIGroupOVN     = "k8s.ovn.org"
+	APIGroupCalico  = "projectcalico.org"
+
+	// Runtime-evidence backends (proposal 015).  RHACS and NetObserv
+	// have their own API groups.  Tetragon registers TracingPolicy
+	// under cilium.io/v1alpha1 — SHARED with the Cilium CNI — so
+	// Tetragon must be detected at the *resource* level (the
+	// TracingPolicy kind), never by the cilium.io group.
+	APIGroupRHACS         = "platform.stackrox.io"
+	APIGroupNetObserv     = "flows.netobserv.io"
+	APIVersionTetragon    = "cilium.io/v1alpha1"
+	KindTracingPolicy     = "TracingPolicy"
+
 	tcpDialTimeout = 3 * time.Second
 )
 
@@ -117,6 +135,99 @@ func (c *APIGroupChecker) PrometheusRulesSupported() (bool, error) {
 // 011); the SpiffeReconciler is a no-op when this is false.
 func (c *APIGroupChecker) SpireInstalled() (bool, error) {
 	return c.HasAPIGroup(APIGroupSpire)
+}
+
+// HasAPIResource returns true when a specific resource *kind* is
+// registered under the given group/version.  Unlike HasAPIGroup, this
+// distinguishes co-tenants of one API group — e.g. Tetragon's
+// TracingPolicy vs Cilium's CiliumNetworkPolicy, both under cilium.io
+// (proposal 015).
+func (c *APIGroupChecker) HasAPIResource(groupVersion, kind string) (bool, error) {
+	_, resourceList, err := c.disc.ServerGroupsAndResources()
+	if err != nil && resourceList == nil {
+		return false, fmt.Errorf("discovery.ServerGroupsAndResources: %w", err)
+	}
+	for _, rl := range resourceList {
+		if rl.GroupVersion != groupVersion {
+			continue
+		}
+		for _, r := range rl.APIResources {
+			if r.Kind == kind {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// RHACSInstalled returns true when the platform.stackrox.io API group
+// is registered — Red Hat Advanced Cluster Security, a proposal-015
+// runtime-evidence backend.
+func (c *APIGroupChecker) RHACSInstalled() (bool, error) {
+	return c.HasAPIGroup(APIGroupRHACS)
+}
+
+// NetObservInstalled returns true when the flows.netobserv.io API
+// group is registered — OpenShift Network Observability, the
+// proposal-015 network-connect evidence source.
+func (c *APIGroupChecker) NetObservInstalled() (bool, error) {
+	return c.HasAPIGroup(APIGroupNetObserv)
+}
+
+// TetragonInstalled returns true when the TracingPolicy resource kind
+// is registered under cilium.io/v1alpha1 — a proposal-015
+// runtime-evidence backend.  Detected resource-level, NOT via
+// HasAPIGroup("cilium.io"), which would false-positive on any Cilium
+// CNI cluster that has no Tetragon.
+func (c *APIGroupChecker) TetragonInstalled() (bool, error) {
+	return c.HasAPIResource(APIVersionTetragon, KindTracingPolicy)
+}
+
+// CiliumInstalled returns true when the cilium.io API group is
+// registered — i.e. the Cilium CNI (with its CiliumNetworkPolicy CRD)
+// is present.  Enables proposal-014 Tier 2/3 network policy.
+func (c *APIGroupChecker) CiliumInstalled() (bool, error) {
+	return c.HasAPIGroup(APIGroupCilium)
+}
+
+// OVNEgressFirewallSupported returns true when the k8s.ovn.org API
+// group is registered — i.e. the cluster runs OVN-Kubernetes, which
+// enforces standard NetworkPolicy and offers the EgressFirewall CRD
+// for Tier 2 FQDN egress (proposal 014).
+func (c *APIGroupChecker) OVNEgressFirewallSupported() (bool, error) {
+	return c.HasAPIGroup(APIGroupOVN)
+}
+
+// CalicoInstalled returns true when the projectcalico.org API group is
+// registered — Calico is a policy-enforcing CNI.  Used only by the
+// CNI-enforcement heuristic (proposal 014), not as a policy backend.
+func (c *APIGroupChecker) CalicoInstalled() (bool, error) {
+	return c.HasAPIGroup(APIGroupCalico)
+}
+
+// CNIEnforcesNetworkPolicy is the heuristic for "does the running CNI
+// actually enforce Kubernetes NetworkPolicy objects" (proposal 014).
+//
+// There is no portable API that answers this directly.  OVN-Kubernetes,
+// Cilium, and Calico all enforce NetworkPolicy and all register a
+// recognisable API group; Flannel (the K3s default) enforces nothing
+// and registers no policy API group.  So: NetworkPolicy is enforced
+// iff one of those three policy-capable CNIs is detected.
+//
+// The verdict is heuristic — operators override it with
+// spec.networkPolicy.cniEnforces ("true"/"false") when the inference
+// is wrong (e.g. a NetworkPolicy-capable CNI this code does not know).
+func (c *APIGroupChecker) CNIEnforcesNetworkPolicy() (bool, error) {
+	for _, group := range []string{APIGroupOVN, APIGroupCilium, APIGroupCalico} {
+		ok, err := c.HasAPIGroup(group)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // TCPReachable dials addr (host:port) and returns true when the connection

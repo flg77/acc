@@ -14,7 +14,8 @@ from acc.signals import (
     SIG_BRIDGE_RESULT,
     subject_register,
     subject_heartbeat,
-    subject_task,
+    subject_task_assign,
+    subject_task_complete,
     subject_role_update,
     subject_role_approval,
     subject_alert,
@@ -67,8 +68,24 @@ class TestSubjectHelpers:
     def test_subject_heartbeat(self):
         assert subject_heartbeat(self.COLL) == "acc.sol-01.heartbeat"
 
-    def test_subject_task(self):
-        assert subject_task(self.COLL) == "acc.sol-01.task"
+    def test_subject_task_assign(self):
+        assert subject_task_assign(self.COLL) == "acc.sol-01.task.assign"
+
+    def test_subject_task_complete(self):
+        assert subject_task_complete(self.COLL) == "acc.sol-01.task.complete"
+
+    def test_subject_task_deprecated_alias(self):
+        import warnings
+
+        from acc.signals import subject_task
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = subject_task(self.COLL)
+        assert result == "acc.sol-01.task.assign"
+        assert any(
+            issubclass(w.category, DeprecationWarning) for w in caught
+        )
 
     def test_subject_role_update(self):
         assert subject_role_update(self.COLL) == "acc.sol-01.role_update"
@@ -83,7 +100,8 @@ class TestSubjectHelpers:
         for fn in (
             subject_register,
             subject_heartbeat,
-            subject_task,
+            subject_task_assign,
+            subject_task_complete,
             subject_role_update,
             subject_role_approval,
             subject_alert,

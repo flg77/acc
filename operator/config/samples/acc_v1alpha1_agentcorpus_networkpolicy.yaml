@@ -1,0 +1,53 @@
+---
+# Sample AgentCorpus — network policy enabled (proposal 014, Phase 1).
+#
+# Demonstrates the opt-in, capability-tiered network-isolation layer.
+# The networkPolicy block is the only addition versus a plain rhoai
+# corpus; everything else is a minimal rhoai deployment.
+#
+# Recommended rollout: start with mode=audit on a canary collective,
+# inspect the emitted objects, then flip to mode=enforce.  See
+# docs/network-policy.md.
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCorpus
+metadata:
+  name: netpol-corpus
+  namespace: acc-system
+spec:
+  deployMode: rhoai
+  version: "0.1.0"
+  imageRegistry: registry.access.redhat.com
+
+  collectives:
+    - name: netpol-collective-01
+
+  infrastructure:
+    nats:
+      version: "2.10"
+      replicas: 3
+      storageSize: 10Gi
+    redis:
+      version: "6"
+      replicas: 3
+      storageSize: 5Gi
+    milvus:
+      uri: "http://milvus.milvus-system.svc.cluster.local:19530"
+      collectionPrefix: "acc_"
+
+  governance:
+    categoryA:
+      wasmConfigMapRef: acc-cat-a-wasm
+    categoryB:
+      pollIntervalSeconds: 30
+    gatekeeperIntegration: false
+
+  # --- Phase 1: network policy (proposal 014) -----------------------------
+  networkPolicy:
+    enabled: true            # opt-in master switch
+    maxTier: 2               # 1 = L4 floor; 2 = FQDN egress; 3 = Cilium L7
+    mode: audit              # start in audit (no default-deny); flip to enforce
+    cniEnforces: auto        # auto-detect; override "true"/"false" on K3s
+    allowedExternalLLM:
+      - api.anthropic.com
+    extraEgressFQDNs:
+      - hooks.slack.com

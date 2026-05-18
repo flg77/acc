@@ -30,10 +30,17 @@ services:
   nats:
     image: nats:2.10-alpine
     container_name: acc-nats
+    # Default: flags-only, no authentication (unchanged).
     command: ["-js", "-m", "8222"]
+    # NATS NKey authentication (proposal 013, opt-in): generate keys
+    # with ./scripts/acc-nkeys, then swap to the config-file command
+    # and uncomment the nats.conf mount.  See docs/nats-nkeys.md.
+    # command: ["-c", "/etc/nats/nats.conf"]
     ports:
       - "4222:4222"   # client
       - "8222:8222"   # monitoring
+    # volumes:                                    # proposal 013 (opt-in)
+    #   - ./nats.conf:/etc/nats/nats.conf:ro,z
     networks:
       - acc-net
     restart: unless-stopped

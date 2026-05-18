@@ -172,7 +172,7 @@ async def _run_once_async(args: argparse.Namespace) -> int:
 
     nc = await connect_nats()
     try:
-        from acc.signals import subject_task  # noqa: PLC0415
+        from acc.signals import subject_task_assign  # noqa: PLC0415
         for sched in due:
             task_id = uuid.uuid4().hex
             payload: dict[str, Any] = {
@@ -194,7 +194,7 @@ async def _run_once_async(args: argparse.Namespace) -> int:
                 payload["target_agent_id"] = sched.target_agent_id
 
             await nc.publish(
-                subject_task(sched.collective_id),
+                subject_task_assign(sched.collective_id),
                 encode_payload(payload),
             )
             sched.last_fired_ts = now

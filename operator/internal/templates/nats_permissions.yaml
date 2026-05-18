@@ -1,0 +1,125 @@
+# NATS NKey publish/subscribe permission matrix — canonical source.
+#
+# Proposal 013 (Phase 0c).  This file is the SINGLE SOURCE OF TRUTH
+# for the per-identity NATS authorization matrix.  It is consumed by
+# BOTH:
+#
+#   * the operator's Go nats.conf renderer
+#     (operator/internal/templates/nats_config.go — //go:embed), and
+#   * the standalone Python CLI (scripts/acc-nkeys) via
+#     acc/nats_permissions.py.
+#
+# Editing it in one place keeps the two language renderers in lock
+# step.  tests/test_nats_permissions.py is a contract test that fails
+# CI if a subject helper in acc/signals.py is left uncovered here.
+#
+# Subject globs use NATS wildcards:
+#   *  matches exactly one token
+#   >  matches one or more trailing tokens
+# The second token of every acc subject is the collective_id, so it
+# is always written as `*` (one matrix serves every collective on the
+# server).
+#
+# Identities: the six agent roles, plus `tui` (the read-only operator
+# surface used by the TUI/CLI) and `leaf` (the edge leaf-node link to
+# the hub).
+
+# --- shared building blocks (YAML anchors keep the matrix DRY) -------
+
+# Worker roles (ingester, analyst, synthesizer, coding_agent,
+# observer) all carry the same permissions: they receive work and
+# report on it, but may not publish the arbiter-only control subjects
+# (plan.*, centroid, domain.*, role_update — the A-011/A-012/A-016
+# invariants).
+_worker_publish: &worker_publish
+  - acc.*.heartbeat
+  - acc.*.register
+  - acc.*.task.complete
+  - acc.*.task.progress
+  - acc.*.queue.*
+  - acc.*.backpressure.*
+  - acc.*.knowledge.*
+  - acc.*.eval.*
+  - acc.*.episode.nominate
+  - acc.*.alert
+  - acc.bridge.*.*.delegate
+  - acc.bridge.*.*.result
+  - acc.bridge.*.pending
+
+_worker_subscribe: &worker_subscribe
+  - acc.*.task.assign
+  - acc.*.task.cancel
+  - acc.*.role_update
+  - acc.*.role_approval
+  - acc.*.plan.*
+  - acc.*.centroid
+  - acc.*.domain.*
+  - acc.*.knowledge.*
+  - acc.*.eval.*
+  - acc.bridge.*.*.delegate
+  - acc.bridge.*.*.result
+
+roles:
+  arbiter:
+    # The arbiter orchestrates: it alone may publish the control
+    # subjects, and it subscribes to everything to observe the
+    # collective.
+    publish:
+      - acc.*.task.assign
+      - acc.*.task.cancel
+      - acc.*.plan.*
+      - acc.*.centroid
+      - acc.*.domain.*
+      - acc.*.role_update
+      - acc.*.role_approval
+      - acc.*.heartbeat
+      - acc.*.register
+      - acc.*.alert
+      - acc.*.knowledge.*
+      - acc.bridge.*.*.delegate
+      - acc.bridge.*.*.result
+      - acc.bridge.*.pending
+    subscribe:
+      - acc.>
+
+  ingester:
+    publish: *worker_publish
+    subscribe: *worker_subscribe
+
+  analyst:
+    publish: *worker_publish
+    subscribe: *worker_subscribe
+
+  synthesizer:
+    publish: *worker_publish
+    subscribe: *worker_subscribe
+
+  coding_agent:
+    publish: *worker_publish
+    subscribe: *worker_subscribe
+
+  observer:
+    # The `observer` agent role is read-mostly but still emits its own
+    # heartbeat/register; reuse the worker set.
+    publish: *worker_publish
+    subscribe: *worker_subscribe
+
+  tui:
+    # The TUI/CLI operator surface: read-only on the bus EXCEPT for
+    # the operator-initiated subjects (submit a plan, decide an
+    # oversight item, issue a task or a cancel).
+    publish:
+      - acc.*.plan.submit
+      - acc.*.oversight.*
+      - acc.*.task.assign
+      - acc.*.task.cancel
+    subscribe:
+      - acc.>
+
+  leaf:
+    # The edge leaf-node link only ever carries cross-collective
+    # bridge traffic to/from the hub.
+    publish:
+      - acc.bridge.>
+    subscribe:
+      - acc.bridge.>

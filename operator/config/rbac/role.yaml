@@ -18,6 +18,10 @@ rules:
 - apiGroups: ["apps"]
   resources: ["deployments", "statefulsets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# DaemonSets — read-only, for Falco runtime-backend detection (proposal 015)
+- apiGroups: ["apps"]
+  resources: ["daemonsets"]
+  verbs: ["get", "list", "watch"]
 - apiGroups: [""]
   resources: ["services", "configmaps", "persistentvolumeclaims"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -26,7 +30,18 @@ rules:
   verbs: ["create", "patch"]
 - apiGroups: [""]
   resources: ["secrets"]
-  verbs: ["get", "list", "watch"]
+  verbs: ["get", "list", "watch", "create"]
+# Network policy (proposal 014) — standard NetworkPolicy + the optional
+# FQDN/L7 backends (EgressFirewall on OVN-Kubernetes, CiliumNetworkPolicy).
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["k8s.ovn.org"]
+  resources: ["egressfirewalls"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["cilium.io"]
+  resources: ["ciliumnetworkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # OPA Gatekeeper ConstraintTemplates (cluster-scoped)
 - apiGroups: ["templates.gatekeeper.sh"]
   resources: ["constrainttemplates"]

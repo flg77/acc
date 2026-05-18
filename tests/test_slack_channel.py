@@ -108,7 +108,7 @@ async def test_send_publishes_canonical_task_assign(monkeypatch):
     # One publish — the TASK_ASSIGN
     assert fake_nc.publish.call_count == 1
     subject, body = fake_nc.publish.call_args.args
-    assert subject == "acc.sol-test.task"
+    assert subject == "acc.sol-test.task.assign"
 
     # Decode the wire format and assert canonical fields.
     raw = msgpack.unpackb(body, raw=False)

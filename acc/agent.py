@@ -47,8 +47,10 @@ from acc.signals import (
     subject_heartbeat,
     subject_register,
     subject_role_update,
-    subject_task,
+    subject_task_assign,
+    subject_task_complete,
     subject_alert,
+    subject_kernel,
     subject_bridge_delegate,
     subject_bridge_result,
 )
@@ -703,7 +705,7 @@ class Agent:
                 complete_body["cluster_id"] = inbound_cluster_id
             complete_payload = json.dumps(complete_body).encode()
             await self.backends.signaling.publish(
-                subject_task(collective_id), complete_payload
+                subject_task_complete(collective_id), complete_payload
             )
 
             # If task was blocked, publish ALERT_ESCALATE
@@ -722,7 +724,7 @@ class Agent:
 
         try:
             await self.backends.signaling.subscribe(
-                subject_task(collective_id), _handle_task
+                subject_task_assign(collective_id), _handle_task
             )
             # Block until stop is requested
             await self._stop_event.wait()
@@ -801,7 +803,7 @@ class Agent:
             # Emit a blocked TASK_COMPLETE + alert on timeout
             timeout_reason = f"bridge_timeout: no result from {target_cid} in {_BRIDGE_TIMEOUT_S:.0f}s"
             await self.backends.signaling.publish(
-                subject_task(collective_id),
+                subject_task_complete(collective_id),
                 json.dumps({
                     "signal_type": SIG_TASK_COMPLETE,
                     "agent_id": self.agent_id,
@@ -843,7 +845,7 @@ class Agent:
             "output": (result_data.get("output", "") or "")[:500],
         }).encode()
         await self.backends.signaling.publish(
-            subject_task(collective_id), complete_payload
+            subject_task_complete(collective_id), complete_payload
         )
         logger.info(
             "bridge: result forwarded (task_id=%s from=%s blocked=%s)",
@@ -1131,7 +1133,8 @@ class Agent:
         """Track TASK_COMPLETE messages relevant to active plans.
 
         Runs alongside the per-agent ``_task_loop`` (which subscribes to
-        the same subject for its own role's TASK_ASSIGN handling).  We
+        the sibling ``acc.{cid}.task.assign`` subject for its own role's
+        TASK_ASSIGN handling — proposal 013 PR-1 split the two).  We
         filter strictly on ``signal_type == "TASK_COMPLETE"`` and let
         the executor's ``_task_index`` reject anything that is not one
         of our plan's tasks — so this loop is a no-op for tasks the
@@ -1154,12 +1157,50 @@ class Agent:
 
         try:
             await self.backends.signaling.subscribe(
-                subject_task(collective_id),
+                subject_task_complete(collective_id),
                 _handle_complete,
             )
             await self._stop_event.wait()
         except Exception as exc:
             logger.error("plan: task_complete subscription error: %s", exc)
+
+    async def _subscribe_kernel_events(self) -> None:
+        """Subscribe to KERNEL_EVENT signals and feed those about this
+        pod into the CognitiveCore's kernel-event buffer (proposal 015).
+
+        The runtime-evidence bridge publishes kernel evidence for every
+        agent pod in the collective on ``acc.{cid}.kernel``; each agent
+        keeps only events whose ``pod_uid`` matches its own (from the
+        downward-API ``ACC_POD_UID`` env).  A no-op when there is no
+        CognitiveCore — the same guard the task loop uses.
+        """
+        if self._cognitive_core is None:
+            return
+        collective_id = self.config.agent.collective_id
+        own_pod_uid = os.environ.get("ACC_POD_UID", "").strip()
+
+        async def _handle_kernel(msg: object) -> None:
+            try:
+                payload = json.loads(getattr(msg, "data", b"{}"))
+            except json.JSONDecodeError:
+                return
+            # Keep only events about this pod.  When ACC_POD_UID is
+            # unset (standalone / dev — one pod) accept everything.
+            if own_pod_uid and payload.get("pod_uid") != own_pod_uid:
+                return
+            try:
+                self._cognitive_core.record_kernel_event(payload)  # type: ignore[union-attr]
+            except Exception:
+                logger.exception("kernel: failed to record KERNEL_EVENT")
+
+        try:
+            await self.backends.signaling.subscribe(
+                subject_kernel(collective_id),
+                _handle_kernel,
+            )
+            await self._stop_event.wait()
+        except Exception as exc:
+            logger.error("kernel: subscription error: %s", exc)
 
     # ------------------------------------------------------------------
     # Main lifecycle (Phase 4e)
@@ -1188,6 +1229,7 @@ class Agent:
                 self._subscribe_oversight_decisions(),
                 self._subscribe_plan_submit(),
                 self._subscribe_plan_task_completes(),
+                self._subscribe_kernel_events(),
                 return_exceptions=True,
             )
         finally:

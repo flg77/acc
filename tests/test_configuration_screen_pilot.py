@@ -184,6 +184,9 @@ async def test_llm_summary_renders_at_mount(isolated_manifests):
         # Proposal 011 PR-1 — resolved signing_mode surfaced too.
         assert "Signing mode" in rendered
         assert "proposal 011" in rendered
+        # Proposal 013 PR-2 — NATS NKey auth status surfaced.
+        assert "NATS NKey auth" in rendered
+        assert "proposal 013" in rendered
 
 
 @pytest.mark.asyncio
@@ -210,6 +213,8 @@ async def test_test_button_updates_result_widget(
             "deploy_mode": "standalone",
             "signing_mode": "ed25519",
             "spiffe_enabled": "no",
+            "nkey_enabled": "no",
+            "nkey_role": "—",
         }
 
     monkeypatch.setattr(cfg, "_load_acc_config_summary", fake_summary)
@@ -254,6 +259,8 @@ async def test_test_button_handles_missing_base_url(
         "deploy_mode": "standalone",
         "signing_mode": "ed25519",
         "spiffe_enabled": "no",
+        "nkey_enabled": "no",
+        "nkey_role": "—",
     })
 
     app = _Harness()

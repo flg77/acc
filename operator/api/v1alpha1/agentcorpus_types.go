@@ -66,6 +66,13 @@ type AgentCorpusSpec struct {
 	// +optional
 	Edge *EdgeSpec `json:"edge,omitempty"`
 
+	// NetworkPolicy configures the optional capability-tiered network
+	// isolation layer for agent and infrastructure pods (proposal 014,
+	// security roadmap Phase 1).  When nil or disabled the operator
+	// emits no policy objects — unchanged legacy behaviour.
+	// +optional
+	NetworkPolicy *NetworkPolicySpec `json:"networkPolicy,omitempty"`
+
 	// MCPServers configures shared MCP servers visible to every collective in
 	// this corpus. Each entry produces a Deployment + Service named
 	// acc-mcp-{name}, matching the URL convention used by mcps/<name>/mcp.yaml.
@@ -136,6 +143,23 @@ type NATSSpec struct {
 	// Resources sets CPU/memory for NATS pods.
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// NKeyAuth enables per-role NATS NKey authentication (proposal
+	// 013, Phase 0c).  When nil or disabled the NATS server runs
+	// without an authorization block — unchanged legacy behaviour.
+	// +optional
+	NKeyAuth *NKeyAuthSpec `json:"nkeyAuth,omitempty"`
+}
+
+// NKeyAuthSpec configures NATS NKey authentication (proposal 013).
+type NKeyAuthSpec struct {
+	// Enabled turns on per-role NKey authentication: the operator
+	// generates an eight-identity NKey Secret, renders an
+	// authorization block into nats.conf, and projects each agent's
+	// role seed into its pod.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // RedisSpec configures the Redis working memory deployment.
@@ -213,6 +237,68 @@ type EdgeSpec struct {
 	RedisMaxMemoryPolicy string `json:"redisMaxMemoryPolicy,omitempty"`
 }
 
+// NetworkPolicySpec configures the capability-tiered network isolation
+// layer (proposal 014, security roadmap Phase 1).
+//
+// The operator emits the highest-tier policy the running cluster's CNI
+// can enforce, capped by MaxTier.  Tier 1 = standard Kubernetes
+// NetworkPolicy (L3/L4); Tier 2 = FQDN egress via OVN EgressFirewall or
+// Cilium CiliumNetworkPolicy; Tier 3 = full L7 (Cilium only).  When
+// Enabled is false (the default) no policy objects are emitted.
+type NetworkPolicySpec struct {
+	// Enabled is the master switch.  Default false — the operator
+	// emits no NetworkPolicy/EgressFirewall/CiliumNetworkPolicy objects
+	// and the collective behaves exactly as before.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// MaxTier is the highest policy tier the operator is allowed to
+	// emit.  The active tier is min(MaxTier, clusterCapability).
+	// 1 = L4 NetworkPolicy; 2 = FQDN egress; 3 = L7 (Cilium).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=3
+	// +kubebuilder:default=1
+	// +optional
+	MaxTier int32 `json:"maxTier,omitempty"`
+
+	// Mode selects enforcement behaviour.  "enforce" drops disallowed
+	// traffic; "audit" logs it without dropping (a safe canary path —
+	// honoured only at Tier 3 with Cilium policy-audit).
+	// +kubebuilder:validation:Enum=enforce;audit
+	// +kubebuilder:default=enforce
+	// +optional
+	Mode string `json:"mode,omitempty"`
+
+	// CNIEnforces overrides the heuristic that detects whether the
+	// running CNI enforces NetworkPolicy.  "auto" (default) infers it;
+	// "true"/"false" force the verdict (use on K3s where the heuristic
+	// cannot be certain).
+	// +kubebuilder:validation:Enum=auto;"true";"false"
+	// +kubebuilder:default=auto
+	// +optional
+	CNIEnforces string `json:"cniEnforces,omitempty"`
+
+	// ExtraEgressFQDNs are additional fully-qualified domain names the
+	// agent pods are allowed to reach (Tier 2+).  E.g. a custom LLM
+	// provider or a private Slack proxy.
+	// +optional
+	ExtraEgressFQDNs []string `json:"extraEgressFQDNs,omitempty"`
+
+	// ExtraEgressCIDRs are additional CIDR blocks agent pods may reach
+	// — the escape hatch for non-DNS external endpoints (e.g. a
+	// fixed-IP NATS hub).
+	// +optional
+	ExtraEgressCIDRs []string `json:"extraEgressCIDRs,omitempty"`
+
+	// AllowedExternalLLM overrides the built-in set of external LLM
+	// provider FQDNs used to scope Tier 2 egress.  When empty a
+	// sensible default set (Anthropic + common OpenAI-compatible
+	// hosts) is used.
+	// +optional
+	AllowedExternalLLM []string `json:"allowedExternalLLM,omitempty"`
+}
+
 // GovernanceSpec configures the OPA 3-tier rule system.
 type GovernanceSpec struct {
 	// CategoryA configures immutable constitutional rule enforcement.
@@ -229,6 +315,51 @@ type GovernanceSpec struct {
 	// ConstraintTemplates (requires Gatekeeper to be installed cluster-wide).
 	// +kubebuilder:default=false
 	GatekeeperIntegration bool `json:"gatekeeperIntegration"`
+
+	// RuntimeEvidence configures the optional provider-agnostic
+	// kernel-event evidence layer for Category-A governance (proposal
+	// 015, security roadmap Phase 3).  When nil or disabled the
+	// operator emits nothing and Cat-A stays metadata-only.
+	// +optional
+	RuntimeEvidence *RuntimeEvidenceSpec `json:"runtimeEvidence,omitempty"`
+}
+
+// RuntimeEvidenceSpec configures the kernel-event evidence layer
+// (proposal 015).  ACC is a *consumer* of runtime-security evidence: it
+// detects whichever backend the cluster runs (RHACS / Falco / Tetragon
+// for process+file events, NetObserv for network-connect events),
+// normalises events onto the NATS bus as KERNEL_EVENT signals, and
+// folds them into Category-A evaluation.  It never installs or operates
+// a runtime-security tool.
+type RuntimeEvidenceSpec struct {
+	// Enabled is the master switch.  Default false — the operator
+	// emits no bridge and Cat-A behaves exactly as before.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Enforce selects enforcement behaviour.  False (default) = a
+	// 4-week observe baseline: kernel violations are logged
+	// (`OBSERVED:kernel:*`) but never block.  True = violations block
+	// and emit ALERT_ESCALATE.
+	// +kubebuilder:default=false
+	// +optional
+	Enforce bool `json:"enforce,omitempty"`
+
+	// ObserveWindowDays is the recommended observe baseline length
+	// before flipping Enforce on.  Advisory — surfaced in status.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=28
+	// +optional
+	ObserveWindowDays int32 `json:"observeWindowDays,omitempty"`
+
+	// PreferredBackend picks the process/file evidence backend when
+	// more than one is detected.  "auto" (default) prefers
+	// RHACS > Falco > Tetragon.
+	// +kubebuilder:validation:Enum=auto;rhacs;falco;tetragon
+	// +kubebuilder:default=auto
+	// +optional
+	PreferredBackend string `json:"preferredBackend,omitempty"`
 }
 
 // CategoryASpec configures Category A (immutable) rule enforcement.
@@ -492,6 +623,18 @@ type AgentCorpusStatus struct {
 	// +optional
 	ManifestDeliveryReady bool `json:"manifestDeliveryReady,omitempty"`
 
+	// NetworkPolicy reports what the NetworkPolicyReconciler emitted
+	// (proposal 014).  The companion NetworkPolicyReady condition
+	// carries the human-readable reason.
+	// +optional
+	NetworkPolicy NetworkPolicyStatus `json:"networkPolicy,omitempty"`
+
+	// RuntimeEvidence reports the kernel-event evidence layer state
+	// (proposal 015).  The companion RuntimeEvidenceReady condition
+	// carries the human-readable reason.
+	// +optional
+	RuntimeEvidence RuntimeEvidenceStatus `json:"runtimeEvidence,omitempty"`
+
 	// CurrentVersion is the ACC version currently deployed.
 	// +optional
 	CurrentVersion string `json:"currentVersion,omitempty"`
@@ -529,8 +672,81 @@ type PrerequisiteStatus struct {
 	// workload-identity provisioning — proposal 011.
 	SpireInstalled bool `json:"spireInstalled,omitempty"`
 
+	// CiliumInstalled is true when the cilium.io API group is
+	// registered.  Enables Tier 2/3 network policy — proposal 014.
+	CiliumInstalled bool `json:"ciliumInstalled,omitempty"`
+
+	// OVNEgressFirewallSupported is true when the k8s.ovn.org API
+	// group is registered (OVN-Kubernetes CNI).  Enables Tier 2 FQDN
+	// egress via EgressFirewall — proposal 014.
+	OVNEgressFirewallSupported bool `json:"ovnEgressFirewallSupported,omitempty"`
+
+	// RHACSInstalled is true when the platform.stackrox.io API group
+	// is registered (Red Hat Advanced Cluster Security) — a
+	// runtime-evidence backend, proposal 015.
+	RHACSInstalled bool `json:"rhacsInstalled,omitempty"`
+
+	// FalcoInstalled is true when the Falco CRD group is registered —
+	// a runtime-evidence backend, proposal 015.
+	FalcoInstalled bool `json:"falcoInstalled,omitempty"`
+
+	// TetragonInstalled is true when the TracingPolicy resource (kind,
+	// under cilium.io/v1alpha1) is registered — a runtime-evidence
+	// backend, proposal 015.  Detected resource-level, NOT by the
+	// cilium.io group (that would collide with CiliumInstalled).
+	TetragonInstalled bool `json:"tetragonInstalled,omitempty"`
+
+	// NetObservInstalled is true when the flows.netobserv.io API group
+	// is registered (OpenShift Network Observability) — the
+	// network-connect evidence source, proposal 015.
+	NetObservInstalled bool `json:"netobservInstalled,omitempty"`
+
 	// AllMet is true when every required prerequisite is satisfied.
 	AllMet bool `json:"allMet,omitempty"`
+}
+
+// NetworkPolicyStatus reports what the NetworkPolicyReconciler emitted
+// (proposal 014).  Written each reconcile pass.
+type NetworkPolicyStatus struct {
+	// ActiveTier is the policy tier actually emitted —
+	// min(spec.networkPolicy.maxTier, clusterCapability).  0 means no
+	// policy (standalone, disabled, or a non-enforcing CNI).
+	// +optional
+	ActiveTier int32 `json:"activeTier,omitempty"`
+
+	// Backend names the policy engine in use: "none", "networkpolicy",
+	// "egressfirewall", or "cilium".
+	// +optional
+	Backend string `json:"backend,omitempty"`
+
+	// PolicyCount is the number of policy objects the operator owns for
+	// this corpus.
+	// +optional
+	PolicyCount int32 `json:"policyCount,omitempty"`
+}
+
+// RuntimeEvidenceStatus reports the kernel-event evidence layer state
+// (proposal 015).  Written each reconcile pass.
+type RuntimeEvidenceStatus struct {
+	// ActiveBackend names the selected process/file evidence backend:
+	// "none", "rhacs", "falco", or "tetragon".
+	// +optional
+	ActiveBackend string `json:"activeBackend,omitempty"`
+
+	// NetworkSource names the network-connect evidence source:
+	// "none" or "netobserv".
+	// +optional
+	NetworkSource string `json:"networkSource,omitempty"`
+
+	// BridgeReady is true when the runtime-evidence bridge Deployment
+	// is available.
+	// +optional
+	BridgeReady bool `json:"bridgeReady,omitempty"`
+
+	// Enforcing is true when kernel violations block (Enforce mode);
+	// false during the observe baseline.
+	// +optional
+	Enforcing bool `json:"enforcing,omitempty"`
 }
 
 // InfrastructureStatus reports the state of operator-managed components.

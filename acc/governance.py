@@ -278,3 +278,87 @@ class CatAEvaluator:
                 os.unlink(input_path)
             except OSError:
                 pass
+
+
+# ---------------------------------------------------------------------------
+# KernelEventEvaluator (proposal 015 — Phase 3)
+# ---------------------------------------------------------------------------
+
+# Default allowed executable-path prefixes for the agent-core image.
+# An ``execve`` of a binary outside this set is flagged.  Operators
+# tune the set from the observe-window log (proposal 015 §5 PR-5);
+# the matching reference Rego is regulatory_layer/category_a/kernel_events.rego.
+DEFAULT_ALLOWED_BINARY_PREFIXES = (
+    "/usr/bin/python",
+    "/usr/local/bin/python",
+    "/usr/bin/",
+    "/bin/",
+    "/app/",
+)
+
+
+class KernelEventEvaluator:
+    """Folds kernel-level evidence into Category-A (proposal 015).
+
+    Where :class:`CatAEvaluator` judges *signal metadata the agent
+    process supplies* (forgeable), this evaluator judges ``KERNEL_EVENT``
+    signals — what the process *actually did*, observed below the
+    application layer by a runtime-security backend.
+
+    It is a small, deterministic Python evaluator (the kernel rule set
+    is tiny and stable); ``regulatory_layer/category_a/kernel_events.rego``
+    is the OPA-equivalent reference operators translate into their
+    runtime-security tool.
+
+    Args:
+        enforce: ``True`` → a kernel violation returns ``allowed=False``
+            (block + ALERT_ESCALATE).  ``False`` (default) → the observe
+            baseline: violations are logged and returned as
+            ``observed:kernel:*`` but never block.
+        allowed_binary_prefixes: executable-path allowlist for ``execve``.
+    """
+
+    def __init__(
+        self,
+        enforce: bool = False,
+        allowed_binary_prefixes: tuple[str, ...] | None = None,
+    ) -> None:
+        self._enforce = enforce
+        self._allowed = tuple(
+            allowed_binary_prefixes or DEFAULT_ALLOWED_BINARY_PREFIXES
+        )
+
+    def evaluate(self, events: list[dict[str, Any]]) -> tuple[bool, str]:
+        """Evaluate a buffer of recent KERNEL_EVENT payloads for one pod.
+
+        Returns ``(allowed, reason)``.  On the first violation found:
+        enforce mode → ``(False, "kernel:<rule>")``; observe mode →
+        ``(True, "observed:kernel:<rule>")``.  No violation →
+        ``(True, "kernel:clean")``.
+        """
+        for ev in events:
+            violation = self._check(ev.get("hook", ""), ev.get("detail", {}) or {})
+            if violation is None:
+                continue
+            if self._enforce:
+                logger.warning("governance: kernel violation (enforce): %s", violation)
+                return False, f"kernel:{violation}"
+            logger.warning("governance: kernel violation (observe): %s", violation)
+            return True, f"observed:kernel:{violation}"
+        return True, "kernel:clean"
+
+    def _check(self, hook: str, detail: dict[str, Any]) -> str | None:
+        """Apply the kernel rule set; return a violation id or ``None``."""
+        if hook == "execve":
+            binary = str(detail.get("binary", ""))
+            if binary and not any(binary.startswith(p) for p in self._allowed):
+                return f"execve:unexpected_binary:{binary}"
+        elif hook == "openat":
+            path = str(detail.get("path", ""))
+            # /proc/<pid>/mem reads are unambiguously malicious.
+            if path.startswith("/proc/") and path.endswith("/mem"):
+                return f"openat:proc_mem:{path}"
+        # `connect` evidence is recorded but not enforced inline — it
+        # needs the approved-CIDR context (proposal 015 §8 Q3); it
+        # surfaces in the observe log via the bridge.
+        return None

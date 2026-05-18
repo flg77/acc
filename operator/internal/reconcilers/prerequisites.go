@@ -12,8 +12,9 @@ import (
 	"context"
 	"fmt"
 
-	"k8s.io/client-go/discovery"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/discovery"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
@@ -79,6 +80,42 @@ func (r *PrerequisiteReconciler) Reconcile(ctx context.Context, corpus *accv1alp
 	}
 	pre.SpireInstalled = spireOK
 
+	// ---------- Cilium / OVN (proposal 014 network-policy tiers) -----------
+	ciliumOK, err := checker.CiliumInstalled()
+	if err != nil {
+		ciliumOK = false
+	}
+	pre.CiliumInstalled = ciliumOK
+
+	ovnOK, err := checker.OVNEgressFirewallSupported()
+	if err != nil {
+		ovnOK = false
+	}
+	pre.OVNEgressFirewallSupported = ovnOK
+
+	// ---------- Runtime-evidence backends (proposal 015) -------------------
+	rhacsOK, err := checker.RHACSInstalled()
+	if err != nil {
+		rhacsOK = false
+	}
+	pre.RHACSInstalled = rhacsOK
+
+	netobservOK, err := checker.NetObservInstalled()
+	if err != nil {
+		netobservOK = false
+	}
+	pre.NetObservInstalled = netobservOK
+
+	tetragonOK, err := checker.TetragonInstalled()
+	if err != nil {
+		tetragonOK = false
+	}
+	pre.TetragonInstalled = tetragonOK
+
+	// Falco has no reliable API-group fingerprint (the Helm chart ships
+	// no CRDs) — detect it by its DaemonSet's standard chart label.
+	pre.FalcoInstalled = r.falcoDaemonSetPresent(ctx)
+
 	// ---------- Kafka (TCP probe) ------------------------------------------
 	kafkaReachable := false
 	if corpus.Spec.Kafka != nil && corpus.Spec.Kafka.BootstrapServers != "" {
@@ -123,9 +160,41 @@ func (r *PrerequisiteReconciler) Reconcile(ctx context.Context, corpus *accv1alp
 			"deployMode=edge but spec.edge.hubNatsUrl is empty; NATS leaf node will not connect to a hub — bridge delegation unavailable until configured")
 	}
 
+	// Network policy (proposal 014): when an operator opted in but the
+	// running CNI cannot enforce NetworkPolicy, warn — the emitted
+	// objects would be advisory only (e.g. K3s/Flannel).
+	if np := corpus.Spec.NetworkPolicy; np != nil && np.Enabled &&
+		corpus.Spec.DeployMode != accv1alpha1.DeployModeStandalone {
+		enforced := ciliumOK || ovnOK
+		if np.CNIEnforces == "true" {
+			enforced = true
+		} else if np.CNIEnforces == "false" {
+			enforced = false
+		}
+		if !enforced {
+			r.warnEvent(ctx, corpus, "CNIDoesNotEnforceNetworkPolicy",
+				"spec.networkPolicy.enabled=true but no policy-enforcing CNI "+
+					"(OVN-Kubernetes/Cilium/Calico) was detected — emitted "+
+					"NetworkPolicy objects will NOT be enforced (e.g. K3s/Flannel). "+
+					"Set spec.networkPolicy.cniEnforces explicitly to override.")
+		}
+	}
+
 	pre.AllMet = allMet
 
 	return SubResult{}, nil
+}
+
+// falcoDaemonSetPresent reports whether a Falco DaemonSet exists
+// anywhere in the cluster (proposal 015).  Falco is detected this way
+// because its Helm chart ships no CRD to fingerprint via discovery.
+func (r *PrerequisiteReconciler) falcoDaemonSetPresent(ctx context.Context) bool {
+	var dsList appsv1.DaemonSetList
+	if err := r.Client.List(ctx, &dsList,
+		client.MatchingLabels{"app.kubernetes.io/name": "falco"}); err != nil {
+		return false
+	}
+	return len(dsList.Items) > 0
 }
 
 func (r *PrerequisiteReconciler) warnEvent(_ context.Context, corpus *accv1alpha1.AgentCorpus, reason, msg string) {

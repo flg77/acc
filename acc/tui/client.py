@@ -76,6 +76,10 @@ class NATSObserver:
         nats_url: NATS server URL (e.g. ``nats://localhost:4222``).
         collective_id: Collective to observe.
         update_queue: ``asyncio.Queue`` to publish snapshot copies on each update.
+        nkey_seed_path: Optional path to the ``tui`` NKey seed file
+            (proposal 013).  When set, the observer authenticates as
+            the read-only operator surface.  ``None`` keeps the legacy
+            credential-less connection.
     """
 
     def __init__(
@@ -83,8 +87,10 @@ class NATSObserver:
         nats_url: str,
         collective_id: str,
         update_queue: asyncio.Queue,
+        nkey_seed_path: str | None = None,
     ) -> None:
         self._nats_url = nats_url
+        self._nkey_seed_path = nkey_seed_path or None
         self._collective_id = collective_id
         self._queue = update_queue
         self._snapshot = CollectiveSnapshot(collective_id=collective_id)
@@ -121,9 +127,25 @@ class NATSObserver:
     # ------------------------------------------------------------------
 
     async def connect(self) -> None:
-        """Connect to the NATS server."""
+        """Connect to the NATS server.
+
+        When a ``tui`` NKey seed path was supplied (proposal 013), the
+        observer authenticates with it; a missing seed file fails
+        closed rather than connecting anonymously.
+        """
         import nats  # deferred import — optional dependency
-        self._nc = await nats.connect(self._nats_url)
+        opts: dict[str, Any] = {}
+        if self._nkey_seed_path is not None:
+            import os  # noqa: PLC0415
+
+            if not os.path.isfile(self._nkey_seed_path):
+                raise FileNotFoundError(
+                    f"NKey auth requested but `tui` seed file not found "
+                    f"at {self._nkey_seed_path!r} — generate it with "
+                    f"`scripts/acc-nkeys generate`"
+                )
+            opts["nkeys_seed"] = self._nkey_seed_path
+        self._nc = await nats.connect(self._nats_url, **opts)
         logger.info("nats_observer: connected to %s", self._nats_url)
 
     async def close(self) -> None:

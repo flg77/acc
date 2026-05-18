@@ -32,7 +32,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from acc.channels.base import PromptResponse
-from acc.signals import SIG_TASK_ASSIGN, subject_task
+from acc.signals import SIG_TASK_ASSIGN, subject_task_assign
 
 if TYPE_CHECKING:
     from acc.tui.client import NATSObserver
@@ -147,7 +147,7 @@ class TUIPromptChannel:
 
         try:
             await self._observer.publish(
-                subject_task(self._collective_id), payload,
+                subject_task_assign(self._collective_id), payload,
             )
         except Exception:
             # Publish failed — clean up the listener so a stale future

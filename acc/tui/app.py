@@ -117,6 +117,18 @@ class ACCTUIApp(App):
         super().__init__()
         self._nats_url = nats_url or os.environ.get("ACC_NATS_URL", _DEFAULT_NATS_URL)
 
+        # Proposal 013 — NATS NKey auth.  When ACC_NKEY_ENABLED is set,
+        # the TUI authenticates as the read-only `tui` identity using
+        # the seed at ACC_NKEY_SEED_PATH.  Unset → credential-less
+        # connection, unchanged from before.
+        self._nkey_seed_path: str | None = None
+        if os.environ.get("ACC_NKEY_ENABLED", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        ):
+            self._nkey_seed_path = (
+                os.environ.get("ACC_NKEY_SEED_PATH", "").strip() or None
+            )
+
         # Multi-collective resolution (REQ-TUI-006)
         if collective_ids:
             self._collective_ids = collective_ids
@@ -162,6 +174,7 @@ class ACCTUIApp(App):
                 nats_url=self._nats_url,
                 collective_id=cid,
                 update_queue=q,
+                nkey_seed_path=self._nkey_seed_path,
             )
             self._queues.append(q)
             self._observers.append(obs)

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from acc.config import (
     ACCConfig,
+    NKeyConfig,
     RoleDefinitionConfig,
     RoleSyncConfig,
     SecurityConfig,
@@ -465,6 +466,68 @@ class TestSpiffeDefaults:
         data = _apply_env({})
         cfg = ACCConfig.model_validate(data)
         assert cfg.security.spiffe.allow_ed25519_fallback is False
+
+
+# ---------------------------------------------------------------------------
+# NATS NKey authentication (proposal 013 PR-2)
+# ---------------------------------------------------------------------------
+
+
+class TestNKeyDefaults:
+    """NKeyConfig defaults + env overlay.  PR-2 is inert: every field
+    defaults to the connection-unchanged posture."""
+
+    def test_nkey_defaults_are_inert(self):
+        nk = NKeyConfig()
+        assert nk.enabled is False
+        assert nk.seed_path == "/run/acc/nkeys/seed"
+        assert nk.role == ""
+        assert nk.leaf_seed_path == ""
+
+    def test_security_carries_inert_nkey_block(self):
+        sec = SecurityConfig()
+        assert isinstance(sec.nkey, NKeyConfig)
+        assert sec.nkey.enabled is False
+
+    def test_nkey_block_propagates(self):
+        cfg = ACCConfig.model_validate({
+            "security": {
+                "nkey": {
+                    "enabled": True,
+                    "seed_path": "/etc/acc/seed-arbiter",
+                    "role": "arbiter",
+                    "leaf_seed_path": "/etc/acc/seed-leaf",
+                },
+            },
+        })
+        assert cfg.security.nkey.enabled is True
+        assert cfg.security.nkey.seed_path == "/etc/acc/seed-arbiter"
+        assert cfg.security.nkey.role == "arbiter"
+        assert cfg.security.nkey.leaf_seed_path == "/etc/acc/seed-leaf"
+
+    def test_nkey_env_overlay(self):
+        # _apply_env reads os.environ directly; exercise it explicitly.
+        env = {
+            "ACC_NKEY_ENABLED": "true",
+            "ACC_NKEY_SEED_PATH": "/run/x/seed",
+            "ACC_NKEY_ROLE": "analyst",
+            "ACC_NKEY_LEAF_SEED_PATH": "/run/x/leaf",
+        }
+        old = {k: os.environ.get(k) for k in env}
+        try:
+            os.environ.update(env)
+            overlaid = _apply_env({})
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        nk = overlaid["security"]["nkey"]
+        assert nk["enabled"] == "true"
+        assert nk["seed_path"] == "/run/x/seed"
+        assert nk["role"] == "analyst"
+        assert nk["leaf_seed_path"] == "/run/x/leaf"
 
 
 # ---------------------------------------------------------------------------

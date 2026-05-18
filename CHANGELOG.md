@@ -13,6 +13,121 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **acc-webgui — optional FastAPI + React web frontend (proposal acc-webgui).**
+  A new optional container: a browser frontend with feature parity to
+  the terminal UI `acc-tui` plus enhanced tracing views.  Opt-in — a
+  separate image + compose profile; nothing changes for existing
+  deployments, and `acc-tui` is unchanged and not deprecated.
+
+  - **PR-1** — FastAPI backend (`acc/webgui/`): `ObserverHub` reuses
+    `acc.tui.client.NATSObserver` + `CollectiveSnapshot` (parity is
+    structural, not a fork); WebSocket `/ws/{cid}` live push + REST
+    read endpoints; `pyproject.toml` `[webgui]` extra + `acc-webgui`
+    console script.
+  - **PR-2** — React + Vite + TypeScript frontend (`webgui/` tree):
+    app shell, collective switcher, the 8 parity screens.
+  - **PR-3** — action endpoints (`infuse` / `prompt` / `oversight` /
+    `test-llm`) + `acc/channels/webgui.py` `WebPromptChannel`.
+  - **PR-4** — enhanced tracing: a task-step waterfall, a PLAN DAG
+    view, and a tamper-evident audit-chain timeline (the audit endpoint
+    re-verifies each record's `evidence_hash`).
+  - **PR-5** — capability-tiered auth (`oauth-proxy` / `oidc` /
+    `token`); viewer/operator RBAC; the server refuses a non-loopback
+    bind when no auth is configured.
+  - **PR-6** — multi-stage `Containerfile.webgui` (Node build stage
+    discarded — the runtime image is Python-only); compose `webgui`
+    profile; operator `acc_webgui_deployment.yaml` sample.
+
+  The backend reuses the TUI's framework-agnostic data layer, so a new
+  signal type appears in both UIs for free.  See `docs/webgui.md`.
+
+- **Runtime-evidence Cat-A (proposal 015, Phase 3).**  A
+  provider-agnostic kernel-event evidence layer for Category-A
+  governance — ACC folds `execve`/`openat`/`connect` evidence (what an
+  agent process *actually did*) into Cat-A, alongside the existing
+  metadata evaluation.  Opt-in via `governance.runtimeEvidence.enabled`
+  (default `false`); observe-by-default.
+
+  - **PR-1** — `RuntimeEvidenceSpec` on `GovernanceSpec`; status
+    `runtimeEvidence` + `RuntimeEvidenceReady` condition;
+    `PrerequisiteStatus` gains `rhacsInstalled` / `falcoInstalled` /
+    `tetragonInstalled` / `netobservInstalled`; resource-level
+    `HasAPIResource` detection (Tetragon's `TracingPolicy` is detected
+    by *kind*, not the `cilium.io` group it shares with the CNI).
+  - **PR-2** — new `acc-runtime-evidence-bridge` image
+    (`acc/runtime_evidence_bridge.py`) with an adapter framework + the
+    Tetragon and NetObserv adapters; operator
+    `RuntimeEvidenceBridgeReconciler`.
+  - **PR-3** — RHACS (Red Hat-preferred) and Falco adapters; backend
+    auto-selection (RHACS > Falco > Tetragon).
+  - **PR-4** — `KERNEL_EVENT` NATS signal; `CognitiveCore` subscribes,
+    correlates events to its own pod, and folds them into Cat-A via
+    the new `KernelEventEvaluator`; downward-API pod identity on agent
+    pods.
+  - **PR-5** — `regulatory_layer/category_a/kernel_events.rego`
+    (K-001/K-002/K-003) + recommended Tetragon/Falco rule samples.
+
+  Provider-agnostic: ACC consumes whichever runtime-security tool the
+  cluster runs and never installs one.  See `docs/runtime-evidence.md`
+  and proposal 015.
+
+- **L7 / eBPF NetworkPolicy (proposal 014, Phase 1).**  An opt-in,
+  capability-tiered network-isolation layer for ACC agent pods,
+  delivered entirely operator-side (no Python runtime change).
+  Opt-in via `spec.networkPolicy.enabled` (default `false`) — upgrading
+  the operator never drops traffic.
+
+  - **PR-1/PR-2** — `NetworkPolicySpec` on `AgentCorpusSpec`; status
+    `networkPolicy` block + `NetworkPolicyReady` condition;
+    `PrerequisiteStatus` gains `ciliumInstalled` /
+    `ovnEgressFirewallSupported`; `APIGroupChecker` detects `cilium.io`
+    and `k8s.ovn.org` plus a CNI-enforcement heuristic.
+  - **PR-3** — new `NetworkPolicyReconciler` (`internal/reconcilers/
+    security/`); Tier 1 = default-deny + DNS + same-namespace +
+    coarse external-HTTPS standard `NetworkPolicy` objects for agent
+    pods.  Honest about K3s/Flannel (emits objects, reports
+    `CNIDoesNotEnforce`).
+  - **PR-4** — Tier 2 FQDN egress via OVN `EgressFirewall` or Cilium
+    `CiliumNetworkPolicy` (auto-selected, emitted as unstructured
+    objects — no heavy CRD-type vendoring).
+  - **PR-5** — Tier 3 Cilium L7 (HTTP-method-scoped egress); `mode:
+    audit` emits the policy set without the default-deny as a safe
+    canary.
+
+  Cilium is **not** a prerequisite — Tier 1 standard `NetworkPolicy`
+  is the portable must-have; Tiers 2/3 auto-negotiate from detected
+  cluster capability.  See `docs/network-policy.md` and proposal 014.
+
+- **NATS NKey authentication (proposal 013, Phase 0c).**  Per-role
+  NKey identities + a server-enforced publish/subscribe permission
+  matrix for the NATS bus, integrating into all three deploy modes
+  (standalone / edge / rhoai).  Opt-in via `security.nkey.enabled`
+  (default `false`) — with the switch off, every NATS connection is
+  byte-for-byte unchanged.
+
+  - **PR-1** — split the shared `acc.{cid}.task` subject into
+    `acc.{cid}.task.assign` (TASK_ASSIGN) and `acc.{cid}.task.complete`
+    (TASK_COMPLETE) so the permission matrix can grant "assign work"
+    and "report completion" independently per role.  `subject_task()`
+    is retained for one release as a deprecated alias.
+  - **PR-2** — new `NKeyConfig` model under `SecurityConfig`
+    (`ACC_NKEY_*` env overrides); canonical `acc/nats_permissions.yaml`
+    permission matrix consumed by both the operator's Go renderer and
+    the Python CLI; `acc/nats_permissions.py` loader; contract test
+    `tests/test_nats_permissions.py` fails CI if a subject in
+    `acc/signals.py` is left uncovered.  TUI Configuration screen
+    surfaces the resolved `nkey.enabled` / `nkey.role`.
+  - **PR-5** — `NATSBackend` and the TUI `NATSObserver` thread an
+    NKey seed into `nats.connect()` when enabled (fail closed on a
+    missing seed, never silently anonymous); new `acc/nkeys.py`
+    (pure-Python Ed25519 NKey generation + `nats.conf` authorization
+    rendering) and the `scripts/acc-nkeys` CLI (`generate` /
+    `render-conf`) for standalone mode; `podman-compose.yml` gains an
+    opt-in `nats.conf` mount.
+
+  Eight identities: the six agent roles plus a read-only `tui`
+  surface and an edge `leaf`-node link.  See `docs/nats-nkeys.md`.
+
 - **Edge SPIFFE guide + cross-mode compatibility e2e (proposal 012
   PR-4).**  Closes proposal 012.  New `docs/spiffe-edge.md` — the
   edge SPIFFE guide: the topology decision tree (nested / federated

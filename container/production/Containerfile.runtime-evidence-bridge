@@ -1,0 +1,73 @@
+# ACC runtime-evidence bridge — Production UBI10 Python 3.12 (minimal)
+#
+# Proposal 015 (security roadmap Phase 3).  A single operator-deployed
+# Deployment that consumes whichever runtime-security backend the
+# cluster runs (Tetragon / RHACS / Falco for process+file evidence,
+# NetObserv for network-connect evidence), normalises events into
+# KERNEL_EVENT signals, and publishes them on NATS for Category-A.
+#
+# This is the *only* privileged/credentialed component of the Phase 3
+# feature — agent pods are unchanged.
+#
+# Build:
+#   podman build -f container/production/Containerfile.runtime-evidence-bridge \
+#     --build-arg ACC_VERSION=0.3.1 \
+#     -t localhost/acc-runtime-evidence-bridge:0.3.1 .
+#
+# Run:
+#   podman run --rm --network host \
+#     -e ACC_RUNTIME_BACKEND=tetragon \
+#     -e ACC_RUNTIME_NETWORK_SOURCE=netobserv \
+#     -e ACC_NATS_URL=nats://localhost:4222 \
+#     localhost/acc-runtime-evidence-bridge:0.3.1
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.3.1
+
+LABEL org.opencontainers.image.title="acc-runtime-evidence-bridge" \
+      org.opencontainers.image.description="ACC runtime-evidence bridge (proposal 015)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+USER 0
+
+# Build tools needed only during pip install of msgpack (C extension).
+RUN microdnf install -y --nodocs \
+        gcc \
+        python3-devel \
+    && microdnf clean all \
+    && rm -rf /var/cache/dnf
+
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+
+# The bridge talks only to NATS + reads backend event files / APIs.
+# No ML/DB/TUI stack.
+RUN pip install --no-cache-dir \
+    "nats-py>=2.7,<3.0" \
+    "msgpack>=1.1,<2.0" \
+    "pyyaml>=6.0,<7.0" \
+    "pydantic>=2.8,<3.0" \
+    "httpx>=0.27,<1.0"
+
+COPY acc/ /app/acc/
+
+RUN pip install --no-cache-dir --no-deps . \
+ && echo "acc:x:1001:0:ACC evidence bridge:/app:/bin/sh" >> /etc/passwd \
+ && chown -R 1001:0 /app \
+ && chmod -R g=u /app
+
+USER 1001
+
+ENV ACC_NATS_URL=nats://localhost:4222 \
+    ACC_RUNTIME_BACKEND=none \
+    ACC_RUNTIME_NETWORK_SOURCE=none \
+    ACC_RUNTIME_ENFORCE=false \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+ENTRYPOINT ["python", "-m", "acc.runtime_evidence_bridge"]

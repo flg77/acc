@@ -34,6 +34,7 @@ import (
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/infra"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/manifests"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/observability"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/security"
 	statuspkg "github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/status"
 )
 
@@ -59,12 +60,16 @@ var (
 // +kubebuilder:rbac:groups=acc.redhat.io,resources=agentcorpora/finalizers,verbs=update
 // +kubebuilder:rbac:groups=acc.redhat.io,resources=agentcollectives,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=services;configmaps;persistentvolumeclaims;events,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=templates.gatekeeper.sh,resources=constrainttemplates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=keda.sh,resources=scaledobjects,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=serving.kserve.io,resources=inferenceservices,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=prometheusrules,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=k8s.ovn.org,resources=egressfirewalls,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
 type AgentCorpusReconciler struct {
 	Client    client.Client
 	Scheme    *runtime.Scheme
@@ -199,8 +204,16 @@ func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconcile
 		&governance.OPABundleServerReconciler{Client: r.Client, Scheme: r.Scheme},
 		&governance.GatekeeperReconciler{Client: r.Client},
 		&bridge.KafkaBridgeReconciler{Client: r.Client, Scheme: r.Scheme},
+		// Runtime-evidence bridge (proposal 015) — kernel-event source
+		// for Cat-A; opt-in, no-op when governance.runtimeEvidence is
+		// disabled or no backend is detected.
+		&bridge.RuntimeEvidenceBridgeReconciler{Client: r.Client, Scheme: r.Scheme},
 		&observability.OTelCollectorReconciler{Client: r.Client, Scheme: r.Scheme},
 		&observability.PrometheusRulesReconciler{Client: r.Client},
+		// NetworkPolicy slot (proposal 014): after prerequisites +
+		// infrastructure are known, before agent Deployments are
+		// created, so the policies exist as pods come up.
+		&security.NetworkPolicyReconciler{Client: r.Client, Scheme: r.Scheme},
 		&collectiverec.CollectiveReconciler{Client: r.Client, Scheme: r.Scheme},
 	}
 }

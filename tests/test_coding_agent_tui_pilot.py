@@ -259,7 +259,7 @@ async def test_prompt_send_routes_task_assign_to_coding_agent():
 
         assert app.observer.published, "send worker never published"
         subject, payload = app.observer.published[0]
-        assert subject == "acc.sol-test.task"
+        assert subject == "acc.sol-test.task.assign"
         assert payload["signal_type"] == "TASK_ASSIGN"
         assert payload["target_role"] == "coding_agent"
         assert payload["content"] == (

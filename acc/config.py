@@ -520,6 +520,57 @@ class SpiffeConfig(BaseModel):
     # edge`` — see ``ACCConfig._validate_edge_spiffe_fields`` below.
 
 
+class NKeyConfig(BaseModel):
+    """NATS NKey authentication settings (proposal 013, Phase 0c).
+
+    Inert in PR-2 — this PR ships the config surface + the canonical
+    permission matrix only.  Proposal 013's PR-3/PR-4 (operator) and
+    PR-5 (runtime connect path) consume these fields.
+
+    All fields default to values that disable NKey auth entirely
+    (``enabled: False``).  With the switch off, ``acc.backends.
+    signaling_nats`` connects exactly as it did before — zero
+    behaviour change for every existing deployment.
+
+    NKeys authenticate the *connection* and gate which *subjects* an
+    identity may publish/subscribe (server-enforced).  This is
+    complementary to SPIFFE (proposal 011), which signs the
+    ROLE_UPDATE *payload* — a deployment may run either, both, or
+    neither.
+
+    Example::
+
+        security:
+          nkey:
+            enabled: true
+            role: arbiter
+            seed_path: /run/acc/nkeys/seed
+    """
+
+    enabled: bool = False
+    """Master switch.  When False every other field is ignored and
+    the NATS client connects without credentials (legacy behaviour)."""
+
+    seed_path: str = "/run/acc/nkeys/seed"
+    """Filesystem path to this process's NKey *seed* file (the
+    secret half of the Ed25519 keypair, ``S...``-prefixed).  On
+    rhoai/edge the operator projects a K8s Secret here; standalone
+    operators point this at a ``0600`` file produced by
+    ``scripts/acc-nkeys generate``.  Never logged or rendered."""
+
+    role: str = ""
+    """Which NKey identity this process presents — one of the six
+    agent roles, ``tui``, or ``leaf``.  Empty means "derive from
+    ``agent.role``" at connect time (the common case for agent
+    pods)."""
+
+    leaf_seed_path: str = ""
+    """Seed file for the edge leaf-node link to the hub
+    (``deploy_mode: edge`` only).  Empty disables leaf-link
+    authentication.  Distinct from ``seed_path`` because the leaf
+    connection is a different NATS identity than the agent."""
+
+
 class SecurityConfig(BaseModel):
     """Cryptographic security settings (Phase 0a onwards).
 
@@ -552,6 +603,12 @@ class SecurityConfig(BaseModel):
     """SPIFFE workload identity settings.  Inert until
     ``signing_mode: spiffe`` is set AND ``spiffe.enabled: true``."""
 
+    nkey: NKeyConfig = Field(default_factory=NKeyConfig)
+    """NATS NKey authentication settings (proposal 013).  Inert until
+    ``nkey.enabled: true``.  Complementary to ``spiffe`` — NKeys
+    authenticate the NATS connection; SPIFFE signs ROLE_UPDATE
+    payloads."""
+
 
 class ComplianceConfig(BaseModel):
     """Enterprise compliance settings (ACC-12).
@@ -583,6 +640,19 @@ class ComplianceConfig(BaseModel):
 
     cat_a_wasm_path: str = "/app/regulatory_layer/category_a/constitutional_rhoai.wasm"
     """Path to the compiled OPA WASM artifact for Cat-A evaluation."""
+
+    runtime_evidence_enabled: bool = False
+    """When True: the agent's CognitiveCore subscribes to KERNEL_EVENT
+    signals and folds kernel-level evidence into Cat-A (proposal 015).
+    Inert when False — Cat-A stays metadata-only.  The operator sets
+    this on agent pods when the runtime-evidence bridge is deployed."""
+
+    runtime_enforce: bool = False
+    """When True: kernel-event Cat-A violations block task processing
+    and emit ALERT_ESCALATE.  False (default) = the observe baseline —
+    violations are logged (``OBSERVED:kernel:*``) but never block.
+    Separate from ``cat_a_enforce`` so kernel evidence can run in
+    observe while metadata Cat-A enforces, or vice versa."""
 
     audit_backend: Literal["file", "kafka", "multi"] = "file"
     """Audit record backend.  ``file`` = rotating JSONL (edge-default).
@@ -841,6 +911,11 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_SPIFFE_PARENT_UNREACHABLE_ACTION": ("security", "spiffe", "parent_unreachable_action"),
     "ACC_NATS_MTLS_CERT_PATH":      ("security", "spiffe", "nats_mtls_cert_path"),
     "ACC_NATS_MTLS_KEY_PATH":       ("security", "spiffe", "nats_mtls_key_path"),
+    # NATS NKey authentication (proposal 013 PR-2)
+    "ACC_NKEY_ENABLED":             ("security", "nkey", "enabled"),
+    "ACC_NKEY_SEED_PATH":           ("security", "nkey", "seed_path"),
+    "ACC_NKEY_ROLE":                ("security", "nkey", "role"),
+    "ACC_NKEY_LEAF_SEED_PATH":      ("security", "nkey", "leaf_seed_path"),
     # Note: ACC_SPIFFE_FEDERATION_PEERS handled separately — list type
     # needs comma-split that _apply_env's flat string assignment doesn't
     # do.  Operators set this field in acc-config.yaml directly.
@@ -864,6 +939,9 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_OWASP_ENFORCE":         ("compliance", "owasp_enforce"),
     "ACC_CAT_A_ENFORCE":         ("compliance", "cat_a_enforce"),
     "ACC_CAT_A_WASM_PATH":       ("compliance", "cat_a_wasm_path"),
+    # Runtime-evidence / kernel-event Cat-A (proposal 015)
+    "ACC_RUNTIME_EVIDENCE_ENABLED": ("compliance", "runtime_evidence_enabled"),
+    "ACC_RUNTIME_ENFORCE":          ("compliance", "runtime_enforce"),
     "ACC_AUDIT_BACKEND":         ("compliance", "audit_backend"),
     "ACC_AUDIT_FILE_PATH":       ("compliance", "audit_file_path"),
     "ACC_AUDIT_KAFKA_BOOTSTRAP": ("compliance", "audit_kafka_bootstrap"),
@@ -945,7 +1023,14 @@ def build_backends(config: ACCConfig) -> BackendBundle:
     signaling: SignalingBackend
     if config.signaling.backend == "nats":
         from acc.backends.signaling_nats import NATSBackend
-        signaling = NATSBackend(config.signaling.nats_url)
+        # Proposal 013 — thread the NKey seed when NKey auth is on.
+        # When off, nkey_seed_path stays None and the connection is
+        # credential-less, exactly as before.
+        nkey = config.security.nkey
+        signaling = NATSBackend(
+            config.signaling.nats_url,
+            nkey_seed_path=nkey.seed_path if nkey.enabled else None,
+        )
     else:
         raise ValueError(f"Unknown signaling backend: {config.signaling.backend}")
 

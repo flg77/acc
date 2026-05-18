@@ -1,0 +1,43 @@
+---
+# Tetragon TracingPolicy — ACC kernel-event Cat-A (proposal 015 sample).
+#
+# Apply to a cluster running Tetragon so it emits the process/file
+# events the ACC runtime-evidence bridge consumes.  Operator-applied —
+# ACC does not force-provision this.
+#
+#   kubectl apply -f tetragon-tracingpolicy.yaml
+#
+# Pairs with regulatory_layer/category_a/kernel_events.rego (K-001/K-002).
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: acc-agent-execve
+spec:
+  # Trace process execution.  The bridge filters to ACC agent pods by
+  # the acc.redhat.io/agent-role label; kernel_events.rego K-001 then
+  # flags binaries outside the agent image's known paths.
+  kprobes:
+    - call: "sys_execve"
+      syscall: true
+      args:
+        - index: 0
+          type: "string"
+---
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: acc-agent-proc-mem
+spec:
+  # Trace openat; kernel_events.rego K-002 flags /proc/<pid>/mem reads.
+  kprobes:
+    - call: "sys_openat"
+      syscall: true
+      args:
+        - index: 1
+          type: "string"
+      selectors:
+        - matchArgs:
+            - index: 1
+              operator: "Prefix"
+              values:
+                - "/proc/"

@@ -275,6 +275,29 @@ class CognitiveCore:
         except Exception as exc:
             logger.warning("cognitive_core: OWASP grader init failed: %s", exc)
 
+        # Proposal 015 — kernel-event Cat-A.  The evaluator and the
+        # rolling event buffer are created only when runtime evidence
+        # is enabled; otherwise Cat-A stays metadata-only (unchanged).
+        if getattr(self._compliance_cfg, "runtime_evidence_enabled", False):
+            try:
+                from collections import deque
+                from acc.governance import KernelEventEvaluator
+                self._kernel_evaluator = KernelEventEvaluator(
+                    enforce=getattr(self._compliance_cfg, "runtime_enforce", False),
+                )
+                self._kernel_events = deque(maxlen=64)
+            except Exception as exc:
+                logger.warning("cognitive_core: kernel evaluator init failed: %s", exc)
+
+    def record_kernel_event(self, event: dict) -> None:
+        """Append a KERNEL_EVENT payload for this pod to the rolling
+        buffer (proposal 015).  Called by the agent's kernel-event loop
+        for events whose ``pod_uid`` matches this pod.  A no-op when
+        runtime evidence is disabled."""
+        buf = getattr(self, "_kernel_events", None)
+        if buf is not None:
+            buf.append(event)
+
     def set_domain_centroid(self, centroid: list[float]) -> None:
         """Update the cached domain centroid vector (ACC-11).
 
@@ -463,6 +486,33 @@ class CognitiveCore:
                     )
             except Exception as exc:
                 logger.warning("cognitive_core: Cat-A evaluation error: %s", exc)
+
+        # Proposal 015 — KERNEL-EVENT CAT-A.  Folds runtime evidence
+        # (execve/openat/connect observed below the application layer)
+        # into Cat-A.  Inert unless runtime evidence is enabled.  In
+        # observe mode a violation is recorded as OBSERVED:kernel:* and
+        # never blocks; in enforce mode it blocks like a metadata Cat-A
+        # denial — same cat_a_result field, same ALERT_ESCALATE path.
+        kernel_evaluator = getattr(self, "_kernel_evaluator", None)
+        if kernel_evaluator is not None:
+            try:
+                events = list(getattr(self, "_kernel_events", []))
+                allowed, reason = kernel_evaluator.evaluate(events)
+                if reason.startswith("observed:"):
+                    cat_a_result = f"OBSERVED:{reason[9:]}"
+                elif not allowed:
+                    cat_a_result = f"BLOCK:{reason}"
+                    self._stress.cat_a_trigger_count += 1
+                    self._stress.task_count += 1
+                    self._emit_alert_escalate(f"cat_a:{reason}")
+                    self._update_compliance_health()
+                    return CognitiveResult(
+                        blocked=True,
+                        block_reason=f"cat_a:{reason}",
+                        stress=self._snapshot_stress(),
+                    )
+            except Exception as exc:
+                logger.warning("cognitive_core: kernel-event evaluation error: %s", exc)
 
         # 3 — LLM CALL (async).  Emit BEFORE the call — the LLM is the
         # slowest part of the pipeline, so the operator sees the

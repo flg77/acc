@@ -144,7 +144,7 @@ func TestRenderACCConfig_OTelBackend(t *testing.T) {
 
 func TestRenderNATSConfig_SingleNode(t *testing.T) {
 	corpus := makeTestCorpus()
-	conf, err := templates.RenderNATSConfig(corpus)
+	conf, err := templates.RenderNATSConfig(corpus, nil)
 	if err != nil {
 		t.Fatalf("RenderNATSConfig error: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRenderNATSConfig_Clustered(t *testing.T) {
 	corpus := makeTestCorpus()
 	corpus.Spec.Infrastructure.NATS.Replicas = 3
 
-	conf, err := templates.RenderNATSConfig(corpus)
+	conf, err := templates.RenderNATSConfig(corpus, nil)
 	if err != nil {
 		t.Fatalf("RenderNATSConfig error: %v", err)
 	}
@@ -188,7 +188,7 @@ func makeEdgeCorpus() *accv1alpha1.AgentCorpus {
 
 func TestRenderNATSConfig_EdgeLeafNode(t *testing.T) {
 	corpus := makeEdgeCorpus()
-	conf, err := templates.RenderNATSConfig(corpus)
+	conf, err := templates.RenderNATSConfig(corpus, nil)
 	if err != nil {
 		t.Fatalf("RenderNATSConfig error: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestRenderNATSConfig_EdgeLeafNode(t *testing.T) {
 
 func TestRenderNATSConfig_StandaloneNoLeafNode(t *testing.T) {
 	corpus := makeTestCorpus()
-	conf, err := templates.RenderNATSConfig(corpus)
+	conf, err := templates.RenderNATSConfig(corpus, nil)
 	if err != nil {
 		t.Fatalf("RenderNATSConfig error: %v", err)
 	}
@@ -217,13 +217,80 @@ func TestRenderNATSConfig_StandaloneNoLeafNode(t *testing.T) {
 func TestRenderNATSConfig_EdgeNoHubUrl(t *testing.T) {
 	corpus := makeEdgeCorpus()
 	corpus.Spec.Edge.HubNatsUrl = "" // hub URL not yet configured
-	conf, err := templates.RenderNATSConfig(corpus)
+	conf, err := templates.RenderNATSConfig(corpus, nil)
 	if err != nil {
 		t.Fatalf("RenderNATSConfig error: %v", err)
 	}
 	// No hub URL → no leafnodes block (agent operates in disconnected mode)
 	if strings.Contains(conf, "leafnodes") {
 		t.Error("edge config without hub URL should not contain leafnodes block")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NATS NKey authentication (proposal 013, PR-3)
+// ---------------------------------------------------------------------------
+
+func TestRenderNATSConfig_NKeyAuthDisabled(t *testing.T) {
+	// Default corpus has no NKeyAuth — no authorization block.
+	corpus := makeTestCorpus()
+	conf, err := templates.RenderNATSConfig(corpus, nil)
+	if err != nil {
+		t.Fatalf("RenderNATSConfig error: %v", err)
+	}
+	if strings.Contains(conf, "authorization {") {
+		t.Error("NKey-disabled config must not contain an authorization block")
+	}
+}
+
+func TestRenderNATSConfig_NKeyEnabledEmptyKeys(t *testing.T) {
+	// NKeyAuth enabled but no keys yet (PR-3 lands before PR-4's
+	// Secret) — renders cleanly with no authorization block.
+	corpus := makeTestCorpus()
+	corpus.Spec.Infrastructure.NATS.NKeyAuth = &accv1alpha1.NKeyAuthSpec{Enabled: true}
+	conf, err := templates.RenderNATSConfig(corpus, nil)
+	if err != nil {
+		t.Fatalf("RenderNATSConfig error: %v", err)
+	}
+	if strings.Contains(conf, "authorization {") {
+		t.Error("empty key set must not render an authorization block")
+	}
+}
+
+func TestRenderNATSConfig_NKeyAuthEnabled(t *testing.T) {
+	corpus := makeTestCorpus()
+	corpus.Spec.Infrastructure.NATS.NKeyAuth = &accv1alpha1.NKeyAuthSpec{Enabled: true}
+	keys := map[string]string{
+		"arbiter":      "UARBITERTESTKEY",
+		"ingester":     "UINGESTERTESTKEY",
+		"analyst":      "UANALYSTTESTKEY",
+		"synthesizer":  "USYNTHTESTKEY",
+		"coding_agent": "UCODINGTESTKEY",
+		"observer":     "UOBSERVERTESTKEY",
+		"tui":          "UTUITESTKEY",
+		"leaf":         "ULEAFTESTKEY",
+	}
+	conf, err := templates.RenderNATSConfig(corpus, keys)
+	if err != nil {
+		t.Fatalf("RenderNATSConfig error: %v", err)
+	}
+	if !strings.Contains(conf, "authorization {") {
+		t.Fatalf("expected an authorization block\n\n%s", conf)
+	}
+	for identity, pub := range keys {
+		if !strings.Contains(conf, "# "+identity) {
+			t.Errorf("authorization block missing identity %q", identity)
+		}
+		if !strings.Contains(conf, "nkey: "+pub) {
+			t.Errorf("authorization block missing nkey %q", pub)
+		}
+	}
+	// The arbiter is the sole publisher of the control subjects.
+	if !strings.Contains(conf, `"acc.*.plan.*"`) {
+		t.Error("authorization block missing the plan control subject")
+	}
+	if !strings.Contains(conf, `"acc.*.task.assign"`) {
+		t.Error("authorization block missing the split task.assign subject")
 	}
 }
 

@@ -133,6 +133,16 @@ morphogen gradient that differentiates a stem cell into a specialised
 cell type before it performs any work.
 (A-016: only the arbiter may publish this signal.)"""
 
+# Runtime-evidence kernel-event signal (proposal 015, Phase 3)
+SIG_KERNEL_EVENT = "KERNEL_EVENT"
+"""Kernel-level evidence (``execve`` / ``openat`` / ``connect``) observed
+by a runtime-security backend (RHACS / Falco / Tetragon / NetObserv) and
+republished onto the bus by the runtime-evidence bridge.  Consumed by an
+agent's CognitiveCore, which folds events about its own pod into
+Category-A evaluation — ground truth the agent process cannot forge.
+Endocrine in reach (collective-scoped); the bridge publishes, agents
+filter by their own ``pod_uid``."""
+
 # Compliance / EU AI Act human oversight signals (ACC-12)
 SIG_OVERSIGHT_DECISION = "OVERSIGHT_DECISION"
 """Endocrine signal carrying a human operator's approve / reject decision
@@ -201,6 +211,7 @@ SIGNAL_MODES: dict[str, str] = {
     SIG_BRIDGE_RESULT:          SIGNAL_MODE_ENDOCRINE,
     SIG_DOMAIN_DIFFERENTIATION: SIGNAL_MODE_ENDOCRINE,
     SIG_OVERSIGHT_DECISION:     SIGNAL_MODE_ENDOCRINE,
+    SIG_KERNEL_EVENT:           SIGNAL_MODE_ENDOCRINE,
 }
 """Authoritative mapping from signal type constant to its communication mode.
 
@@ -223,9 +234,55 @@ def subject_heartbeat(collective_id: str) -> str:
     return f"acc.{collective_id}.heartbeat"
 
 
+def subject_task_assign(collective_id: str) -> str:
+    """Return the NATS subject for TASK_ASSIGN signals.
+
+    Split from the former shared ``acc.{cid}.task`` subject (proposal
+    013 PR-1) so the NATS NKey publish/subscribe permission matrix can
+    grant "assign work" independently of "report completion" — the two
+    message types no longer share a subject.
+
+    Example::
+
+        subject_task_assign("sol-01")
+        # → "acc.sol-01.task.assign"
+    """
+    return f"acc.{collective_id}.task.assign"
+
+
+def subject_task_complete(collective_id: str) -> str:
+    """Return the NATS subject for TASK_COMPLETE signals.
+
+    Split from the former shared ``acc.{cid}.task`` subject (proposal
+    013 PR-1).  See :func:`subject_task_assign`.
+
+    Example::
+
+        subject_task_complete("sol-01")
+        # → "acc.sol-01.task.complete"
+    """
+    return f"acc.{collective_id}.task.complete"
+
+
 def subject_task(collective_id: str) -> str:
-    """Return the NATS subject for TASK_ASSIGN / TASK_COMPLETE signals."""
-    return f"acc.{collective_id}.task"
+    """Deprecated alias for :func:`subject_task_assign`.
+
+    The former shared ``acc.{cid}.task`` subject carried both
+    TASK_ASSIGN and TASK_COMPLETE.  Proposal 013 PR-1 split it into
+    :func:`subject_task_assign` and :func:`subject_task_complete`.
+    This alias is retained for one release for out-of-tree callers and
+    emits a :class:`DeprecationWarning`; it resolves to the *assign*
+    subject (the publish direction most external callers used).
+    """
+    import warnings  # noqa: PLC0415
+
+    warnings.warn(
+        "subject_task() is deprecated; use subject_task_assign() or "
+        "subject_task_complete() (proposal 013 PR-1)",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return f"acc.{collective_id}.task.assign"
 
 
 def subject_role_update(collective_id: str) -> str:
@@ -250,6 +307,20 @@ def subject_role_approval(collective_id: str) -> str:
 def subject_alert(collective_id: str) -> str:
     """Return the NATS subject for ALERT_ESCALATE signals."""
     return f"acc.{collective_id}.alert"
+
+
+def subject_kernel(collective_id: str) -> str:
+    """Return the NATS subject for KERNEL_EVENT signals (proposal 015).
+
+    The runtime-evidence bridge publishes here; every agent in the
+    collective subscribes and filters by its own ``pod_uid``.
+
+    Example::
+
+        subject_kernel("sol-01")
+        # → "acc.sol-01.kernel"
+    """
+    return f"acc.{collective_id}.kernel"
 
 
 # ---------------------------------------------------------------------------

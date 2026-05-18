@@ -179,6 +179,24 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 								{Name: "ACC_COLLECTIVE_ID", Value: collective.Spec.CollectiveID},
 								{Name: "ACC_CORPUS_NAME", Value: corpus.Name},
 								{Name: "ACC_CONFIG_PATH", Value: "/etc/acc/acc-config.yaml"},
+								// Downward-API pod identity (proposal 015) — lets the
+								// agent filter KERNEL_EVENT signals to its own pod.
+								{
+									Name: "ACC_POD_NAME",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.name",
+										},
+									},
+								},
+								{
+									Name: "ACC_POD_UID",
+									ValueFrom: &corev1.EnvVarSource{
+										FieldRef: &corev1.ObjectFieldSelector{
+											FieldPath: "metadata.uid",
+										},
+									},
+								},
 							}, manifestEnv...), extraEnv...),
 							Resources: derefResources(roleSpec.Resources),
 							VolumeMounts: append([]corev1.VolumeMount{
@@ -237,6 +255,11 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	// otherwise.  Applied after the base Deployment is built so the
 	// agent container is already at index 0.
 	ApplySpiffeSidecar(deploy, collective, SpiffeHelperConfigMapName(collective))
+
+	// Proposal 013 PR-4 — project this role's NATS NKey seed from the
+	// operator-generated Secret + set the ACC_NKEY_* env vars.  No-op
+	// when spec.infrastructure.nats.nkeyAuth is disabled.
+	ApplyNKeySeed(deploy, corpus, role)
 
 	upsertResult, err := util.Upsert(ctx, r.Client, r.Scheme, collective, deploy, func(existing client.Object) error {
 		existingDeploy := existing.(*appsv1.Deployment)
@@ -303,6 +326,16 @@ func buildExtraEnv(
 					},
 				},
 			},
+		)
+	}
+
+	// Runtime-evidence / kernel-event Cat-A (proposal 015).  When the
+	// corpus has runtimeEvidence enabled, the agent's CognitiveCore
+	// subscribes to KERNEL_EVENT and folds kernel evidence into Cat-A.
+	if re := corpus.Spec.Governance.RuntimeEvidence; re != nil && re.Enabled {
+		envs = append(envs,
+			corev1.EnvVar{Name: "ACC_RUNTIME_EVIDENCE_ENABLED", Value: "true"},
+			corev1.EnvVar{Name: "ACC_RUNTIME_ENFORCE", Value: fmt.Sprintf("%t", re.Enforce)},
 		)
 	}
 

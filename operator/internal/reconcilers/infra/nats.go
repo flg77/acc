@@ -14,13 +14,17 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/nkeygen"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/templates"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/util"
@@ -51,9 +55,17 @@ func (r *NATSReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agen
 	name := fmt.Sprintf("%s-nats", corpus.Name)
 
 	// -----------------------------------------------------------------------
+	// 0. NKey Secret (proposal 013) — generated once, never rewritten.
+	// -----------------------------------------------------------------------
+	nkeyPublicKeys, err := r.reconcileNKeySecret(ctx, corpus)
+	if err != nil {
+		return reconcilers.SubResult{}, fmt.Errorf("reconcile nkey secret: %w", err)
+	}
+
+	// -----------------------------------------------------------------------
 	// 1. ConfigMap — nats.conf
 	// -----------------------------------------------------------------------
-	natsConf, err := templates.RenderNATSConfig(corpus)
+	natsConf, err := templates.RenderNATSConfig(corpus, nkeyPublicKeys)
 	if err != nil {
 		return reconcilers.SubResult{}, fmt.Errorf("render nats config: %w", err)
 	}
@@ -180,4 +192,75 @@ func (r *NATSReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agen
 
 	progressing := result == util.UpsertResultCreated || result == util.UpsertResultUpdated
 	return reconcilers.SubResult{Progressing: progressing}, nil
+}
+
+// reconcileNKeySecret ensures the per-corpus NKey Secret exists when
+// NKey auth is enabled (proposal 013, PR-4).
+//
+// The Secret holds one NKey *seed* per identity (key ``seed-<identity>``)
+// for the six agent roles plus ``tui`` and ``leaf``.  It is generated
+// EXACTLY ONCE: if the Secret already exists this function never
+// rewrites it — regenerating the seeds would invalidate every running
+// pod's credential and lock the collective off its own bus.
+//
+// Returns the identity→public-key map (re-derived from the persisted
+// seeds) for the nats.conf authorization block, or nil when NKey auth
+// is disabled.
+func (r *NATSReconciler) reconcileNKeySecret(
+	ctx context.Context, corpus *accv1alpha1.AgentCorpus,
+) (map[string]string, error) {
+	natsSpec := corpus.Spec.Infrastructure.NATS
+	if natsSpec.NKeyAuth == nil || !natsSpec.NKeyAuth.Enabled {
+		return nil, nil
+	}
+
+	secretName := fmt.Sprintf("%s-nats-nkeys", corpus.Name)
+	key := types.NamespacedName{Namespace: corpus.Namespace, Name: secretName}
+	secret := &corev1.Secret{}
+	err := r.Client.Get(ctx, key, secret)
+	if apierrors.IsNotFound(err) {
+		// First reconcile — mint the eight identities.
+		data := map[string][]byte{}
+		for _, identity := range templates.NKeyIdentities() {
+			seed, _, genErr := nkeygen.GenerateUserNKey()
+			if genErr != nil {
+				return nil, fmt.Errorf("generate nkey for %s: %w", identity, genErr)
+			}
+			data["seed-"+identity] = []byte(seed)
+		}
+		secret = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: corpus.Namespace,
+				Labels:    util.CommonLabels(corpus.Name, natsComponentName, corpus.Spec.Version),
+			},
+			Type: corev1.SecretTypeOpaque,
+			Data: data,
+		}
+		if refErr := ctrl.SetControllerReference(corpus, secret, r.Scheme); refErr != nil {
+			return nil, fmt.Errorf("set owner ref on nkey secret: %w", refErr)
+		}
+		if createErr := r.Client.Create(ctx, secret); createErr != nil {
+			return nil, fmt.Errorf("create nkey secret: %w", createErr)
+		}
+	} else if err != nil {
+		return nil, fmt.Errorf("get nkey secret: %w", err)
+	}
+	// NOTE: the existing-Secret branch deliberately does nothing — the
+	// seeds are never rewritten once minted.
+
+	// Re-derive the public keys from whatever seeds the Secret holds.
+	publicKeys := map[string]string{}
+	for _, identity := range templates.NKeyIdentities() {
+		seed, ok := secret.Data["seed-"+identity]
+		if !ok {
+			continue
+		}
+		pub, derErr := nkeygen.PublicFromSeed(string(seed))
+		if derErr != nil {
+			return nil, fmt.Errorf("derive public key for %s: %w", identity, derErr)
+		}
+		publicKeys[identity] = pub
+	}
+	return publicKeys, nil
 }

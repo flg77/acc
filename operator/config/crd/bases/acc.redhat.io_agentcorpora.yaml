@@ -200,6 +200,41 @@ spec:
                       GatekeeperIntegration enables syncing Category A rules as OPA Gatekeeper
                       ConstraintTemplates (requires Gatekeeper to be installed cluster-wide).
                     type: boolean
+                  runtimeEvidence:
+                    description: |-
+                      RuntimeEvidence configures the optional provider-agnostic
+                      kernel-event evidence layer for Category-A governance
+                      (proposal 015, security roadmap Phase 3).
+                    properties:
+                      enabled:
+                        default: false
+                        description: Enabled is the master switch.
+                        type: boolean
+                      enforce:
+                        default: false
+                        description: |-
+                          Enforce selects enforcement behaviour. False (default) =
+                          a 4-week observe baseline; True = violations block.
+                        type: boolean
+                      observeWindowDays:
+                        default: 28
+                        description: ObserveWindowDays is the recommended observe
+                          baseline length before flipping Enforce on.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      preferredBackend:
+                        default: auto
+                        description: |-
+                          PreferredBackend picks the process/file evidence backend
+                          when more than one is detected.
+                        enum:
+                        - auto
+                        - rhacs
+                        - falco
+                        - tetragon
+                        type: string
+                    type: object
                 required:
                 - categoryA
                 - categoryB
@@ -247,6 +282,21 @@ spec:
                   nats:
                     description: NATS configures the JetStream StatefulSet.
                     properties:
+                      nkeyAuth:
+                        description: |-
+                          NKeyAuth enables per-role NATS NKey authentication (proposal
+                          013, Phase 0c).  When nil or disabled the NATS server runs
+                          without an authorization block — unchanged legacy behaviour.
+                        properties:
+                          enabled:
+                            default: false
+                            description: |-
+                              Enabled turns on per-role NKey authentication: the operator
+                              generates an eight-identity NKey Secret, renders an
+                              authorization block into nats.conf, and projects each agent's
+                              role seed into its pod.
+                            type: boolean
+                        type: object
                       replicas:
                         default: 1
                         description: Replicas sets the NATS cluster size (1 = single-node,
@@ -772,6 +822,65 @@ spec:
                   type: object
                 maxItems: 16
                 type: array
+              networkPolicy:
+                description: |-
+                  NetworkPolicy configures the optional capability-tiered network
+                  isolation layer for agent and infrastructure pods (proposal 014,
+                  security roadmap Phase 1).  When nil or disabled the operator
+                  emits no policy objects — unchanged legacy behaviour.
+                properties:
+                  allowedExternalLLM:
+                    description: |-
+                      AllowedExternalLLM overrides the built-in set of external LLM
+                      provider FQDNs used to scope Tier 2 egress.
+                    items:
+                      type: string
+                    type: array
+                  cniEnforces:
+                    default: auto
+                    description: |-
+                      CNIEnforces overrides the heuristic that detects whether the
+                      running CNI enforces NetworkPolicy.
+                    enum:
+                    - auto
+                    - "true"
+                    - "false"
+                    type: string
+                  enabled:
+                    default: false
+                    description: Enabled is the master switch.
+                    type: boolean
+                  extraEgressCIDRs:
+                    description: ExtraEgressCIDRs are additional CIDR blocks agent
+                      pods may reach.
+                    items:
+                      type: string
+                    type: array
+                  extraEgressFQDNs:
+                    description: ExtraEgressFQDNs are additional fully-qualified
+                      domain names the agent pods are allowed to reach (Tier 2+).
+                    items:
+                      type: string
+                    type: array
+                  maxTier:
+                    default: 1
+                    description: |-
+                      MaxTier is the highest policy tier the operator is allowed to
+                      emit.  1 = L4 NetworkPolicy; 2 = FQDN egress; 3 = L7 (Cilium).
+                    format: int32
+                    maximum: 3
+                    minimum: 1
+                    type: integer
+                  mode:
+                    default: enforce
+                    description: |-
+                      Mode selects enforcement behaviour. "enforce" drops disallowed
+                      traffic; "audit" emits the policies without the default-deny.
+                    enum:
+                    - enforce
+                    - audit
+                    type: string
+                type: object
               observability:
                 description: Observability configures OTel collector and Prometheus
                   rules.
@@ -1090,6 +1199,26 @@ spec:
                   MCPServerStatuses reports the per-MCP-server state. Keyed by
                   MCPServerSpec.Name. Populated by the MCP reconciler that ships in PR-51.
                 type: object
+              networkPolicy:
+                description: |-
+                  NetworkPolicy reports what the NetworkPolicyReconciler emitted
+                  (proposal 014).  The companion NetworkPolicyReady condition
+                  carries the human-readable reason.
+                properties:
+                  activeTier:
+                    description: ActiveTier is the policy tier actually emitted.
+                    format: int32
+                    type: integer
+                  backend:
+                    description: 'Backend names the policy engine in use: none,
+                      networkpolicy, egressfirewall, or cilium.'
+                    type: string
+                  policyCount:
+                    description: PolicyCount is the number of policy objects the
+                      operator owns for this corpus.
+                    format: int32
+                    type: integer
+                type: object
               observedGeneration:
                 description: ObservedGeneration is the .metadata.generation this status
                   reflects.
@@ -1119,6 +1248,15 @@ spec:
                     description: AllMet is true when every required prerequisite is
                       satisfied.
                     type: boolean
+                  ciliumInstalled:
+                    description: |-
+                      CiliumInstalled is true when the cilium.io API group is
+                      registered.  Enables Tier 2/3 network policy — proposal 014.
+                    type: boolean
+                  falcoInstalled:
+                    description: FalcoInstalled is true when a Falco DaemonSet
+                      is present — a runtime-evidence backend, proposal 015.
+                    type: boolean
                   gatekeeperInstalled:
                     description: GatekeeperInstalled is true when templates.gatekeeper.sh
                       is registered.
@@ -1135,9 +1273,26 @@ spec:
                     description: KServeInstalled is true when serving.kserve.io is
                       registered.
                     type: boolean
+                  netobservInstalled:
+                    description: |-
+                      NetObservInstalled is true when the flows.netobserv.io API
+                      group is registered (OpenShift Network Observability) —
+                      the network-connect evidence source, proposal 015.
+                    type: boolean
+                  ovnEgressFirewallSupported:
+                    description: |-
+                      OVNEgressFirewallSupported is true when the k8s.ovn.org API
+                      group is registered (OVN-Kubernetes CNI) — proposal 014.
+                    type: boolean
                   prometheusRulesSupported:
                     description: PrometheusRulesSupported is true when monitoring.coreos.com
                       is registered.
+                    type: boolean
+                  rhacsInstalled:
+                    description: |-
+                      RHACSInstalled is true when the platform.stackrox.io API
+                      group is registered (Red Hat Advanced Cluster Security) —
+                      a runtime-evidence backend, proposal 015.
                     type: boolean
                   rhoaiInstalled:
                     description: RHOAIInstalled is true when the ODH/RHOAI API group
@@ -1149,6 +1304,35 @@ spec:
                       registered (spire-controller-manager present).  Gates SPIFFE
                       workload-identity provisioning — proposal 011.
                     type: boolean
+                  tetragonInstalled:
+                    description: |-
+                      TetragonInstalled is true when the TracingPolicy resource
+                      kind is registered — a runtime-evidence backend, proposal
+                      015.  Detected resource-level, not by the cilium.io group.
+                    type: boolean
+                type: object
+              runtimeEvidence:
+                description: |-
+                  RuntimeEvidence reports the kernel-event evidence layer state
+                  (proposal 015).  The companion RuntimeEvidenceReady condition
+                  carries the human-readable reason.
+                properties:
+                  activeBackend:
+                    description: 'ActiveBackend names the selected process/file
+                      evidence backend: none, rhacs, falco, or tetragon.'
+                    type: string
+                  bridgeReady:
+                    description: BridgeReady is true when the runtime-evidence
+                      bridge Deployment is available.
+                    type: boolean
+                  enforcing:
+                    description: Enforcing is true when kernel violations block
+                      (Enforce mode); false during the observe baseline.
+                    type: boolean
+                  networkSource:
+                    description: 'NetworkSource names the network-connect evidence
+                      source: none or netobserv.'
+                    type: string
                 type: object
             type: object
         type: object

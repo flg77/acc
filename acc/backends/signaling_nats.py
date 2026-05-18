@@ -19,18 +19,49 @@ class NATSBackend:
     on receipt before the handler is invoked.
     """
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, nkey_seed_path: str | None = None) -> None:
+        """Args:
+            url: NATS server URL.
+            nkey_seed_path: Optional path to an NKey *seed* file
+                (proposal 013).  When set, the connection authenticates
+                with that NKey identity.  ``None`` (the default)
+                preserves the legacy credential-less connection — so
+                deployments with ``security.nkey.enabled: false`` are
+                byte-for-byte unchanged on the wire.
+        """
         self._url = url
+        self._nkey_seed_path = nkey_seed_path or None
         self._nc: NATSClient | None = None
 
     async def connect(self) -> None:
         """Connect to the NATS server at the configured URL.
 
+        When an NKey seed path was supplied, the connection is
+        authenticated with that identity; otherwise it connects
+        without credentials (legacy behaviour).
+
         Raises:
-            BackendConnectionError: If the connection cannot be established.
+            BackendConnectionError: If the connection cannot be
+                established — including a missing seed file when NKey
+                auth was requested (fail closed, never silently
+                anonymous).
         """
+        opts: dict[str, Any] = {}
+        if self._nkey_seed_path is not None:
+            import os  # noqa: PLC0415
+
+            if not os.path.isfile(self._nkey_seed_path):
+                raise BackendConnectionError(
+                    f"NKey auth requested but seed file not found at "
+                    f"{self._nkey_seed_path!r} — generate it with "
+                    f"`scripts/acc-nkeys generate` (standalone) or check "
+                    f"the operator-projected Secret (rhoai/edge)"
+                )
+            opts["nkeys_seed"] = self._nkey_seed_path
         try:
-            self._nc = await nats.connect(self._url)
+            self._nc = await nats.connect(self._url, **opts)
+        except BackendConnectionError:
+            raise
         except Exception as exc:
             raise BackendConnectionError(
                 f"Failed to connect to NATS at {self._url}: {exc}"

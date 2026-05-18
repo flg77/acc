@@ -79,7 +79,7 @@ async def test_send_publishes_task_assign_with_fresh_task_id():
     assert task_id and len(task_id) >= 16  # UUID hex is 32 chars
     assert len(obs.published) == 1
     subject, payload = obs.published[0]
-    assert subject == "acc.sol-test.task"
+    assert subject == "acc.sol-test.task.assign"
     assert payload["signal_type"] == SIG_TASK_ASSIGN
     assert payload["task_id"] == task_id
     assert payload["target_role"] == "coding_agent"

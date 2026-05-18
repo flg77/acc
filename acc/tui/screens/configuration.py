@@ -148,11 +148,15 @@ def _load_acc_config_summary() -> dict[str, str]:
             deploy_mode = full.deploy_mode
             signing_mode = full.security.signing_mode
             spiffe_enabled = full.security.spiffe.enabled
+            nkey_enabled = full.security.nkey.enabled
+            nkey_role = full.security.nkey.role or "—"
         except Exception:
             role_source = "—"
             deploy_mode = "—"
             signing_mode = "—"
             spiffe_enabled = False
+            nkey_enabled = False
+            nkey_role = "—"
         return {
             "backend": str(cfg.backend),
             "model": getattr(cfg, "model", "—") or "—",
@@ -162,6 +166,8 @@ def _load_acc_config_summary() -> dict[str, str]:
             "deploy_mode": deploy_mode,
             "signing_mode": signing_mode,
             "spiffe_enabled": "yes" if spiffe_enabled else "no",
+            "nkey_enabled": "yes" if nkey_enabled else "no",
+            "nkey_role": nkey_role,
         }
     except Exception:
         logger.exception("configuration: LLMConfig() failed")
@@ -174,6 +180,8 @@ def _load_acc_config_summary() -> dict[str, str]:
             "deploy_mode": "—",
             "signing_mode": "—",
             "spiffe_enabled": "—",
+            "nkey_enabled": "—",
+            "nkey_role": "—",
         }
 
 
@@ -408,6 +416,8 @@ class ConfigurationScreen(Screen):
             f"[bold]Signing mode:[/bold] {summary['signing_mode']} "
             f"[dim](spiffe.enabled={summary['spiffe_enabled']}; "
             "proposal 011)[/dim]\n"
+            f"[bold]NATS NKey auth:[/bold] {summary['nkey_enabled']} "
+            f"[dim](role={summary['nkey_role']}; proposal 013)[/dim]\n"
             "\n[dim]Values reflect ACCConfig.llm + the documented "
             "ACC_LLM_* env-var overrides.  Read-only for now — "
             "edit the underlying acc-config.yaml or the env vars; "

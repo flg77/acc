@@ -1,0 +1,40 @@
+# Falco rules — ACC kernel-event Cat-A (proposal 015 sample).
+#
+# Mount this file into the Falco rules.d directory on a cluster running
+# Falco so it emits the process/file events the ACC runtime-evidence
+# bridge consumes.  Operator-applied — ACC does not force-provision it.
+#
+# Falco must run with json_output: true so the bridge's FalcoAdapter
+# can parse the alert stream.  Pairs with
+# regulatory_layer/category_a/kernel_events.rego (K-001/K-002).
+
+- macro: acc_agent_pod
+  condition: (k8s.pod.label.acc.redhat.io/agent-role exists)
+
+# K-001 — exec of a binary outside the ACC agent image's known paths.
+- rule: ACC agent unexpected exec
+  desc: An ACC agent pod executed a binary outside its known paths.
+  condition: >
+    spawned_process and acc_agent_pod
+    and not proc.exepath startswith /usr/bin/python
+    and not proc.exepath startswith /usr/local/bin/python
+    and not proc.exepath startswith /usr/bin/
+    and not proc.exepath startswith /bin/
+    and not proc.exepath startswith /app/
+  output: >
+    ACC agent unexpected exec
+    (pod=%k8s.pod.name proc=%proc.name exepath=%proc.exepath)
+  priority: WARNING
+  tags: [acc, cat-a, k-001]
+
+# K-002 — read of another process's memory by an ACC agent pod.
+- rule: ACC agent proc mem read
+  desc: An ACC agent pod opened /proc/<pid>/mem.
+  condition: >
+    open_read and acc_agent_pod
+    and fd.name glob /proc/*/mem
+  output: >
+    ACC agent read process memory
+    (pod=%k8s.pod.name proc=%proc.name file=%fd.name)
+  priority: CRITICAL
+  tags: [acc, cat-a, k-002]

@@ -57,12 +57,24 @@ services:
         NATS_VERSION: "2.10.22"
     image: localhost/acc-nats:2.10.22
     container_name: acc-nats
+    # Default: flags-only, no authentication (unchanged).
     command: ["-js", "-m", "8222", "--store_dir", "/data/jetstream"]
+    # ── NATS NKey authentication (proposal 013, opt-in) ──────────────
+    # To enable per-role NKey auth on standalone:
+    #   1. ./scripts/acc-nkeys generate    --out-dir ./nkeys
+    #   2. ./scripts/acc-nkeys render-conf --keys-dir ./nkeys \
+    #          --out ./nats.conf
+    #   3. comment out the `command:` above and uncomment both the
+    #      `command:` and the nats.conf volume line below;
+    #   4. set ACC_NKEY_ENABLED=true + ACC_NKEY_SEED_PATH on every
+    #      ACC service (see docs/nats-nkeys.md).
+    # command: ["-c", "/etc/nats/nats.conf"]
     ports:
       - "4222:4222"   # client connections
       - "8222:8222"   # HTTP monitoring
     volumes:
       - nats-data:/data/jetstream
+      # - ./nats.conf:/etc/nats/nats.conf:ro,z   # proposal 013 (opt-in)
     networks:
       - acc-net
     restart: unless-stopped
@@ -482,3 +494,42 @@ services:
     # stdin_open + tty required for interactive terminal access (REQ-TUI-049)
     stdin_open: true
     tty: true
+
+  # ── acc-webgui (optional web frontend — proposal acc-webgui) ────────────
+  # FastAPI + React frontend with feature parity to acc-tui plus the
+  # enhanced tracing views.  Optional, profile-gated:
+  #   podman-compose --profile webgui up -d
+  #
+  # AUTH: a network-exposed UI must authenticate.  This sample uses the
+  # token tier — set ACC_WEBGUI_OPERATOR_TOKEN / _VIEWER_TOKEN (e.g. via
+  # deploy/.env).  Without an auth mode the server refuses a non-loopback
+  # bind.  On OpenShift, front it with an oauth-proxy sidecar instead.
+  acc-webgui:
+    profiles:
+      - webgui
+    build:
+      context: ../..
+      dockerfile: container/production/Containerfile.webgui
+      args:
+        ACC_VERSION: *acc-version
+    image: localhost/acc-webgui:0.2.0
+    container_name: acc-webgui
+    depends_on:
+      nats:
+        condition: service_healthy
+    env_file:
+      - path: ../../deploy/.env
+        required: false
+    environment:
+      ACC_NATS_URL: nats://nats:4222
+      ACC_COLLECTIVE_IDS: sol-01
+      ACC_WEBGUI_HOST: 0.0.0.0
+      ACC_WEBGUI_PORT: "8080"
+      ACC_WEBGUI_AUTH_MODE: token
+      ACC_WEBGUI_OPERATOR_TOKEN: ${ACC_WEBGUI_OPERATOR_TOKEN:-}
+      ACC_WEBGUI_VIEWER_TOKEN: ${ACC_WEBGUI_VIEWER_TOKEN:-}
+    ports:
+      - "8080:8080"
+    networks:
+      - acc-net
+    restart: unless-stopped
