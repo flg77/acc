@@ -69,9 +69,15 @@ actions are stamped with the authenticated human identity.
 
 ```bash
 export ACC_WEBGUI_OPERATOR_TOKEN=$(openssl rand -hex 24)
-podman-compose --profile webgui up -d
+./acc-deploy.sh build              # bakes every image, incl. acc-webgui
+./acc-deploy.sh up --webgui        # start the stack + the web frontend
 # → http://localhost:8080  (bearer-token auth)
 ```
+
+`acc-webgui` is optional: `./acc-deploy.sh up` alone leaves it off, and
+`up --webgui` (or `WEBGUI=true`) opts it in. `build` / `rebuild` always
+bake the `acc-webgui` image so it is ready the moment you pass the flag.
+The raw equivalent is `podman-compose --profile webgui up -d`.
 
 ### edge (MicroShift / K3s)
 

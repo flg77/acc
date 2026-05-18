@@ -43,6 +43,10 @@
 #                              (examples/acc_autoresearcher/, production
 #                              only; default: false).  Requires BRAVE_API_KEY
 #                              + ACC_ANTHROPIC_API_KEY in the operator env.
+#   WEBGUI=true|false        Include the optional acc-webgui frontend
+#                            (production only; default: false).  Equivalent
+#                            to passing the `--webgui` flag.  build/rebuild
+#                            always bake the acc-webgui image regardless.
 #   DETACH=false             Run in foreground instead of detached (default: true)
 #   ACC_CLI_IMAGE=...        Override the cli image reference (default: localhost/acc-cli:0.2.0)
 #   ACC_CLI_NETWORK=...      Override podman --network (default: host)
@@ -51,6 +55,7 @@
 #
 # Examples:
 #   ./acc-deploy.sh                          # Start production stack + TUI (detached)
+#   ./acc-deploy.sh up --webgui              # Start the stack + acc-webgui frontend
 #   TUI=false ./acc-deploy.sh                # Start production stack without TUI
 #   STACK=beta ./acc-deploy.sh               # Start beta stack
 #   ./acc-deploy.sh build                    # Build production images (incl. cli)
@@ -83,7 +88,23 @@ TUI="${TUI:-true}"
 CODING_SPLIT="${CODING_SPLIT:-false}"
 MCP_ECHO="${MCP_ECHO:-false}"
 AUTORESEARCHER="${AUTORESEARCHER:-false}"
+WEBGUI="${WEBGUI:-false}"
 DETACH="${DETACH:-true}"
+
+# ── Extract the --webgui flag from the pass-through args ───────────────────────
+# `./acc-deploy.sh up --webgui` opts the optional acc-webgui frontend into the
+# running stack.  We strip the flag here so it is not forwarded to
+# podman-compose (which would reject an unknown option).  build/rebuild always
+# include the webgui profile regardless of the flag.
+_PASS_ARGS=()
+for _arg in "$@"; do
+    if [[ "$_arg" == "--webgui" ]]; then
+        WEBGUI=true
+    else
+        _PASS_ARGS+=("$_arg")
+    fi
+done
+set -- ${_PASS_ARGS[@]+"${_PASS_ARGS[@]}"}
 
 # ── Validate ───────────────────────────────────────────────────────────────────
 if [[ "$STACK" != "beta" && "$STACK" != "production" ]]; then
@@ -215,6 +236,18 @@ elif [[ "$AUTORESEARCHER" == "true" ]]; then
     echo "WARNING: acc-autoresearcher is only available in production. Ignoring AUTORESEARCHER=true." >&2
 fi
 
+# acc-webgui — optional FastAPI + React web frontend (proposal acc-webgui).
+# Production only.  Auto-included on build/rebuild so the image is always
+# baked (a parity requirement: every `build`/`rebuild` produces every image);
+# on `up` it is opted in explicitly with `--webgui` (or WEBGUI=true).
+if [[ "$STACK" == "production" ]]; then
+    if [[ "$WEBGUI" == "true" || "$COMMAND" == "build" || "$COMMAND" == "rebuild" ]]; then
+        BASE_CMD+=(--profile webgui)
+    fi
+elif [[ "$WEBGUI" == "true" ]]; then
+    echo "WARNING: acc-webgui is only available in production. Ignoring WEBGUI=true." >&2
+fi
+
 # CLI profile only matters at build time — the acc-cli image is one-shot
 # (invoked via ./acc-cli.sh).  Auto-enable on `build`/`rebuild` so a single
 # `./acc-deploy.sh build` produces every image; suppress it on `up` so we
@@ -232,6 +265,8 @@ echo "  Compose file : $COMPOSE_FILE"
 [[ "$CODING_SPLIT" == "true" && "$STACK" == "production" ]] && echo "  CODING_SPLIT : enabled (3 peer coding_agent services)"
 [[ "$MCP_ECHO" == "true" && "$STACK" == "production" ]] && echo "  MCP_ECHO     : enabled (diagnostic JSON-RPC echo server)"
 [[ "$AUTORESEARCHER" == "true" && "$STACK" == "production" ]] && echo "  AUTORESEARCHER : enabled (browser-harness + Brave Search + fetch MCPs)"
+[[ "$WEBGUI" == "true" && "$STACK" == "production" ]] && echo "  WEBGUI       : enabled (FastAPI + React web frontend on :8080)"
+[[ "$STACK" == "production" && ("$COMMAND" == "build" || "$COMMAND" == "rebuild") ]] && echo "  WEBGUI image : built (start with ./acc-deploy.sh up --webgui)"
 [[ "$STACK" == "production" && ("$COMMAND" == "build" || "$COMMAND" == "rebuild") ]] && echo "  CLI image    : built (use ./acc-deploy.sh cli ... to invoke)"
 echo "  Command      : $COMMAND $*"
 echo ""
