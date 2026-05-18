@@ -6,7 +6,7 @@
 #   name, vendor, version, summary, description
 
 # ── Build stage ─────────────────────────────────────────────────────────────
-FROM registry.access.redhat.com/ubi10/go-toolset:1.22 AS builder
+FROM registry.access.redhat.com/ubi10/go-toolset:10.0 AS builder
 
 USER root
 WORKDIR /workspace

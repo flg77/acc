@@ -26,6 +26,11 @@
 # ---------------------------------------------------------------------------
 FROM registry.access.redhat.com/ubi9/nodejs-22 AS build
 
+# The ubi9/nodejs-22 image defaults to uid 1001, but WORKDIR /build is
+# created root-owned — npm can't write node_modules there.  Build as
+# root in this discarded stage; nothing here reaches the runtime image.
+USER 0
+
 WORKDIR /build
 COPY webgui/package.json webgui/package-lock.json* ./
 RUN npm ci || npm install

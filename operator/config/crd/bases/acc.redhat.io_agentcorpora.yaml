@@ -203,31 +203,38 @@ spec:
                   runtimeEvidence:
                     description: |-
                       RuntimeEvidence configures the optional provider-agnostic
-                      kernel-event evidence layer for Category-A governance
-                      (proposal 015, security roadmap Phase 3).
+                      kernel-event evidence layer for Category-A governance (proposal
+                      015, security roadmap Phase 3).  When nil or disabled the
+                      operator emits nothing and Cat-A stays metadata-only.
                     properties:
                       enabled:
                         default: false
-                        description: Enabled is the master switch.
+                        description: |-
+                          Enabled is the master switch.  Default false — the operator
+                          emits no bridge and Cat-A behaves exactly as before.
                         type: boolean
                       enforce:
                         default: false
                         description: |-
-                          Enforce selects enforcement behaviour. False (default) =
-                          a 4-week observe baseline; True = violations block.
+                          Enforce selects enforcement behaviour.  False (default) = a
+                          4-week observe baseline: kernel violations are logged
+                          (`OBSERVED:kernel:*`) but never block.  True = violations block
+                          and emit ALERT_ESCALATE.
                         type: boolean
                       observeWindowDays:
                         default: 28
-                        description: ObserveWindowDays is the recommended observe
-                          baseline length before flipping Enforce on.
+                        description: |-
+                          ObserveWindowDays is the recommended observe baseline length
+                          before flipping Enforce on.  Advisory — surfaced in status.
                         format: int32
                         minimum: 1
                         type: integer
                       preferredBackend:
                         default: auto
                         description: |-
-                          PreferredBackend picks the process/file evidence backend
-                          when more than one is detected.
+                          PreferredBackend picks the process/file evidence backend when
+                          more than one is detected.  "auto" (default) prefers
+                          RHACS > Falco > Tetragon.
                         enum:
                         - auto
                         - rhacs
@@ -832,7 +839,9 @@ spec:
                   allowedExternalLLM:
                     description: |-
                       AllowedExternalLLM overrides the built-in set of external LLM
-                      provider FQDNs used to scope Tier 2 egress.
+                      provider FQDNs used to scope Tier 2 egress.  When empty a
+                      sensible default set (Anthropic + common OpenAI-compatible
+                      hosts) is used.
                     items:
                       type: string
                     type: array
@@ -840,7 +849,9 @@ spec:
                     default: auto
                     description: |-
                       CNIEnforces overrides the heuristic that detects whether the
-                      running CNI enforces NetworkPolicy.
+                      running CNI enforces NetworkPolicy.  "auto" (default) infers it;
+                      "true"/"false" force the verdict (use on K3s where the heuristic
+                      cannot be certain).
                     enum:
                     - auto
                     - "true"
@@ -848,17 +859,24 @@ spec:
                     type: string
                   enabled:
                     default: false
-                    description: Enabled is the master switch.
+                    description: |-
+                      Enabled is the master switch.  Default false — the operator
+                      emits no NetworkPolicy/EgressFirewall/CiliumNetworkPolicy objects
+                      and the collective behaves exactly as before.
                     type: boolean
                   extraEgressCIDRs:
-                    description: ExtraEgressCIDRs are additional CIDR blocks agent
-                      pods may reach.
+                    description: |-
+                      ExtraEgressCIDRs are additional CIDR blocks agent pods may reach
+                      — the escape hatch for non-DNS external endpoints (e.g. a
+                      fixed-IP NATS hub).
                     items:
                       type: string
                     type: array
                   extraEgressFQDNs:
-                    description: ExtraEgressFQDNs are additional fully-qualified
-                      domain names the agent pods are allowed to reach (Tier 2+).
+                    description: |-
+                      ExtraEgressFQDNs are additional fully-qualified domain names the
+                      agent pods are allowed to reach (Tier 2+).  E.g. a custom LLM
+                      provider or a private Slack proxy.
                     items:
                       type: string
                     type: array
@@ -866,7 +884,8 @@ spec:
                     default: 1
                     description: |-
                       MaxTier is the highest policy tier the operator is allowed to
-                      emit.  1 = L4 NetworkPolicy; 2 = FQDN egress; 3 = L7 (Cilium).
+                      emit.  The active tier is min(MaxTier, clusterCapability).
+                      1 = L4 NetworkPolicy; 2 = FQDN egress; 3 = L7 (Cilium).
                     format: int32
                     maximum: 3
                     minimum: 1
@@ -874,8 +893,9 @@ spec:
                   mode:
                     default: enforce
                     description: |-
-                      Mode selects enforcement behaviour. "enforce" drops disallowed
-                      traffic; "audit" emits the policies without the default-deny.
+                      Mode selects enforcement behaviour.  "enforce" drops disallowed
+                      traffic; "audit" logs it without dropping (a safe canary path —
+                      honoured only at Tier 3 with Cilium policy-audit).
                     enum:
                     - enforce
                     - audit
@@ -1206,16 +1226,21 @@ spec:
                   carries the human-readable reason.
                 properties:
                   activeTier:
-                    description: ActiveTier is the policy tier actually emitted.
+                    description: |-
+                      ActiveTier is the policy tier actually emitted —
+                      min(spec.networkPolicy.maxTier, clusterCapability).  0 means no
+                      policy (standalone, disabled, or a non-enforcing CNI).
                     format: int32
                     type: integer
                   backend:
-                    description: 'Backend names the policy engine in use: none,
-                      networkpolicy, egressfirewall, or cilium.'
+                    description: |-
+                      Backend names the policy engine in use: "none", "networkpolicy",
+                      "egressfirewall", or "cilium".
                     type: string
                   policyCount:
-                    description: PolicyCount is the number of policy objects the
-                      operator owns for this corpus.
+                    description: |-
+                      PolicyCount is the number of policy objects the operator owns for
+                      this corpus.
                     format: int32
                     type: integer
                 type: object
@@ -1254,8 +1279,9 @@ spec:
                       registered.  Enables Tier 2/3 network policy — proposal 014.
                     type: boolean
                   falcoInstalled:
-                    description: FalcoInstalled is true when a Falco DaemonSet
-                      is present — a runtime-evidence backend, proposal 015.
+                    description: |-
+                      FalcoInstalled is true when the Falco CRD group is registered —
+                      a runtime-evidence backend, proposal 015.
                     type: boolean
                   gatekeeperInstalled:
                     description: GatekeeperInstalled is true when templates.gatekeeper.sh
@@ -1275,14 +1301,15 @@ spec:
                     type: boolean
                   netobservInstalled:
                     description: |-
-                      NetObservInstalled is true when the flows.netobserv.io API
-                      group is registered (OpenShift Network Observability) —
-                      the network-connect evidence source, proposal 015.
+                      NetObservInstalled is true when the flows.netobserv.io API group
+                      is registered (OpenShift Network Observability) — the
+                      network-connect evidence source, proposal 015.
                     type: boolean
                   ovnEgressFirewallSupported:
                     description: |-
                       OVNEgressFirewallSupported is true when the k8s.ovn.org API
-                      group is registered (OVN-Kubernetes CNI) — proposal 014.
+                      group is registered (OVN-Kubernetes CNI).  Enables Tier 2 FQDN
+                      egress via EgressFirewall — proposal 014.
                     type: boolean
                   prometheusRulesSupported:
                     description: PrometheusRulesSupported is true when monitoring.coreos.com
@@ -1290,9 +1317,9 @@ spec:
                     type: boolean
                   rhacsInstalled:
                     description: |-
-                      RHACSInstalled is true when the platform.stackrox.io API
-                      group is registered (Red Hat Advanced Cluster Security) —
-                      a runtime-evidence backend, proposal 015.
+                      RHACSInstalled is true when the platform.stackrox.io API group
+                      is registered (Red Hat Advanced Cluster Security) — a
+                      runtime-evidence backend, proposal 015.
                     type: boolean
                   rhoaiInstalled:
                     description: RHOAIInstalled is true when the ODH/RHOAI API group
@@ -1306,9 +1333,10 @@ spec:
                     type: boolean
                   tetragonInstalled:
                     description: |-
-                      TetragonInstalled is true when the TracingPolicy resource
-                      kind is registered — a runtime-evidence backend, proposal
-                      015.  Detected resource-level, not by the cilium.io group.
+                      TetragonInstalled is true when the TracingPolicy resource (kind,
+                      under cilium.io/v1alpha1) is registered — a runtime-evidence
+                      backend, proposal 015.  Detected resource-level, NOT by the
+                      cilium.io group (that would collide with CiliumInstalled).
                     type: boolean
                 type: object
               runtimeEvidence:
@@ -1318,20 +1346,24 @@ spec:
                   carries the human-readable reason.
                 properties:
                   activeBackend:
-                    description: 'ActiveBackend names the selected process/file
-                      evidence backend: none, rhacs, falco, or tetragon.'
+                    description: |-
+                      ActiveBackend names the selected process/file evidence backend:
+                      "none", "rhacs", "falco", or "tetragon".
                     type: string
                   bridgeReady:
-                    description: BridgeReady is true when the runtime-evidence
-                      bridge Deployment is available.
+                    description: |-
+                      BridgeReady is true when the runtime-evidence bridge Deployment
+                      is available.
                     type: boolean
                   enforcing:
-                    description: Enforcing is true when kernel violations block
-                      (Enforce mode); false during the observe baseline.
+                    description: |-
+                      Enforcing is true when kernel violations block (Enforce mode);
+                      false during the observe baseline.
                     type: boolean
                   networkSource:
-                    description: 'NetworkSource names the network-connect evidence
-                      source: none or netobserv.'
+                    description: |-
+                      NetworkSource names the network-connect evidence source:
+                      "none" or "netobserv".
                     type: string
                 type: object
             type: object

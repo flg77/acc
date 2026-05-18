@@ -831,6 +831,13 @@ spec:
                       EdgeTopology selects the edge SPIRE deployment topology
                       (proposal 012).  Only consulted when the owning AgentCorpus
                       has deployMode=edge.
+                        nested    — edge SPIRE server downstream of an rhoai parent;
+                                    identities are site-qualified
+                                    (spiffe://<td>/edge/<site>/role/<id>).
+                        federated — edge SPIRE owns its trust domain, federated with
+                                    peers; no site-qualifier (the trust domain IS the
+                                    scope).
+                        ed25519   — no edge SPIRE; legacy trust model.
                     enum:
                     - nested
                     - federated
@@ -847,8 +854,9 @@ spec:
                       FederationPeers lists SPIFFE bundle-endpoint URLs to federate
                       with (proposal 012 PR-3).  Required (>= 1 entry) when
                       edgeTopology=federated — each peer becomes a
-                      ClusterFederatedTrustDomain custom resource.  Entry format:
-                      <trust-domain>@<bundle-endpoint-url>.
+                      ClusterFederatedTrustDomain custom resource so this edge's
+                      SPIRE trusts SVIDs issued by the peer's trust domain.  Ignored
+                      for nested / ed25519 topologies.
                     items:
                       type: string
                     type: array
