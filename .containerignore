@@ -1,0 +1,9 @@
+# Build-context excludes (proposal acc-webgui).
+# Keep the React node_modules + build output out of the image build
+# context — the multi-stage Containerfile.webgui runs `npm ci` itself.
+webgui/node_modules/
+webgui/dist/
+**/__pycache__/
+*.pyc
+.git/
+acc-tui-logs/

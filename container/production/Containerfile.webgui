@@ -1,0 +1,94 @@
+# ACC web GUI — Production multi-stage build (proposal acc-webgui).
+#
+# Stage 1 (build, DISCARDED) compiles the React SPA with the Node
+# toolchain.  Stage 2 is the runtime image — UBI10 Python 3.12, the
+# same conventions as Containerfile.tui — and contains ZERO Node: only
+# the compiled static assets cross the stage boundary.
+#
+# acc-webgui is the optional FastAPI + React web frontend: feature
+# parity with acc-tui plus the enhanced tracing views.
+#
+# Build:
+#   podman build -f container/production/Containerfile.webgui \
+#     --build-arg ACC_VERSION=0.3.1 \
+#     -t localhost/acc-webgui:0.3.1 .
+#
+# Run (standalone — localhost, token auth):
+#   podman run --rm --network host \
+#     -e ACC_NATS_URL=nats://localhost:4222 \
+#     -e ACC_COLLECTIVE_IDS=sol-01 \
+#     -e ACC_WEBGUI_AUTH_MODE=token \
+#     -e ACC_WEBGUI_OPERATOR_TOKEN=$(openssl rand -hex 24) \
+#     localhost/acc-webgui:0.3.1
+
+# ---------------------------------------------------------------------------
+# Stage 1 — React build (discarded; no Node reaches the runtime image)
+# ---------------------------------------------------------------------------
+FROM registry.access.redhat.com/ubi9/nodejs-22 AS build
+
+WORKDIR /build
+COPY webgui/package.json webgui/package-lock.json* ./
+RUN npm ci || npm install
+COPY webgui/ ./
+RUN npm run build
+# → /build/dist
+
+# ---------------------------------------------------------------------------
+# Stage 2 — FastAPI runtime (UBI10 Python 3.12 minimal)
+# ---------------------------------------------------------------------------
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.3.1
+
+LABEL org.opencontainers.image.title="acc-webgui" \
+      org.opencontainers.image.description="ACC optional web frontend (FastAPI + React)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+USER 0
+
+# Build tools needed only during pip install of msgpack (C extension).
+RUN microdnf install -y --nodocs gcc python3-devel \
+    && microdnf clean all \
+    && rm -rf /var/cache/dnf
+
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+
+# The acc-webgui dependency surface — the [webgui] extra plus the
+# shared data-layer deps (nats-py/msgpack: NATSObserver; pyyaml/pydantic).
+RUN pip install --no-cache-dir \
+    "fastapi>=0.115,<1.0" \
+    "uvicorn[standard]>=0.30,<1.0" \
+    "authlib>=1.3,<2.0" \
+    "nats-py>=2.7,<3.0" \
+    "msgpack>=1.1,<2.0" \
+    "pyyaml>=6.0,<7.0" \
+    "pydantic>=2.8,<3.0" \
+    "httpx>=0.27,<1.0"
+
+# Application source + the compiled React assets from Stage 1.
+COPY acc/ /app/acc/
+COPY --from=build /build/dist /app/acc/webgui/static
+
+RUN pip install --no-cache-dir --no-deps . \
+ && echo "acc:x:1001:0:ACC web GUI:/app:/bin/sh" >> /etc/passwd \
+ && chown -R 1001:0 /app \
+ && chmod -R g=u /app
+
+USER 1001
+
+ENV ACC_NATS_URL=nats://nats:4222 \
+    ACC_COLLECTIVE_IDS=sol-01 \
+    ACC_WEBGUI_HOST=0.0.0.0 \
+    ACC_WEBGUI_PORT=8080 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+EXPOSE 8080
+WORKDIR /app
+
+# acc-webgui refuses a non-loopback bind unless ACC_WEBGUI_AUTH_MODE is
+# set — so a network deployment MUST configure auth (proposal §4.7).
+ENTRYPOINT ["acc-webgui"]
