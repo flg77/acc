@@ -40,6 +40,8 @@ must authenticate. Auth is capability-tiered — set
 |---|---|---|
 | `oauth-proxy` | trust an OpenShift oauth-proxy sidecar's identity headers | rhoai |
 | `oidc` | validate a bearer JWT against `ACC_WEBGUI_OIDC_ISSUER` | edge / standalone with an IdP |
+| `mtls` | client-certificate auth — a TLS front layer verifies the cert and injects the subject | edge |
+| `htpasswd` | username/password login (Apache htpasswd file) → a signed session token | dev / standalone (multi-user) |
 | `token` | a static operator / viewer bearer token | standalone / dev |
 
 **If no mode is set, acc-webgui refuses to bind a non-loopback
@@ -47,7 +49,14 @@ address** — it will not expose an unauthenticated UI on the network.
 
 RBAC has two roles: **viewer** (all read-only screens + tracing) and
 **operator** (also infuse / prompt / oversight / test-LLM). Write
-actions are stamped with the authenticated human identity.
+actions are stamped with the authenticated human identity. For the
+header / certificate / login modes, the operator role is granted to
+the users listed in `ACC_WEBGUI_OPERATOR_USERS`.
+
+The WebSocket `/ws/{cid}` is authenticated too: `oauth-proxy` / `mtls`
+use the headers the front layer injects on the upgrade request;
+`token` / `oidc` / `htpasswd` pass the token as a `?token=` query
+parameter (browsers cannot set headers on a WebSocket).
 
 ## Configuration
 
@@ -57,10 +66,15 @@ actions are stamped with the authenticated human identity.
 | `ACC_COLLECTIVE_IDS` | `sol-01` | comma-separated collectives to observe |
 | `ACC_WEBGUI_HOST` | `127.0.0.1` | bind address |
 | `ACC_WEBGUI_PORT` | `8080` | bind port |
-| `ACC_WEBGUI_AUTH_MODE` | _(none)_ | `oauth-proxy` \| `oidc` \| `token` |
+| `ACC_WEBGUI_AUTH_MODE` | _(none)_ | `oauth-proxy` \| `oidc` \| `mtls` \| `htpasswd` \| `token` |
 | `ACC_WEBGUI_OPERATOR_TOKEN` / `_VIEWER_TOKEN` | — | token-mode bearer tokens |
-| `ACC_WEBGUI_OPERATOR_USERS` | — | comma-separated operator-role users (oauth-proxy / oidc) |
+| `ACC_WEBGUI_OPERATOR_USERS` | — | comma-separated operator-role users (oauth-proxy / oidc / mtls / htpasswd) |
 | `ACC_WEBGUI_OIDC_ISSUER` | — | OIDC issuer URL |
+| `ACC_WEBGUI_HTPASSWD_PATH` | — | htpasswd mode: path to a bcrypt htpasswd file |
+| `ACC_WEBGUI_SESSION_SECRET` | random | htpasswd mode: HS256 session-token signing key |
+| `ACC_WEBGUI_SESSION_TTL` | `43200` | htpasswd mode: session lifetime, seconds (12h) |
+| `ACC_WEBGUI_MTLS_HEADER` | `x-client-cert-subject` | mtls mode: header carrying the verified client identity |
+| `ACC_WEBGUI_MTLS_VERIFY_HEADER` | `x-client-cert-verify` | mtls mode: header that must equal `SUCCESS` |
 | `ACC_NKEY_ENABLED` / `ACC_NKEY_SEED_PATH` | — | NKey auth for the NATS connection (proposal 013) |
 
 ## Deploying — per mode
@@ -96,6 +110,51 @@ site has an IdP.
 Apply the Deployment + Service, add an `oauth-proxy` sidecar
 (`ACC_WEBGUI_AUTH_MODE=oauth-proxy`), and uncomment the `Route` in the
 sample for cluster SSO + TLS.
+
+## htpasswd mode (dev — multi-user)
+
+`token` mode shares one secret across everyone. `htpasswd` mode gives
+each developer real credentials, so the human identity stamped on
+infuse / prompt / oversight actions is their actual username.
+
+```bash
+# bcrypt only — htpasswd -B; raise the cost with -C 12
+htpasswd -B -c -C 12 ./acc-webgui.htpasswd alice
+htpasswd -B       -C 12 ./acc-webgui.htpasswd bob
+
+export ACC_WEBGUI_AUTH_MODE=htpasswd
+export ACC_WEBGUI_HTPASSWD_PATH=$PWD/acc-webgui.htpasswd
+export ACC_WEBGUI_SESSION_SECRET=$(openssl rand -hex 32)
+export ACC_WEBGUI_OPERATOR_USERS=alice          # bob is then a viewer
+acc-webgui
+```
+
+The browser shows a username/password form; a successful login mints a
+short-lived signed session token (HS256, `ACC_WEBGUI_SESSION_TTL`,
+default 12h). The htpasswd file is re-read on every login, so adding a
+user needs no restart. If `ACC_WEBGUI_SESSION_SECRET` is unset a random
+one is generated — every session then dies on restart; set it
+explicitly for continuity or multiple replicas.
+
+## mtls mode (edge — client certificates)
+
+`mtls` is the strong, self-contained option for edge nodes with no
+IdP: a TLS-terminating front layer verifies the operator's client
+certificate against a local CA and injects the verified subject as a
+header acc-webgui trusts (the same trust model as `oauth-proxy`).
+uvicorn does not expose the peer certificate to the app, so the front
+layer — not acc-webgui — does the TLS + cert verification.
+
+- **standalone / edge (Podman, sidecar)** — front acc-webgui with the
+  nginx sidecar config `container/production/nginx-mtls-sidecar.conf`.
+- **edge cluster (MicroShift)** — the router can do re-encrypt +
+  client-cert verification instead, injecting the same headers.
+
+acc-webgui **must bind `127.0.0.1`** (`ACC_WEBGUI_HOST=127.0.0.1`) so
+it is reachable only via the front layer — a direct connection could
+forge the `X-Client-Cert-*` headers. The role of each certificate
+identity is decided by `ACC_WEBGUI_OPERATOR_USERS` (match the value
+form the front layer sends — the nginx sample sends the bare CN).
 
 ## The screens
 

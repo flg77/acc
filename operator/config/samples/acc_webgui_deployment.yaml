@@ -8,8 +8,15 @@
 #   kubectl apply -f operator/config/samples/acc_webgui_deployment.yaml
 #
 # AUTHENTICATION (mandatory — this is a network-exposed human surface):
-#   * edge / generic Kubernetes — set ACC_WEBGUI_AUTH_MODE=token (or
-#     =oidc with ACC_WEBGUI_OIDC_ISSUER) and supply the token/secret.
+#   * dev / generic Kubernetes — ACC_WEBGUI_AUTH_MODE=token, or
+#     =htpasswd (multi-user; mount a bcrypt htpasswd file + set
+#     ACC_WEBGUI_HTPASSWD_PATH and ACC_WEBGUI_SESSION_SECRET), or
+#     =oidc with ACC_WEBGUI_OIDC_ISSUER.
+#   * edge — ACC_WEBGUI_AUTH_MODE=mtls: front the pod with the nginx
+#     mTLS sidecar (container/production/nginx-mtls-sidecar.conf), or
+#     have the MicroShift router do re-encrypt + client-cert
+#     verification.  See the commented mTLS block at the end of this
+#     file.
 #   * OpenShift — set ACC_WEBGUI_AUTH_MODE=oauth-proxy and front the
 #     Service with an oauth-proxy sidecar + the Route below for SSO.
 # Without an auth mode acc-webgui refuses a non-loopback bind.
@@ -69,7 +76,7 @@ spec:
               value: "8080"
             # --- auth (edit per deploy mode — see the header) ---
             - name: ACC_WEBGUI_AUTH_MODE
-              value: "token"            # token | oidc | oauth-proxy
+              value: "token"            # token | htpasswd | oidc | mtls | oauth-proxy
             - name: ACC_WEBGUI_OPERATOR_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -82,6 +89,15 @@ spec:
                   name: acc-webgui-auth
                   key: viewer_token
                   optional: true
+            # htpasswd mode — also mount the htpasswd file (volume below)
+            # and uncomment:
+            # - name: ACC_WEBGUI_HTPASSWD_PATH
+            #   value: /etc/acc-webgui/htpasswd
+            # - name: ACC_WEBGUI_SESSION_SECRET
+            #   valueFrom:
+            #     secretKeyRef: { name: acc-webgui-auth, key: session_secret }
+            # - name: ACC_WEBGUI_OPERATOR_USERS
+            #   value: "alice,bob"      # htpasswd users granted the operator role
           resources:
             requests:
               cpu: "100m"
@@ -134,3 +150,27 @@ spec:
 #     targetPort: http
 #   tls:
 #     termination: edge
+#
+# ---------------------------------------------------------------------------
+# EDGE — mtls mode.  Add an nginx mTLS sidecar to the Deployment above:
+# it terminates TLS on :8443, verifies the client certificate against a
+# local CA, and injects the verified subject as a header acc-webgui
+# trusts.  acc-webgui itself must then bind 127.0.0.1 (set
+# ACC_WEBGUI_HOST=127.0.0.1 and ACC_WEBGUI_AUTH_MODE=mtls) so it is
+# reachable ONLY through the sidecar.
+#
+# Add to spec.template.spec.containers:
+#   - name: mtls-sidecar
+#     image: docker.io/library/nginx:stable
+#     ports: [{ name: https, containerPort: 8443 }]
+#     volumeMounts:
+#       - { name: nginx-conf, mountPath: /etc/nginx/nginx.conf, subPath: nginx.conf, readOnly: true }
+#       - { name: webgui-tls, mountPath: /etc/nginx/tls, readOnly: true }
+# Add to spec.template.spec.volumes:
+#   - name: nginx-conf            # ConfigMap from nginx-mtls-sidecar.conf
+#     configMap: { name: acc-webgui-mtls-nginx }
+#   - name: webgui-tls            # server.crt/key + client-ca.crt
+#     secret: { secretName: acc-webgui-tls }
+# And point the Service port at the sidecar (port 8443, name https).
+# On a MicroShift cluster the router can do re-encrypt + client-cert
+# verification instead, injecting the same headers — no sidecar needed.
