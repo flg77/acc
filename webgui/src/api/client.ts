@@ -20,6 +20,18 @@ export function setToken(token: string | null): void {
   }
 }
 
+export function getToken(): string | null {
+  return bearerToken;
+}
+
+// True when the backend rejected the request for lack of a valid token.
+// The app shell uses this to show the token-entry gate instead of an
+// indefinite "Connecting…" spinner.
+export function isAuthError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.startsWith("401") || msg.startsWith("403");
+}
+
 function authHeaders(): Record<string, string> {
   return bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {};
 }

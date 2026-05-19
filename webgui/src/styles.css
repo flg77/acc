@@ -98,3 +98,24 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .verified { color: var(--ok); font-weight: 600; }
 .tampered { color: var(--err); font-weight: 600; }
+
+/* Token-entry gate (token auth mode, no valid token in this browser). */
+.token-gate {
+  max-width: 26rem;
+  margin: 4rem auto;
+  padding: 1.5rem;
+  background: var(--panel);
+  border-radius: 0.5rem;
+}
+.token-gate h1 { margin-top: 0; }
+.token-gate form { display: flex; gap: 0.5rem; align-items: flex-start; }
+.token-gate input { flex: 1; }
+.token-gate button { white-space: nowrap; }
+.token-gate code {
+  background: var(--bg);
+  padding: 0.05rem 0.25rem;
+  border-radius: 0.2rem;
+  font-size: 0.75rem;
+}
+.errmsg { color: var(--err); font-size: 0.85rem; }
+.loading button { margin-top: 0.6rem; }
