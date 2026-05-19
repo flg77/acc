@@ -1,0 +1,201 @@
+=== phi4 ===
+  cid: 4cf1f6c915c5
+  --- captured tail (45 lines) ---
+    [error matches]
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     engine_core = EngineCoreProc(*args, **kwargs)
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 606, in __init__
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     super().__init__(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 109, in __init__
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     num_gpu_blocks, num_cpu_blocks, kv_cache_config = self._initialize_kv_caches(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 239, in _initialize_kv_caches
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     kv_cache_configs = get_kv_cache_configs(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]                        ^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 1277, in get_kv_cache_configs
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     check_enough_kv_cache_memory(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 686, in check_enough_kv_cache_memory
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     raise ValueError(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine.
+    
+    [last 20 lines]
+    [1;36m(EngineCore_DP0 pid=131)[0;0m INFO 05-14 08:18:45 [monitor.py:34] torch.compile takes 19.85 s in total
+    [1;36m(EngineCore_DP0 pid=131)[0;0m INFO 05-14 08:18:46 [gpu_worker.py:359] Available KV cache memory: -0.92 GiB
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842] EngineCore failed to start.
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842] Traceback (most recent call last):
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 833, in run_engine_core
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     engine_core = EngineCoreProc(*args, **kwargs)
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 606, in __init__
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     super().__init__(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 109, in __init__
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     num_gpu_blocks, num_cpu_blocks, kv_cache_config = self._initialize_kv_caches(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 239, in _initialize_kv_caches
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     kv_cache_configs = get_kv_cache_configs(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]                        ^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 1277, in get_kv_cache_configs
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     check_enough_kv_cache_memory(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 686, in check_enough_kv_cache_memory
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842]     raise ValueError(
+    [1;36m(EngineCore_DP0 pid=131)[0;0m ERROR 05-14 08:18:46 [core.py:842] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine.
+
+=== r1-8b ===
+  cid: ab6dd7095de8
+  --- captured tail (3 lines) ---
+    [error matches]
+    [1;36m(APIServer pid=1)[0;0m INFO 05-14 08:19:09 [utils.py:253] non-default args: {'model': 'neuralmagic/DeepSeek-R1-Distill-Llama-8B-FP8', 'max_model_len': 8192, 'enforce_eager': True, 'gpu_memory_utilization': 0.85}
+    
+    [last 20 lines]
+    INFO 05-14 08:19:09 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+    [1;36m(APIServer pid=1)[0;0m INFO 05-14 08:19:09 [api_server.py:1977] vLLM API server version 0.11.2+rhai5
+    [1;36m(APIServer pid=1)[0;0m INFO 05-14 08:19:09 [utils.py:253] non-default args: {'model': 'neuralmagic/DeepSeek-R1-Distill-Llama-8B-FP8', 'max_model_len': 8192, 'enforce_eager': True, 'gpu_memory_utilization': 0.85}
+
+=== llama-8b-fp8 ===
+  cid: 4a5f84334b4b
+  --- captured tail (48 lines) ---
+    [error matches]
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     engine_core = EngineCoreProc(*args, **kwargs)
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 606, in __init__
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     super().__init__(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 109, in __init__
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     num_gpu_blocks, num_cpu_blocks, kv_cache_config = self._initialize_kv_caches(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 239, in _initialize_kv_caches
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     kv_cache_configs = get_kv_cache_configs(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]                        ^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 1277, in get_kv_cache_configs
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     check_enough_kv_cache_memory(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 686, in check_enough_kv_cache_memory
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     raise ValueError(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine.
+    
+    [last 20 lines]
+    [1;36m(EngineCore_DP0 pid=130)[0;0m INFO 05-14 08:20:32 [monitor.py:34] torch.compile takes 31.74 s in total
+    [1;36m(EngineCore_DP0 pid=130)[0;0m INFO 05-14 08:20:33 [gpu_worker.py:359] Available KV cache memory: -0.21 GiB
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842] EngineCore failed to start.
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842] Traceback (most recent call last):
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 833, in run_engine_core
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     engine_core = EngineCoreProc(*args, **kwargs)
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 606, in __init__
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     super().__init__(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 109, in __init__
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     num_gpu_blocks, num_cpu_blocks, kv_cache_config = self._initialize_kv_caches(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 239, in _initialize_kv_caches
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     kv_cache_configs = get_kv_cache_configs(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]                        ^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 1277, in get_kv_cache_configs
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     check_enough_kv_cache_memory(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 686, in check_enough_kv_cache_memory
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842]     raise ValueError(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:20:33 [core.py:842] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine.
+
+=== qwen-coder ===
+  cid: da10972a0e06
+  --- captured tail (41 lines) ---
+    [error matches]
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     engine_core = EngineCoreProc(*args, **kwargs)
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 606, in __init__
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     super().__init__(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 109, in __init__
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     num_gpu_blocks, num_cpu_blocks, kv_cache_config = self._initialize_kv_caches(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 239, in _initialize_kv_caches
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     kv_cache_configs = get_kv_cache_configs(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]                        ^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 1277, in get_kv_cache_configs
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     check_enough_kv_cache_memory(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 686, in check_enough_kv_cache_memory
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     raise ValueError(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine.
+    
+    [last 20 lines]
+    [1;36m(EngineCore_DP0 pid=130)[0;0m INFO 05-14 08:21:18 [gpu_model_runner.py:3338] Model loading took 2.8871 GiB memory and 1.352587 seconds
+    [1;36m(EngineCore_DP0 pid=130)[0;0m INFO 05-14 08:21:19 [gpu_worker.py:359] Available KV cache memory: -0.84 GiB
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842] EngineCore failed to start.
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842] Traceback (most recent call last):
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 833, in run_engine_core
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     engine_core = EngineCoreProc(*args, **kwargs)
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 606, in __init__
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     super().__init__(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 109, in __init__
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     num_gpu_blocks, num_cpu_blocks, kv_cache_config = self._initialize_kv_caches(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/engine/core.py", line 239, in _initialize_kv_caches
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     kv_cache_configs = get_kv_cache_configs(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]                        ^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 1277, in get_kv_cache_configs
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     check_enough_kv_cache_memory(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/v1/core/kv_cache_utils.py", line 686, in check_enough_kv_cache_memory
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842]     raise ValueError(
+    [1;36m(EngineCore_DP0 pid=130)[0;0m ERROR 05-14 08:21:19 [core.py:842] ValueError: No available memory for the cache blocks. Try increasing `gpu_memory_utilization` when initializing the engine.
+
+=== nemotron-nano ===
+  cid: 2d9ad7712396
+  --- captured tail (3 lines) ---
+    [error matches]
+    [1;36m(APIServer pid=1)[0;0m INFO 05-14 08:21:41 [utils.py:253] non-default args: {'port': 8002, 'model': 'nvidia/Nemotron-3-Nano-Omni-FP8', 'trust_remote_code': True, 'max_model_len': 4096, 'gpu_memory_utilization': 0.3}
+    
+    [last 20 lines]
+    INFO 05-14 08:21:41 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+    [1;36m(APIServer pid=1)[0;0m INFO 05-14 08:21:41 [api_server.py:1977] vLLM API server version 0.11.2+rhai5
+    [1;36m(APIServer pid=1)[0;0m INFO 05-14 08:21:41 [utils.py:253] non-default args: {'port': 8002, 'model': 'nvidia/Nemotron-3-Nano-Omni-FP8', 'trust_remote_code': True, 'max_model_len': 4096, 'gpu_memory_utilization': 0.3}
+
+=== nemo12 ===
+  cid: cca9721b48e2
+  --- captured tail (81 lines) ---
+    [error matches]
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/layers/linear.py", line 631, in __init__
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     super().__init__(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/layers/linear.py", line 484, in __init__
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     self.quant_method.create_weights(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/layers/quantization/fp8.py", line 436, in create_weights
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     weight = create_fp8_weight_parameter(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/layers/quantization/utils/fp8_utils.py", line 1046, in create_fp8_weight_parameter
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     data=torch.empty(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]          ^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/torch/utils/_device.py", line 103, in __torch_function__
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     return func(*args, **kwargs)
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]            ^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842] torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 140.00 MiB. GPU 0 has a total capacity of 11.60 GiB of which 18.38 MiB is free. Including non-PyTorch memory, this process has 11.47 GiB memory in use. Of the allocated memory 11.21 GiB is allocated by PyTorch, and 30.22 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+    
+    [last 20 lines]
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/models/llama.py", line 339, in __init__
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     self.mlp = LlamaMLP(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]                ^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/models/llama.py", line 86, in __init__
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     self.gate_up_proj = MergedColumnParallelLinear(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/layers/linear.py", line 631, in __init__
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     super().__init__(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/layers/linear.py", line 484, in __init__
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     self.quant_method.create_weights(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/layers/quantization/fp8.py", line 436, in create_weights
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     weight = create_fp8_weight_parameter(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/vllm/model_executor/layers/quantization/utils/fp8_utils.py", line 1046, in create_fp8_weight_parameter
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     data=torch.empty(
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]          ^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]   File "/opt/app-root/lib64/python3.12/site-packages/torch/utils/_device.py", line 103, in __torch_function__
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]     return func(*args, **kwargs)
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842]            ^^^^^^^^^^^^^^^^^^^^^
+    [1;36m(EngineCore_DP0 pid=129)[0;0m ERROR 05-14 08:22:27 [core.py:842] torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 140.00 MiB. GPU 0 has a total capacity of 11.60 GiB of which 18.38 MiB is free. Including non-PyTorch memory, this process has 11.47 GiB memory in use. Of the allocated memory 11.21 GiB is allocated by PyTorch, and 30.22 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+
+=== dsv3 ===
+  cid: 3632859a1858
+  --- captured tail (3 lines) ---
+    [error matches]
+    [1;36m(APIServer pid=1)[0;0m INFO 05-14 08:22:49 [utils.py:253] non-default args: {'model': 'deepseek-ai/DeepSeek-V3-Distill-Llama-8B', 'max_model_len': 8192, 'enforce_eager': True, 'gpu_memory_utilization': 0.75}
+    
+    [last 20 lines]
+    INFO 05-14 08:22:49 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+    [1;36m(APIServer pid=1)[0;0m INFO 05-14 08:22:49 [api_server.py:1977] vLLM API server version 0.11.2+rhai5
+    [1;36m(APIServer pid=1)[0;0m INFO 05-14 08:22:49 [utils.py:253] non-default args: {'model': 'deepseek-ai/DeepSeek-V3-Distill-Llama-8B', 'max_model_len': 8192, 'enforce_eager': True, 'gpu_memory_utilization': 0.75}
+
