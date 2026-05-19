@@ -335,7 +335,45 @@ case "$COMMAND" in
 
     down)
         echo "▶ Stopping stack..."
-        "${BASE_CMD[@]}" down "$@"
+        # podman-compose tears the stack down service-by-service on a 10s
+        # SIGTERM grace, then removes containers.  Two failure modes bite:
+        #   1. A container that ignores SIGTERM (acc-tui, acc-redis) is
+        #      SIGKILLed only after 10s — meanwhile compose moves on and
+        #      tries to remove a container whose dependents are still up,
+        #      yielding "has dependent containers" / "container state
+        #      improper" errors and a stuck pod + network.
+        #   2. podman-compose can exit 0 even when those removals failed,
+        #      so the exit code alone cannot be trusted.
+        # Make teardown deterministic: stop every acc container up-front
+        # with a generous grace (removal then never races a live
+        # container), run compose down, then verify nothing survived and
+        # force-clean the pod / network / volumes if it did.
+        readarray -t _ACC_CTRS < <(podman ps -aq --filter "name=acc-" 2>/dev/null)
+        readarray -t _ACC_PODS < <(podman ps -a --filter "name=acc-" \
+            --format '{{.Pod}}' 2>/dev/null | sort -u | sed '/^$/d')
+        if [[ ${#_ACC_CTRS[@]} -gt 0 ]]; then
+            echo "  stopping ${#_ACC_CTRS[@]} acc container(s) with a 30s grace..."
+            podman stop -t 30 "${_ACC_CTRS[@]}" >/dev/null 2>&1 || true
+        fi
+        "${BASE_CMD[@]}" down "$@" || true
+        # Verify by state, not exit code: anything left means the ordered
+        # removal failed — drop the whole pod (ignores intra-pod
+        # dependency order), then mop up containers / network / volumes.
+        if [[ -n "$(podman ps -aq --filter "name=acc-" 2>/dev/null)" ]]; then
+            echo "  containers survived compose down — forcing cleanup..."
+            for _pod in ${_ACC_PODS[@]+"${_ACC_PODS[@]}"}; do
+                podman pod rm -f "$_pod" >/dev/null 2>&1 || true
+            done
+            podman ps -aq --filter "name=acc-" 2>/dev/null \
+                | xargs -r podman rm -f >/dev/null 2>&1 || true
+            podman network ls -q --filter "name=acc-net" 2>/dev/null \
+                | xargs -r podman network rm -f >/dev/null 2>&1 || true
+            # Only remove volumes if the caller asked for it (`down -v`).
+            if [[ " $* " == *" -v "* || " $* " == *" --volumes "* ]]; then
+                podman volume ls -q --filter "name=acc-" 2>/dev/null \
+                    | xargs -r podman volume rm -f >/dev/null 2>&1 || true
+            fi
+        fi
         echo "✓ Stack stopped."
         ;;
 
