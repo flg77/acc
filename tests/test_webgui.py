@@ -13,6 +13,8 @@ import datetime
 import pytest
 
 pytest.importorskip("fastapi")
+pytest.importorskip("authlib")          # webgui session JWT + OIDC
+_bcrypt = pytest.importorskip("bcrypt")  # htpasswd password verification
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -238,3 +240,263 @@ class TestAuth:
                 "/api/test-llm", json={"base_url": "http://127.0.0.1:9"},
                 headers={"Authorization": "Bearer op-secret"})
             assert allowed.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Auth — htpasswd / mtls modes, WebSocket auth, auth-info (PR-A)
+# ---------------------------------------------------------------------------
+
+
+def _app(monkeypatch, env, collective="sol-01"):
+    """Build a create_app() instance with the fake observer + env set."""
+    import acc.tui.client as tui_client
+    monkeypatch.setattr(tui_client, "NATSObserver", _FakeObserver)
+    monkeypatch.setenv("ACC_COLLECTIVE_IDS", collective)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    from acc.webgui.app import create_app
+    return create_app()
+
+
+def _write_htpasswd(tmp_path, entries, *, rounds=4):
+    """Write a bcrypt htpasswd file. entries: {user: plaintext_password}."""
+    lines = []
+    for user, pw in entries.items():
+        h = _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt(rounds=rounds)).decode()
+        lines.append(f"{user}:{h}")
+    path = tmp_path / "htpasswd"
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def _htpasswd_app(monkeypatch, tmp_path, *, users, operator_users=(),
+                   session_ttl=None):
+    env = {
+        "ACC_WEBGUI_AUTH_MODE": "htpasswd",
+        "ACC_WEBGUI_HTPASSWD_PATH": str(_write_htpasswd(tmp_path, users)),
+        "ACC_WEBGUI_SESSION_SECRET": "test-session-secret",
+    }
+    if operator_users:
+        env["ACC_WEBGUI_OPERATOR_USERS"] = ",".join(operator_users)
+    if session_ttl is not None:
+        env["ACC_WEBGUI_SESSION_TTL"] = str(session_ttl)
+    return _app(monkeypatch, env)
+
+
+class TestHtpasswd:
+    def test_login_good_creds_returns_working_token(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "s3cret"})
+        with TestClient(app) as c:
+            r = c.post("/api/login", json={"username": "alice",
+                                           "password": "s3cret"})
+            assert r.status_code == 200
+            token = r.json()["token"]
+            assert token
+            ok = c.get("/api/collectives",
+                       headers={"Authorization": f"Bearer {token}"})
+            assert ok.status_code == 200
+
+    def test_login_bad_password(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "s3cret"})
+        with TestClient(app) as c:
+            r = c.post("/api/login", json={"username": "alice",
+                                           "password": "wrong"})
+            assert r.status_code == 401
+
+    def test_login_unknown_user(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "s3cret"})
+        with TestClient(app) as c:
+            r = c.post("/api/login", json={"username": "bob",
+                                           "password": "s3cret"})
+            assert r.status_code == 401
+
+    def test_login_404_outside_htpasswd_mode(self, monkeypatch):
+        app = _app(monkeypatch, {
+            "ACC_WEBGUI_AUTH_MODE": "token",
+            "ACC_WEBGUI_OPERATOR_TOKEN": "op",
+        })
+        with TestClient(app) as c:
+            r = c.post("/api/login", json={"username": "x", "password": "y"})
+            assert r.status_code == 404
+
+    def test_unauthenticated_request_rejected(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "s3cret"})
+        with TestClient(app) as c:
+            assert c.get("/api/collectives").status_code == 401
+
+    def test_non_bcrypt_line_skipped(self, tmp_path):
+        from acc.webgui.auth import _load_htpasswd
+        h = _bcrypt.hashpw(b"pw", _bcrypt.gensalt(rounds=4)).decode()
+        path = tmp_path / "mixed"
+        path.write_text(
+            f"alice:{h}\n"
+            "legacy:$apr1$abc$def\n"      # non-bcrypt — must be skipped
+            "\n"
+            "# a comment\n"
+        )
+        entries = _load_htpasswd(str(path))
+        assert "alice" in entries
+        assert "legacy" not in entries
+
+    def test_htpasswd_file_reload_without_restart(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "s3cret"})
+        with TestClient(app) as c:
+            assert c.post("/api/login", json={"username": "bob",
+                                              "password": "pw"}).status_code == 401
+            # Append bob to the live file — no restart.
+            h = _bcrypt.hashpw(b"pw", _bcrypt.gensalt(rounds=4)).decode()
+            with open(tmp_path / "htpasswd", "a") as fh:
+                fh.write(f"bob:{h}\n")
+            assert c.post("/api/login", json={"username": "bob",
+                                              "password": "pw"}).status_code == 200
+
+    def test_tampered_token_rejected(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "s3cret"})
+        with TestClient(app) as c:
+            token = c.post("/api/login", json={"username": "alice",
+                                               "password": "s3cret"}).json()["token"]
+            bad = token[:-4] + ("AAAA" if not token.endswith("AAAA") else "BBBB")
+            r = c.get("/api/collectives",
+                      headers={"Authorization": f"Bearer {bad}"})
+            assert r.status_code == 401
+
+    def test_expired_token_rejected(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "s3cret"},
+                            session_ttl=-100)  # minted already-expired
+        with TestClient(app) as c:
+            token = c.post("/api/login", json={"username": "alice",
+                                               "password": "s3cret"}).json()["token"]
+            r = c.get("/api/collectives",
+                      headers={"Authorization": f"Bearer {token}"})
+            assert r.status_code == 401
+
+    def test_y_prefix_hash_accepted(self, monkeypatch, tmp_path):
+        # `htpasswd -B` emits the $2y$ ident — verify the normalisation.
+        h = _bcrypt.hashpw(b"s3cret", _bcrypt.gensalt(rounds=4)).decode()
+        y_hash = "$2y$" + h[4:]
+        (tmp_path / "htpasswd").write_text(f"alice:{y_hash}\n")
+        app = _app(monkeypatch, {
+            "ACC_WEBGUI_AUTH_MODE": "htpasswd",
+            "ACC_WEBGUI_HTPASSWD_PATH": str(tmp_path / "htpasswd"),
+            "ACC_WEBGUI_SESSION_SECRET": "test-session-secret",
+        })
+        with TestClient(app) as c:
+            r = c.post("/api/login", json={"username": "alice",
+                                           "password": "s3cret"})
+            assert r.status_code == 200
+
+    def test_operator_vs_viewer_role(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path,
+                            users={"alice": "pw", "bob": "pw"},
+                            operator_users=["alice"])
+        with TestClient(app) as c:
+            op = c.post("/api/login", json={"username": "alice",
+                                            "password": "pw"}).json()
+            assert op["role"] == "operator"
+            view = c.post("/api/login", json={"username": "bob",
+                                              "password": "pw"}).json()
+            assert view["role"] == "viewer"
+            # viewer cannot perform an operator action
+            assert c.post(
+                "/api/test-llm", json={"base_url": "http://x"},
+                headers={"Authorization": f"Bearer {view['token']}"},
+            ).status_code == 403
+            # operator can
+            assert c.post(
+                "/api/test-llm", json={"base_url": "http://127.0.0.1:9"},
+                headers={"Authorization": f"Bearer {op['token']}"},
+            ).status_code == 200
+
+
+class TestMtls:
+    def _mtls_app(self, monkeypatch, operator_users=()):
+        env = {"ACC_WEBGUI_AUTH_MODE": "mtls"}
+        if operator_users:
+            env["ACC_WEBGUI_OPERATOR_USERS"] = ",".join(operator_users)
+        return _app(monkeypatch, env)
+
+    def test_verified_subject_authorised(self, monkeypatch):
+        with TestClient(self._mtls_app(monkeypatch)) as c:
+            r = c.get("/api/collectives", headers={
+                "x-client-cert-verify": "SUCCESS",
+                "x-client-cert-subject": "alice",
+            })
+            assert r.status_code == 200
+
+    def test_verify_failed_rejected(self, monkeypatch):
+        with TestClient(self._mtls_app(monkeypatch)) as c:
+            r = c.get("/api/collectives", headers={
+                "x-client-cert-verify": "FAILED",
+                "x-client-cert-subject": "alice",
+            })
+            assert r.status_code == 401
+
+    def test_verify_absent_rejected(self, monkeypatch):
+        with TestClient(self._mtls_app(monkeypatch)) as c:
+            r = c.get("/api/collectives",
+                      headers={"x-client-cert-subject": "alice"})
+            assert r.status_code == 401
+
+    def test_operator_mapping(self, monkeypatch):
+        app = self._mtls_app(monkeypatch, operator_users=["ops"])
+        with TestClient(app) as c:
+            ok = c.post("/api/test-llm", json={"base_url": "http://127.0.0.1:9"},
+                        headers={"x-client-cert-verify": "SUCCESS",
+                                 "x-client-cert-subject": "ops"})
+            assert ok.status_code == 200
+            forbidden = c.post("/api/test-llm", json={"base_url": "http://x"},
+                               headers={"x-client-cert-verify": "SUCCESS",
+                                        "x-client-cert-subject": "alice"})
+            assert forbidden.status_code == 403
+
+
+class TestWebSocketAuth:
+    def test_token_mode_ws_rejects_without_token(self, monkeypatch):
+        from fastapi import WebSocketDisconnect
+        app = _app(monkeypatch, {
+            "ACC_WEBGUI_AUTH_MODE": "token",
+            "ACC_WEBGUI_OPERATOR_TOKEN": "op-secret",
+        })
+        with TestClient(app) as c:
+            with pytest.raises(WebSocketDisconnect):
+                with c.websocket_connect("/ws/sol-01"):
+                    pass
+
+    def test_token_mode_ws_accepts_with_query_token(self, monkeypatch):
+        app = _app(monkeypatch, {
+            "ACC_WEBGUI_AUTH_MODE": "token",
+            "ACC_WEBGUI_OPERATOR_TOKEN": "op-secret",
+        })
+        with TestClient(app) as c:
+            with c.websocket_connect("/ws/sol-01?token=op-secret"):
+                pass  # handshake accepted → authenticated
+
+    def test_htpasswd_ws_accepts_with_session_token(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "s3cret"})
+        with TestClient(app) as c:
+            token = c.post("/api/login", json={"username": "alice",
+                                               "password": "s3cret"}).json()["token"]
+            with c.websocket_connect(f"/ws/sol-01?token={token}"):
+                pass
+
+    def test_oauth_proxy_ws_accepts_with_header(self, monkeypatch):
+        app = _app(monkeypatch, {"ACC_WEBGUI_AUTH_MODE": "oauth-proxy"})
+        with TestClient(app) as c:
+            with c.websocket_connect(
+                "/ws/sol-01",
+                headers={"X-Forwarded-Email": "alice@example.com"},
+            ):
+                pass
+
+
+class TestAuthInfo:
+    def test_auth_info_open_and_reports_mode(self, client):
+        # The `client` fixture runs in the default (none) mode.
+        r = client.get("/api/auth-info")
+        assert r.status_code == 200
+        assert r.json()["mode"] == "none"
+
+    def test_auth_info_reports_htpasswd(self, monkeypatch, tmp_path):
+        app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "pw"})
+        with TestClient(app) as c:
+            assert c.get("/api/auth-info").json()["mode"] == "htpasswd"

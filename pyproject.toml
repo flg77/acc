@@ -71,10 +71,13 @@ webgui = [
     # acc-webgui — the optional FastAPI + React web frontend.  The
     # React build is a separate Node toolchain (webgui/ tree); only
     # these Python deps ship in the runtime image.  authlib backs the
-    # OIDC auth tier (proposal acc-webgui PR-5).
+    # OIDC + htpasswd-session-JWT auth tiers; bcrypt verifies the
+    # htpasswd file (proposal acc-webgui PR-5 + the htpasswd/mtls
+    # auth-mode amendment).
     "fastapi>=0.115,<1.0",
     "uvicorn[standard]>=0.30,<1.0",
     "authlib>=1.3,<2.0",
+    "bcrypt>=4.1,<5.0",
 ]
 
 [project.scripts]

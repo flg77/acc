@@ -12,6 +12,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from acc.webgui.auth import authenticate_websocket
 from acc.webgui.observers import ObserverHub
 
 logger = logging.getLogger("acc.webgui.ws")
@@ -23,6 +24,18 @@ router = APIRouter()
 async def collective_ws(websocket: WebSocket, collective_id: str) -> None:
     """Stream live `CollectiveSnapshot` updates for one collective."""
     hub: ObserverHub = websocket.app.state.hub
+
+    # Authenticate the upgrade BEFORE accepting.  Browsers cannot set an
+    # Authorization header on a WebSocket, so token/oidc/htpasswd modes
+    # carry it as a ?token= query param; oauth-proxy/mtls modes use the
+    # headers the front layer injects on the upgrade request.  Viewer
+    # role suffices — the WS streams read-only snapshots.
+    cfg = websocket.app.state.auth_config
+    principal = authenticate_websocket(websocket, cfg)
+    if principal is None:
+        await websocket.close(code=1008)  # policy violation
+        return
+
     await websocket.accept()
 
     if not hub.register_ws(collective_id, websocket):

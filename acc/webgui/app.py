@@ -48,7 +48,9 @@ def create_app():
     from fastapi import Depends, FastAPI
 
     from acc.webgui.observers import ObserverHub
-    from acc.webgui import auth, routes_action, routes_read, routes_trace, ws
+    from acc.webgui import (
+        auth, routes_action, routes_auth, routes_read, routes_trace, ws,
+    )
 
     nats_url = os.environ.get("ACC_NATS_URL", _DEFAULT_NATS_URL)
     collective_ids = _collective_ids()
@@ -81,6 +83,10 @@ def create_app():
     # /health is intentionally open (liveness probe); the data, tracing,
     # and action surfaces are gated.  Read + tracing need the viewer
     # role; actions need the operator role (proposal §4.7).
+    #
+    # routes_auth (/api/login + /api/auth-info) is itself ungated — it
+    # IS the front door — and must register before the SPA static mount.
+    app.include_router(routes_auth.router)
     app.include_router(routes_read.router)  # gates its own data endpoints
     app.include_router(routes_trace.router, dependencies=[Depends(auth.require_viewer)])
     app.include_router(routes_action.router)  # each endpoint requires operator
