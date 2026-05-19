@@ -55,6 +55,19 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return resp.json() as Promise<T>;
 }
 
+// --- auth -------------------------------------------------------------------
+
+// Unauthenticated probe — tells the SPA which login gate to render.
+export const getAuthInfo = () => getJSON<{ mode: string }>("/api/auth-info");
+
+// htpasswd-mode login: exchange username/password for a session token.
+// Throws "401: ..." on bad credentials (see isAuthError).
+export const login = (username: string, password: string) =>
+  postJSON<{ token: string; user: string; role: string }>("/api/login", {
+    username,
+    password,
+  });
+
 // --- read ------------------------------------------------------------------
 
 export const listCollectives = () =>
@@ -139,7 +152,15 @@ export function openSnapshotStream(
   const connect = () => {
     if (closed) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/ws/${encodeURIComponent(cid)}`);
+    // Browsers cannot set an Authorization header on a WebSocket, so
+    // bearer/JWT modes carry the token as a ?token= query param; header
+    // modes (oauth-proxy / mtls) have no token and rely on the upgrade
+    // request's headers.
+    const tok = getToken();
+    const q = tok ? `?token=${encodeURIComponent(tok)}` : "";
+    ws = new WebSocket(
+      `${proto}://${location.host}/ws/${encodeURIComponent(cid)}${q}`,
+    );
     ws.onmessage = (ev) => {
       try {
         onSnapshot(JSON.parse(ev.data));

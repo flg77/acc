@@ -111,6 +111,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .token-gate form { display: flex; gap: 0.5rem; align-items: flex-start; }
 .token-gate input { flex: 1; }
 .token-gate button { white-space: nowrap; }
+/* htpasswd login — username + password stacked, then the button. */
+.token-gate form.login-form { flex-direction: column; align-items: stretch; }
+.token-gate form.login-form button { align-self: flex-start; }
 .token-gate code {
   background: var(--bg);
   padding: 0.05rem 0.25rem;
