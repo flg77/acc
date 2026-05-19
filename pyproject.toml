@@ -101,6 +101,13 @@ include = ["acc*"]
 # (acc/tui/screens/help.py).  Bundled into the installed package so the
 # ? key works after `pip install --no-deps .` in the production image.
 "acc.tui.help" = ["*.md"]
+# Compiled React SPA (Vite `dist/`).  Containerfile.webgui copies the
+# build output into acc/webgui/static BEFORE `pip install --no-deps .`;
+# without this entry pip copies only .py files, so the installed package
+# has no static/ dir — app.py then skips the SPA mount and every non-API
+# path returns FastAPI's {"detail":"Not Found"}.  The glob is empty (and
+# harmless) in a dev checkout where static/ does not exist.
+"acc.webgui" = ["static/*", "static/**/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
