@@ -536,9 +536,24 @@ services:
       ACC_COLLECTIVE_IDS: sol-01
       ACC_WEBGUI_HOST: 0.0.0.0
       ACC_WEBGUI_PORT: "8080"
-      ACC_WEBGUI_AUTH_MODE: token
+      # Interpolation falls back to "token" when the operator's .env
+      # doesn't set the mode.  A hard-coded `token` here would override
+      # whatever the env_file: above provides — that's why we use ${...}.
+      ACC_WEBGUI_AUTH_MODE: ${ACC_WEBGUI_AUTH_MODE:-token}
       ACC_WEBGUI_OPERATOR_TOKEN: ${ACC_WEBGUI_OPERATOR_TOKEN:-}
       ACC_WEBGUI_VIEWER_TOKEN: ${ACC_WEBGUI_VIEWER_TOKEN:-}
+      # htpasswd mode — these are honoured only when AUTH_MODE=htpasswd.
+      ACC_WEBGUI_HTPASSWD_PATH: ${ACC_WEBGUI_HTPASSWD_PATH:-/app/acc-webgui.htpasswd}
+      ACC_WEBGUI_SESSION_SECRET: ${ACC_WEBGUI_SESSION_SECRET:-}
+      ACC_WEBGUI_SESSION_TTL: ${ACC_WEBGUI_SESSION_TTL:-43200}
+      ACC_WEBGUI_OPERATOR_USERS: ${ACC_WEBGUI_OPERATOR_USERS:-}
+    volumes:
+      # htpasswd mode — bind the bcrypt password file in at the
+      # default container path.  `required: false` semantics: when the
+      # file is absent on the host, podman still tries to mount it and
+      # the bind fails; the safe workaround is to keep an empty
+      # placeholder at the repo root (or just don't use htpasswd mode).
+      - ../../acc-webgui.htpasswd:/app/acc-webgui.htpasswd:ro,z
     ports:
       - "8080:8080"
     networks:
