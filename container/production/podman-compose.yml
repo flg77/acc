@@ -492,6 +492,11 @@ services:
       # the image's built-in defaults (typically backend=ollama) and
       # silently misleads the operator about what's running.
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Mount the host's .env READ-WRITE so the Configuration screen's
+      # Save button can persist operator-tunable LLM knobs.  Only the
+      # acc-tui service gets :rw — agents/webgui keep RO env_file
+      # access.  See acc/tui/env_writeback.py for the atomic upsert.
+      - ../../.env:/app/.env:rw,z
     # Uncomment when WebBridge is enabled (ACC_TUI_WEB_PORT=8765):
     # ports:
     #   - "8765:8765"

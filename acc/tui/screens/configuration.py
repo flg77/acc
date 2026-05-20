@@ -43,7 +43,9 @@ from textual.widgets import (
     Button,
     DataTable,
     Footer,
+    Input,
     Label,
+    Select,
     Static,
     TabbedContent,
     TabPane,
@@ -57,6 +59,23 @@ if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
 
 logger = logging.getLogger("acc.tui.screens.configuration")
+
+# Backends supported by the LLM Endpoints Save form.  Mirrors
+# `LLMBackendChoice` in acc/config.py; kept as a local tuple so the
+# Select widget can render without importing the Pydantic model at
+# screen-import time.
+_LLM_BACKEND_CHOICES = (
+    "ollama", "openai_compat", "anthropic", "vllm", "llama_stack",
+)
+
+# The four hot-swappable LLM knobs the Save form writes to ./.env.
+# Anything else (deploy_mode, NKey, SPIFFE) is file-edit + restart.
+_LLM_EDITABLE_KEYS = (
+    "ACC_LLM_BACKEND",
+    "ACC_LLM_MODEL",
+    "ACC_LLM_BASE_URL",
+    "ACC_LLM_TIMEOUT_S",
+)
 
 
 def _skills_root() -> Path:
@@ -124,6 +143,28 @@ def _ping_endpoint(url: str, timeout_s: float = 5.0) -> tuple[bool, str, float]:
     except Exception as exc:  # noqa: BLE001
         elapsed_ms = (time.monotonic() - started) * 1000
         return False, f"error: {exc}", elapsed_ms
+
+
+def _resolve_env_writeback_path():
+    """Resolve the .env path the TUI write-back persists to.
+
+    Precedence: ``ACC_ENV_FILE`` env var > ``/app/.env`` (the
+    rw mount used by the acc-tui compose service) > ``./.env``.
+    Returns a :class:`pathlib.Path`.
+    """
+    import os  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    explicit = os.environ.get("ACC_ENV_FILE", "").strip()
+    if explicit:
+        return Path(explicit)
+    container_path = Path("/app/.env")
+    if container_path.exists() or container_path.parent.is_dir():
+        # Use the container path when the canonical mount point is
+        # reachable (the file may not exist yet — upsert_env creates it).
+        if Path("/app").is_dir():
+            return container_path
+    return Path(".env")
 
 
 def _resolve_acc_config_path() -> str:
@@ -253,6 +294,28 @@ class ConfigurationScreen(Screen):
         margin: 0 0 0 1;
         min-width: 14;
     }
+    /* LLM Endpoints — editable Save form. */
+    ConfigurationScreen #llm-edit-form {
+        height: auto;
+        margin: 0 1 1 1;
+        padding: 0 1;
+    }
+    ConfigurationScreen .llm-edit-row {
+        height: 3;
+        margin: 0 0 0 0;
+    }
+    ConfigurationScreen .llm-edit-label {
+        width: 14;
+        content-align: left middle;
+        padding: 1 0 0 0;
+    }
+    ConfigurationScreen .llm-edit-control {
+        width: 60;
+    }
+    ConfigurationScreen #llm-save-result {
+        height: auto;
+        padding: 1 1;
+    }
     """
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
@@ -285,13 +348,66 @@ class ConfigurationScreen(Screen):
         yield Footer()
 
     def _compose_llm_tab(self):
-        """LLM Endpoints tab — configured summary + live table + test."""
+        """LLM Endpoints tab — configured summary + live table + test.
+
+        The four hot-swappable LLM knobs (Backend / Model / Base URL /
+        Timeout) are editable; Save writes them to the canonical
+        ``./.env`` and publishes a ``config.reload`` signal so running
+        agents can pick the change up without a restart.  Everything
+        else on this screen (deploy_mode, signing, NKey, role sync)
+        is still file-edit + container restart.
+        """
         with ScrollableContainer():
             yield Label("CONFIGURED BACKEND", classes="panel-label")
             yield Static(
                 "[dim]Reading ACCConfig.llm …[/dim]",
                 id="llm-config-summary",
             )
+
+            # Editable LLM knobs.  Pre-populated by _render_llm_summary
+            # on mount; saving routes through _on_save_llm_config().
+            with Vertical(id="llm-edit-form"):
+                with Horizontal(classes="llm-edit-row"):
+                    yield Label("Backend:", classes="llm-edit-label")
+                    yield Select(
+                        [(b, b) for b in _LLM_BACKEND_CHOICES],
+                        id="llm-edit-backend",
+                        allow_blank=False,
+                        classes="llm-edit-control",
+                    )
+                with Horizontal(classes="llm-edit-row"):
+                    yield Label("Model:", classes="llm-edit-label")
+                    yield Input(
+                        id="llm-edit-model",
+                        placeholder="e.g. claude-sonnet-4-5",
+                        classes="llm-edit-control",
+                    )
+                with Horizontal(classes="llm-edit-row"):
+                    yield Label("Base URL:", classes="llm-edit-label")
+                    yield Input(
+                        id="llm-edit-base-url",
+                        placeholder="http://host:port/v1",
+                        classes="llm-edit-control",
+                    )
+                with Horizontal(classes="llm-edit-row"):
+                    yield Label("Timeout (s):", classes="llm-edit-label")
+                    yield Input(
+                        id="llm-edit-timeout",
+                        placeholder="120",
+                        type="integer",
+                        classes="llm-edit-control",
+                    )
+                with Horizontal(classes="llm-edit-row"):
+                    yield Button(
+                        "Save & reload",
+                        id="btn-llm-save",
+                        variant="success",
+                    )
+                    yield Static(
+                        "[dim] Writes to ./.env and broadcasts a "
+                        "config.reload signal.[/dim]",
+                        id="llm-save-result",
+                    )
 
             with Horizontal(id="llm-test-row"):
                 yield Button(
@@ -424,14 +540,28 @@ class ConfigurationScreen(Screen):
             f"[bold]NATS NKey auth:[/bold] {summary['nkey_enabled']} "
             f"[dim](role={summary['nkey_role']}; proposal 013)[/dim]\n"
             "\n[dim]Values reflect ACCConfig.llm + the documented "
-            "ACC_LLM_* env-var overrides.  Read-only for now — "
-            "edit the underlying acc-config.yaml or the env vars; "
-            "writeback from the TUI is slated for a follow-up.[/dim]"
+            "ACC_LLM_* env-var overrides.  Edit the four LLM knobs "
+            "below to update ./.env; deploy_mode / signing / NKey "
+            "stay file-edit + restart.[/dim]"
         )
         try:
             self.query_one("#llm-config-summary", Static).update(content)
         except Exception:
             logger.exception("configuration: render summary failed")
+
+        # Pre-populate the editable form with the current values.
+        try:
+            backend = summary["backend"]
+            if backend in _LLM_BACKEND_CHOICES:
+                self.query_one("#llm-edit-backend", Select).value = backend
+            model = summary["model"] if summary["model"] != "—" else ""
+            base_url = summary["base_url"] if summary["base_url"] != "—" else ""
+            timeout = summary["request_timeout_s"] if summary["request_timeout_s"] != "—" else ""
+            self.query_one("#llm-edit-model", Input).value = model
+            self.query_one("#llm-edit-base-url", Input).value = base_url
+            self.query_one("#llm-edit-timeout", Input).value = timeout
+        except Exception:
+            logger.exception("configuration: prefill edit form failed")
 
     def _on_test_button(self) -> None:
         """Handler for the Test connection button.
@@ -456,6 +586,106 @@ class ConfigurationScreen(Screen):
             f"[{colour}]{message}[/{colour}] · "
             f"{elapsed_ms:.0f} ms · {base_url}"
         )
+
+    def _on_save_llm_config(self) -> None:
+        """Persist the four LLM knobs to ./.env and broadcast a reload.
+
+        The file write is atomic with a single-rotation .bak (see
+        :mod:`acc.tui.env_writeback`).  After the write succeeds, a
+        ``acc.<cid>.config.reload`` NATS signal is published so live
+        agents can hot-swap their LLM client without a restart.  If
+        the publish fails (NATS down), the file still persists and
+        the operator is told to restart agents manually.
+        """
+        result = self.query_one("#llm-save-result", Static)
+        try:
+            backend = str(self.query_one("#llm-edit-backend", Select).value)
+            model = self.query_one("#llm-edit-model", Input).value.strip()
+            base_url = self.query_one("#llm-edit-base-url", Input).value.strip()
+            timeout_raw = self.query_one("#llm-edit-timeout", Input).value.strip()
+        except Exception:
+            logger.exception("configuration: read edit form failed")
+            result.update("[red]Could not read the form values.[/red]")
+            return
+
+        if backend not in _LLM_BACKEND_CHOICES:
+            result.update(f"[red]Invalid backend: {backend!r}[/red]")
+            return
+        try:
+            timeout = int(timeout_raw) if timeout_raw else 120
+            if timeout <= 0:
+                raise ValueError("must be positive")
+        except ValueError:
+            result.update(
+                f"[red]Timeout must be a positive integer (got {timeout_raw!r}).[/red]"
+            )
+            return
+
+        updates = {
+            "ACC_LLM_BACKEND": backend,
+            "ACC_LLM_MODEL": model,
+            "ACC_LLM_BASE_URL": base_url,
+            "ACC_LLM_TIMEOUT_S": str(timeout),
+        }
+        env_path = _resolve_env_writeback_path()
+
+        try:
+            from acc.tui.env_writeback import upsert_env  # noqa: PLC0415
+            upsert_env(env_path, updates)
+        except Exception as exc:
+            logger.exception("configuration: .env writeback failed")
+            result.update(f"[red]Save failed: {exc}[/red]")
+            return
+
+        # Publish a best-effort reload signal.  Wraps any error so a
+        # NATS outage does NOT mask the successful file save.
+        publish_msg = self._publish_config_reload(updates)
+
+        # Refresh the read panel from the new file/env state so the
+        # operator sees the saved values immediately.
+        os_environ_update = updates if env_path.exists() else {}
+        try:
+            import os  # noqa: PLC0415
+            for k, v in os_environ_update.items():
+                os.environ[k] = v
+        except Exception:
+            pass
+        self._render_llm_summary()
+        result.update(
+            f"[green]Saved to {env_path}[/green] · {publish_msg}"
+        )
+
+    def _publish_config_reload(self, changes: dict[str, str]) -> str:
+        """Broadcast a ``config.reload`` signal on NATS, best-effort.
+
+        Returns a status string to render next to the Save button.
+        Never raises — failures (no observer, NATS down) are reported
+        in the returned message, not via exceptions.
+        """
+        try:
+            client = self._get_observer_client()
+            if client is None:
+                return "[yellow]reload not broadcast — no NATS client[/yellow]"
+            cid = client.collective_id
+            client.publish_config_reload(changes)
+            return f"[dim]reload broadcast on acc.{cid}.config.reload[/dim]"
+        except Exception as exc:
+            logger.exception("configuration: publish_config_reload failed")
+            return (
+                f"[yellow]save persisted; reload broadcast failed "
+                f"({exc}). Restart agents to apply.[/yellow]"
+            )
+
+    def _get_observer_client(self):
+        """Return the running NATSObserver, or None if unavailable.
+
+        The TUI app stores its observer on :attr:`acc.tui.app.AccTUI`;
+        we walk up via :attr:`textual.screen.Screen.app`.
+        """
+        try:
+            return getattr(self.app, "observer", None)
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # Skills + MCPs (moved from Ecosystem)
@@ -541,6 +771,9 @@ class ConfigurationScreen(Screen):
         btn_id = event.button.id or ""
         if btn_id == "btn-llm-test":
             self._on_test_button()
+            return
+        if btn_id == "btn-llm-save":
+            self._on_save_llm_config()
             return
         if btn_id == "btn-upload-skill":
             self._pending_upload_kind = "skill"

@@ -366,6 +366,53 @@ class NATSObserver:
         json_bytes = json.dumps(payload).encode()
         await self._nc.publish(subject, msgpack.packb(json_bytes, use_bin_type=True))
 
+    @property
+    def collective_id(self) -> str:
+        """The collective this observer is subscribed to."""
+        return self._collective_id
+
+    def publish_config_reload(self, changes: dict[str, str]) -> None:
+        """Broadcast a `config.reload` signal — fire-and-forget.
+
+        Schedules an async publish on the current event loop and
+        returns immediately so the TUI's synchronous button handler
+        is not blocked.  Failures are logged but do not propagate —
+        the caller already has a successful file save and the operator
+        gets a follow-up "restart agents" hint if NATS is down.
+
+        Payload shape (proposal acc-config-simplify §B.4):
+            {"v": 1, "ts": "...Z", "source": "tui",
+             "operator": "<user-or-host>",
+             "changes": {"ACC_LLM_BACKEND": "...", ...}}
+        """
+        import datetime as _dt  # noqa: PLC0415
+        import os as _os        # noqa: PLC0415
+        import socket as _sock  # noqa: PLC0415
+
+        if self._nc is None:
+            raise RuntimeError(
+                "publish_config_reload called before NATSObserver.connect()"
+            )
+        subject = f"acc.{self._collective_id}.config.reload"
+        operator = (_os.environ.get("USER") or _os.environ.get("USERNAME")
+                    or _sock.gethostname() or "unknown")
+        payload = {
+            "v": 1,
+            "ts": _dt.datetime.now(_dt.timezone.utc)
+                              .isoformat().replace("+00:00", "Z"),
+            "source": "tui",
+            "operator": operator,
+            "changes": dict(changes),
+        }
+
+        async def _do() -> None:
+            try:
+                await self.publish(subject, payload)
+            except Exception:
+                logger.exception("publish_config_reload failed")
+
+        asyncio.create_task(_do())
+
     # ------------------------------------------------------------------
     # Message routing — registry pattern (REQ-TUI-010)
     # ------------------------------------------------------------------
