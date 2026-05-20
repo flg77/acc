@@ -185,6 +185,19 @@ class TestVLLMBackend:
     def _backend(self):
         return VLLMBackend(inference_url="http://vllm:8000", model="llama3.2:3b")
 
+    def test_strips_trailing_v1_to_avoid_double_path(self):
+        """A common operator paste is `http://host:8022/v1` (the same
+        shape openai_compat accepts).  VLLMBackend appends
+        `/v1/chat/completions` itself, so without the strip the live
+        request would 404 on `/v1/v1/chat/completions`."""
+        b = VLLMBackend(inference_url="http://vllm:8000/v1", model="x")
+        assert b._base_url == "http://vllm:8000"
+        b2 = VLLMBackend(inference_url="http://vllm:8000/v1/", model="x")
+        assert b2._base_url == "http://vllm:8000"
+        # Trailing-/v1 only — don't strip /v1 in the middle of a path.
+        b3 = VLLMBackend(inference_url="http://router/v1-experimental", model="x")
+        assert b3._base_url == "http://router/v1-experimental"
+
     @pytest.mark.asyncio
     async def test_complete_uses_openai_endpoint(self):
         backend = self._backend()

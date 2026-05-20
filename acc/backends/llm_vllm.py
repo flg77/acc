@@ -18,7 +18,15 @@ class VLLMBackend:
     """
 
     def __init__(self, inference_url: str, model: str) -> None:
-        self._base_url = inference_url.rstrip("/")
+        base = inference_url.rstrip("/")
+        # Operators routinely paste a `/v1`-suffixed URL into the
+        # config (it's how vLLM serves the OpenAI-compat API, and
+        # the openai_compat backend explicitly takes that shape).
+        # Strip a trailing /v1 so we always append /v1/chat/completions
+        # cleanly and never produce `/v1/v1/chat/completions` → 404.
+        if base.endswith("/v1"):
+            base = base[:-3]
+        self._base_url = base
         self._model = model
 
     def _raise_for_status(self, response: httpx.Response) -> None:
