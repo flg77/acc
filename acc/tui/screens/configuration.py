@@ -126,51 +126,56 @@ def _ping_endpoint(url: str, timeout_s: float = 5.0) -> tuple[bool, str, float]:
         return False, f"error: {exc}", elapsed_ms
 
 
+def _resolve_acc_config_path() -> str:
+    """Resolve the acc-config.yaml path for the TUI to read.
+
+    Precedence: ``ACC_CONFIG_PATH`` env var > the canonical container
+    mount ``/app/acc-config.yaml`` > the cwd fallback
+    ``./acc-config.yaml``.  Mirrors what the compose file mounts on
+    every ACC service (see ``container/production/podman-compose.yml``,
+    the ``acc-config.yaml`` volume on each agent / TUI / webgui).
+    """
+    import os  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    explicit = os.environ.get("ACC_CONFIG_PATH", "").strip()
+    if explicit:
+        return explicit
+    if Path("/app/acc-config.yaml").is_file():
+        return "/app/acc-config.yaml"
+    return "acc-config.yaml"
+
+
 def _load_acc_config_summary() -> dict[str, str]:
     """Return the configured LLM backend summary as a dict.
 
-    Reads ``ACCConfig.llm`` defaults — backend / model / base_url /
-    request_timeout_s — and applies the env-var overrides that
-    :mod:`acc.config` documents (`ACC_LLM_BACKEND`, `ACC_LLM_MODEL`,
-    etc.).  Best-effort: a missing config module yields a placeholder
-    summary so the screen never crashes on import.
+    Resolves the live `ACCConfig` via :func:`acc.config.load_config` —
+    so the panel reflects the YAML file the container actually mounted
+    AND the documented env-var overrides (`ACC_LLM_BACKEND`,
+    `ACC_LLM_MODEL`, etc., overlaid by `acc.config._apply_env`).
+
+    Best-effort: a missing YAML / validation failure / import error
+    yields a placeholder summary so the screen never crashes.
     """
     try:
-        from acc.config import ACCConfig, LLMConfig  # noqa: PLC0415
-        cfg = LLMConfig()
-        # Resolve role_source via the full ACCConfig so the deploy-mode
-        # default (proposal 010) is applied.  Best-effort: if ACCConfig
-        # validation fails (e.g. rhoai mode missing milvus_uri in a
-        # smoke harness), fall back to "—".
-        try:
-            full = ACCConfig()
-            role_source = full.role_sync.role_source
-            deploy_mode = full.deploy_mode
-            signing_mode = full.security.signing_mode
-            spiffe_enabled = full.security.spiffe.enabled
-            nkey_enabled = full.security.nkey.enabled
-            nkey_role = full.security.nkey.role or "—"
-        except Exception:
-            role_source = "—"
-            deploy_mode = "—"
-            signing_mode = "—"
-            spiffe_enabled = False
-            nkey_enabled = False
-            nkey_role = "—"
+        from acc.config import load_config  # noqa: PLC0415
+
+        full = load_config(_resolve_acc_config_path())
+        cfg = full.llm
         return {
             "backend": str(cfg.backend),
             "model": getattr(cfg, "model", "—") or "—",
             "base_url": getattr(cfg, "base_url", "—") or "—",
             "request_timeout_s": str(getattr(cfg, "request_timeout_s", "—")),
-            "role_source": role_source,
-            "deploy_mode": deploy_mode,
-            "signing_mode": signing_mode,
-            "spiffe_enabled": "yes" if spiffe_enabled else "no",
-            "nkey_enabled": "yes" if nkey_enabled else "no",
-            "nkey_role": nkey_role,
+            "role_source": full.role_sync.role_source,
+            "deploy_mode": full.deploy_mode,
+            "signing_mode": full.security.signing_mode,
+            "spiffe_enabled": "yes" if full.security.spiffe.enabled else "no",
+            "nkey_enabled": "yes" if full.security.nkey.enabled else "no",
+            "nkey_role": full.security.nkey.role or "—",
         }
     except Exception:
-        logger.exception("configuration: LLMConfig() failed")
+        logger.exception("configuration: load_config() failed")
         return {
             "backend": "—",
             "model": "—",
