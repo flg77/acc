@@ -290,6 +290,17 @@ def subject_role_update(collective_id: str) -> str:
     return f"acc.{collective_id}.role_update"
 
 
+def subject_config_reload(collective_id: str) -> str:
+    """Return the NATS subject for `config.reload` signals.
+
+    Published by the TUI's Configuration screen when the operator
+    edits the hot-swappable LLM knobs; running agents resubscribe
+    via :meth:`acc.agent.ACCAgent._subscribe_config_reload` and
+    hot-swap their LLM backend without a restart.
+    """
+    return f"acc.{collective_id}.config.reload"
+
+
 def subject_task_cancel(collective_id: str) -> str:
     """Return the NATS subject for TASK_CANCEL signals (PR-5).
 

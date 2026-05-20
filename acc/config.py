@@ -1007,6 +1007,52 @@ class BackendBundle:
     metrics: MetricsBackend
 
 
+def build_llm_backend(config: ACCConfig) -> LLMBackend:
+    """Instantiate just the LLM backend from *config*.
+
+    Extracted from :func:`build_backends` so the agent's
+    ``config.reload`` handler can swap the LLM client in-process
+    without rebuilding signaling / vector / metrics (those hold
+    long-lived connections that must not be churned).
+    """
+    if config.llm.backend == "ollama":
+        from acc.backends.llm_ollama import OllamaBackend
+        return OllamaBackend(
+            base_url=config.llm.ollama_base_url,
+            model=config.llm.ollama_model,
+        )
+    if config.llm.backend == "anthropic":
+        from acc.backends.llm_anthropic import AnthropicBackend
+        return AnthropicBackend(
+            model=config.llm.anthropic_model,
+            embedding_model_path=config.llm.embedding_model_path,
+        )
+    if config.llm.backend == "vllm":
+        from acc.backends.llm_vllm import VLLMBackend
+        return VLLMBackend(
+            # Universal base_url takes precedence over legacy vllm_inference_url
+            inference_url=config.llm.base_url or config.llm.vllm_inference_url,
+            model=config.llm.model or config.llm.ollama_model,
+        )
+    if config.llm.backend == "openai_compat":
+        from acc.backends.llm_openai_compat import OpenAICompatBackend
+        return OpenAICompatBackend(
+            base_url=config.llm.base_url or config.llm.vllm_inference_url,
+            model=config.llm.model or config.llm.ollama_model,
+            api_key_env=config.llm.api_key_env,
+            embedding_model_path=config.llm.embedding_model_path,
+            timeout_s=config.llm.request_timeout_s,
+            max_retries=config.llm.max_retries,
+        )
+    if config.llm.backend == "llama_stack":
+        from acc.backends.llm_llama_stack import LlamaStackBackend
+        return LlamaStackBackend(
+            base_url=config.llm.llama_stack_url,
+            embedding_model_path=config.llm.embedding_model_path,
+        )
+    raise ValueError(f"Unknown LLM backend: {config.llm.backend}")
+
+
 def build_backends(config: ACCConfig) -> BackendBundle:
     """Instantiate concrete backends from *config*.
 
@@ -1051,44 +1097,7 @@ def build_backends(config: ACCConfig) -> BackendBundle:
         raise ValueError(f"Unknown vector backend: {config.vector_db.backend}")
 
     # --- LLM ---
-    llm: LLMBackend
-    if config.llm.backend == "ollama":
-        from acc.backends.llm_ollama import OllamaBackend
-        llm = OllamaBackend(
-            base_url=config.llm.ollama_base_url,
-            model=config.llm.ollama_model,
-        )
-    elif config.llm.backend == "anthropic":
-        from acc.backends.llm_anthropic import AnthropicBackend
-        llm = AnthropicBackend(
-            model=config.llm.anthropic_model,
-            embedding_model_path=config.llm.embedding_model_path,
-        )
-    elif config.llm.backend == "vllm":
-        from acc.backends.llm_vllm import VLLMBackend
-        llm = VLLMBackend(
-            # Universal base_url takes precedence over legacy vllm_inference_url
-            inference_url=config.llm.base_url or config.llm.vllm_inference_url,
-            model=config.llm.model or config.llm.ollama_model,
-        )
-    elif config.llm.backend == "openai_compat":
-        from acc.backends.llm_openai_compat import OpenAICompatBackend
-        llm = OpenAICompatBackend(
-            base_url=config.llm.base_url or config.llm.vllm_inference_url,
-            model=config.llm.model or config.llm.ollama_model,
-            api_key_env=config.llm.api_key_env,
-            embedding_model_path=config.llm.embedding_model_path,
-            timeout_s=config.llm.request_timeout_s,
-            max_retries=config.llm.max_retries,
-        )
-    elif config.llm.backend == "llama_stack":
-        from acc.backends.llm_llama_stack import LlamaStackBackend
-        llm = LlamaStackBackend(
-            base_url=config.llm.llama_stack_url,
-            embedding_model_path=config.llm.embedding_model_path,
-        )
-    else:
-        raise ValueError(f"Unknown LLM backend: {config.llm.backend}")
+    llm: LLMBackend = build_llm_backend(config)
 
     # --- Metrics ---
     metrics: MetricsBackend

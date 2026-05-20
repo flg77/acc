@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, Optional
 if TYPE_CHECKING:
     from acc.config import ACCConfig
 
-from acc.config import load_config, build_backends
+from acc.config import build_backends, build_llm_backend, load_config
 from acc.cognitive_core import CognitiveCore, StressIndicators
 from acc.role_store import RoleStore, RoleUpdateRejectedError
 from acc.signals import (
@@ -46,6 +46,7 @@ from acc.signals import (
     SIG_BRIDGE_RESULT,
     subject_heartbeat,
     subject_register,
+    subject_config_reload,
     subject_role_update,
     subject_task_assign,
     subject_task_complete,
@@ -181,6 +182,10 @@ class Agent:
 
     def __init__(self) -> None:
         config_path = os.environ.get("ACC_CONFIG_PATH", "acc-config.yaml")
+        # Stash the path so config.reload handler can re-read the same
+        # file (the TUI write-back updates env vars; load_config applies
+        # them as the overlay on this file).
+        self._config_path = config_path
         self.config = load_config(config_path)
         self.backends = build_backends(self.config)
         self.agent_id: str = os.environ.get(
@@ -957,6 +962,125 @@ class Agent:
             logger.error("role_update: subscription error: %s", exc)
 
     # ------------------------------------------------------------------
+    # config.reload subscription — TUI write-back hot-swap
+    # ------------------------------------------------------------------
+
+    # Hot-swap-safe env keys.  Anything outside this set is logged
+    # and ignored on a `config.reload` — operator must restart agents
+    # to apply NATS_URL / NKey / SPIFFE / collective_id changes.
+    _CONFIG_RELOAD_HOT_KEYS = frozenset({
+        "ACC_LLM_BACKEND",
+        "ACC_LLM_MODEL",
+        "ACC_LLM_BASE_URL",
+        "ACC_LLM_TIMEOUT_S",
+        "ACC_LLM_MAX_RETRIES",
+        "ACC_LLM_API_KEY_ENV",
+    })
+
+    async def _on_config_reload(self, msg: object) -> None:
+        """Handle one `config.reload` NATS message.
+
+        Extracted as a method (not a closure) so unit tests can call
+        it directly with a stub message.  Updates `os.environ`,
+        re-reads the config, rebuilds ONLY the LLM backend, and
+        atomically swaps the agent's references.  Never raises —
+        any failure logs and keeps the old backend live.
+        """
+        import os  # noqa: PLC0415
+
+        try:
+            payload = json.loads(getattr(msg, "data", b"{}"))
+        except json.JSONDecodeError:
+            logger.warning("config.reload: invalid JSON payload")
+            return
+        changes = payload.get("changes") or {}
+        if not isinstance(changes, dict) or not changes:
+            logger.warning("config.reload: empty / non-dict changes")
+            return
+
+        applied: dict[str, str] = {}
+        for key, value in changes.items():
+            if key in self._CONFIG_RELOAD_HOT_KEYS and value is not None:
+                os.environ[key] = str(value)
+                applied[key] = str(value)
+        if not applied:
+            logger.info(
+                "config.reload: nothing hot-swappable in payload (got %s)",
+                sorted(changes.keys()),
+            )
+            return
+
+        # Rebuild only the LLM backend.  load_config() re-reads the
+        # YAML and re-applies the env overlay so the result reflects
+        # what's now in os.environ.
+        try:
+            new_cfg = load_config(self._config_path)
+            new_llm = build_llm_backend(new_cfg)
+        except Exception:
+            logger.exception(
+                "config.reload: failed to rebuild LLM (keeping old)"
+            )
+            return
+
+        # Atomic swap.  In-flight LLM calls finish on the old client;
+        # new calls hit the new one.
+        old_llm = self.backends.llm
+        self.backends.llm = new_llm
+        self.config = new_cfg
+        try:
+            self._cognitive_core.llm = new_llm
+        except AttributeError:
+            pass
+
+        logger.info(
+            "config.reload: swapped LLM backend backend=%s model=%s "
+            "base_url=%s (operator=%s)",
+            new_cfg.llm.backend,
+            getattr(new_cfg.llm, "model", "") or
+                getattr(new_cfg.llm, "anthropic_model", ""),
+            getattr(new_cfg.llm, "base_url", "") or
+                getattr(new_cfg.llm, "vllm_inference_url", ""),
+            payload.get("operator", "unknown"),
+        )
+
+        # Best-effort cleanup of the old backend if it exposes a
+        # close()/aclose() hook.  Never raise.
+        for hook in ("aclose", "close"):
+            fn = getattr(old_llm, hook, None)
+            if fn is None:
+                continue
+            try:
+                result = fn()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                logger.debug("config.reload: old LLM %s() failed", hook,
+                             exc_info=True)
+            break
+
+        # The next HEARTBEAT tick (default 30s) carries the new
+        # `llm_backend` dict, so the TUI's LIVE BACKENDS table reflects
+        # the swap on the next interval.  A faster kick is future-work
+        # (proposal acc-config-simplify §B.5).
+
+    async def _subscribe_config_reload(self) -> None:
+        """Subscribe to ``acc.<cid>.config.reload`` and hot-swap LLM.
+
+        The TUI Configuration screen publishes this signal when the
+        operator edits one of the four hot-swappable LLM knobs
+        (`ACC_LLM_BACKEND`, `ACC_LLM_MODEL`, `ACC_LLM_BASE_URL`,
+        `ACC_LLM_TIMEOUT_S`).
+        """
+        collective_id = self.config.agent.collective_id
+        try:
+            await self.backends.signaling.subscribe(
+                subject_config_reload(collective_id), self._on_config_reload
+            )
+            await self._stop_event.wait()
+        except Exception as exc:
+            logger.error("config.reload: subscription error: %s", exc)
+
+    # ------------------------------------------------------------------
     # CENTROID_UPDATE subscription (ACC-11)
     # ------------------------------------------------------------------
 
@@ -1224,6 +1348,7 @@ class Agent:
                 self._heartbeat_loop(),
                 self._task_loop(),
                 self._subscribe_role_updates(),
+                self._subscribe_config_reload(),
                 self._subscribe_bridge_results(),
                 self._subscribe_centroid_updates(),
                 self._subscribe_oversight_decisions(),
