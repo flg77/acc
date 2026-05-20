@@ -114,8 +114,29 @@ def _format_health(health: str) -> str:
     return health or "—"
 
 
-def _ping_endpoint(url: str, timeout_s: float = 5.0) -> tuple[bool, str, float]:
-    """HEAD-ping an HTTP endpoint; return ``(ok, message, elapsed_ms)``.
+def _probe_for(backend: str, base_url: str) -> tuple[str, str]:
+    """Pick the right HTTP probe URL+method per LLM backend.
+
+    The bare base_url is rarely the right thing to ping: vLLM /
+    OpenAI-compat / Llama-Stack return ``HTTP 404`` on ``HEAD /v1``
+    because ``/v1`` is not a handler — even though the server is
+    healthy and serves ``GET /v1/models`` etc.  This helper resolves
+    the canonical health endpoint for each backend.
+    """
+    b = (backend or "").lower()
+    base = base_url.rstrip("/")
+    if b in ("vllm", "openai_compat", "llama_stack"):
+        return f"{base}/models", "GET"
+    # Ollama answers on the root with a friendly string; Anthropic has
+    # no public unauth health probe — fall through to a HEAD on the
+    # base URL and let the response decide.
+    return base_url, "HEAD"
+
+
+def _ping_endpoint(
+    url: str, method: str = "HEAD", timeout_s: float = 5.0,
+) -> tuple[bool, str, float]:
+    """Ping an HTTP endpoint; return ``(ok, message, elapsed_ms)``.
 
     Stdlib-only.  Used by the Configuration screen's "Test connection"
     button to verify the configured LLM backend is reachable without
@@ -127,7 +148,7 @@ def _ping_endpoint(url: str, timeout_s: float = 5.0) -> tuple[bool, str, float]:
         return False, "no base_url configured", 0.0
     started = time.monotonic()
     try:
-        req = urllib.request.Request(url, method="HEAD")
+        req = urllib.request.Request(url, method=method)
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310
             status = resp.status
             elapsed_ms = (time.monotonic() - started) * 1000
@@ -574,17 +595,19 @@ class ConfigurationScreen(Screen):
         result_widget = self.query_one("#llm-test-result", Static)
         result_widget.update("[yellow]Pinging…[/yellow]")
         summary = _load_acc_config_summary()
+        backend = summary["backend"]
         base_url = summary["base_url"]
         if base_url in ("", "—"):
             result_widget.update(
                 "[red]No base_url configured for the active backend.[/red]"
             )
             return
-        ok, message, elapsed_ms = _ping_endpoint(base_url)
+        probe_url, method = _probe_for(backend, base_url)
+        ok, message, elapsed_ms = _ping_endpoint(probe_url, method)
         colour = "green" if ok else "red"
         result_widget.update(
-            f"[{colour}]{message}[/{colour}] · "
-            f"{elapsed_ms:.0f} ms · {base_url}"
+            f"[{colour}]{message}[/{colour}] · {method} · "
+            f"{elapsed_ms:.0f} ms · {probe_url}"
         )
 
     def _on_save_llm_config(self) -> None:

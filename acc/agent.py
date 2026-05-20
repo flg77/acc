@@ -486,6 +486,12 @@ class Agent:
                 "state": self.state,
                 "role": self.config.agent.role,
                 "role_version": self._active_role.version,
+                # Live LLM-backend snapshot — populates the TUI's
+                # Configuration → LLM Endpoints "LIVE BACKENDS" table
+                # (acc/tui/client.py:_route_heartbeat reads
+                # `llm_backend` from each heartbeat).  health/p50 are
+                # placeholders until per-call telemetry lands.
+                "llm_backend": self._llm_info(),
                 # StressIndicators (ACC-6a REQ-STRESS-002)
                 "drift_score": stress.drift_score,
                 "cat_b_deviation_score": stress.cat_b_deviation_score,
@@ -964,6 +970,33 @@ class Agent:
     # ------------------------------------------------------------------
     # config.reload subscription — TUI write-back hot-swap
     # ------------------------------------------------------------------
+
+    def _llm_info(self) -> dict:
+        """Return the live LLM-backend snapshot for the HEARTBEAT payload.
+
+        Picks the right field per backend so the TUI's LIVE BACKENDS
+        table shows a meaningful value regardless of which backend
+        Pydantic-config slot is populated (legacy ollama / vllm /
+        anthropic versus the universal model/base_url).  `health` is
+        currently a placeholder "ok"; `p50_latency_ms` is 0.0 until
+        per-call telemetry lands.  The columns turn into informative
+        cells the moment this method ships — better than dashes.
+        """
+        llm = self.config.llm
+        return {
+            "backend": llm.backend,
+            "model": (llm.model
+                      or llm.anthropic_model
+                      or llm.ollama_model
+                      or ""),
+            "base_url": (llm.base_url
+                         or llm.vllm_inference_url
+                         or llm.ollama_base_url
+                         or llm.llama_stack_url
+                         or ""),
+            "health": "ok",
+            "p50_latency_ms": 0.0,
+        }
 
     # Hot-swap-safe env keys.  Anything outside this set is logged
     # and ignored on a `config.reload` — operator must restart agents
