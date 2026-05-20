@@ -123,3 +123,40 @@ class TestUpsertEnv:
         target = tmp_path / ".env"
         upsert_env(target, {"ACC_LLM_MODEL": "model name with spaces"})
         assert 'ACC_LLM_MODEL="model name with spaces"' in target.read_text()
+
+    def test_falls_back_to_in_place_rewrite_on_ebusy(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Single-file bind mounts make rename(2) fail with EBUSY.
+
+        Simulate the acc-tui-container case where /app/.env is a host
+        bind mount: os.replace raises ``OSError(EBUSY)``.  The helper
+        must catch it and fall back to a truncate + in-place rewrite
+        so Save still succeeds.
+        """
+        import os as _os
+        target = tmp_path / ".env"
+        target.write_text("ACC_LLM_BACKEND=ollama\n")
+
+        real_replace = _os.replace
+        calls: list[tuple[str, str]] = []
+
+        def _fake_replace(src, dst):
+            calls.append((str(src), str(dst)))
+            # Simulate the bind-mount EBUSY only when the destination
+            # is the target .env file.  Leave other os.replace calls
+            # alone (none expected, but defensive).
+            if str(dst) == str(target):
+                raise OSError(16, "Device or resource busy", str(src), None, str(dst))
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(_os, "replace", _fake_replace)
+
+        upsert_env(target, {"ACC_LLM_BACKEND": "vllm"})
+
+        # The replace was attempted and rejected (fallback fired).
+        assert calls, "os.replace should have been called once"
+        # The file is updated — fallback truncate+rewrite worked.
+        assert "ACC_LLM_BACKEND=vllm" in target.read_text()
+        # No stray temp file left behind.
+        assert not list(tmp_path.glob(".env.tmp.*"))

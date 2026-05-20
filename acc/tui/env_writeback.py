@@ -20,6 +20,7 @@ truth for editing that file safely:
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import re
@@ -144,7 +145,31 @@ def upsert_env(path: Path | str, updates: dict[str, str]) -> None:
             ) as tmp:
                 tmp.write(new_text)
                 tmp_path = tmp.name
-            os.replace(tmp_path, str(path))
+            try:
+                os.replace(tmp_path, str(path))
+            except OSError as exc:
+                if exc.errno != errno.EBUSY:
+                    raise
+                # The target is a SINGLE-FILE bind mount — the
+                # acc-tui compose service mounts ./.env at /app/.env
+                # for write-back.  Linux rename(2) returns EBUSY in
+                # that case because the destination inode is the
+                # mount target, not a regular dentry.  Fall back to
+                # an in-place truncate + rewrite.  The .bak rotation
+                # written above is the recovery path if the process
+                # dies mid-write.
+                logger.info(
+                    "env_writeback: target %r is bind-mounted; "
+                    "falling back to in-place rewrite (atomic rename "
+                    "refused by the kernel with EBUSY).",
+                    str(path),
+                )
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(new_text)
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
             try:
                 os.chmod(path, 0o600)
             except OSError:
