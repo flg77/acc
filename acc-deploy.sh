@@ -8,6 +8,9 @@
 #   ./acc-deploy.sh [COMMAND] [OPTIONS]
 #
 # Commands:
+#   setup     Scaffold ./.env from ./.env.example if absent.  No-op when
+#             ./.env is already present.  Run this once after the first
+#             clone; or use ./env/use.sh to pick a backend preset.
 #   build     Build container images (must be done before first 'up')
 #   rebuild   Pull latest from origin (git fetch + git pull --ff-only) and
 #             rebuild every image with --no-cache --pull.  Use after a
@@ -274,6 +277,26 @@ echo ""
 # ── Execute ────────────────────────────────────────────────────────────────────
 case "$COMMAND" in
 
+    setup)
+        # Scaffold ./.env from the canonical template.  Idempotent: if
+        # ./.env already exists, leave it alone.  Operators who prefer
+        # a ready-made backend preset use ./env/use.sh instead.
+        ENV_FILE="$REPO_ROOT/.env"
+        ENV_EXAMPLE="$REPO_ROOT/.env.example"
+        if [[ -f "$ENV_FILE" ]]; then
+            echo "✓ $ENV_FILE already exists — nothing to do."
+            echo "  Use ./env/use.sh <preset> to overwrite with a backend preset."
+        elif [[ -f "$ENV_EXAMPLE" ]]; then
+            cp "$ENV_EXAMPLE" "$ENV_FILE"
+            chmod 600 "$ENV_FILE" 2>/dev/null || true
+            echo "✓ Created $ENV_FILE from .env.example (chmod 600)."
+            echo "  Next:  \$EDITOR .env  &&  ./acc-deploy.sh up"
+        else
+            echo "ERROR: $ENV_EXAMPLE not found — cannot scaffold." >&2
+            exit 1
+        fi
+        ;;
+
     build)
         echo "▶ Building images..."
         "${BASE_CMD[@]}" build "$@"
@@ -318,6 +341,22 @@ case "$COMMAND" in
         ;;
 
     up)
+        # Soft cut for the deploy/.env -> ./.env migration.  If the
+        # operator still has deploy/.env from a previous install and no
+        # ./.env, symlink it so the new compose env_file: ../../.env
+        # picks it up.  One release; hard-removed after that.
+        if [[ ! -f "$REPO_ROOT/.env" && -f "$REPO_ROOT/deploy/.env" ]]; then
+            echo "DEPRECATION: deploy/.env detected without ./.env." >&2
+            echo "             The canonical location is now ./.env (repo root)." >&2
+            if ln -s deploy/.env "$REPO_ROOT/.env" 2>/dev/null; then
+                echo "             Symlinked deploy/.env -> ./.env for this release." >&2
+            else
+                cp "$REPO_ROOT/deploy/.env" "$REPO_ROOT/.env"
+                echo "             Copied deploy/.env -> ./.env (symlink not supported here)." >&2
+            fi
+            echo "             Move it explicitly: \`mv deploy/.env .env\`." >&2
+        fi
+
         echo "▶ Starting stack..."
         if [[ "$DETACH" == "true" ]]; then
             "${BASE_CMD[@]}" up -d "$@"

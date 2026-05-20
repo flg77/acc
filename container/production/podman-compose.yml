@@ -95,7 +95,7 @@ services:
     image: localhost/acc-redis:7.2
     container_name: acc-redis
     env_file:
-      - path: ../../deploy/.env
+      - path: ../../.env
         required: false
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -128,7 +128,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../deploy/.env
+      - path: ../../.env
         required: false
     environment:
       ACC_AGENT_ROLE: ingester
@@ -154,7 +154,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../deploy/.env
+      - path: ../../.env
         required: false
     environment:
       ACC_AGENT_ROLE: analyst
@@ -180,7 +180,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../deploy/.env
+      - path: ../../.env
         required: false
     environment:
       ACC_AGENT_ROLE: arbiter
@@ -218,7 +218,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../deploy/.env
+      - path: ../../.env
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
@@ -247,7 +247,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../deploy/.env
+      - path: ../../.env
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
@@ -276,7 +276,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../deploy/.env
+      - path: ../../.env
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
@@ -467,6 +467,12 @@ services:
     depends_on:
       nats:
         condition: service_healthy
+    # Source the operator's canonical .env so the Configuration screen
+    # picks up ACC_LLM_* overrides — agents/webgui have this; acc-tui
+    # was missing it and the panel silently showed Pydantic defaults.
+    env_file:
+      - path: ../../.env
+        required: false
     environment:
       ACC_NATS_URL: nats://nats:4222
       # Multi-collective: comma-separated list of collective IDs (REQ-TUI-006)
@@ -502,7 +508,7 @@ services:
   #
   # AUTH: a network-exposed UI must authenticate.  This sample uses the
   # token tier — set ACC_WEBGUI_OPERATOR_TOKEN / _VIEWER_TOKEN (e.g. via
-  # deploy/.env).  Without an auth mode the server refuses a non-loopback
+  # the repo-root .env).  Without an auth mode the server refuses a non-loopback
   # bind.  On OpenShift, front it with an oauth-proxy sidecar instead.
   acc-webgui:
     profiles:
@@ -518,7 +524,7 @@ services:
       nats:
         condition: service_healthy
     env_file:
-      - path: ../../deploy/.env
+      - path: ../../.env
         required: false
     environment:
       ACC_NATS_URL: nats://nats:4222

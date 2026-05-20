@@ -1,14 +1,14 @@
 # `env/` — Pre-configured stack environments
 
 Operator-facing presets that drop straight into the canonical
-sourced location (`deploy/.env`) for the ACC stack.
+sourced location (`./.env` at the repo root) for the ACC stack.
 
 ## Why this directory exists
 
 The compose file at `container/production/podman-compose.yml`
-declares `env_file: ../../deploy/.env` on every service, so the
+declares `env_file: ../../.env` on every service, so the
 **only file the agent + TUI + MCP containers actually source is
-`deploy/.env`** at the repo root.
+`./.env`** at the repo root (podman-compose's native location).
 
 Editing `examples/*/​.env` (the per-example files the runner
 scripts source) propagates env vars into the *runner shell* — but
@@ -17,17 +17,17 @@ operator using a local vLLM hit: the test script worked, the
 containers couldn't reach the LLM.
 
 This directory hands out one ready-to-paste preset per supported
-LLM backend so operators don't have to author `deploy/.env` by
+LLM backend so operators don't have to author `./.env` by
 hand.
 
 ## How to use
 
 ```bash
 # 1. Copy the preset that matches your local vLLM serving setup
-cp env/.env.llama-3.2-1B-Instruct-FP8 deploy/.env
+cp env/.env.llama-3.2-1B-Instruct-FP8 .env
 
 # 2. Open + fill in API keys (Anthropic / Brave / etc.)
-$EDITOR deploy/.env
+$EDITOR .env
 
 # 3. Bring the stack up — every container now sees the right
 #    ACC_OPENAI_BASE_URL et al.
@@ -41,8 +41,7 @@ $EDITOR deploy/.env
 ./env/use.sh                                    # lists available presets
 ```
 
-The helper preserves any existing `deploy/.env` as
-`deploy/.env.bak` before overwriting.
+The helper preserves any existing `.env` as `.env.bak` before overwriting.
 
 ## Catalog (mirrors vllmpunch's models.json)
 
@@ -103,7 +102,7 @@ bound to localhost only — restart it with `--host 0.0.0.0`.
 ```
 env/
 ├── README.md                              ← this file
-├── use.sh                                 ← helper that copies into deploy/.env
+├── use.sh                                 ← helper that copies into ./.env
 ├── .env.example                           ← canonical template (every var documented)
 ├── .env.llama-3.2-1B-Instruct-FP8         ← preset
 ├── .env.qwen3-1.7B                        ← preset

@@ -36,7 +36,7 @@ Before running for the first time, verify:
 | Python 3.12 installed | `python3 --version` | `3.12+` |
 | Ollama running (if local LLM) | `ollama list` | model list |
 | `acc-config.yaml` present | `ls acc-config.yaml` | found |
-| `deploy/.env` present | `ls deploy/.env` | found (optional) |
+| `.env` present (repo root) | `ls .env` | found (optional) |
 
 Install missing tools:
 ```bash
@@ -106,9 +106,14 @@ Building acc-agent-ingester
 
 ### `.env` file
 
-Create `deploy/.env` (copied from `deploy/.env.example`):
+Create `./.env` at the repo root (the canonical location). Either:
+
 ```bash
-cp deploy/.env.example deploy/.env
+./acc-deploy.sh setup            # scaffolds .env from .env.example
+# or for a ready-made backend preset:
+./env/use.sh anthropic           # see ./env/use.sh for the full list
+# or by hand:
+cp .env.example .env
 ```
 
 Key variables to set:
@@ -255,7 +260,7 @@ To detach without stopping: `Ctrl-P Ctrl-Q`
 
 To expose TUI data over HTTP (for dashboards, CI polling):
 
-1. Edit `deploy/.env`: set `ACC_TUI_WEB_PORT=8765`
+1. Edit `.env`: set `ACC_TUI_WEB_PORT=8765`
 2. Uncomment the port mapping in `container/production/podman-compose.yml`:
    ```yaml
    ports:
@@ -435,7 +440,7 @@ Agent publishes heartbeat on `acc.{collective_id}.heartbeat`. If stuck:
 redis.exceptions.AuthenticationError: WRONGPASS
 ```
 
-1. Verify `REDIS_PASSWORD` in `deploy/.env` is non-empty
+1. Verify `REDIS_PASSWORD` in `.env` is non-empty
 2. Ensure both the Redis container and agent containers see the same value:
    ```bash
    podman exec acc-redis redis-cli -a "$REDIS_PASSWORD" ping

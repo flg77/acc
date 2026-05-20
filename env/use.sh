@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# env/use.sh — copy a preset into deploy/.env (the canonical sourced file).
+# env/use.sh — copy a preset into ./.env (the canonical sourced file).
 #
 #   ./env/use.sh                                — list available presets
 #   ./env/use.sh llama-3.2-1B-Instruct-FP8      — copy that preset
 #   ./env/use.sh anthropic                       — copy hosted Claude preset
 #
-# Preserves any existing deploy/.env as deploy/.env.bak.
+# Preserves any existing .env as .env.bak.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/.." && pwd)"
-DEPLOY_DIR="${REPO_ROOT}/deploy"
 
 # --- list mode ---------------------------------------------------------------
 if [[ $# -eq 0 ]]; then
-    echo "env/use.sh — copy a preset into deploy/.env"
+    echo "env/use.sh — copy a preset into ./.env"
     echo
     echo "Available presets (env/.env.<name>):"
     for f in "${HERE}"/.env.*; do
@@ -51,18 +50,18 @@ if [[ ! -f "${SRC}" ]]; then
     exit 1
 fi
 
-mkdir -p "${DEPLOY_DIR}"
-DST="${DEPLOY_DIR}/.env"
+DST="${REPO_ROOT}/.env"
 
 if [[ -f "${DST}" ]]; then
-    echo "▶ Backing up existing deploy/.env → deploy/.env.bak"
+    echo "▶ Backing up existing .env → .env.bak"
     cp "${DST}" "${DST}.bak"
 fi
 
 cp "${SRC}" "${DST}"
-echo "✓ Copied env/.env.${PRESET_NAME} → deploy/.env"
+chmod 600 "${DST}" 2>/dev/null || true
+echo "✓ Copied env/.env.${PRESET_NAME} → ./.env"
 echo
 echo "Next steps:"
-echo "  1. \$EDITOR deploy/.env        # fill in API keys / tweak ports"
+echo "  1. \$EDITOR .env               # fill in API keys / tweak ports"
 echo "  2. ./acc-deploy.sh down       # if a stack was already running"
 echo "  3. ./acc-deploy.sh up"

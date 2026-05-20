@@ -12,7 +12,7 @@ for a single-operator project.
 
 Do **not** commit secrets into these files — use
 `ACC_LLM_API_KEY_ENV` to point at an env var (set via
-`deploy/.env`, which **is** gitignored).
+`./.env` at the repo root, which **is** gitignored).
 
 ## Naming
 
