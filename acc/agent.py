@@ -36,10 +36,12 @@ if TYPE_CHECKING:
 
 from acc.config import build_backends, build_llm_backend, load_config
 from acc.cognitive_core import CognitiveCore, StressIndicators
+from acc.role_assign import RoleAssignRejectedError, verify_role_assign
 from acc.role_store import RoleStore, RoleUpdateRejectedError
 from acc.signals import (
     SIG_HEARTBEAT,
     SIG_REGISTER,
+    SIG_ROLE_ASSIGN,
     SIG_TASK_COMPLETE,
     SIG_ALERT_ESCALATE,
     SIG_BRIDGE_DELEGATE,
@@ -47,6 +49,7 @@ from acc.signals import (
     subject_heartbeat,
     subject_register,
     subject_config_reload,
+    subject_role_assign,
     subject_role_update,
     subject_task_assign,
     subject_task_complete,
@@ -136,9 +139,17 @@ def _build_redis_client(config: "ACCConfig") -> "Optional[Any]":
 STATE_REGISTERING = "REGISTERING"
 STATE_ACTIVE = "ACTIVE"
 STATE_DRAINING = "DRAINING"
+# D-001 (PR-J) — worker-pool boot state.  A dormant agent runs
+# without a CognitiveCore (no LLM client, no vector queries) and
+# only subscribes to ``acc.<cid>.role_assign``.  On a valid signed
+# ROLE_ASSIGN it materialises its CognitiveCore, transitions
+# DORMANT → ACTIVE, and starts processing TASK_ASSIGN normally.
+STATE_DORMANT = "DORMANT"
 
-# Roles that do not instantiate a CognitiveCore
-_NO_COGNITIVE_ROLES = {"observer"}
+# Roles that do not instantiate a CognitiveCore.  ``dormant`` /
+# empty-string both park the agent in the worker pool waiting for
+# a runtime ROLE_ASSIGN (D-001).
+_NO_COGNITIVE_ROLES = {"observer", "dormant", ""}
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +232,16 @@ class Agent:
             "ACC_AGENT_ID",
             f"{self.config.agent.role}-{uuid.uuid4().hex[:8]}",
         )
-        self.state = STATE_REGISTERING
+        # D-001 (PR-J) — worker-pool boot.  When the agent's configured
+        # role is ``dormant`` (or empty) the agent boots into the
+        # worker pool: no CognitiveCore is instantiated, the state
+        # surfaces in the TUI as DORMANT, and the agent waits for a
+        # signed ROLE_ASSIGN to promote it.  Every other role boots
+        # normally with STATE_REGISTERING → STATE_ACTIVE.
+        if self.config.agent.role in ("", "dormant"):
+            self.state = STATE_DORMANT
+        else:
+            self.state = STATE_REGISTERING
         self._stop_event = asyncio.Event()
 
         # Redis working-memory client (Phase 0b) — None when not configured
@@ -564,17 +584,24 @@ class Agent:
     # ------------------------------------------------------------------
 
     async def _task_loop(self) -> None:
-        """Subscribe to task subject and process incoming TASK_ASSIGN messages."""
-        if self._cognitive_core is None:
-            logger.info(
-                "task_loop: skipped for role=%s (no CognitiveCore)",
-                self.config.agent.role,
-            )
-            return
+        """Subscribe to task subject and process incoming TASK_ASSIGN messages.
 
+        D-001 (PR-J) — the subscription is now ALWAYS active (even
+        for dormant workers / observer roles) so a worker promoted
+        from dormant at runtime via ROLE_ASSIGN can start processing
+        tasks without restarting the loop.  The handler short-circuits
+        on a per-message basis when ``_cognitive_core`` is still None
+        (legacy ``no-cognitive`` roles like ``observer``) — the only
+        cost is the bus subscription, which is cheap.
+        """
         collective_id = self.config.agent.collective_id
 
         async def _handle_task(msg: object) -> None:
+            if self._cognitive_core is None:
+                # Dormant / observer — drop the task silently.  A
+                # subsequent ROLE_ASSIGN that promotes us will let
+                # the next inbound TASK_ASSIGN flow normally.
+                return
             try:
                 data = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
@@ -1000,6 +1027,195 @@ class Agent:
             logger.error("role_update: subscription error: %s", exc)
 
     # ------------------------------------------------------------------
+    # ROLE_ASSIGN subscription — worker-pool runtime promotion (D-001)
+    # ------------------------------------------------------------------
+
+    async def _subscribe_role_assign(self) -> None:
+        """D-001 (PR-J) — subscribe to ROLE_ASSIGN signals.
+
+        Only acts on payloads whose ``target_agent_id`` matches this
+        agent and whose Ed25519 signature verifies against the
+        arbiter's registered key.  On a pass the dormant worker
+        promotes itself in place: builds a CognitiveCore for the new
+        role, transitions DORMANT → REGISTERING → ACTIVE on the next
+        heartbeat, and publishes a fresh REGISTER signal so the TUI
+        observes the role change immediately.
+
+        Subscription is universal (every agent gets it) — already-
+        active workers simply find their ``target_agent_id`` filter
+        rejects every inbound payload, so the subscription is a
+        no-op for them.  Keeping it universal means an agent
+        accidentally booted with the wrong role can still be re-
+        targeted at runtime without a restart.
+        """
+        collective_id = self.config.agent.collective_id
+
+        async def _handle_role_assign(msg: object) -> None:
+            try:
+                payload = json.loads(_payload_bytes(msg))
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("role_assign: invalid JSON payload")
+                return
+
+            target = str(payload.get("target_agent_id", ""))
+            if target != self.agent_id:
+                # Silently drop assignments meant for another worker.
+                logger.debug(
+                    "role_assign: dropped (target=%r != self=%r)",
+                    target, self.agent_id,
+                )
+                return
+
+            try:
+                verify_key_b64 = self._resolve_role_assign_verify_key()
+                verify_role_assign(payload, verify_key_b64=verify_key_b64)
+            except RoleAssignRejectedError as exc:
+                logger.warning(
+                    "role_assign: rejected (agent_id=%s): %s",
+                    self.agent_id, exc,
+                )
+                return
+
+            try:
+                self._promote_from_dormant(payload)
+            except Exception:
+                logger.exception(
+                    "role_assign: promotion failed (agent_id=%s) — "
+                    "agent stays in current state",
+                    self.agent_id,
+                )
+
+        try:
+            await self.backends.signaling.subscribe(
+                subject_role_assign(collective_id), _handle_role_assign,
+            )
+            await self._stop_event.wait()
+        except Exception as exc:
+            logger.error("role_assign: subscription error: %s", exc)
+
+    def _resolve_role_assign_verify_key(self) -> str:
+        """Return the Base64-encoded Ed25519 verify key the arbiter
+        signs ROLE_ASSIGN payloads with.
+
+        Reuses the same key the role_store uses for ROLE_UPDATE
+        verification (proposal 011) — there's exactly one signing
+        identity per collective (the arbiter), so a separate key
+        for ROLE_ASSIGN would just be a footgun.  Pulled lazily so
+        a missing-key configuration surfaces as a clean
+        :class:`RoleAssignRejectedError` rather than a startup
+        crash for agents that never receive a ROLE_ASSIGN.
+        """
+        # Best-effort traversal — security.ed25519.verify_key is the
+        # canonical home; older configs may carry it elsewhere.
+        cfg = getattr(self, "config", None)
+        if cfg is None:
+            return ""
+        security = getattr(cfg, "security", None)
+        if security is None:
+            return ""
+        ed = getattr(security, "ed25519", None)
+        if ed is not None:
+            key = getattr(ed, "verify_key", "") or getattr(ed, "verify_key_b64", "")
+            if key:
+                return str(key)
+        # Fallback: look on the role_store's already-loaded config.
+        rs_cfg = getattr(self._role_store, "_config", None) if hasattr(self, "_role_store") else None
+        if rs_cfg is not None:
+            sec = getattr(rs_cfg, "security", None)
+            if sec is not None:
+                ed = getattr(sec, "ed25519", None)
+                if ed is not None:
+                    key = (
+                        getattr(ed, "verify_key", "")
+                        or getattr(ed, "verify_key_b64", "")
+                    )
+                    if key:
+                        return str(key)
+        return ""
+
+    def _promote_from_dormant(self, payload: dict) -> None:
+        """Promote this agent from DORMANT to its assigned role.
+
+        Pre-condition: ``payload`` has already passed
+        :func:`acc.role_assign.verify_role_assign`.
+
+        Steps (in order):
+
+        1. Build a ``RoleDefinitionConfig`` from
+           ``payload["role_definition"]``.
+        2. Plug the new role into ``self._active_role`` and update
+           ``self.config.agent.role`` so subsequent code paths
+           (heartbeat ``role`` field, TASK_ASSIGN filter, role-update
+           handler) see the new identity.
+        3. Build a CognitiveCore if one isn't already live.
+        4. Set ``ACC_CLUSTER_ID`` / ``ACC_AGENT_PURPOSE`` on
+           ``os.environ`` so the heartbeat picks them up (these env
+           vars are read by PR-D's HEARTBEAT serialisation).
+        5. Flip ``self.state`` to STATE_ACTIVE.
+
+        Synchronous — does NOT publish.  The next heartbeat tick
+        broadcasts the new role + state, and any TUI watcher (e.g.
+        InfuseScreen's apply_snapshot) sees the promotion via the
+        existing heartbeat path.
+        """
+        from acc.config import RoleDefinitionConfig  # noqa: PLC0415
+
+        role_def_dict = payload.get("role_definition") or {}
+        role_name = (
+            role_def_dict.get("name")
+            or role_def_dict.get("role")
+            or self.config.agent.role
+        )
+
+        # 1. validate + load the new role definition.
+        new_role = RoleDefinitionConfig.model_validate(role_def_dict)
+
+        # 2. wire it in.
+        self._active_role = new_role
+        # config.agent.role is a Pydantic-validated string field; assign
+        # via model_copy to keep validation invariants.
+        try:
+            self.config.agent.role = str(role_name) if role_name else "worker"
+        except Exception:
+            # If the underlying model is frozen, fall back to direct attr.
+            object.__setattr__(self.config.agent, "role", str(role_name) if role_name else "worker")
+
+        # 3. build CognitiveCore if not present (dormant boot path).
+        if self._cognitive_core is None:
+            peer_collectives = list(self.config.agent.peer_collectives)
+            hub_cid = self.config.agent.hub_collective_id
+            if hub_cid and hub_cid not in peer_collectives:
+                peer_collectives.append(hub_cid)
+            self._cognitive_core = CognitiveCore(
+                agent_id=self.agent_id,
+                collective_id=self.config.agent.collective_id,
+                llm=self.backends.llm,
+                vector=self.backends.vector,
+                redis_client=self._redis,
+                role_label=self.config.agent.role,
+                peer_collectives=peer_collectives,
+                bridge_enabled=self.config.agent.bridge_enabled,
+                skill_registry=self._skill_registry,
+                mcp_registry=self._mcp_registry,
+            )
+
+        # 4. operator-supplied tags propagate via env so the heartbeat
+        # carries them per PR-D.
+        cluster_id = str(payload.get("cluster_id", ""))
+        purpose = str(payload.get("purpose", ""))
+        if cluster_id:
+            os.environ["ACC_CLUSTER_ID"] = cluster_id
+        if purpose:
+            os.environ["ACC_AGENT_PURPOSE"] = purpose
+
+        # 5. flip state — DORMANT → ACTIVE.
+        self.state = STATE_ACTIVE
+        logger.info(
+            "role_assign: promoted (agent_id=%s new_role=%s cluster_id=%r purpose=%r)",
+            self.agent_id, self.config.agent.role, cluster_id, purpose,
+        )
+
+    # ------------------------------------------------------------------
     # config.reload subscription — TUI write-back hot-swap
     # ------------------------------------------------------------------
 
@@ -1413,6 +1629,11 @@ class Agent:
                 self._heartbeat_loop(),
                 self._task_loop(),
                 self._subscribe_role_updates(),
+                # D-001 (PR-J) — worker-pool ROLE_ASSIGN subscription.
+                # Universal: every agent listens but only promotes when
+                # ``target_agent_id`` matches.  Dormant workers depend
+                # on it; active workers no-op.
+                self._subscribe_role_assign(),
                 self._subscribe_config_reload(),
                 self._subscribe_bridge_results(),
                 self._subscribe_centroid_updates(),

@@ -21,7 +21,14 @@ decisions are marked but not deleted.
 
 ## D-001 — Spawn coding_agent via worker pool, not apply-watcher
 
-**Status:** PROPOSED (this is the next implementation target)
+**Status:** LANDED (PR-J, commit on `main` 2026-05-22; 19 new tests).
+The agent-side primitive (dormant boot mode, signed ROLE_ASSIGN
+verifier, ``_promote_from_dormant``, universal ``_subscribe_role_assign``)
+ships in this PR.  The arbiter-side reconcile loop that watches
+``collective.yaml`` and emits ROLE_ASSIGN to dormant workers is
+deferred to a follow-up PR (J-2) — for now an operator (or the
+TUI's Apply path, via a small future patch) can publish a signed
+ROLE_ASSIGN manually using :func:`acc.role_assign.sign_role_assign`.
 **Date:** 2026-05-21
 **Context:** PR-D (commit `83883fd`) wired "Nucleus Apply" to write
 the requested agent into `./collective.yaml` and touch

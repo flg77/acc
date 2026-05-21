@@ -56,6 +56,13 @@ SIG_TASK_ASSIGN = "TASK_ASSIGN"
 SIG_TASK_COMPLETE = "TASK_COMPLETE"
 SIG_ROLE_UPDATE = "ROLE_UPDATE"
 SIG_ROLE_APPROVAL = "ROLE_APPROVAL"
+# D-001 (PR-J) — worker-pool runtime role-assign.  Published by the
+# arbiter's reconcile loop to promote a dormant worker (boot-mode
+# ``ACC_AGENT_ROLE in {"", "dormant"}``) into the requested role.
+# Carries an Ed25519 signature over the role definition + target
+# agent_id so a hostile peer can't hijack a worker.  See
+# docs/DECISIONS.md D-001.
+SIG_ROLE_ASSIGN = "ROLE_ASSIGN"
 SIG_ALERT_ESCALATE = "ALERT_ESCALATE"
 
 # Cross-collective bridge signals (ACC-9)
@@ -288,6 +295,33 @@ def subject_task(collective_id: str) -> str:
 def subject_role_update(collective_id: str) -> str:
     """Return the NATS subject for ROLE_UPDATE signals."""
     return f"acc.{collective_id}.role_update"
+
+
+def subject_role_assign(collective_id: str) -> str:
+    """Return the NATS subject for ROLE_ASSIGN signals (D-001 / PR-J).
+
+    Published by the arbiter's reconcile loop targeting a SPECIFIC
+    dormant worker.  The wire payload carries:
+
+    * ``target_agent_id``  — the dormant worker chosen for promotion.
+      Every other dormant worker silently drops the message.
+    * ``role_name``        — name of the role to load (e.g.
+      ``coding_agent``).  Must exist on disk under ``roles/<name>/``.
+    * ``cluster_id``       — optional cluster grouping; forwarded into
+      ``ACC_CLUSTER_ID`` on the promoted agent so PR-D's
+      heartbeat-correlator on the TUI can match the spawn.
+    * ``purpose``          — optional operator-supplied purpose string
+      forwarded into ``ACC_AGENT_PURPOSE``.
+    * ``role_definition``  — the full ``RoleDefinitionConfig.model_dump()``
+      so the dormant worker doesn't have to find it on disk.
+    * ``approver_id``      — arbiter's id; matched against the
+      registered arbiter for this collective.
+    * ``signature``        — Ed25519 signature over the canonical
+      JSON of the prior fields.  Reuses the role_store signing
+      keys (proposal 011) so an unprivileged process can't forge an
+      assignment.
+    """
+    return f"acc.{collective_id}.role_assign"
 
 
 def subject_config_reload(collective_id: str) -> str:
