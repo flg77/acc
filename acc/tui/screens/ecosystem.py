@@ -572,6 +572,35 @@ class EcosystemScreen(Screen):
 
         self._load_roles()
 
+        # Bug-fix (post-PR-A regression): the inline role.yaml editor
+        # stayed empty and the "Schedule infusion" button stayed
+        # disabled on first paint because Textual's DataTable does NOT
+        # fire ``RowHighlighted`` from ``add_row`` — only from cursor
+        # movement / focus.  Force-render the detail for the first row
+        # and arm the button up-front so the operator sees a populated
+        # editor without having to click into the table.  Focusing the
+        # table also makes arrow-key navigation work without an
+        # initial click into the pane.
+        try:
+            if self._all_role_rows:
+                first_role = self._all_role_rows[0][0]
+                self._selected_role = first_role
+                self._arm_infusion_button(first_role)
+                self._show_role_detail(first_role)
+                try:
+                    role_table.move_cursor(row=0)
+                    role_table.focus()
+                except Exception:
+                    logger.debug(
+                        "ecosystem: initial cursor/focus failed",
+                        exc_info=True,
+                    )
+        except Exception:
+            logger.exception(
+                "ecosystem: initial detail render failed; "
+                "operator will need to click a row manually",
+            )
+
         # Proposal 003 PR-3 — start the roles/ directory watcher.
         # Captures the initial fingerprint synchronously so the very
         # first poll tick doesn't post a spurious change message.

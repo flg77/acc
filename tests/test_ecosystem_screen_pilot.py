@@ -1032,16 +1032,29 @@ def test_resolve_editor_command_platform_fallback(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_edit_buttons_armed_on_row_select(isolated_manifests):
-    """Proposal 007 — selecting a role enables both edit buttons."""
+    """Proposal 007 + post-PR-A regression fix — selecting a role
+    enables both edit buttons.
+
+    Updated semantic (post-PR-A bug-fix): the buttons are auto-armed
+    on screen mount against the FIRST row in the role library, so the
+    operator doesn't have to click into the table before being able
+    to Save / open in $EDITOR / schedule infusion.  This test now
+    verifies (a) the auto-armed state after mount, and (b) that
+    highlighting a different row keeps the buttons armed.
+    """
     app = _Harness()
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
 
-        # Pre-condition — buttons disabled before any selection.
-        assert screen.query_one("#btn-edit-yaml", Button).disabled is True
-        assert screen.query_one("#btn-edit-md",   Button).disabled is True
+        # Post-mount: both buttons should already be armed against the
+        # first row in the library.
+        assert screen.query_one("#btn-edit-yaml", Button).disabled is False
+        assert screen.query_one("#btn-edit-md",   Button).disabled is False
+        assert screen._selected_role != ""
 
+        # Highlight an explicit row — buttons stay armed, selection
+        # follows.
         role_table = screen.query_one("#role-table", DataTable)
         first_row_key = list(role_table.rows.keys())[0]
         screen.on_data_table_row_highlighted(
@@ -1055,6 +1068,40 @@ async def test_edit_buttons_armed_on_row_select(isolated_manifests):
 
         assert screen.query_one("#btn-edit-yaml", Button).disabled is False
         assert screen.query_one("#btn-edit-md",   Button).disabled is False
+
+
+@pytest.mark.asyncio
+async def test_first_row_auto_renders_detail_on_mount(isolated_manifests):
+    """Bug-fix regression test — the inline role.yaml editor must be
+    populated with the FIRST role's yaml on screen mount, without the
+    operator clicking the row.
+
+    Pre-fix: ``RowHighlighted`` only fires on cursor movement, so the
+    editor stayed blank and ``Schedule infusion`` stayed disabled
+    until the operator clicked.  Post-fix: ``on_mount`` force-arms
+    against the first row.
+    """
+    from textual.widgets import TextArea
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        # The fixture's first row should have populated the editor.
+        editor = screen.query_one("#role-yaml-editor", TextArea)
+        assert editor.text.strip() != "", (
+            f"role.yaml editor should be populated on mount, got "
+            f"{editor.text!r}"
+        )
+        # Schedule-infusion button armed.
+        assert (
+            screen.query_one("#btn-schedule-infusion", Button).disabled
+            is False
+        )
+        # _selected_role wired up so subsequent Save / open-in-$EDITOR
+        # work without a click.
+        assert screen._selected_role != ""
 
 
 @pytest.mark.asyncio
