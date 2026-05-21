@@ -440,3 +440,154 @@ async def test_clear_history_empties_the_pane():
         await pilot.pause()
 
         assert screen.history == []
+
+
+# ---------------------------------------------------------------------------
+# PR-F — task-progress bar + invocation-waterfall + detail modal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_progress_render_populates_task_progress_line():
+    """`_render_task_progress_line` writes a bar+ratio+confidence
+    summary into `#task-progress-line`."""
+    from textual.widgets import Static
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        # Patch update() to capture the rendered text.
+        line = screen.query_one("#task-progress-line", Static)
+        captured: list[str] = []
+        real = line.update
+
+        def rec(content="", **kw):
+            captured.append(str(content))
+            return real(content, **kw)
+
+        line.update = rec  # type: ignore[assignment]
+        screen._render_task_progress_line({
+            "task_id": "abcd1234",
+            "current_step": 5,
+            "total_steps": 8,
+            "step_label": "Composing",
+            "confidence": 0.78,
+            "confidence_trend": "STABLE",
+        })
+        await pilot.pause()
+        assert captured, "progress line should have been updated"
+        text = captured[-1]
+        assert "task=abcd1234" in text
+        assert "5/8" in text
+        assert "62%" in text   # 5/8 → 62%
+        assert "78%" in text   # confidence
+        assert "Composing" in text
+
+
+@pytest.mark.asyncio
+async def test_render_task_progress_line_none_resets_to_idle():
+    """Passing `None` resets the progress line to the idle placeholder."""
+    from textual.widgets import Static
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        line = screen.query_one("#task-progress-line", Static)
+        captured: list[str] = []
+        real = line.update
+
+        def rec(content="", **kw):
+            captured.append(str(content))
+            return real(content, **kw)
+
+        line.update = rec  # type: ignore[assignment]
+        screen._render_task_progress_line(None)
+        await pilot.pause()
+
+        assert captured and "No active task" in captured[-1]
+
+
+@pytest.mark.asyncio
+async def test_trace_entry_appends_invocation_waterfall_row():
+    """A `trace` history entry adds a row to `#invocation-waterfall`
+    and stashes the full record on `_waterfall_records`."""
+    from textual.widgets import DataTable
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        wf = screen.query_one("#invocation-waterfall", DataTable)
+        assert wf.row_count == 0
+
+        screen._append_history({
+            "role": "trace",
+            "task_id": "abcd1234",
+            "agent_id": "coding-1",
+            "kind": "skill",
+            "target": "echo",
+            "ok": True,
+            "error": "",
+            "ts": time.time(),
+        })
+        await pilot.pause()
+
+        assert wf.row_count == 1
+        assert len(screen._waterfall_records) == 1
+        rec = next(iter(screen._waterfall_records.values()))
+        assert rec["kind"] == "skill"
+        assert rec["target"] == "echo"
+        assert rec["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_waterfall_caps_at_configured_limit():
+    """Inserting more than _WATERFALL_CAP traces drops the oldest."""
+    from textual.widgets import DataTable
+    from acc.tui.screens.prompt import _WATERFALL_CAP
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        for i in range(_WATERFALL_CAP + 5):
+            screen._append_history({
+                "role": "trace",
+                "task_id": "abcd1234",
+                "agent_id": "coding-1",
+                "kind": "skill",
+                "target": f"echo_{i}",
+                "ok": True,
+                "error": "",
+                "ts": time.time() + i * 0.001,
+            })
+
+        wf = screen.query_one("#invocation-waterfall", DataTable)
+        assert wf.row_count == _WATERFALL_CAP
+        assert len(screen._waterfall_records) == _WATERFALL_CAP
+
+
+def test_invocation_detail_modal_renders_known_fields():
+    """The modal body lists known fields then dumps the raw JSON.
+
+    Pure unit test on the static body-builder so we don't have to
+    run the modal under Pilot.
+    """
+    from acc.tui.widgets.invocation_detail_modal import InvocationDetailModal
+    body = InvocationDetailModal._render_body({
+        "task_id": "abcd1234",
+        "agent_id": "coding-1",
+        "kind": "mcp",
+        "target": "fs.read",
+        "ok": False,
+        "error": "permission denied",
+    })
+    assert "task_id" in body
+    assert "abcd1234" in body
+    assert "mcp" in body
+    assert "fs.read" in body
+    assert "permission denied" in body
+    assert "raw record" in body
+    assert '"target": "fs.read"' in body

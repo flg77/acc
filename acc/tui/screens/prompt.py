@@ -50,10 +50,13 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Button, Footer, Input, Label, Select, Static, TextArea
+from textual.widgets import (
+    Button, DataTable, Footer, Input, Label, Select, Static, TextArea,
+)
 
 from acc.channels import TUIPromptChannel
 from acc.tui.widgets.cluster_panel import ClusterPanel
+from acc.tui.widgets.invocation_detail_modal import InvocationDetailModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
 if TYPE_CHECKING:
@@ -113,6 +116,12 @@ def _resolve_timeout() -> float:
 # History FIFO cap.  Chat panes accumulate fast; 200 entries gives
 # ~50 prompt round-trips with traces before the oldest fall off.
 _MAX_HISTORY: int = 200
+
+# PR-F — cap on rows shown in the invocation-waterfall DataTable.
+# Operator typically wants to see the most recent task's tool fires;
+# 50 rows survives a 10-step chain plus a few retries without being
+# noisy.  Older rows fall off the head.
+_WATERFALL_CAP: int = 50
 
 
 class PromptScreen(Screen):
@@ -220,6 +229,11 @@ class PromptScreen(Screen):
         # (proposal 003 PR-1 §6 risk row 1) to suppress replies that
         # arrive after the operator has moved on.
         self._cancelled_task_ids: list[str] = []
+        # PR-F — full invocation record per row key in the
+        # `#invocation-waterfall` DataTable.  Click-handler reads from
+        # here to populate the InvocationDetailModal so the full
+        # record (not just the table cells) is preserved.
+        self._waterfall_records: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------
     # Compose / mount / lifecycle
@@ -249,6 +263,28 @@ class PromptScreen(Screen):
         # ``snapshot`` (below) feeds it on every snapshot tick.
         yield ClusterPanel(id="prompt-cluster-panel")
 
+        # PR-F — task-progress bar above the transcript.  Renders the
+        # latest TASK_PROGRESS for the active task as a single line
+        # (step ratio + label + confidence trend).  Always visible;
+        # shows a grey placeholder when no task is in flight.
+        yield Static(
+            "[dim]No active task.  Send a prompt below to begin.[/dim]",
+            id="task-progress-line",
+        )
+
+        # PR-F — capability-invocation waterfall.  Promoted from the
+        # transcript's line-by-line `→ skill:echo OK` entries to a
+        # sortable DataTable.  Click a row to drill into the
+        # invocation's full record via InvocationDetailModal.  The
+        # table holds the LAST `_WATERFALL_CAP` invocations across all
+        # tasks; older rows scroll off when the cap is exceeded.
+        yield DataTable(
+            id="invocation-waterfall",
+            cursor_type="row",
+            show_cursor=True,
+            zebra_stripes=True,
+        )
+
         # ── Transcript (centre, flex) ───────────────────────────────
         with ScrollableContainer(id="prompt-transcript-container"):
             yield Static(id="prompt-transcript")
@@ -265,6 +301,14 @@ class PromptScreen(Screen):
     def on_mount(self) -> None:
         """Render the empty transcript once at mount."""
         self._render_transcript()
+        # PR-F — initialise the invocation waterfall column layout.
+        try:
+            wf = self.query_one("#invocation-waterfall", DataTable)
+            wf.add_columns(
+                "ts", "task", "agent", "kind:target", "ok", "error",
+            )
+        except Exception:
+            logger.exception("prompt: invocation-waterfall init failed")
         # Focus the textarea so the operator can type immediately.
         try:
             self.query_one("#prompt-textarea", TextArea).focus()
@@ -746,9 +790,26 @@ class PromptScreen(Screen):
 
     def _append_history(self, entry: dict) -> None:
         """Append to history (FIFO-capped at _MAX_HISTORY) + re-render +
-        scroll to bottom so the latest entry is visible."""
+        scroll to bottom so the latest entry is visible.
+
+        PR-F — also feeds the dedicated widgets above the transcript:
+        ``trace`` entries land in the invocation waterfall DataTable;
+        ``progress`` entries refresh the task-progress bar; a new
+        ``operator`` entry resets the progress bar for the new task.
+        """
         self.history = (self.history + [entry])[-_MAX_HISTORY:]
         self._render_transcript()
+        # PR-F — keep the structured widgets in sync with the transcript.
+        role = entry.get("role", "")
+        if role == "trace":
+            self._waterfall_add_row(entry)
+        elif role == "progress":
+            self._render_task_progress_line(entry)
+        elif role == "operator":
+            # New task starts — clear the progress bar so a stale value
+            # from the previous task doesn't sit there until the agent
+            # emits its first TASK_PROGRESS.
+            self._render_task_progress_line(None)
         try:
             container = self.query_one(
                 "#prompt-transcript-container", ScrollableContainer,
@@ -757,6 +818,118 @@ class PromptScreen(Screen):
         except Exception:
             # Container not mounted yet (tests).  Render still happened.
             pass
+
+    # ------------------------------------------------------------------
+    # PR-F — structured trace widgets (progress bar + invocation waterfall)
+    # ------------------------------------------------------------------
+
+    def _render_task_progress_line(self, entry: dict | None) -> None:
+        """Refresh ``#task-progress-line`` from one TASK_PROGRESS entry.
+
+        Pass ``None`` to reset to the idle placeholder (used when a
+        fresh ``operator`` prompt lands).
+        """
+        try:
+            line = self.query_one("#task-progress-line", Static)
+        except Exception:
+            return
+        if not entry:
+            line.update(
+                "[dim]No active task.  Send a prompt below to begin.[/dim]"
+            )
+            return
+        cur = entry.get("current_step", 0) or 0
+        tot = entry.get("total_steps", 0) or 0
+        label = entry.get("step_label", "") or ""
+        conf = entry.get("confidence", 0.0) or 0.0
+        trend = entry.get("confidence_trend", "")
+        trend_arrow = (
+            "↑" if trend == "RISING"
+            else "↓" if trend == "FALLING"
+            else "→"
+        )
+        tid = (entry.get("task_id", "") or "")[:8]
+        bar_w = 30
+        if tot > 0:
+            ratio = min(1.0, cur / tot)
+            filled = int(ratio * bar_w)
+            bar = "█" * filled + "░" * (bar_w - filled)
+            step_str = f"{cur}/{tot}"
+            pct = f"{ratio:.0%}"
+        else:
+            bar = "░" * bar_w
+            step_str = f"{cur}/?" if cur else "?"
+            pct = "—"
+        label_str = f" — {label}" if label else ""
+        line.update(
+            f"[dim]task={tid}[/dim]  [blue]{bar}[/blue]  "
+            f"[bold]{step_str}[/bold]  {pct}  "
+            f"[dim]{trend_arrow} {conf:.0%}[/dim]{label_str}"
+        )
+
+    def _waterfall_add_row(self, entry: dict) -> None:
+        """Append one row to ``#invocation-waterfall`` for a trace entry.
+
+        Caps the table at ``_WATERFALL_CAP`` rows by dropping the
+        oldest.  Stashes the full entry on ``_waterfall_records`` so
+        the row-click handler can pop an :class:`InvocationDetailModal`
+        with the complete record (the table cells are pre-truncated).
+        """
+        try:
+            wf = self.query_one("#invocation-waterfall", DataTable)
+        except Exception:
+            return
+        ts = time.strftime("%H:%M:%S", time.localtime(entry.get("ts", 0)))
+        task = (entry.get("task_id", "") or "")[:8]
+        agent = (entry.get("agent_id", "") or "")[:14]
+        kind = entry.get("kind", "?")
+        target = entry.get("target", "?")
+        ok = bool(entry.get("ok", False))
+        ok_cell = "[green]✓[/green]" if ok else "[red]✗[/red]"
+        err = entry.get("error", "") or ""
+        err_short = (err[:60] + "…") if len(err) > 60 else err
+        key = f"inv-{int(time.time() * 1000)}-{wf.row_count}"
+        try:
+            wf.add_row(
+                ts, task, agent, f"{kind}:{target}", ok_cell, err_short,
+                key=key,
+            )
+        except Exception:
+            logger.exception("prompt: waterfall add_row failed")
+            return
+        self._waterfall_records[key] = dict(entry)
+        # Cap.  Textual returns row keys as `RowKey` objects; the
+        # actual string we passed lives on `.value`.
+        while wf.row_count > _WATERFALL_CAP:
+            oldest = next(iter(wf.rows.keys()), None)
+            if oldest is None:
+                break
+            old_value = getattr(oldest, "value", oldest)
+            try:
+                wf.remove_row(oldest)
+            except Exception:
+                break
+            self._waterfall_records.pop(str(old_value), None)
+
+    def on_data_table_row_selected(
+        self, event: DataTable.RowSelected,
+    ) -> None:
+        """Click on an invocation row → push the detail modal."""
+        if event.data_table.id != "invocation-waterfall":
+            return
+        key = ""
+        try:
+            row_key = event.row_key
+            key = str(row_key.value if hasattr(row_key, "value") else row_key)
+        except Exception:
+            pass
+        rec = self._waterfall_records.get(key)
+        if rec is None:
+            return
+        try:
+            self.app.push_screen(InvocationDetailModal(rec))
+        except Exception:
+            logger.exception("prompt: push InvocationDetailModal failed")
 
     def _append_progress_entry(self, payload: dict) -> None:
         """Convert one TASK_PROGRESS payload to a transcript entry.
