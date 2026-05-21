@@ -430,9 +430,22 @@ class CognitiveCore:
             )
 
         # 2 — PROMPT BUILD
-        _emit(2, "Building system prompt")
-        system_prompt = self.build_system_prompt(role)
+        # PR-I (D-002) — retrieve top-K most-similar past episodes FIRST
+        # so they can be folded into the system prompt below.  Gated by
+        # ``role.memory_retrieval`` (default True; ephemeral roles can
+        # opt out via role.yaml).  Best-effort: any failure (embedding
+        # error, missing table, vector backend without ``search``,
+        # legacy mocks in tests) silently falls back to the legacy
+        # prompt — RAG is an additive boost, NEVER a hard dependency
+        # of the LLM call.
         user_content: str = task_payload.get("content", "")
+        retrieved_episodes: list[dict] = []
+        if getattr(role, "memory_retrieval", True) and user_content:
+            retrieved_episodes = await self._retrieve_episodes(
+                user_content, role, top_k=5,
+            )
+        _emit(2, "Building system prompt")
+        system_prompt = self.build_system_prompt(role, retrieved_episodes)
 
         # ACC-12 — PRE-GUARDRAIL (OWASP LLM01/04/06/08)
         pre_guard_result = None
@@ -895,7 +908,11 @@ class CognitiveCore:
     # Prompt construction
     # ------------------------------------------------------------------
 
-    def build_system_prompt(self, role: RoleDefinitionConfig) -> str:
+    def build_system_prompt(
+        self,
+        role: RoleDefinitionConfig,
+        retrieved_episodes: list[dict] | None = None,
+    ) -> str:
         """Construct the LLM system prompt from *role*.
 
         Falls back to a generic ACC agent prompt when *purpose* is empty.
@@ -903,6 +920,14 @@ class CognitiveCore:
         When ``bridge_enabled=True`` and peer collectives are configured, appends
         a delegation instruction that tells the LLM how to signal that a task
         should be forwarded to a peer collective (ACC-9 / A-010).
+
+        PR-I (D-002) — when ``retrieved_episodes`` is a non-empty list,
+        appends a ``RECENT_RELEVANT_EPISODES`` block so the LLM can
+        ground its answer in the agent's actual past work.  Each
+        episode is rendered as a single line:
+        ``- [HH:MM:SS] [signal_type] excerpt…``.  Empty list / None →
+        no section, preserving the legacy prompt for roles with
+        ``memory_retrieval: false``.
         """
         purpose = role.purpose.strip()
         persona_instruction = _PERSONA_INSTRUCTIONS.get(
@@ -917,6 +942,27 @@ class CognitiveCore:
         parts = [purpose, f"\nPersona: {persona_instruction}"]
         if seed:
             parts.append(f"\n{seed}")
+
+        # PR-I — recent-episodes RAG block.  Lives before the
+        # skill / MCP advertisement blocks so the LLM weighs prior
+        # experience BEFORE deciding which tool to fire.
+        if retrieved_episodes:
+            rag_lines = ["", "RECENT_RELEVANT_EPISODES (your past work, most-similar first):"]
+            for ep in retrieved_episodes:
+                ts_str = ep.get("ts_str", "")
+                signal_type = ep.get("signal_type", "TASK_ASSIGN")
+                excerpt = ep.get("excerpt", "").strip().replace("\n", " ")
+                if len(excerpt) > 160:
+                    excerpt = excerpt[:157] + "…"
+                rag_lines.append(
+                    f"- [{ts_str}] [{signal_type}] {excerpt}"
+                )
+            rag_lines.append(
+                "(Use these to ground your answer.  If the operator "
+                "asks 'do you remember…?' you DO — these are your prior "
+                "tasks.  Cite the timestamp when you reference one.)"
+            )
+            parts.append("\n".join(rag_lines))
 
         # Phase 4.3 — Available skills block.  Only listed when the role
         # opts in via default_skills (a subset of allowed_skills).  Empty
@@ -1060,6 +1106,118 @@ class CognitiveCore:
                 deviation_score += (actual_tokens - token_budget) / max(token_budget, 1)
 
         return deviation_score
+
+    async def _retrieve_episodes(
+        self,
+        query_text: str,
+        role: RoleDefinitionConfig,
+        *,
+        top_k: int = 5,
+        freshness_window_s: float = 86400.0,
+    ) -> list[dict]:
+        """PR-I (D-002) — RAG: top-K past episodes for the current task.
+
+        Embeds *query_text* via the agent's LLM backend, queries
+        LanceDB's ``episodes`` table for the nearest neighbours by
+        cosine similarity, filters by freshness (default last 24h)
+        and same-agent provenance, and returns a list of
+        ``{ts_str, signal_type, excerpt}`` dicts ready for
+        :meth:`build_system_prompt` to render.
+
+        Best-effort.  Every failure mode (empty query, missing
+        embed() method, vector backend without ``search``, LanceDB
+        table absent on fresh boot, deserialisation errors in the
+        stored ``payload_json``) is caught and yields an empty list
+        — RAG is an additive boost and MUST NOT block the LLM call.
+
+        Args:
+            query_text: The operator's prompt (the current task's
+                ``content``).  Empty / whitespace-only short-circuits
+                to ``[]``.
+            role: Used for future per-role filtering (domain_id,
+                allowed_actions); currently informational so an
+                upgrade doesn't break the call shape.
+            top_k: Maximum number of episodes to return.
+            freshness_window_s: Drop episodes older than this many
+                seconds.  Set to ``0`` to disable the filter (used
+                in tests with a synthetic clock).
+
+        Returns:
+            List of dicts (newest-similarity-first), each with keys
+            ``ts``, ``ts_str``, ``signal_type``, ``excerpt``.
+            Empty list on any failure or when no episodes match.
+        """
+        if not query_text or not query_text.strip():
+            return []
+        embed_fn = getattr(self._llm, "embed", None)
+        search_fn = getattr(self._vector, "search", None)
+        if embed_fn is None or search_fn is None:
+            logger.debug(
+                "rag: backend missing embed/search — skip retrieval",
+            )
+            return []
+        try:
+            query_embedding = await embed_fn(query_text[:2000])
+        except Exception:
+            logger.exception("rag: embed failed; skip retrieval")
+            return []
+        try:
+            raw_results = search_fn("episodes", query_embedding, top_k)
+        except Exception:
+            # LanceDB table missing on a fresh agent boot is the
+            # most common case — log at DEBUG only.
+            logger.debug(
+                "rag: vector.search raised; skip retrieval",
+                exc_info=True,
+            )
+            return []
+
+        now = time.time()
+        out: list[dict] = []
+        for row in raw_results or []:
+            try:
+                ts = float(row.get("ts", 0.0))
+                if freshness_window_s > 0 and ts > 0:
+                    if (now - ts) > freshness_window_s:
+                        continue
+                # Same-agent provenance keeps "do you remember?"
+                # answers honest — the LLM only sees what THIS agent
+                # actually did, not a sibling's history.  Drop the
+                # filter for fresh boots (no prior episodes) by being
+                # lenient when the agent_id field is absent.
+                row_aid = str(row.get("agent_id", "") or "")
+                if row_aid and row_aid != self._agent_id:
+                    continue
+                signal_type = str(row.get("signal_type") or "TASK_ASSIGN")
+                payload_json = row.get("payload_json") or ""
+                excerpt = ""
+                if payload_json:
+                    try:
+                        payload = json.loads(payload_json)
+                        excerpt = str(
+                            payload.get("content")
+                            or payload.get("task_description")
+                            or "",
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        excerpt = str(payload_json)[:200]
+                ts_str = (
+                    time.strftime("%H:%M:%S", time.localtime(ts))
+                    if ts else "—"
+                )
+                out.append({
+                    "ts": ts,
+                    "ts_str": ts_str,
+                    "signal_type": signal_type,
+                    "excerpt": excerpt,
+                })
+            except Exception:
+                logger.debug(
+                    "rag: skipped malformed episode row",
+                    exc_info=True,
+                )
+                continue
+        return out
 
     def _persist_episode(
         self,

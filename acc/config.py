@@ -50,6 +50,17 @@ class RoleDefinitionConfig(BaseModel):
     category_b_overrides: dict[str, float] = Field(default_factory=dict)
     version: str = "0.1.0"
 
+    # D-002 (PR-I) — RAG-the-agent.  When True (default) the
+    # CognitiveCore queries LanceDB's ``episodes`` table for the
+    # top-K nearest past episodes (by cosine similarity to the
+    # current task's embedding) and renders them into the system
+    # prompt under a ``RECENT_RELEVANT_EPISODES`` section.  Adds
+    # ~150-300ms of pre-LLM latency (one extra embedding +
+    # LanceDB read).  Set ``memory_retrieval: false`` on roles
+    # where the latency matters more than the recall (ephemeral
+    # one-shot agents).  See docs/DECISIONS.md D-002.
+    memory_retrieval: bool = True
+
     # Proposal 004 — first-class subrole hierarchy.
     # ``parent_role`` declares the role's logical parent in a flat
     # 2-level tree: a top-level role (``coding_agent``) is the

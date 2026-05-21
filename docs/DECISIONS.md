@@ -86,7 +86,7 @@ forever.
 
 ## D-002 — RAG (memory retrieval) is default-on per role
 
-**Status:** PROPOSED
+**Status:** LANDED (PR-I, commit on `main` 2026-05-22; 17 new tests)
 **Date:** 2026-05-21
 **Context:** Agents have `read_vector_db`, `read_scratchpad`,
 `write_working_memory` in their `allowed_actions` but the LLM never
