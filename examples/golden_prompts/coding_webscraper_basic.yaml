@@ -1,0 +1,18 @@
+name: coding_webscraper_basic
+description: |
+  The original operator regression report — "write a Python webscraper
+  that fetches IBM stock prices from Yahoo Finance" should produce
+  runnable Python that imports requests / urllib / httpx / yfinance.
+prompt: |
+  Write a small Python webscraper that fetches IBM stock prices from
+  Yahoo Finance.  Return only the closing price.  Keep the code under
+  30 lines.
+target_role: coding_agent
+timeout_s: 30.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 30000
+  blocked: false
+  output_contains:
+    - IBM
+  output_matches_regex: "import\\s+(requests|urllib|httpx|yfinance|pandas)"

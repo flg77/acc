@@ -1,0 +1,15 @@
+name: smoke_basic_reply
+description: |
+  Smoke check.  Any role, any prompt — just verifies that the
+  operator → arbiter → LLM → TUI loop closes within 5s.  Pinned by
+  Commit-7 (agent payload-decode fix) — pre-Commit-7 this returned
+  ``task_id=""`` and the channel timed out.
+prompt: |
+  Reply with exactly the word "pong".
+target_role: analyst
+timeout_s: 15.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 15000
+  blocked: false
+  output_matches_regex: "pong"

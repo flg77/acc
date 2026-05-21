@@ -254,7 +254,11 @@ unmistakable when needed.
 
 ## D-005 — Golden-prompt suite in three runner modes (CLI / TUI / scheduled)
 
-**Status:** PROPOSED
+**Status:** LANDED (Phase 1 — schema + CLI + 6 seed prompts; PR-K
+on `main` 2026-05-22; 28 new tests).  The TUI Diagnostics pane
+(Phase 2) and the scheduled maintenance-agent runner (Phase 3) are
+deferred follow-ups that both consume the same
+``acc.golden_prompts`` loader + assertion engine.
 **Date:** 2026-05-21
 **Context:** Every operator session today is a manual smoke test.
 Regressions like the agent-side payload-decode bug (Commit-7) went

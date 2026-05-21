@@ -1,0 +1,19 @@
+name: coding_review_pass
+description: |
+  Code-review smoke: a clean snippet should produce a PASS verdict.
+  Pins the CODE_REVIEW task type so the role's seed_context (which
+  asks for `verdict: PASS|FAIL|NEEDS_CHANGES`) is exercised.
+prompt: |
+  Review this Python snippet and reply with a single-line verdict
+  (PASS / FAIL / NEEDS_CHANGES) followed by one sentence of rationale.
+
+      def greet(name: str) -> str:
+          return f"Hello, {name}"
+
+target_role: coding_agent
+timeout_s: 20.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 20000
+  blocked: false
+  output_matches_regex: "PASS|NEEDS_CHANGES|FAIL"

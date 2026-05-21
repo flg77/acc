@@ -1,0 +1,20 @@
+name: arbiter_routing
+description: |
+  Arbiter routing smoke — a multi-step task should NOT be blocked,
+  and ought to land within the arbiter's normal Cat-B latency band.
+  In a stack with the PR-G worker pool live + PLAN heuristic enabled
+  (D-003) a future revision of this prompt will also assert the
+  PLAN signal fires; for now just check the round-trip.
+prompt: |
+  Outline how you'd implement a small key-value store with a TTL,
+  a write-through cache, and a unit-test scaffold.  Three sections
+  please.
+target_role: arbiter
+timeout_s: 30.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 30000
+  blocked: false
+  output_contains:
+    - TTL
+  output_matches_regex: "(test|cache|store)"

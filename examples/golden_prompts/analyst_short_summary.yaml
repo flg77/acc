@@ -1,0 +1,16 @@
+name: analyst_short_summary
+description: |
+  Analyst-role behavioural check — the persona is `analytical`, so
+  short factual prompts should yield a concise structured reply.
+prompt: |
+  Summarise the difference between TCP and UDP in 3 bullet points.
+target_role: analyst
+timeout_s: 20.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 20000
+  blocked: false
+  output_contains:
+    - TCP
+    - UDP
+  output_matches_regex: "(\\-|\\*|\\d\\.)"  # at least one list marker

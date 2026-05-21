@@ -1,0 +1,20 @@
+name: memory_recall
+description: |
+  Pins D-002 (PR-I) — RAG default-on.  After at least one prior
+  episode exists, the agent should reference its past work when
+  asked.  In a fresh stack with no prior episodes the agent should
+  honestly say so (still a PASS by these expects — we only check
+  the agent acknowledges memory rather than denies it).
+prompt: |
+  Do you have any record of tasks you've handled in this session?
+  Be honest — if you don't, say so.
+target_role: analyst
+timeout_s: 20.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 20000
+  blocked: false
+  # Either an explicit acknowledgement OR an explicit "no, none yet"
+  # is acceptable — what we forbid is the legacy "I have no memory
+  # capabilities" hallucination that PR-I fixes.
+  output_matches_regex: "(memory|episode|recall|past|previous|prior|no record|none yet|no prior|fresh)"

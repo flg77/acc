@@ -69,6 +69,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # dependencies (e.g. nats-py for `role list`) do not block startup.
     from acc.cli import (  # noqa: PLC0415
         collective_cmd,
+        e2e_cmd,
         role_cmd,
         nats_cmd,
         llm_cmd,
@@ -85,6 +86,11 @@ def _build_parser() -> argparse.ArgumentParser:
     oversight_cmd.register(sub)
     plan_cmd.register(sub)
     schedule_cmd.register_schedule_subparser(sub)
+    # PR-K (D-005) — golden-prompt suite runner (CLI mode).
+    # Shares its loader / assertion engine (`acc.golden_prompts`) with
+    # the TUI Diagnostics pane and the scheduled maintenance agent
+    # (both deferred to follow-ups).
+    e2e_cmd.register(sub)
 
     return parser
 
