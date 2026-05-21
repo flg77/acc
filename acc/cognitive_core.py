@@ -521,7 +521,31 @@ class CognitiveCore:
         # actual reasoning — captures "we got past the guards".
         _emit(3, "Calling LLM", confidence=0.55)
         response, latency_ms, token_count = await self._call_llm(system_prompt, user_content)
-        output_text: str = response.get("content", "")
+        # Backend shape tolerance — historical inconsistency:
+        #   * ``acc.backends.llm_openai_compat.complete`` returns
+        #     ``{"content": <str>, "usage": {...}}``.
+        #   * ``acc.backends.llm_{vllm,anthropic,llama_stack,ollama}.complete``
+        #     return either the parsed JSON object (when the LLM emitted
+        #     valid JSON) or ``{"text": <str>}`` (raw text fallback).
+        # Reading ``response["content"]`` only worked for openai_compat;
+        # every other backend gave an empty string here, the agent
+        # published an empty TASK_COMPLETE, and the operator's Prompt
+        # window stayed silent.  Accept all three shapes:
+        output_text = (
+            response.get("content")
+            or response.get("text")
+            # JSON-shaped response — best-effort flatten of a known key,
+            # else stringify so the operator at least sees the dict.
+            or response.get("response")
+            or response.get("message")
+            or ""
+        )
+        if not output_text and isinstance(response, dict) and response:
+            try:
+                output_text = json.dumps(response, ensure_ascii=False)
+            except Exception:
+                output_text = str(response)
+        output_text = str(output_text)
 
         # Update token utilisation
         token_budget = role.category_b_overrides.get("token_budget", 0)

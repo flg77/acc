@@ -214,7 +214,12 @@ class TestVLLMBackend:
             MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
             result = await backend.complete("sys", "usr")
         assert "/v1/chat/completions" in captured[0]
-        assert result == {"result": "ok"}
+        # Canonical shape (post Commit-5): always carry ``content`` +
+        # ``usage``; JSON-shaped LLM output is folded in alongside.
+        assert result["content"] == '{"result": "ok"}'
+        assert result["text"] == '{"result": "ok"}'
+        assert result["usage"] == {}
+        assert result["result"] == "ok"  # parsed JSON merged in
 
     @pytest.mark.asyncio
     async def test_503_raises_retryable(self):

@@ -1391,8 +1391,38 @@ class EcosystemScreen(Screen):
         )
 
     def _handle_schedule_infusion(self) -> None:
-        """Schedule-infusion handler split out for clarity."""
-        if not self._selected_role:
+        """Schedule-infusion handler split out for clarity.
+
+        Commit-5 — operator-reported: clicking Schedule infusion
+        forwarded the auto-mount-committed role (e.g. account_executive)
+        even after the operator had scrolled to a different row and
+        previewed it.  Fix: prefer the DataTable's cursor row if it
+        differs from ``_selected_role``, and auto-commit that row
+        before forwarding so subsequent Save / Edit / ● paint is
+        consistent.  Pre-Commit-5 the operator had to press Enter to
+        commit, then click Schedule — easy to forget after Commit-4
+        split highlight from select.
+        """
+        target = self._selected_role
+        try:
+            table = self.query_one("#role-table", DataTable)
+            cursor_row = table.cursor_row
+            rows = list(table.rows.keys())
+            if 0 <= cursor_row < len(rows):
+                cursor_role = self._extract_role_name(rows[cursor_row])
+                if cursor_role and cursor_role != self._selected_role:
+                    # Auto-commit the cursor row before forwarding.
+                    self._selected_role = cursor_role
+                    self._arm_infusion_button(cursor_role)
+                    target = cursor_role
+        except Exception:
+            logger.debug(
+                "ecosystem: cursor-row introspection failed; "
+                "falling back to _selected_role",
+                exc_info=True,
+            )
+
+        if not target:
             self.notify(
                 "Highlight or click a role row first",
                 severity="warning",
@@ -1400,7 +1430,7 @@ class EcosystemScreen(Screen):
             )
             return
         # Post to the App; the App routes to InfuseScreen and switches.
-        self.app.post_message(RolePreloadMessage(self._selected_role))
+        self.app.post_message(RolePreloadMessage(target))
 
     # ------------------------------------------------------------------
     # Proposal 009 — Upload flow + snapshot LLM render moved to the

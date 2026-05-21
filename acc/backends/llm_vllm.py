@@ -62,11 +62,29 @@ class VLLMBackend:
                 timeout=120.0,
             )
         self._raise_for_status(response)
-        content = response.json()["choices"][0]["message"]["content"]
+        body_json = response.json()
+        content = body_json["choices"][0]["message"]["content"]
+        usage = body_json.get("usage", {}) or {}
+        # Canonical shape — matches ``acc.backends.llm_openai_compat``:
+        # always include ``content`` (the raw LLM text) AND ``usage``
+        # so ``cognitive_core._call_llm`` can read token counts.
+        # When the LLM emits valid JSON the parsed object is folded
+        # in under the same key set so callers that DO want structured
+        # output can still read it.
+        result: dict = {"content": content, "usage": usage}
         try:
-            return json.loads(content)
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                # Preserve structured fields without clobbering content.
+                for k, v in parsed.items():
+                    result.setdefault(k, v)
+                # Legacy callers still read "text" — keep populated.
+                result["text"] = content
+            else:
+                result["text"] = content
         except json.JSONDecodeError:
-            return {"text": content}
+            result["text"] = content
+        return result
 
     async def embed(self, text: str) -> list[float]:
         """POST to ``/v1/embeddings`` (OpenAI-compatible format)."""

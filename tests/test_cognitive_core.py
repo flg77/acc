@@ -247,6 +247,45 @@ class TestProcessTaskHappy:
         result = await core.process_task({"content": "analyse"}, role=_make_role())
         assert 0.0 <= result.stress.drift_score <= 1.0
 
+    # -------- Commit-5 — backend shape tolerance ----------------------
+
+    @pytest.mark.asyncio
+    async def test_output_text_from_text_key(self):
+        """Operator-reported bug: vLLM/anthropic/llama_stack/ollama
+        backends return ``{"text": "..."}`` when the LLM output isn't
+        JSON.  cognitive_core was reading ``response["content"]`` only,
+        which yielded empty ``output_text``, an empty TASK_COMPLETE
+        ``output``, and a silent Prompt window.  Fix accepts ``text``."""
+        llm = MagicMock()
+        llm.complete = AsyncMock(return_value={
+            "text": "the agent's actual reply",
+            # No "content" key — matches vLLM raw-text fallback.
+        })
+        llm.embed = AsyncMock(return_value=_unit_vector())
+        core = _make_core(llm=llm)
+        result = await core.process_task(
+            {"content": "say something"}, role=_make_role(),
+        )
+        assert "the agent's actual reply" in result.output, result.output
+
+    @pytest.mark.asyncio
+    async def test_output_text_falls_back_to_response_dict(self):
+        """LLM returned a JSON object with neither ``content`` nor
+        ``text`` — cognitive_core must stringify so the operator at
+        least sees the dict, not an empty bubble."""
+        llm = MagicMock()
+        llm.complete = AsyncMock(return_value={
+            "answer": "42",
+            "confidence": 0.95,
+        })
+        llm.embed = AsyncMock(return_value=_unit_vector())
+        core = _make_core(llm=llm)
+        result = await core.process_task(
+            {"content": "what's the answer?"}, role=_make_role(),
+        )
+        assert "42" in result.output
+        assert "answer" in result.output
+
 
 # ---------------------------------------------------------------------------
 # _compute_drift — zero vector baseline (REQ-CORE-006, REQ-CORE-007)

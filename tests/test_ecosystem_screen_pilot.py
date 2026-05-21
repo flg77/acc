@@ -416,6 +416,11 @@ async def test_button_press_without_selection_notifies(
         # handler's defensive notify, not the disabled-state guard.
         btn.disabled = False
         screen._selected_role = ""  # explicit clear
+        # Commit-5: Schedule-infusion also accepts the table's cursor
+        # row.  Clear the table too so the fallback has nothing to
+        # latch onto and the defensive notify fires as designed.
+        role_table = screen.query_one("#role-table", DataTable)
+        role_table.clear()
         btn.press()
         await pilot.pause()
 
