@@ -190,6 +190,10 @@ class NATSObserver:
         unique (UUID hex) so collisions don't happen.
         """
         self._task_listeners[task_id] = future
+        logger.info(
+            "register_task_listener: task_id=%s (registry size=%d)",
+            task_id[:12], len(self._task_listeners),
+        )
 
     def unregister_task_listener(self, task_id: str) -> None:
         """Drop a registration without delivering anything.
@@ -610,10 +614,42 @@ class NATSObserver:
         # delivery so the dict doesn't grow unboundedly even if the
         # channel forgets to unregister.
         task_id = data.get("task_id", "")
+        # Commit-7 — operator-reported: TASK_COMPLETE arrives in the
+        # routing log but the Prompt-channel future never resolves
+        # (180s timeout).  Log every TASK_COMPLETE arrival with the
+        # task_id + listener-registry state so the mismatch is
+        # diagnosable from acc-tui.log alone.
+        registered_ids = list(self._task_listeners.keys())
+        logger.info(
+            "task_complete: agent=%s task_id=%r blocked=%s; "
+            "registered_listeners=%s",
+            agent_id,
+            task_id,
+            data.get("blocked", False),
+            [tid[:12] for tid in registered_ids],
+        )
         if task_id:
             future = self._task_listeners.pop(task_id, None)
             if future is not None and not future.done():
                 future.set_result(data)
+                logger.info(
+                    "task_complete: resolved future for task_id=%s "
+                    "(agent=%s)", task_id[:12], agent_id,
+                )
+            elif future is not None and future.done():
+                logger.info(
+                    "task_complete: future for task_id=%s was already "
+                    "done (cancelled/timeout) — TASK_COMPLETE ignored",
+                    task_id[:12],
+                )
+            else:
+                logger.warning(
+                    "task_complete: NO listener for task_id=%r "
+                    "(registered: %s) — operator's Prompt window will "
+                    "not receive this reply",
+                    task_id,
+                    [tid[:12] for tid in registered_ids],
+                )
             # PR-progress — TASK_COMPLETE marks end-of-task; drop any
             # progress listeners for this task_id so callers don't have
             # to manually reach for unregister_task_progress_listener.

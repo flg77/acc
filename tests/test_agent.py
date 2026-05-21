@@ -180,3 +180,62 @@ class TestStateConstants:
         assert STATE_REGISTERING == "REGISTERING"
         assert STATE_ACTIVE == "ACTIVE"
         assert STATE_DRAINING == "DRAINING"
+
+
+# ---------------------------------------------------------------------------
+# Commit-7 — _payload_bytes shape tolerance
+# ---------------------------------------------------------------------------
+
+
+class TestPayloadBytesHelper:
+    """Regression tests for the operator-reported "Prompt no reply" root
+    cause: agent handlers were written against a NATS-msg-object
+    interface (``getattr(msg, "data", b"{}")``) but
+    ``acc.backends.SignalingBackend.subscribe`` contracts handlers
+    receive bytes.  ``b"".data`` raised AttributeError silently caught
+    by the default → handlers got ``b"{}"`` → ``json.loads`` returned
+    ``{}`` → every TASK_COMPLETE echoed ``task_id=""`` → the
+    Prompt-channel future never matched → 180s timeout.
+
+    The new ``_payload_bytes`` helper accepts BOTH shapes; these tests
+    pin that behaviour against future regressions.
+    """
+
+    def test_extracts_bytes_from_raw_bytes(self):
+        from acc.agent import _payload_bytes
+        raw = b'{"task_id": "abc"}'
+        assert _payload_bytes(raw) == raw
+
+    def test_extracts_bytes_from_bytearray(self):
+        from acc.agent import _payload_bytes
+        raw = bytearray(b'{"x": 1}')
+        assert _payload_bytes(raw) == bytes(raw)
+
+    def test_extracts_data_attr_from_msg_object(self):
+        """Legacy NATS-msg-object shape — ``.data`` attribute carrying
+        bytes.  Some test harnesses still construct msg-like stubs."""
+        from acc.agent import _payload_bytes
+
+        class _Msg:
+            data = b'{"task_id": "from-msg"}'
+
+        assert _payload_bytes(_Msg()) == b'{"task_id": "from-msg"}'
+
+    def test_falls_back_to_empty_json_on_unrecognised_shape(self):
+        """An object without ``.data`` should yield the safe empty-JSON
+        fallback so callers' ``json.loads`` doesn't raise."""
+        from acc.agent import _payload_bytes
+
+        class _Bare:
+            pass
+
+        assert _payload_bytes(_Bare()) == b"{}"
+
+    def test_does_not_recurse(self):
+        """The original bulk-replace of ``getattr(msg, "data", ...)``
+        accidentally replaced the helper's own fallback with a call to
+        itself, causing infinite recursion.  Lock that in."""
+        from acc.agent import _payload_bytes
+        # Deep-enough call to surface RecursionError if the bug returns.
+        for _ in range(2000):
+            _payload_bytes(b'{"k": "v"}')

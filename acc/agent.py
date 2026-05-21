@@ -58,6 +58,35 @@ from acc.signals import (
 
 logger = logging.getLogger("acc.agent")
 
+
+def _payload_bytes(msg) -> bytes:
+    """Return the JSON-bytes payload from a signaling subscribe callback arg.
+
+    Commit-7 bug-fix.  ``acc.backends.SignalingBackend.subscribe`` contracts
+    that handlers receive ``bytes`` (the JSON payload, already unwrapped from
+    the msgpack envelope by ``NATSBackend._dispatch``).  Every handler in this
+    module was written against the *raw* NATS ``msg`` object interface
+    (``_payload_bytes(msg)``) which does NOT exist on the bytes the
+    backend actually passes — bytes have no ``.data`` attribute, so the
+    fallback returned ``b"{}"`` and every inbound ``data`` dict was empty.
+    Effect: ``TASK_ASSIGN`` payloads arrived with no ``content``, no
+    ``task_id``, no ``target_agent_id``; ``TASK_COMPLETE`` echoed
+    ``task_id=""``; the operator's Prompt-channel future never resolved
+    because nothing matched its registered task_id.
+
+    This helper accepts either shape — bytes (the current backend contract)
+    or a NATS-msg-shaped object (legacy / future ``raw=True`` mode) — so the
+    handlers work regardless of which the backend hands them.
+    """
+    if isinstance(msg, (bytes, bytearray)):
+        return bytes(msg)
+    # Legacy NATS-msg-object shape: read its .data attribute.  Inlined
+    # rather than calling getattr() through a variable to avoid the
+    # self-recursion that the bulk-replace from the original buggy
+    # `getattr(msg, "data", b"{}")` introduced.
+    raw = getattr(msg, "data", None)
+    return raw if isinstance(raw, (bytes, bytearray)) else b"{}"
+
 # Bridge delegation timeout — if the peer collective does not respond within
 # this many seconds, the pending delegation is discarded (ACC-9).
 _BRIDGE_TIMEOUT_S: float = 30.0
@@ -547,7 +576,7 @@ class Agent:
 
         async def _handle_task(msg: object) -> None:
             try:
-                data = json.loads(getattr(msg, "data", b"{}"))
+                data = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
                 logger.warning("task_loop: invalid JSON in TASK_ASSIGN payload")
                 return
@@ -893,7 +922,7 @@ class Agent:
 
         async def _handle_bridge_result(msg: object) -> None:
             try:
-                data = json.loads(getattr(msg, "data", b"{}"))
+                data = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
                 logger.warning("bridge: invalid JSON in BRIDGE_RESULT payload")
                 return
@@ -941,7 +970,7 @@ class Agent:
 
         async def _handle_role_update(msg: object) -> None:
             try:
-                payload = json.loads(getattr(msg, "data", b"{}"))
+                payload = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
                 logger.warning("role_update: invalid JSON payload")
                 return
@@ -1025,7 +1054,7 @@ class Agent:
         import os  # noqa: PLC0415
 
         try:
-            payload = json.loads(getattr(msg, "data", b"{}"))
+            payload = json.loads(_payload_bytes(msg))
         except json.JSONDecodeError:
             logger.warning("config.reload: invalid JSON payload")
             return
@@ -1135,7 +1164,7 @@ class Agent:
 
         async def _handle_centroid_update(msg: object) -> None:
             try:
-                payload = json.loads(getattr(msg, "data", b"{}"))
+                payload = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
                 logger.warning("centroid_update: invalid JSON payload")
                 return
@@ -1188,7 +1217,7 @@ class Agent:
 
         async def _handle_decision(msg: object) -> None:
             try:
-                payload = json.loads(getattr(msg, "data", b"{}"))
+                payload = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
                 logger.warning("oversight: invalid JSON payload")
                 return
@@ -1218,7 +1247,7 @@ class Agent:
         async def _handle_submit(msg: object) -> None:
             """Enqueue a new pending item from an OVERSIGHT_SUBMIT request."""
             try:
-                payload = json.loads(getattr(msg, "data", b"{}"))
+                payload = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
                 logger.warning("oversight: invalid SUBMIT payload")
                 return
@@ -1272,7 +1301,7 @@ class Agent:
 
         async def _handle_submit(msg: object) -> None:
             try:
-                payload = json.loads(getattr(msg, "data", b"{}"))
+                payload = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
                 logger.warning("plan: invalid SUBMIT JSON payload")
                 return
@@ -1306,7 +1335,7 @@ class Agent:
 
         async def _handle_complete(msg: object) -> None:
             try:
-                payload = json.loads(getattr(msg, "data", b"{}"))
+                payload = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
                 return
             if payload.get("signal_type") != SIG_TASK_COMPLETE:
@@ -1341,7 +1370,7 @@ class Agent:
 
         async def _handle_kernel(msg: object) -> None:
             try:
-                payload = json.loads(getattr(msg, "data", b"{}"))
+                payload = json.loads(_payload_bytes(msg))
             except json.JSONDecodeError:
                 return
             # Keep only events about this pod.  When ACC_POD_UID is
