@@ -1311,6 +1311,123 @@ async def test_inline_save_yaml_rejects_invalid(isolated_manifests):
 
 
 @pytest.mark.asyncio
+async def test_agentset_tab_loads_collective_into_editor(
+    isolated_manifests, tmp_path, monkeypatch,
+):
+    """PR-C — Agentset tab loads the on-disk collective.yaml into the
+    inline TextArea and renders one row per AgentSpec in the table."""
+    from textual.widgets import TextArea, DataTable
+    spec_path = tmp_path / "collective.yaml"
+    spec_path.write_text(
+        "collective_id: sol-01\n"
+        "agents:\n"
+        "  - role: coding_agent\n"
+        "    replicas: 3\n"
+        "    cluster_id: backend\n"
+        "    purpose: 'Implement decomposed coding tasks'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ACC_COLLECTIVE_PATH", str(spec_path))
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        editor = screen.query_one("#collective-editor", TextArea)
+        assert "coding_agent" in editor.text
+        assert "backend" in editor.text
+
+        table = screen.query_one("#agentset-table", DataTable)
+        assert table.row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_agentset_save_writes_validated_yaml(
+    isolated_manifests, tmp_path, monkeypatch,
+):
+    """PR-C — Save validates the editor through CollectiveSpec and
+    atomically writes the file."""
+    from textual.widgets import TextArea
+    spec_path = tmp_path / "collective.yaml"
+    spec_path.write_text("collective_id: sol-01\nagents: []\n", encoding="utf-8")
+    monkeypatch.setenv("ACC_COLLECTIVE_PATH", str(spec_path))
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        editor = screen.query_one("#collective-editor", TextArea)
+        editor.text = (
+            "collective_id: sol-01\n"
+            "agents:\n"
+            "  - role: coding_agent\n"
+            "    replicas: 2\n"
+            "    cluster_id: backend\n"
+        )
+        ok = screen._handle_collective_save()
+        await pilot.pause()
+        assert ok is True
+        on_disk = spec_path.read_text()
+        assert "replicas: 2" in on_disk
+
+
+@pytest.mark.asyncio
+async def test_agentset_save_rejects_invalid_yaml(
+    isolated_manifests, tmp_path, monkeypatch,
+):
+    """PR-C — Save returns False and leaves the file untouched when the
+    editor contains an invalid CollectiveSpec."""
+    from textual.widgets import TextArea
+    spec_path = tmp_path / "collective.yaml"
+    original = "collective_id: sol-01\nagents: []\n"
+    spec_path.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("ACC_COLLECTIVE_PATH", str(spec_path))
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        editor = screen.query_one("#collective-editor", TextArea)
+        # collective_id pattern requires DNS-label-safe; underscore breaks it.
+        editor.text = "collective_id: Sol_01\nagents: []\n"
+        ok = screen._handle_collective_save()
+        await pilot.pause()
+        assert ok is False
+        assert spec_path.read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_agentset_apply_touches_request_marker(
+    isolated_manifests, tmp_path, monkeypatch,
+):
+    """PR-C — Apply writes the file AND touches `.acc-apply.request`
+    next to it (the host-side watcher picks that up)."""
+    from textual.widgets import TextArea
+    spec_path = tmp_path / "collective.yaml"
+    spec_path.write_text("collective_id: sol-01\nagents: []\n", encoding="utf-8")
+    monkeypatch.setenv("ACC_COLLECTIVE_PATH", str(spec_path))
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        editor = screen.query_one("#collective-editor", TextArea)
+        editor.text = (
+            "collective_id: sol-01\n"
+            "agents:\n"
+            "  - role: coding_agent\n"
+            "    replicas: 1\n"
+        )
+        screen._handle_collective_apply()
+        await pilot.pause()
+
+        request_path = tmp_path / ".acc-apply.request"
+        assert request_path.exists(), "apply must touch .acc-apply.request"
+        # And the spec was saved too.
+        assert "replicas: 1" in spec_path.read_text()
+
+
+@pytest.mark.asyncio
 async def test_inline_editor_dirty_blocks_watcher_clobber(isolated_manifests):
     """PR-A: an external save (file-watcher firing while the inline
     editor has unsaved edits) must NOT clobber the operator's typing.

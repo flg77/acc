@@ -35,6 +35,8 @@ from textual.widgets import (
     Label,
     Markdown,
     Static,
+    TabbedContent,
+    TabPane,
     TextArea,
 )
 
@@ -399,6 +401,19 @@ class EcosystemScreen(Screen):
         yield NavigationBar(active_screen="ecosystem", id="nav")
         yield Label("ACC Ecosystem — Extracellular Matrix", id="ecosystem-title")
 
+        # PR-C — wrap the screen in TabbedContent so the operator can
+        # toggle between the existing "Roles" library view (left+right
+        # panes, infusion path) and the new "Agentset" view (declarative
+        # collective.yaml editor + reconcile-Apply).
+        with TabbedContent(id="ecosystem-tabs"):
+            with TabPane("Roles", id="tab-roles"):
+                yield from self._compose_roles_tab()
+            with TabPane("Agentset", id="tab-agentset"):
+                yield from self._compose_agentset_tab()
+        yield Footer()
+
+    def _compose_roles_tab(self) -> ComposeResult:
+        """The existing Ecosystem left+right panes — role library + detail."""
         with Horizontal(id="ecosystem-main"):
             # Left: role table + roadmap placeholders
             with Vertical(id="ecosystem-left"):
@@ -501,7 +516,37 @@ class EcosystemScreen(Screen):
                 # Proposal 009 — Active LLM Backends moved to the
                 # Configuration pane (pane 8).
 
-        yield Footer()
+    def _compose_agentset_tab(self) -> ComposeResult:
+        """PR-C — declarative agentset editor + reconcile-Apply.
+
+        Mirrors the structure of the Roles tab's right-pane editor
+        (PR-A pattern): a live-snapshot DataTable on top, an inline
+        YAML TextArea, action buttons, and a status line that
+        surfaces validation errors or apply progress.
+        """
+        with Vertical(id="agentset-tab"):
+            yield Label(
+                "AGENTSET — declarative collective.yaml.  "
+                "Edit + Save to persist; Apply to reconcile podman state.",
+                classes="panel-label",
+            )
+            yield DataTable(id="agentset-table", show_cursor=False)
+            yield Label("collective.yaml", classes="panel-label")
+            yield TextArea(
+                "",
+                id="collective-editor",
+                language="yaml",
+                show_line_numbers=True,
+                soft_wrap=False,
+            )
+            with Horizontal(id="agentset-actions"):
+                yield Button("Save", id="btn-collective-save",
+                              variant="primary")
+                yield Button("Validate", id="btn-collective-validate",
+                              variant="default")
+                yield Button("Apply", id="btn-collective-apply",
+                              variant="success")
+            yield Static("", id="agentset-status")
 
     def on_mount(self) -> None:
         """Populate role table and LLM table columns at mount time (REQ-TUI-037)."""
@@ -511,6 +556,19 @@ class EcosystemScreen(Screen):
         # Proposal 009 — Skills / MCPs / LLM tables removed from
         # Ecosystem.  Their canonical home is the Configuration
         # pane (pane 8) since proposal 003 PR-4.
+
+        # PR-C — Agentset tab.  Initialise the DataTable columns and
+        # load `./collective.yaml` into the inline TextArea.  Errors
+        # are tolerated (collective.yaml may be absent on a fresh
+        # checkout — operator runs `./acc-deploy.sh setup` to scaffold).
+        try:
+            ag_table = self.query_one("#agentset-table", DataTable)
+            ag_table.add_columns(
+                "Role", "Replicas", "cluster_id", "purpose", "live",
+            )
+        except Exception:
+            logger.exception("ecosystem: agentset table init failed")
+        self._load_collective_into_editor()
 
         self._load_roles()
 
@@ -652,6 +710,13 @@ class EcosystemScreen(Screen):
             self._handle_edit_in_editor("role.yaml")
         elif bid == "btn-edit-md":
             self._handle_edit_in_editor("role.md")
+        # PR-C — Agentset tab actions.
+        elif bid == "btn-collective-save":
+            self._handle_collective_save()
+        elif bid == "btn-collective-validate":
+            self._handle_collective_validate()
+        elif bid == "btn-collective-apply":
+            self._handle_collective_apply()
         # Proposal 009 — Upload skill / Upload MCP buttons moved to
         # the Configuration pane (pane 8).
 
@@ -783,6 +848,215 @@ class EcosystemScreen(Screen):
             severity="information", timeout=3.0,
         )
 
+    # ------------------------------------------------------------------
+    # PR-C — Agentset tab: load + edit + save + apply collective.yaml
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_collective_path() -> Path:
+        """Resolve the path of `./collective.yaml`.
+
+        Precedence: ``ACC_COLLECTIVE_PATH`` env var > ``/app/collective.yaml``
+        (the canonical mount inside the acc-tui container, added in
+        ``container/production/podman-compose.yml`` for PR-C) >
+        ``./collective.yaml`` (cwd fallback for the host-run TUI).
+        """
+        explicit = os.environ.get("ACC_COLLECTIVE_PATH", "").strip()
+        if explicit:
+            return Path(explicit)
+        container_path = Path("/app/collective.yaml")
+        if container_path.is_file():
+            return container_path
+        return Path("collective.yaml")
+
+    def _load_collective_into_editor(self) -> None:
+        """Populate `#collective-editor` from the on-disk spec.
+
+        Tolerates a missing file (fresh checkout) by leaving the editor
+        empty and surfacing a hint in `#agentset-status`.
+        """
+        path = self._resolve_collective_path()
+        try:
+            editor = self.query_one("#collective-editor", TextArea)
+            status = self.query_one("#agentset-status", Static)
+        except Exception:
+            return
+        if not path.exists():
+            editor.text = (
+                "# collective.yaml not found at " + str(path) + "\n"
+                "# Run `./acc-deploy.sh setup` or copy "
+                "`./collective.yaml.example` to get started.\n"
+            )
+            status.update(
+                "[yellow]no collective.yaml on disk yet[/yellow]"
+            )
+            self._refresh_agentset_table(None)
+            return
+        try:
+            editor.text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            editor.text = f"# Read error: {exc}\n"
+            status.update(f"[red]read failed: {exc}[/red]")
+            return
+        status.update(f"[dim]Loaded {path}[/dim]")
+        # Refresh the table from the (now-on-disk) spec.
+        try:
+            from acc.collective import load_collective  # noqa: PLC0415
+            spec = load_collective(path)
+            self._refresh_agentset_table(spec)
+        except Exception as exc:  # noqa: BLE001
+            from rich.markup import escape  # noqa: PLC0415
+            logger.exception("ecosystem: refresh agentset table failed")
+            status.update(f"[yellow]spec invalid: {escape(str(exc))}[/yellow]")
+            self._refresh_agentset_table(None)
+
+    def _refresh_agentset_table(self, spec: Any) -> None:
+        """Rebuild ``#agentset-table`` rows from a CollectiveSpec.
+
+        Pass ``None`` (or an invalid spec) to clear the table.  The
+        live-count column reads from ``self.snapshot`` when present;
+        falls back to ``—`` otherwise.
+        """
+        try:
+            table = self.query_one("#agentset-table", DataTable)
+        except Exception:
+            return
+        table.clear()
+        if spec is None:
+            return
+        # Build a role → live-count map from the current snapshot.
+        live_counts: dict[str, int] = {}
+        snap = self.snapshot
+        if snap is not None:
+            try:
+                for a in snap.agents.values():
+                    role = getattr(a, "role", "")
+                    if role:
+                        live_counts[role] = live_counts.get(role, 0) + 1
+            except Exception:
+                pass
+        for agent in spec.agents:
+            live = str(live_counts.get(agent.role, 0))
+            table.add_row(
+                agent.role,
+                str(agent.replicas),
+                agent.cluster_id or "—",
+                (agent.purpose or "—")[:60],
+                live,
+            )
+
+    def _handle_collective_save(self) -> bool:
+        """Save the editor contents to collective.yaml after validation.
+
+        Returns True on success, False otherwise.  Surfaces status in
+        `#agentset-status` either way.  Used directly by Save and
+        composed by Apply (which only proceeds on True).
+        """
+        try:
+            editor = self.query_one("#collective-editor", TextArea)
+            status = self.query_one("#agentset-status", Static)
+        except Exception:
+            return False
+        from acc.collective import CollectiveSpec, dump_collective  # noqa: PLC0415
+        import yaml as _yaml  # noqa: PLC0415
+
+        from rich.markup import escape  # noqa: PLC0415
+
+        text = editor.text
+        try:
+            data = _yaml.safe_load(text) or {}
+            spec = CollectiveSpec.model_validate(data)
+        except Exception as exc:  # noqa: BLE001
+            status.update(
+                "[red]⚠ invalid collective.yaml — not saved[/red]\n"
+                f"  • {escape(str(exc))}"
+            )
+            return False
+        path = self._resolve_collective_path()
+        try:
+            dump_collective(spec, path)
+        except OSError as exc:
+            logger.exception("ecosystem: collective.yaml write failed")
+            status.update(f"[red]⚠ write failed: {exc}[/red]")
+            return False
+        status.update(
+            f"[green]✓ saved[/green] [dim]{path}[/dim] — "
+            f"{len(spec.agents)} agent slot(s)"
+        )
+        self._refresh_agentset_table(spec)
+        self.notify(
+            f"Saved {path.name}", severity="information", timeout=3.0,
+        )
+        return True
+
+    def _handle_collective_validate(self) -> None:
+        """Validate the editor contents without writing."""
+        try:
+            editor = self.query_one("#collective-editor", TextArea)
+            status = self.query_one("#agentset-status", Static)
+        except Exception:
+            return
+        from acc.collective import CollectiveSpec  # noqa: PLC0415
+        from rich.markup import escape  # noqa: PLC0415
+        import yaml as _yaml  # noqa: PLC0415
+
+        try:
+            data = _yaml.safe_load(editor.text) or {}
+            spec = CollectiveSpec.model_validate(data)
+        except Exception as exc:  # noqa: BLE001
+            status.update(
+                f"[red]⚠ invalid[/red]\n  • {escape(str(exc))}"
+            )
+            return
+        status.update(
+            f"[green]✓ valid[/green] [dim]collective_id={spec.collective_id} "
+            f"agents={len(spec.agents)}[/dim]"
+        )
+        self._refresh_agentset_table(spec)
+
+    def _handle_collective_apply(self) -> None:
+        """Save + signal the apply-watcher to reconcile podman state.
+
+        Writes the file (same validation as Save), then touches
+        ``./.acc-apply.request`` next to the spec — the host-side
+        watcher script ``scripts/acc-apply-watcher.sh`` (operator
+        installs once via ``./acc-deploy.sh setup``) wakes on that
+        file and runs ``./acc-deploy.sh apply``.
+
+        When no watcher is running, the file still persists and the
+        status line tells the operator to run apply by hand.
+        """
+        try:
+            status = self.query_one("#agentset-status", Static)
+        except Exception:
+            return
+
+        # Save first (validates + writes).  If save fails, the status
+        # line already surfaces the error — abort the apply.
+        if not self._handle_collective_save():
+            return
+
+        path = self._resolve_collective_path()
+        request_path = path.parent / ".acc-apply.request"
+        try:
+            # Touch the request marker.  Content holds the spec path
+            # so the watcher can pick it up.
+            request_path.write_text(
+                f"{path}\n", encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.exception("ecosystem: apply request touch failed")
+            status.update(
+                f"[yellow]✓ saved but watcher signal failed: {exc}.  "
+                f"Run `./acc-deploy.sh apply {path.name}` by hand.[/yellow]"
+            )
+            return
+        status.update(
+            f"[green]✓ saved + apply requested[/green] [dim]{request_path}[/dim]\n"
+            f"  Run `./acc-deploy.sh apply {path.name}` on the host if no "
+            f"watcher is installed."
+        )
+
     def _handle_schedule_infusion(self) -> None:
         """Schedule-infusion handler split out for clarity."""
         if not self._selected_role:
@@ -802,10 +1076,30 @@ class EcosystemScreen(Screen):
     # ------------------------------------------------------------------
 
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
-        # No-op kept so existing app-level snapshot fan-out doesn't
-        # crash on AttributeError; future Ecosystem-side renderers can
-        # live here.
-        return
+        """Refresh the Agentset tab's live-count column from each snapshot.
+
+        PR-C — the rest of the screen (role table, role detail) is
+        snapshot-agnostic; only the `#agentset-table`'s last column
+        depends on live agent presence.
+
+        Skip the initial `None` reactive — `on_mount` already loaded
+        the table.  Re-firing here would double-add rows because
+        Textual's DataTable defers visual updates across the watcher
+        boundary (clear + add interleave with the on_mount path).
+        """
+        if snap is None:
+            return
+        try:
+            # Cheap: reuse the existing on-disk spec rather than
+            # re-validating the editor's working copy.
+            from acc.collective import load_collective  # noqa: PLC0415
+            path = self._resolve_collective_path()
+            if path.exists():
+                spec = load_collective(path)
+                self._refresh_agentset_table(spec)
+        except Exception:
+            # Snapshot ticks are noisy; don't spam the log.
+            pass
 
     # ------------------------------------------------------------------
     # Role loading

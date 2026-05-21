@@ -497,6 +497,11 @@ services:
       # acc-tui service gets :rw — agents/webgui keep RO env_file
       # access.  See acc/tui/env_writeback.py for the atomic upsert.
       - ../../.env:/app/.env:rw,z
+      # PR-C — Agentset tab.  The TUI's collective.yaml editor saves
+      # back through `acc.collective.dump_collective`; needs a RW
+      # mount on this file.  Apply writes `.acc-apply.request` in the
+      # same dir (the repo root) for a host-side watcher to pick up.
+      - ../../collective.yaml:/app/collective.yaml:rw,z
     # Uncomment when WebBridge is enabled (ACC_TUI_WEB_PORT=8765):
     # ports:
     #   - "8765:8765"
