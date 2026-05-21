@@ -94,5 +94,22 @@ def upsert_env(path: Path | str, updates: dict[str, str]) -> None:
 
     new_text = "".join(new_lines)
     # 0o600 — .env carries REDIS_PASSWORD / API keys / session secret.
-    atomic_write_text(path, new_text, mode=0o600,
-                       tmp_prefix=".env.tmp.")
+    try:
+        atomic_write_text(path, new_text, mode=0o600,
+                           tmp_prefix=".env.tmp.")
+    except PermissionError as exc:
+        # Operator-actionable hint.  Most common failure on lighthouse:
+        # the acc-tui container runs as uid 1001 but `./.env` on the
+        # host is owned by the operator's uid with 0600 perms — the
+        # cross-namespace uids don't match, so the in-place rewrite
+        # is refused.  The compose file now declares
+        # `userns_mode: keep-id:uid=1001,gid=0` to remap; rebuilding
+        # + restarting the acc-tui service picks it up.
+        raise PermissionError(
+            f"{exc}\n"
+            f"  Hint: the acc-tui container needs `userns_mode: "
+            f"keep-id:uid=1001,gid=0` so its in-container uid 1001 "
+            f"maps to your host uid.  Either `./acc-deploy.sh up` "
+            f"after pulling the latest compose, or `chmod 666 .env` "
+            f"as a temporary workaround.",
+        ) from exc

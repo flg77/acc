@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from acc.tui.env_writeback import _quote, upsert_env
 
 
@@ -160,3 +162,43 @@ class TestUpsertEnv:
         assert "ACC_LLM_BACKEND=vllm" in target.read_text()
         # No stray temp file left behind.
         assert not list(tmp_path.glob(".env.tmp.*"))
+
+    def test_permission_denied_surfaces_hint(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """Operator-reported regression: Save failed with bare
+        ``[Errno 13] Permission denied: '/app/.env'`` and no fix-it
+        guidance.  The wrapped PermissionError must mention
+        ``userns_mode`` / ``chmod 666`` so the operator can act
+        without grepping source.
+        """
+        import os as _os
+        target = tmp_path / ".env"
+        target.write_text("ACC_LLM_BACKEND=ollama\n")
+
+        def _fake_replace(src, dst):
+            # Simulate the cross-uid bind-mount case: rename refused.
+            if str(dst) == str(target):
+                raise OSError(16, "Device or resource busy",
+                              str(src), None, str(dst))
+            return _os.replace(src, dst)
+
+        def _fake_open(*args, **kwargs):
+            # The in-place fallback opens target for write.  Refuse it
+            # to simulate uid 1001 hitting a host-owned 0600 file.
+            if args and str(args[0]) == str(target) and "w" in (args[1] if len(args) > 1 else kwargs.get("mode", "")):
+                raise PermissionError(13, "Permission denied", str(target))
+            return _real_open(*args, **kwargs)
+
+        _real_open = open
+        monkeypatch.setattr(_os, "replace", _fake_replace)
+        import builtins
+        monkeypatch.setattr(builtins, "open", _fake_open)
+
+        with pytest.raises(PermissionError) as exc_info:
+            upsert_env(target, {"ACC_LLM_BACKEND": "vllm"})
+
+        msg = str(exc_info.value)
+        assert "userns_mode" in msg or "chmod" in msg, (
+            f"PermissionError message should mention the fix; got {msg!r}"
+        )

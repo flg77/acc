@@ -702,10 +702,18 @@ class ConfigurationScreen(Screen):
     def _get_observer_client(self):
         """Return the running NATSObserver, or None if unavailable.
 
-        The TUI app stores its observer on :attr:`acc.tui.app.AccTUI`;
-        we walk up via :attr:`textual.screen.Screen.app`.
+        The TUI app exposes the primary observer as the
+        ``nats_observer`` property (read-only over ``_observers[0]``
+        after the multi-collective refactor).  Earlier callers used
+        ``self.app.observer`` which never existed and quietly returned
+        None — meaning Save's CONFIG_RELOAD broadcast was silently
+        dropped, and live agents kept pinging the old endpoint until
+        an operator restart.
         """
         try:
+            obs = getattr(self.app, "nats_observer", None)
+            if obs is not None:
+                return obs
             return getattr(self.app, "observer", None)
         except Exception:
             return None

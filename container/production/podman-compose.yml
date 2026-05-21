@@ -464,6 +464,16 @@ services:
         ACC_VERSION: *acc-version
     image: localhost/acc-tui:0.2.0
     container_name: acc-tui
+    # Map the container's uid 1001 → the host operator's uid so the
+    # Configuration screen can write back to /app/.env (a bind mount
+    # to the host's `./.env`, typically chmod 600 + owned by the
+    # operator).  Without this mapping the in-container write hits
+    # `[Errno 13] Permission denied` against the host file because
+    # the container's 1001 is a different namespace uid.  Requires
+    # rootless podman + an entry in /etc/subuid.  Falls back
+    # gracefully on rootful podman (the userns_mode keyword is then
+    # a no-op).
+    userns_mode: "keep-id:uid=1001,gid=0"
     depends_on:
       nats:
         condition: service_healthy
