@@ -104,6 +104,21 @@ class CommunicationsScreen(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Commit-6 — render an explicit "waiting" placeholder in each
+        # panel up front so a freshly-mounted Comms screen tells the
+        # operator "I'm alive, no data yet" rather than rendering
+        # blank panels indistinguishable from a wedged screen.  The
+        # snapshot watcher overwrites these on first tick.
+        for panel_id in (
+            "plan-dag-panel", "knowledge-feed-panel", "signal-log-panel",
+        ):
+            try:
+                self.query_one(f"#{panel_id}", Static).update(
+                    "[dim]waiting for first snapshot…[/dim]"
+                )
+            except Exception:
+                pass
+
         ep_table = self.query_one("#episode-table", DataTable)
         ep_table.add_columns(
             "Episode ID", "Agent", "Score", "Task Type", "Status"

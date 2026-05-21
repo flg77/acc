@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Optional
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import (
@@ -510,6 +511,16 @@ class ConfigurationScreen(Screen):
             return
         try:
             self._render_llm_backends(snap)
+        except NoMatches:
+            # Commit-6 — expected lazy-mount race: the LIVE BACKENDS
+            # table lives under the LLM Endpoints sub-tab of a
+            # TabbedContent.  When the operator is on a different
+            # sub-tab the table isn't in the DOM yet, and a full
+            # traceback every snapshot tick (≈ once / second) floods
+            # the log with thousands of useless entries.  Silently
+            # skip — the next sub-tab activation rebuilds the DOM and
+            # the watcher catches up.
+            pass
         except Exception:
             logger.exception("configuration: LLM live render failed")
 

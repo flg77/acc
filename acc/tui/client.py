@@ -111,6 +111,16 @@ class NATSObserver:
         # via ``register_task_progress_listener`` / ``unregister_task_progress_listener``.
         self._task_progress_listeners: dict[str, list] = {}
 
+        # Commit-6 — operator-visible routing health.  Counts every
+        # signal type routed since the process started; a periodic log
+        # line emits the current running totals so a stalled
+        # subscription is diagnosable from ``acc-tui.log`` alone
+        # (without spinning up a separate NATS subscriber).  Keys are
+        # signal_type strings; the special key ``__decode_err__``
+        # captures msgpack/json decode failures.
+        self._signal_counters: dict[str, int] = {}
+        self._last_signal_log_ts: float = 0.0
+
         # PR-1 cluster — per-cluster_id callback registry.  When the
         # arbiter fans a single PLAN step out as N TASK_ASSIGN payloads
         # (PR-2), each carries the same ``cluster_id``.  The TUI
@@ -432,6 +442,10 @@ class NATSObserver:
             raw = msgpack.unpackb(msg.data, raw=False)
             data = json.loads(raw)
         except Exception:
+            self._signal_counters["__decode_err__"] = (
+                self._signal_counters.get("__decode_err__", 0) + 1
+            )
+            self._maybe_log_signal_counts()
             logger.debug(
                 "nats_observer: could not decode message on %s",
                 getattr(msg, "subject", "?"),
@@ -440,6 +454,12 @@ class NATSObserver:
 
         signal_type: str = data.get("signal_type", "")
         agent_id: str = data.get("agent_id", "")
+        # Commit-6 — count every routed message so a stalled
+        # subscription is diagnosable from the log alone.
+        self._signal_counters[signal_type or "__no_signal_type__"] = (
+            self._signal_counters.get(signal_type or "__no_signal_type__", 0) + 1
+        )
+        self._maybe_log_signal_counts()
 
         handler_name = _HANDLERS.get(signal_type)
         if handler_name is None:
@@ -819,6 +839,29 @@ class NATSObserver:
     # ------------------------------------------------------------------
     # Snapshot push
     # ------------------------------------------------------------------
+
+    def _maybe_log_signal_counts(self) -> None:
+        """Commit-6 — emit a single INFO line every 60s with the
+        running per-signal-type counts.  Cheap heartbeat that lets
+        the operator confirm via ``acc-tui.log`` whether the
+        subscription is actively receiving (and what's flowing) —
+        critical when Comm / Performance panes look empty and the
+        question is "is anything arriving at all?".
+        """
+        now = time.time()
+        if now - self._last_signal_log_ts < 60.0:
+            return
+        self._last_signal_log_ts = now
+        if not self._signal_counters:
+            logger.info("nats_observer: no signals routed in last 60s")
+            return
+        # Sort by frequency desc for readability.
+        items = sorted(
+            self._signal_counters.items(),
+            key=lambda kv: -kv[1],
+        )
+        summary = " ".join(f"{k}={v}" for k, v in items)
+        logger.info("nats_observer: routed counts (cumulative) — %s", summary)
 
     def _push_snapshot(self) -> None:
         """Push a snapshot copy to the update queue (non-blocking; drop if full)."""
