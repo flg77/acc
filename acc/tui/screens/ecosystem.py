@@ -35,6 +35,7 @@ from textual.widgets import (
     Label,
     Markdown,
     Static,
+    TextArea,
 )
 
 from acc.role_loader import RoleLoader, list_roles
@@ -366,6 +367,14 @@ class EcosystemScreen(Screen):
         # The "Schedule infusion" button reads this to decide which role
         # to pre-load into the Nucleus form.
         self._selected_role: str = ""
+        # PR-A — inline role.yaml editor dirty flag.  True iff the
+        # TextArea contents differ from the last on-disk snapshot
+        # (loaded into `_last_saved_yaml_text`).  Computed in
+        # `on_text_area_changed`; checked by the file-watcher refresh
+        # path so an external `$EDITOR` save doesn't clobber unsaved
+        # edits.
+        self._yaml_dirty: bool = False
+        self._last_saved_yaml_text: str = ""
         # Proposal 009 — _pending_upload_kind state removed (Upload
         # flow moved to the Configuration pane).
         # Proposal 003 PR-2 — cached role-row data so the search filter
@@ -431,12 +440,23 @@ class EcosystemScreen(Screen):
                         id="role-md-collapsible",
                     ):
                         yield Markdown("", id="role-md-content")
-                    with Collapsible(
-                        title="role.yaml (raw)",
-                        collapsed=True,
-                        id="role-yaml-collapsible",
-                    ):
-                        yield Static("", id="role-yaml-content")
+                    # PR-A — role.yaml is now always visible and
+                    # inline-editable.  Operator types in the TextArea
+                    # and hits Save (`btn-save-yaml`); the new contents
+                    # are atomically written through
+                    # `acc.tui.role_writeback.upsert_role_yaml` after a
+                    # Pydantic pre-write validation pass.  The existing
+                    # 2s file-watcher then picks up the change and
+                    # refreshes the per-role caches downstream.
+                    yield Label("role.yaml", classes="panel-label")
+                    yield TextArea(
+                        "",
+                        id="role-yaml-editor",
+                        language="yaml",
+                        show_line_numbers=True,
+                        soft_wrap=False,
+                    )
+                    yield Static("", id="yaml-save-status")
 
                 # Infusion action — bridge from Ecosystem (extracellular role
                 # catalogue) to Nucleus (intracellular role expression).
@@ -454,18 +474,25 @@ class EcosystemScreen(Screen):
                         id="infusion-hint",
                     )
 
-                # Proposal 007 — operator can edit the selected role's
-                # files directly in $EDITOR.  PR-3's file-watcher
-                # auto-refreshes the detail pane when the editor saves.
+                # PR-A — Save the inline TextArea (atomic write, validated).
+                # The "Open in $EDITOR" buttons stay as power-user fallbacks
+                # for vim / emacs / VS Code workflows; PR-3's file-watcher
+                # refreshes the detail pane when the external editor saves.
                 with Horizontal(id="row-edit-actions"):
                     yield Button(
-                        "Edit role.yaml",
+                        "Save role.yaml",
+                        id="btn-save-yaml",
+                        variant="primary",
+                        disabled=True,
+                    )
+                    yield Button(
+                        "Open role.yaml in $EDITOR",
                         id="btn-edit-yaml",
                         variant="default",
                         disabled=True,
                     )
                     yield Button(
-                        "Edit role.md",
+                        "Open role.md in $EDITOR",
                         id="btn-edit-md",
                         variant="default",
                         disabled=True,
@@ -597,7 +624,9 @@ class EcosystemScreen(Screen):
                 role_name,
             )
         # Proposal 007 — arm the edit buttons too.
-        for btn_id in ("btn-edit-yaml", "btn-edit-md"):
+        # PR-A — also arm the inline Save-yaml button (same selection
+        # state — operator can edit + save the highlighted role).
+        for btn_id in ("btn-edit-yaml", "btn-edit-md", "btn-save-yaml"):
             try:
                 self.query_one(f"#{btn_id}", Button).disabled = False
             except Exception:
@@ -617,6 +646,8 @@ class EcosystemScreen(Screen):
         bid = event.button.id or ""
         if bid == "btn-schedule-infusion":
             self._handle_schedule_infusion()
+        elif bid == "btn-save-yaml":
+            self._handle_save_yaml()
         elif bid == "btn-edit-yaml":
             self._handle_edit_in_editor("role.yaml")
         elif bid == "btn-edit-md":
@@ -676,6 +707,81 @@ class EcosystemScreen(Screen):
                 f"Could not launch editor: {exc}",
                 severity="error", timeout=4.0,
             )
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Track inline-editor dirty-state by comparing against the
+        last on-disk snapshot (PR-A).
+
+        Set `_yaml_dirty = (text != last_saved)` rather than a naive
+        bump-on-every-keystroke: the synchronous `editor.text = ...`
+        the screen uses to load a fresh row queues a `Changed` event
+        that fires AFTER the load, which would otherwise leave dirty
+        flipped to True with no operator action.  Comparing against
+        `_last_saved_yaml_text` reflects real intent.
+        """
+        if event.text_area.id == "role-yaml-editor":
+            self._yaml_dirty = (event.text_area.text
+                                 != self._last_saved_yaml_text)
+
+    def _handle_save_yaml(self) -> None:
+        """PR-A — atomically save the inline role.yaml TextArea contents.
+
+        Validates via :func:`acc.tui.role_writeback.upsert_role_yaml`'s
+        Pydantic pre-write check first; on failure surfaces a short
+        bullet list of pydantic errors in `#yaml-save-status` and
+        leaves the file untouched.
+        """
+        if not self._selected_role:
+            self.notify("Highlight or click a role row first",
+                        severity="warning", timeout=4.0)
+            return
+        try:
+            editor = self.query_one("#role-yaml-editor", TextArea)
+            status = self.query_one("#yaml-save-status", Static)
+        except Exception:
+            logger.exception("ecosystem: save handler — widgets missing")
+            return
+
+        path = _roles_root() / self._selected_role / "role.yaml"
+        text = editor.text
+        try:
+            from acc.tui.role_writeback import (  # noqa: PLC0415
+                RoleValidationError,
+                upsert_role_yaml,
+            )
+            upsert_role_yaml(
+                path,
+                text,
+                role_name=self._selected_role,
+                roles_root=_roles_root(),
+            )
+        except RoleValidationError as exc:
+            # Render the first few pydantic errors as a short list.
+            bullets = []
+            for err in (exc.errors or [])[:5]:
+                loc = ".".join(str(p) for p in err.get("loc", ())) or "(root)"
+                bullets.append(f"  • {loc}: {err.get('msg', '')}")
+            detail = "\n".join(bullets) if bullets else f"  • {exc}"
+            status.update(
+                f"[red]⚠ invalid role.yaml — not saved[/red]\n{detail}"
+            )
+            return
+        except OSError as exc:
+            logger.exception("ecosystem: role.yaml write failed")
+            status.update(f"[red]⚠ write failed: {exc}[/red]")
+            return
+
+        self._yaml_dirty = False
+        # Record the saved snapshot so the Changed-event handler can
+        # compute dirty as `text != last_saved`.
+        self._last_saved_yaml_text = text
+        status.update(
+            f"[green]✓ saved[/green] [dim]{path}[/dim]"
+        )
+        self.notify(
+            f"Saved {self._selected_role}/role.yaml",
+            severity="information", timeout=3.0,
+        )
 
     def _handle_schedule_infusion(self) -> None:
         """Schedule-infusion handler split out for clarity."""
@@ -851,10 +957,27 @@ class EcosystemScreen(Screen):
             # If the operator had a role selected and it still exists
             # post-refresh, re-render its detail pane.  Otherwise leave
             # the placeholder visible.
+            #
+            # PR-A — but DO NOT re-render when the inline yaml editor
+            # has unsaved edits: an external `$EDITOR` save (or another
+            # TUI session) would otherwise clobber the operator's
+            # in-progress typing.  Surface a hint instead so they know
+            # the file moved underneath them.
             if self._selected_role and self._selected_role in (
                 row[0] for row in self._all_role_rows
             ):
-                self._show_role_detail(self._selected_role)
+                if self._yaml_dirty:
+                    try:
+                        status = self.query_one("#yaml-save-status", Static)
+                        status.update(
+                            "[yellow]⚠ role.yaml changed on disk — "
+                            "your edits are unsaved.  Save to overwrite, "
+                            "or re-select the row to discard.[/yellow]"
+                        )
+                    except Exception:
+                        pass
+                else:
+                    self._show_role_detail(self._selected_role)
 
             # Best-effort operator note — non-fatal if the panel widget
             # changes shape later.
@@ -981,7 +1104,45 @@ class EcosystemScreen(Screen):
             )
             md_widget.update(md_text + subrole_section)
 
-        # role.yaml surface — verbatim render under a Collapsible.
+        # role.yaml surface — inline editable TextArea (PR-A).
+        try:
+            yaml_editor = self.query_one("#role-yaml-editor", TextArea)
+        except Exception:
+            yaml_editor = None
+        if yaml_editor is not None:
+            if not yaml_path.exists():
+                placeholder = f"# role.yaml not found for {role_name}\n"
+                yaml_editor.text = placeholder
+                self._last_saved_yaml_text = placeholder
+                self._yaml_dirty = False
+            else:
+                try:
+                    yaml_text = yaml_path.read_text(encoding="utf-8")
+                except OSError as exc:
+                    placeholder = f"# Read error: {exc}\n"
+                    yaml_editor.text = placeholder
+                    self._last_saved_yaml_text = placeholder
+                    self._yaml_dirty = False
+                else:
+                    # PR-A — replace the editor text via the public
+                    # property; record the loaded snapshot so the
+                    # `Changed` event handler can compute dirty as
+                    # `text != last_saved` rather than naively flip
+                    # on the very change we just queued.
+                    yaml_editor.text = yaml_text
+                    self._last_saved_yaml_text = yaml_text
+                    self._yaml_dirty = False
+        # Clear any prior save-status line; a stale "✓ saved" message
+        # from the previously-selected role would mislead the operator.
+        try:
+            self.query_one("#yaml-save-status", Static).update("")
+        except Exception:
+            pass
+
+        # The legacy `#role-yaml-content` Static was retired in PR-A;
+        # the inline TextArea above is the new surface.  Keep this
+        # branch for back-compat with any external code-path that
+        # tried to update the old widget; harmless no-op now.
         try:
             yaml_widget = self.query_one("#role-yaml-content", Static)
         except Exception:

@@ -2,31 +2,24 @@
 
 The TUI Configuration screen persists operator-tunable LLM knobs
 (`ACC_LLM_BACKEND`, `ACC_LLM_MODEL`, `ACC_LLM_BASE_URL`,
-`ACC_LLM_TIMEOUT_S`) to `./.env`.  This module is the single point of
-truth for editing that file safely:
+`ACC_LLM_TIMEOUT_S`) to `./.env`.  The atomic-write core lives in
+:mod:`acc._atomic_write`; this module owns the dotenv-shaped upsert
+on top of it:
 
-* **Atomic** — temp file in the same directory + ``os.replace``.
 * **Comment-preserving** — existing comments, blank lines, and the
   ordering of unrelated lines are kept verbatim.
 * **Smart re-use** — if a key already exists (uncommented OR as a
   ``# KEY=…`` example line), that line is updated in place; only
   unseen keys are appended at the end.
-* **Backup** — a single-rotation ``<path>.bak`` written before the
-  replace so a bad save can be reverted by hand.
-* **Concurrent-writer safe on POSIX** — `fcntl.flock` serialises two
-  TUI sessions, or a TUI session running against an operator's
-  ``$EDITOR``.
 """
 
 from __future__ import annotations
 
-import errno
 import logging
-import os
 import re
-import tempfile
-from contextlib import contextmanager
 from pathlib import Path
+
+from acc._atomic_write import atomic_write_text
 
 logger = logging.getLogger("acc.tui.env_writeback")
 
@@ -52,24 +45,6 @@ def _quote(value: str) -> str:
     return f'"{escaped}"'
 
 
-@contextmanager
-def _file_lock(fh):
-    """`fcntl.flock` on POSIX; a no-op on platforms without it."""
-    try:
-        import fcntl  # noqa: PLC0415 — POSIX-only stdlib
-    except ImportError:
-        yield
-        return
-    try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
-        yield
-    finally:
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-
-
 def upsert_env(path: Path | str, updates: dict[str, str]) -> None:
     """Atomically upsert ``KEY=VALUE`` pairs into a dotenv-style file.
 
@@ -87,8 +62,6 @@ def upsert_env(path: Path | str, updates: dict[str, str]) -> None:
         return
 
     path = Path(path)
-    parent = path.parent if str(path.parent) else Path(".")
-    parent.mkdir(parents=True, exist_ok=True)
 
     # Read existing content (or start empty).
     text = path.read_text(encoding="utf-8") if path.exists() else ""
@@ -120,57 +93,6 @@ def upsert_env(path: Path | str, updates: dict[str, str]) -> None:
             new_lines.append(f"{key}={_quote(updates[key])}\n")
 
     new_text = "".join(new_lines)
-
-    # Single-rotation backup.
-    if path.exists():
-        try:
-            backup = path.with_suffix(path.suffix + ".bak")
-            backup.write_bytes(path.read_bytes())
-        except OSError as exc:
-            logger.warning("env_writeback: backup write failed: %s", exc)
-
-    # Lock a sibling .lock file (not the target itself) so the open
-    # handle does not block os.replace on Windows.  On POSIX flock
-    # serialises concurrent writers; on platforms without flock the
-    # lock is a best-effort no-op.
-    lock_path = parent / (path.name + ".lock")
-    with open(lock_path, "w", encoding="utf-8") as lock_fh:
-        with _file_lock(lock_fh):
-            with tempfile.NamedTemporaryFile(
-                "w",
-                encoding="utf-8",
-                dir=str(parent),
-                prefix=".env.tmp.",
-                delete=False,
-            ) as tmp:
-                tmp.write(new_text)
-                tmp_path = tmp.name
-            try:
-                os.replace(tmp_path, str(path))
-            except OSError as exc:
-                if exc.errno != errno.EBUSY:
-                    raise
-                # The target is a SINGLE-FILE bind mount — the
-                # acc-tui compose service mounts ./.env at /app/.env
-                # for write-back.  Linux rename(2) returns EBUSY in
-                # that case because the destination inode is the
-                # mount target, not a regular dentry.  Fall back to
-                # an in-place truncate + rewrite.  The .bak rotation
-                # written above is the recovery path if the process
-                # dies mid-write.
-                logger.info(
-                    "env_writeback: target %r is bind-mounted; "
-                    "falling back to in-place rewrite (atomic rename "
-                    "refused by the kernel with EBUSY).",
-                    str(path),
-                )
-                with open(path, "w", encoding="utf-8") as fh:
-                    fh.write(new_text)
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-            try:
-                os.chmod(path, 0o600)
-            except OSError:
-                pass
+    # 0o600 — .env carries REDIS_PASSWORD / API keys / session secret.
+    atomic_write_text(path, new_text, mode=0o600,
+                       tmp_prefix=".env.tmp.")

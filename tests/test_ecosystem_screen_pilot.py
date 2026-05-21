@@ -199,30 +199,28 @@ def test_path_resolution_missing_env_path_falls_back(tmp_path, monkeypatch, capl
 
 
 def _capture_panel_updates(screen) -> list[str]:
-    """Patch every detail-panel surface's ``update`` to record calls.
+    """Capture content rendered into the role detail panels.
 
-    Proposal 003 PR-2 split the role detail into two collapsibles:
+    Proposal 003 PR-2 split the role detail into two collapsibles —
     a Markdown widget (``#role-md-content``) for ``role.md`` and a
-    Static (``#role-yaml-content``) for the raw yaml.  We monkey-
-    patch both so existing assertions on substrings (e.g. ``test_role``
-    in the yaml title, ``pilot fixture`` in the yaml body) keep
-    working regardless of which surface the test exercises.
+    Static (``#role-yaml-content``) for the raw yaml.  PR-A (workflow
+    rework) replaced the role.yaml Static with an inline
+    ``TextArea`` (``#role-yaml-editor``).  The returned list keeps
+    growing as content is rendered: Markdown updates land via the
+    patched ``.update`` callback; the TextArea's current ``.text`` is
+    appended after each ``screen.on_data_table_row_*`` handler call
+    via the ``refresh()`` attribute attached to the list.
     """
-    from textual.widgets import Markdown
-    captured: list[str] = []
+    from textual.widgets import Markdown, TextArea
 
-    # role.yaml Static
-    yaml_widget = screen.query_one("#role-yaml-content", Static)
-    yaml_real = yaml_widget.update
+    class _CapturedList(list):
+        """A list subclass that supports attribute assignment so the
+        caller can attach a ``refresh()`` callback."""
 
-    def yaml_recording(content="", **kwargs):
-        captured.append(str(content))
-        return yaml_real(content, **kwargs)
+    captured: _CapturedList = _CapturedList()
 
-    yaml_widget.update = yaml_recording  # type: ignore[assignment]
-
-    # role.md Markdown widget — also tap its update so md-only
-    # assertions can land here too.
+    # role.md Markdown — patch update() so substring assertions for
+    # role.md content land here.
     try:
         md_widget = screen.query_one("#role-md-content", Markdown)
         md_real = md_widget.update
@@ -235,6 +233,19 @@ def _capture_panel_updates(screen) -> list[str]:
     except Exception:
         pass
 
+    # role.yaml — the TextArea's `.text` property is set by
+    # `_show_role_detail`.  We can't easily intercept a property
+    # setter; instead expose `refresh()` so the test snapshots the
+    # current value AFTER the handler returns.
+    def _refresh() -> None:
+        try:
+            captured.append(
+                screen.query_one("#role-yaml-editor", TextArea).text
+            )
+        except Exception:
+            pass
+
+    captured.refresh = _refresh  # type: ignore[attr-defined]
     return captured
 
 
@@ -267,6 +278,7 @@ async def test_row_selected_handler_directly(isolated_manifests):
         )
         screen.on_data_table_row_selected(event)
         await pilot.pause()
+        captured.refresh()  # PR-A — snapshot the inline TextArea text
 
         assert screen._selected_role == "test_role"
         assert any("test_role" in c for c in captured), captured
@@ -333,6 +345,7 @@ async def test_row_highlighted_handler_directly(isolated_manifests):
         captured = _capture_panel_updates(screen)
         screen.on_data_table_row_highlighted(event)
         await pilot.pause()
+        captured.refresh()  # PR-A — snapshot the inline TextArea text
 
         assert screen._selected_role == "test_role"
         assert any("test_role" in c for c in captured), captured
@@ -1180,3 +1193,164 @@ async def test_role_detail_md_appends_subrole_section(
         # The "directory-derived" disclaimer is present so the
         # operator knows it's convention, not first-class data.
         assert "directory-derived" in rendered
+
+
+# ---------------------------------------------------------------------------
+# PR-A — inline role.yaml editor (TextArea + Save + validation)
+# ---------------------------------------------------------------------------
+
+
+def _arm_status_capture(screen):
+    """Install a recorder over ``#yaml-save-status`` BEFORE the action.
+
+    Textual's ``Static`` doesn't expose the current renderable, so we
+    monkey-patch ``update`` to stash the last text on the widget.
+    Tests then assert on ``widget._last_text``.  Idempotent.
+    """
+    widget = screen.query_one("#yaml-save-status", Static)
+    if getattr(widget, "_acc_patched_for_test", False):
+        return widget
+    real = widget.update
+    widget._last_text = ""  # type: ignore[attr-defined]
+
+    def recording(content="", **kwargs):
+        widget._last_text = str(content)  # type: ignore[attr-defined]
+        return real(content, **kwargs)
+
+    widget.update = recording  # type: ignore[assignment]
+    widget._acc_patched_for_test = True  # type: ignore[attr-defined]
+    return widget
+
+
+@pytest.mark.asyncio
+async def test_inline_save_yaml_writes_valid_changes(isolated_manifests):
+    """PR-A: the operator edits role.yaml in-pane and Save persists.
+
+    Confirms the full flow: select row → TextArea is populated → modify
+    the buffer (bump the version) → press `#btn-save-yaml` → the file
+    on disk reflects the change and the status line shows ✓ saved.
+    """
+    from textual.widgets import TextArea
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        status_widget = _arm_status_capture(screen)
+
+        editor = screen.query_one("#role-yaml-editor", TextArea)
+        new_yaml = editor.text.replace("0.1.0", "0.2.0")
+        assert new_yaml != editor.text
+        editor.text = new_yaml
+
+        # Trigger the Save handler — equivalent to clicking the button.
+        screen._handle_save_yaml()
+        await pilot.pause()
+
+        roles_root = isolated_manifests["roles_root"]
+        on_disk = (roles_root / "test_role" / "role.yaml").read_text()
+        assert "0.2.0" in on_disk
+        assert "0.1.0" not in on_disk
+
+        status = status_widget._last_text
+        assert "saved" in str(status).lower()
+        assert screen._yaml_dirty is False
+
+
+@pytest.mark.asyncio
+async def test_inline_save_yaml_rejects_invalid(isolated_manifests):
+    """PR-A: invalid YAML surfaces validation errors and leaves the file
+    untouched."""
+    from textual.widgets import TextArea
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        status_widget = _arm_status_capture(screen)
+        roles_root = isolated_manifests["roles_root"]
+        original = (roles_root / "test_role" / "role.yaml").read_text()
+
+        editor = screen.query_one("#role-yaml-editor", TextArea)
+        # Invalidate via an unknown persona literal — pydantic rejects.
+        editor.text = original.replace(
+            "persona: 'concise'", "persona: 'definitely-not-a-real-persona'"
+        )
+        screen._handle_save_yaml()
+        await pilot.pause()
+
+        # File untouched.
+        on_disk = (roles_root / "test_role" / "role.yaml").read_text()
+        assert on_disk == original
+
+        # Status surfaces the failure.
+        status = status_widget._last_text
+        assert "invalid" in str(status).lower()
+
+
+@pytest.mark.asyncio
+async def test_inline_editor_dirty_blocks_watcher_clobber(isolated_manifests):
+    """PR-A: an external save (file-watcher firing while the inline
+    editor has unsaved edits) must NOT clobber the operator's typing.
+    """
+    from textual.widgets import TextArea
+    from acc.tui.messages import RolesChangedMessage
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        role_table = screen.query_one("#role-table", DataTable)
+        first_row_key = list(role_table.rows.keys())[0]
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
+                data_table=role_table,
+                cursor_row=0,
+                row_key=first_row_key,
+            )
+        )
+        await pilot.pause()
+
+        status_widget = _arm_status_capture(screen)
+        editor = screen.query_one("#role-yaml-editor", TextArea)
+        in_progress = editor.text + "\n# operator typing in progress\n"
+        editor.text = in_progress
+        # Let the Changed event flow through the event loop so
+        # `_yaml_dirty` reflects the text mismatch.
+        await pilot.pause()
+        assert screen._yaml_dirty is True
+
+        # Simulate the file-watcher firing (e.g. another process saved
+        # the same file).  The reload-from-disk path must be skipped.
+        screen.on_roles_changed_message(
+            RolesChangedMessage(reason="poll")
+        )
+        await pilot.pause()
+
+        # The editor still shows the operator's in-progress text — not
+        # clobbered by an automatic refresh.
+        assert "operator typing in progress" in editor.text
+        # And the status line warns about the conflict.
+        status = status_widget._last_text
+        assert "unsaved" in str(status).lower() or "changed on disk" in str(status).lower()
