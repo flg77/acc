@@ -1,0 +1,38 @@
+# ACC collective spec — declarative agentset for the standalone Podman stack.
+#
+# This is the operator-tunable surface PR-B of the Ecosystem-led workflow
+# rework introduced.  `acc-deploy.sh apply` synthesizes a podman-compose
+# overlay from this file and brings up any agent declared here that's
+# not already running.
+#
+# The DEFAULT shape ships empty (`agents: []`) — the baseline
+# ingester / analyst / arbiter services stay declared in
+# `container/production/podman-compose.yml` and come up via the
+# existing `./acc-deploy.sh up` flow.  This file is for the EXTRA
+# agents the operator adds via the TUI (or by hand) — coding split,
+# research swarms, custom roles.
+#
+# Two ready-made presets ship at the repo root:
+#   - collective.coding-split.yaml   — 3 coding_agents in cluster `backend`
+#   - collective.autoresearcher.yaml — the 6 research roles
+# Apply one with `./acc-deploy.sh apply collective.coding-split.yaml`.
+#
+# Schema mirrors operator/api/v1alpha1/agentcollective_types.go.
+
+collective_id: sol-01
+
+# Each entry produces N podman services named
+# `acc-cell-<role-or-prefix>-<n>` (distinct from the baseline
+# `acc-agent-*` services in the base compose, so the two
+# coexist cleanly).
+agents: []
+
+# Optional shared LLM block — informational; the running stack reads
+# acc-config.yaml + .env env overrides.  Kept for parity with the
+# K8s operator's AgentCollectiveSpec.LLM.
+# llm:
+#   backend: openai_compat
+#   base_url: http://host.containers.internal:8022/v1
+#   model: RedHatAI/Llama-3.2-3B-Instruct-FP8
+
+# heartbeat_interval_seconds: 30

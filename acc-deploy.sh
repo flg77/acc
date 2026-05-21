@@ -11,6 +11,13 @@
 #   setup     Scaffold ./.env from ./.env.example if absent.  No-op when
 #             ./.env is already present.  Run this once after the first
 #             clone; or use ./env/use.sh to pick a backend preset.
+#   apply [SPEC] [--dry-run]
+#             Declarative agentset.  Reads collective.yaml (or SPEC) and
+#             synthesizes a podman-compose overlay; brings up any agent
+#             declared in the spec that's not already running.  Presets
+#             ship at the repo root: collective.coding-split.yaml,
+#             collective.autoresearcher.yaml.  --dry-run prints the
+#             reconcile diff without acting.  PR-B.
 #   build     Build container images (must be done before first 'up')
 #   rebuild   Pull latest from origin (git fetch + git pull --ff-only) and
 #             rebuild every image with --no-cache --pull.  Use after a
@@ -301,6 +308,54 @@ case "$COMMAND" in
         echo "▶ Building images..."
         "${BASE_CMD[@]}" build "$@"
         echo "✓ Build complete."
+        ;;
+
+    apply)
+        # PR-B — declarative agentset.  Reads ./collective.yaml (or the
+        # path supplied as $1) and synthesizes a podman-compose overlay
+        # next to the base compose; then runs `up -d` with both.  Adds
+        # ANY agents declared in the spec that aren't already running;
+        # does not touch the baseline acc-agent-* services in the base
+        # compose (those stay there until PR-E).
+        SPEC="${1:-collective.yaml}"
+        DRY_RUN=false
+        if [[ "$SPEC" == "--dry-run" ]]; then
+            DRY_RUN=true
+            SPEC="${2:-collective.yaml}"
+        fi
+        if [[ ! -f "$REPO_ROOT/$SPEC" ]]; then
+            echo "ERROR: spec not found: $REPO_ROOT/$SPEC" >&2
+            echo "       Available presets:" >&2
+            for f in "$REPO_ROOT"/collective*.yaml; do
+                [[ -f "$f" ]] && echo "         $(basename "$f")" >&2
+            done
+            exit 1
+        fi
+        OVERLAY_PATH="$REPO_ROOT/container/production/podman-compose.overlay.yml"
+        echo "▶ Synthesizing overlay from $SPEC..."
+        if ! python -m acc.cli collective synthesize \
+                "$REPO_ROOT/$SPEC" -o "$OVERLAY_PATH"; then
+            echo "ERROR: synthesize failed" >&2
+            exit 1
+        fi
+        echo "  → $OVERLAY_PATH"
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo "▶ Reconcile diff (dry-run):"
+            python -m acc.cli collective diff "$REPO_ROOT/$SPEC" || true
+            echo "✓ Dry-run complete; nothing applied."
+            exit 0
+        fi
+        echo "▶ Applying $SPEC..."
+        podman-compose -f "$COMPOSE_FILE" -f "$OVERLAY_PATH" up -d \
+            --remove-orphans "$@"
+        echo ""
+        echo "✓ Applied $SPEC.  Synthesized services:"
+        podman ps --filter "label=acc.synthesized=true" \
+            --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+        echo ""
+        echo "  Monitor:  ./acc-deploy.sh logs"
+        echo "  Diff:     ./acc-deploy.sh apply --dry-run $SPEC"
+        echo "  Stop:     ./acc-deploy.sh down"
         ;;
 
     rebuild)

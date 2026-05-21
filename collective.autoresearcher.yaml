@@ -1,0 +1,45 @@
+# ACC collective preset — autoresearcher agentset.
+#
+# Six roles forming the 5-phase research DAG documented in
+# `examples/acc_autoresearcher/expected_topology.md`.  Each role gets a
+# distinct cluster_id so the arbiter's PlanExecutor can fan out
+# per-phase tasks without crossing wires.
+#
+# Apply:
+#   ./acc-deploy.sh apply collective.autoresearcher.yaml
+# Mirrors what the legacy `AUTORESEARCHER=true ./acc-deploy.sh up`
+# brought up, but from this declarative YAML — env-var path is
+# deprecated and removed in PR-E.
+
+collective_id: sol-01
+
+agents:
+  - role: research_planner
+    replicas: 1
+    cluster_id: planner
+    purpose: "Decompose the research brief into per-phase tasks."
+
+  - role: research_economist
+    replicas: 2
+    cluster_id: economist
+    purpose: "Quantify the economic angle of the research brief."
+
+  - role: research_competitor
+    replicas: 2
+    cluster_id: competitor
+    purpose: "Map the competitive landscape relevant to the brief."
+
+  - role: research_strategist
+    replicas: 1
+    cluster_id: strategist
+    purpose: "Synthesise the economic + competitor findings into strategy."
+
+  - role: research_synthesizer
+    replicas: 1
+    cluster_id: synthesizer
+    purpose: "Compose the final report from the strategist's output."
+
+  - role: research_critic
+    replicas: 1
+    cluster_id: critic
+    purpose: "Review the synthesised report; emit NEEDS_REVISE to iterate."

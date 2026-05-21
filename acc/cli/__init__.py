@@ -68,6 +68,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # Lazy-import each command module so pip-install is fast and unused
     # dependencies (e.g. nats-py for `role list`) do not block startup.
     from acc.cli import (  # noqa: PLC0415
+        collective_cmd,
         role_cmd,
         nats_cmd,
         llm_cmd,
@@ -77,6 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
         schedule_cmd,
     )
     role_cmd.register(sub)
+    collective_cmd.register(sub)
     nats_cmd.register(sub)
     llm_cmd.register(sub)
     trace_cmd.register(sub)
