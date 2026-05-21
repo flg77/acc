@@ -358,7 +358,34 @@ class EcosystemScreen(Screen):
         ("6", "navigate('ecosystem')", "Ecosystem"),
         ("7", "navigate('prompt')", "Prompt"),
         ("8", "navigate('configuration')", "Configuration"),
+        # Commit-3c — per-pane shortcuts.  Surfaced in the shortcut-
+        # agenda bar above the Footer.  Lowercase so they don't clash
+        # with screen-level Tab/Enter input handling.
+        ("e", "toggle_edit_yaml", "Edit role.yaml"),
+        ("s", "save_yaml", "Save role.yaml"),
+        ("i", "infuse", "Schedule infusion"),
     ]
+
+    def action_toggle_edit_yaml(self) -> None:
+        """Commit-3c — keyboard shortcut for the Edit/Lock toggle."""
+        try:
+            self._handle_toggle_edit_yaml()
+        except Exception:
+            logger.exception("ecosystem: action_toggle_edit_yaml failed")
+
+    def action_save_yaml(self) -> None:
+        """Commit-3c — keyboard shortcut for Save role.yaml."""
+        try:
+            self._handle_save_yaml()
+        except Exception:
+            logger.exception("ecosystem: action_save_yaml failed")
+
+    def action_infuse(self) -> None:
+        """Commit-3c — keyboard shortcut for Schedule infusion."""
+        try:
+            self._handle_schedule_infusion()
+        except Exception:
+            logger.exception("ecosystem: action_infuse failed")
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
 
@@ -410,6 +437,23 @@ class EcosystemScreen(Screen):
                 yield from self._compose_roles_tab()
             with TabPane("Agentset", id="tab-agentset"):
                 yield from self._compose_agentset_tab()
+        # Commit-3c — per-pane shortcut bar.  Lives above the global
+        # Footer (which carries the cross-pane Soma/Nucleus/… nav).
+        # Static contents — the operator-relevant chord summary for
+        # whichever Ecosystem tab is currently active.  Updated on
+        # tab activation in :meth:`on_tabbed_content_tab_activated`.
+        yield Static(
+            "[b]Roles tab[/b] · "
+            "[yellow]↑/↓[/yellow] navigate · "
+            "[yellow]Enter[/yellow] select · "
+            "[yellow]e[/yellow] edit role.yaml · "
+            "[yellow]s[/yellow] save · "
+            "[yellow]i[/yellow] schedule infusion · "
+            "[yellow]/[/yellow] filter · "
+            "[yellow]Tab[/yellow] switch to Agentset",
+            id="shortcut-agenda",
+            classes="shortcut-bar",
+        )
         yield Footer()
 
     def _compose_roles_tab(self) -> ComposeResult:
@@ -463,14 +507,27 @@ class EcosystemScreen(Screen):
                     # Pydantic pre-write validation pass.  The existing
                     # 2s file-watcher then picks up the change and
                     # refreshes the per-role caches downstream.
-                    yield Label("role.yaml", classes="panel-label")
-                    yield TextArea(
+                    # Commit-3b — read-only by default so the editor
+                    # is a viewing surface first.  Toggle via the
+                    # "Edit role.yaml" button to enter edit mode; the
+                    # button label flips to "Lock" while editing.
+                    # Save still works regardless of the toggle state
+                    # (defensive against an operator mid-edit save).
+                    yield Label(
+                        "role.yaml  [dim](read-only · press Edit to "
+                        "modify)[/dim]",
+                        classes="panel-label",
+                        id="role-yaml-label",
+                    )
+                    _editor = TextArea(
                         "",
                         id="role-yaml-editor",
                         language="yaml",
                         show_line_numbers=True,
                         soft_wrap=False,
                     )
+                    _editor.read_only = True
+                    yield _editor
                     yield Static("", id="yaml-save-status")
 
                 # Infusion action — bridge from Ecosystem (extracellular role
@@ -494,6 +551,15 @@ class EcosystemScreen(Screen):
                 # for vim / emacs / VS Code workflows; PR-3's file-watcher
                 # refreshes the detail pane when the external editor saves.
                 with Horizontal(id="row-edit-actions"):
+                    # Commit-3b — read-only-default toggle.  Default
+                    # is read-only; clicking flips the TextArea into
+                    # edit mode and the button label to "Lock".
+                    yield Button(
+                        "✎ Edit role.yaml",
+                        id="btn-toggle-edit-yaml",
+                        variant="default",
+                        disabled=True,
+                    )
                     yield Button(
                         "Save role.yaml",
                         id="btn-save-yaml",
@@ -551,7 +617,13 @@ class EcosystemScreen(Screen):
     def on_mount(self) -> None:
         """Populate role table and LLM table columns at mount time (REQ-TUI-037)."""
         role_table = self.query_one("#role-table", DataTable)
-        role_table.add_columns("Role", "Domain", "Persona", "Tasks")
+        # Commit-3a — explicit selection-marker column on the left.
+        # The blue cursor band Textual draws is easy to miss when the
+        # operator scrolls; an explicit ● character in column 0 makes
+        # the "this is the role the buttons will act on" invariant
+        # impossible to misread.  The marker is updated whenever
+        # `_selected_role` changes via :meth:`_paint_selection_marker`.
+        role_table.add_columns("", "Role", "Domain", "Persona", "Tasks")
 
         # Proposal 009 — Skills / MCPs / LLM tables removed from
         # Ecosystem.  Their canonical home is the Configuration
@@ -622,6 +694,40 @@ class EcosystemScreen(Screen):
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
+
+    def on_tabbed_content_tab_activated(
+        self, event: "TabbedContent.TabActivated"
+    ) -> None:
+        """Commit-3c — swap the shortcut agenda when the operator
+        toggles between Roles and Agentset.  Best-effort; missing
+        widgets fall through silently."""
+        try:
+            tab_id = event.tab.id or ""
+        except Exception:
+            return
+        try:
+            agenda = self.query_one("#shortcut-agenda", Static)
+        except Exception:
+            return
+        if "agentset" in tab_id:
+            agenda.update(
+                "[b]Agentset tab[/b] · "
+                "[yellow]Save[/yellow] write collective.yaml · "
+                "[yellow]Validate[/yellow] dry-run check · "
+                "[yellow]Apply[/yellow] reconcile podman state · "
+                "[yellow]Tab[/yellow] switch back to Roles",
+            )
+        else:
+            agenda.update(
+                "[b]Roles tab[/b] · "
+                "[yellow]↑/↓[/yellow] navigate · "
+                "[yellow]Enter[/yellow] select · "
+                "[yellow]e[/yellow] edit role.yaml · "
+                "[yellow]s[/yellow] save · "
+                "[yellow]i[/yellow] schedule infusion · "
+                "[yellow]/[/yellow] filter · "
+                "[yellow]Tab[/yellow] switch to Agentset",
+            )
 
     def on_data_table_row_highlighted(
         self, event: DataTable.RowHighlighted
@@ -713,11 +819,49 @@ class EcosystemScreen(Screen):
         # Proposal 007 — arm the edit buttons too.
         # PR-A — also arm the inline Save-yaml button (same selection
         # state — operator can edit + save the highlighted role).
-        for btn_id in ("btn-edit-yaml", "btn-edit-md", "btn-save-yaml"):
+        # Commit-3b — also arm the "Edit" toggle (read-only ↔ edit).
+        for btn_id in (
+            "btn-edit-yaml", "btn-edit-md", "btn-save-yaml",
+            "btn-toggle-edit-yaml",
+        ):
             try:
                 self.query_one(f"#{btn_id}", Button).disabled = False
             except Exception:
                 logger.exception("ecosystem: failed to arm %s", btn_id)
+
+        # Commit-3a — repaint the selection-marker column.
+        self._paint_selection_marker(role_name)
+
+    def _paint_selection_marker(self, role_name: str) -> None:
+        """Refresh column 0 of the role table so only *role_name* shows
+        the ● marker.
+
+        Commit-3a.  Idempotent — safe to call from on_mount and from
+        every row-highlight / row-select handler.  Tolerates Textual's
+        DataTable changing its cell-update API across versions.
+        """
+        try:
+            table = self.query_one("#role-table", DataTable)
+        except Exception:
+            return
+        try:
+            from textual.coordinate import Coordinate  # noqa: PLC0415
+        except Exception:
+            Coordinate = None  # type: ignore[assignment]
+        for row_idx, row_key in enumerate(list(table.rows.keys())):
+            key_value = getattr(row_key, "value", None) or str(row_key)
+            marker = "●" if key_value == role_name else ""
+            if Coordinate is not None:
+                try:
+                    table.update_cell_at(Coordinate(row_idx, 0), marker)
+                    continue
+                except Exception:
+                    pass
+            # Last-ditch fallback — no-op rather than raise.  The
+            # blue cursor band still communicates selection.
+            logger.debug(
+                "ecosystem: update_cell_at failed for row=%d", row_idx,
+            )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Dispatch by button id.
@@ -735,6 +879,8 @@ class EcosystemScreen(Screen):
             self._handle_schedule_infusion()
         elif bid == "btn-save-yaml":
             self._handle_save_yaml()
+        elif bid == "btn-toggle-edit-yaml":
+            self._handle_toggle_edit_yaml()
         elif bid == "btn-edit-yaml":
             self._handle_edit_in_editor("role.yaml")
         elif bid == "btn-edit-md":
@@ -817,6 +963,48 @@ class EcosystemScreen(Screen):
             self._yaml_dirty = (event.text_area.text
                                  != self._last_saved_yaml_text)
 
+    def _handle_toggle_edit_yaml(self) -> None:
+        """Commit-3b — flip the role.yaml editor between read-only and
+        edit mode.
+
+        Visual contract:
+
+        * read-only (default): button label = "✎ Edit role.yaml",
+          label header = "role.yaml (read-only · press Edit to modify)",
+          TextArea.read_only=True.
+        * edit: button label = "🔒 Lock role.yaml", label header =
+          "role.yaml (editing — Save commits, Lock reverts to view)",
+          TextArea.read_only=False.
+
+        Save still functions in both modes; this is a viewing-comfort
+        affordance, not an enforcement boundary.
+        """
+        try:
+            editor = self.query_one("#role-yaml-editor", TextArea)
+            btn = self.query_one("#btn-toggle-edit-yaml", Button)
+            label = self.query_one("#role-yaml-label", Label)
+        except Exception:
+            logger.exception("ecosystem: edit-toggle widgets missing")
+            return
+        new_read_only = not getattr(editor, "read_only", False)
+        editor.read_only = new_read_only
+        if new_read_only:
+            btn.label = "✎ Edit role.yaml"
+            label.update(
+                "role.yaml  [dim](read-only · press Edit to "
+                "modify)[/dim]",
+            )
+        else:
+            btn.label = "🔒 Lock role.yaml"
+            label.update(
+                "role.yaml  [yellow](editing — Save commits, Lock "
+                "reverts to view)[/yellow]",
+            )
+            try:
+                editor.focus()
+            except Exception:
+                pass
+
     def _handle_save_yaml(self) -> None:
         """PR-A — atomically save the inline role.yaml TextArea contents.
 
@@ -876,6 +1064,22 @@ class EcosystemScreen(Screen):
             f"Saved {self._selected_role}/role.yaml",
             severity="information", timeout=3.0,
         )
+        # Commit-3b — flip back to read-only so the editor doesn't
+        # stay vulnerable to accidental keypresses post-save.  No-op
+        # if the toggle widgets aren't found (defensive against test
+        # harnesses with a slimmed compose tree).
+        try:
+            editor = self.query_one("#role-yaml-editor", TextArea)
+            btn = self.query_one("#btn-toggle-edit-yaml", Button)
+            label = self.query_one("#role-yaml-label", Label)
+            editor.read_only = True
+            btn.label = "✎ Edit role.yaml"
+            label.update(
+                "role.yaml  [dim](read-only · press Edit to "
+                "modify)[/dim]",
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # PR-C — Agentset tab: load + edit + save + apply collective.yaml
@@ -1209,7 +1413,10 @@ class EcosystemScreen(Screen):
                 or q in persona.lower()
             ):
                 continue
-            table.add_row(role_name, domain, persona, tasks, key=role_name)
+            marker = "●" if role_name == self._selected_role else ""
+            table.add_row(
+                marker, role_name, domain, persona, tasks, key=role_name,
+            )
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Proposal 003 PR-2 — repopulate the role table on every

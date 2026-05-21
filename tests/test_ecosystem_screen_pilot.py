@@ -1518,3 +1518,110 @@ async def test_inline_editor_dirty_blocks_watcher_clobber(isolated_manifests):
         # And the status line warns about the conflict.
         status = status_widget._last_text
         assert "unsaved" in str(status).lower() or "changed on disk" in str(status).lower()
+
+
+# ---------------------------------------------------------------------------
+# Commit-3 — selection marker, read-only-default toggle, shortcut bar
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_role_table_has_selection_marker_column(isolated_manifests):
+    """Commit-3a — the role table grows a leading ● marker column;
+    the first auto-selected row shows ●, others don't."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        table = screen.query_one("#role-table", DataTable)
+        # Column count: marker + Role + Domain + Persona + Tasks = 5.
+        assert len(table.columns) == 5, (
+            f"expected 5 columns (marker + 4 data), got {len(table.columns)}"
+        )
+
+        # The auto-selected first row should carry the ● marker.
+        from textual.coordinate import Coordinate
+        first_marker = table.get_cell_at(Coordinate(0, 0))
+        assert str(first_marker) == "●", (
+            f"first row's marker cell should be ●, got {first_marker!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_yaml_editor_read_only_by_default(isolated_manifests):
+    """Commit-3b — the role.yaml editor must be read-only on mount.
+    Clicking the Edit toggle flips it editable; Save flips back."""
+    from textual.widgets import TextArea
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        editor = screen.query_one("#role-yaml-editor", TextArea)
+        toggle = screen.query_one("#btn-toggle-edit-yaml", Button)
+
+        # Default: read-only, button armed (we're on a row).
+        assert editor.read_only is True
+        assert toggle.disabled is False
+
+        # Flip into edit.
+        screen._handle_toggle_edit_yaml()
+        await pilot.pause()
+        assert editor.read_only is False
+        assert "Lock" in str(toggle.label)
+
+        # Flip back.
+        screen._handle_toggle_edit_yaml()
+        await pilot.pause()
+        assert editor.read_only is True
+        assert "Edit" in str(toggle.label)
+
+
+@pytest.mark.asyncio
+async def test_shortcut_agenda_present_and_updates_on_tab_switch(
+    isolated_manifests,
+):
+    """Commit-3c — the shortcut bar above Footer must exist and the
+    text must reflect the active TabPane.  Verified by intercepting
+    `Static.update()` calls (Textual's `renderable` attr is markup-
+    formatted and not directly comparable across versions)."""
+    from textual.widgets import TabbedContent
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        # The widget exists and lives above the Footer.
+        agenda = screen.query_one("#shortcut-agenda", Static)
+        assert agenda is not None
+
+        # Intercept future update() calls to see what the
+        # tab-activated handler writes.
+        recorded: list[str] = []
+        original_update = agenda.update
+
+        def capture(content="", *a, **kw):
+            recorded.append(str(content))
+            return original_update(content, *a, **kw)
+
+        agenda.update = capture  # type: ignore[assignment]
+
+        # Switch to Agentset — the handler should re-write the agenda.
+        tabs = screen.query_one("#ecosystem-tabs", TabbedContent)
+        tabs.active = "tab-agentset"
+        await pilot.pause()
+
+        assert recorded, "expected on_tabbed_content_tab_activated to update agenda"
+        assert any(
+            "Agentset" in text or "reconcile" in text.lower() or "Apply" in text
+            for text in recorded
+        ), f"Agentset agenda not in updates: {recorded!r}"
+
+        # Switch back to Roles.
+        tabs.active = "tab-roles"
+        await pilot.pause()
+        assert any("Roles" in text for text in recorded), (
+            f"Roles agenda not in updates: {recorded!r}"
+        )
