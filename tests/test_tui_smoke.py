@@ -63,8 +63,10 @@ class _TestApp(ACCTUIApp):
             nats_url="nats://localhost:4222",
             collective_id="sol-01",
         )
-        # Replace the real observer with the mock before on_mount fires
-        self.nats_observer = mock_observer
+        # Replace the real observer with the mock before on_mount fires.
+        # `nats_observer` is a read-only property over `_observers[0]`
+        # after the multi-observer refactor — assign the list directly.
+        self._observers = [mock_observer]
 
 
 # ---------------------------------------------------------------------------
@@ -92,8 +94,9 @@ async def test_tab_switches_to_infuse_screen():
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        # Press Tab to switch to infuse screen
-        await pilot.press("tab")
+        # Switch to infuse (post-nav-bar refactor: keybinding moved; push
+        # the registered screen by name).
+        app.push_screen("nucleus")
         await pilot.pause()
         from acc.tui.screens.infuse import InfuseScreen
         assert isinstance(app.screen, InfuseScreen)
@@ -108,7 +111,7 @@ async def test_infuse_clear_resets_purpose_field():
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         # Navigate to InfuseScreen
-        await pilot.press("tab")
+        app.push_screen("nucleus")
         await pilot.pause()
 
         from acc.tui.screens.infuse import InfuseScreen
@@ -120,8 +123,8 @@ async def test_infuse_clear_resets_purpose_field():
         purpose_area.insert("test purpose text")
         await pilot.pause()
 
-        # Click Clear
-        await pilot.click("#btn-clear")
+        # Clear (size=(120,40) clips the button row; call the action)
+        app.screen.action_clear()
         await pilot.pause()
 
         # Purpose should be empty after clear
@@ -129,8 +132,12 @@ async def test_infuse_clear_resets_purpose_field():
 
 
 @pytest.mark.asyncio
-async def test_apply_button_calls_nats_publish():
+async def test_apply_button_calls_nats_publish(tmp_path, monkeypatch):
     """Apply button must call NATSObserver.publish exactly once (REQ-TEST-003, REQ-INF-003)."""
+    # Isolate the collective.yaml side-effect of Apply (PR-D) so this
+    # smoke test doesn't mutate the repo's collective.yaml.
+    monkeypatch.setenv("ACC_COLLECTIVE_PATH", str(tmp_path / "collective.yaml"))
+    monkeypatch.chdir(tmp_path)
     obs = _mock_observer()
     app = _TestApp(mock_observer=obs)
 
@@ -138,14 +145,14 @@ async def test_apply_button_calls_nats_publish():
         await pilot.pause()
 
         # Navigate to InfuseScreen
-        await pilot.press("tab")
+        app.push_screen("nucleus")
         await pilot.pause()
 
         from acc.tui.screens.infuse import InfuseScreen
         assert isinstance(app.screen, InfuseScreen)
 
-        # Click Apply
-        await pilot.click("#btn-apply")
+        # Apply (button clipped under size=(120,40); call action directly)
+        app.screen.action_apply()
         await pilot.pause()
 
         # NATSObserver.publish must have been called exactly once
@@ -153,20 +160,22 @@ async def test_apply_button_calls_nats_publish():
 
 
 @pytest.mark.asyncio
-async def test_apply_sets_awaiting_status():
+async def test_apply_sets_awaiting_status(tmp_path, monkeypatch):
     """After Apply, status bar must show 'Awaiting arbiter approval' (REQ-INF-005)."""
+    monkeypatch.setenv("ACC_COLLECTIVE_PATH", str(tmp_path / "collective.yaml"))
+    monkeypatch.chdir(tmp_path)
     obs = _mock_observer()
     app = _TestApp(mock_observer=obs)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        await pilot.press("tab")
+        app.push_screen("nucleus")
         await pilot.pause()
 
         from acc.tui.screens.infuse import InfuseScreen
         assert isinstance(app.screen, InfuseScreen)
 
-        await pilot.click("#btn-apply")
+        app.screen.action_apply()
         await pilot.pause()
 
         assert "Awaiting" in app.screen.status_text

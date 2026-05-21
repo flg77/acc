@@ -64,6 +64,25 @@ def _roles_root() -> str:
     return os.environ.get("ACC_ROLES_ROOT", "roles")
 
 
+def _resolve_collective_path():
+    """PR-D — resolve `./collective.yaml`.
+
+    Precedence: ``ACC_COLLECTIVE_PATH`` env > ``/app/collective.yaml``
+    (the canonical mount inside the acc-tui container, added by PR-C
+    in ``container/production/podman-compose.yml``) >
+    ``./collective.yaml`` (host-run fallback).  Same shape as
+    ``EcosystemScreen._resolve_collective_path``.
+    """
+    from pathlib import Path  # noqa: PLC0415
+    explicit = os.environ.get("ACC_COLLECTIVE_PATH", "").strip()
+    if explicit:
+        return Path(explicit)
+    container_path = Path("/app/collective.yaml")
+    if container_path.is_file():
+        return container_path
+    return Path("collective.yaml")
+
+
 class InfuseScreen(Screen):
     """Role infusion form — compose and apply role definitions to the collective."""
 
@@ -89,6 +108,14 @@ class InfuseScreen(Screen):
     def __init__(self, **kwargs) -> None:  # type: ignore[override]
         super().__init__(**kwargs)
         self._dynamic_task_types: list[str] = []
+        # PR-D — spawn-on-Apply state.  `_apply_started_ts` filters
+        # the heartbeat watcher so it only marks "agent registered"
+        # for HEARTBEATs that arrive AFTER the operator hit Apply
+        # (avoids matching an existing agent of the same role).
+        # `_pending_apply` holds the `(role, cluster_id)` tuple we're
+        # waiting for; cleared once an agent matching it heartbeats.
+        self._apply_started_ts: float = 0.0
+        self._pending_apply: tuple[str, str | None] | None = None
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="nucleus", id="nav")
@@ -109,6 +136,18 @@ class InfuseScreen(Screen):
                     id="select-role",
                     value="ingester",
                     allow_blank=False,
+                )
+
+            # PR-D — cluster_id surface.  Tags the agent the operator's
+            # about to spawn with a cluster grouping the arbiter's
+            # PlanExecutor uses for task fan-out.  Free-form string;
+            # empty means "no cluster".
+            with Horizontal(id="row-cluster-id"):
+                yield Label("Cluster id:", classes="field-label")
+                yield Input(
+                    placeholder="e.g. backend, planner, …",
+                    id="input-cluster-id",
+                    classes="input-short",
                 )
 
             yield Label("Purpose", classes="section-label")
@@ -322,6 +361,42 @@ class InfuseScreen(Screen):
             if any(a.role_version == submitted_ver for a in snapshot.agents.values()):
                 self.status_text = f"✓ Role {submitted_ver!r} applied"
 
+        # PR-D — when Apply also requested a spawn, watch for a NEW
+        # agent (registered AFTER `_apply_started_ts`) whose role +
+        # cluster_id match the pending tuple.  Status flips to
+        # "Agent <id> registered" the moment the reconcile lands and
+        # the new agent heartbeats.  Bail out cleanly if the screen
+        # has no pending apply or no started-ts.
+        if self._pending_apply is None or not self._apply_started_ts:
+            return
+        want_role, want_cluster = self._pending_apply
+        for agent_id, agent in snapshot.agents.items():
+            if getattr(agent, "role", "") != want_role:
+                continue
+            # cluster_id propagates via REGISTER once PR-B-era agents
+            # ingest ACC_CLUSTER_ID.  Match strictly when set; allow
+            # any when None.
+            agent_cid = getattr(agent, "cluster_id", None)
+            if want_cluster is not None and agent_cid != want_cluster:
+                continue
+            registered_at = (
+                getattr(agent, "registered_ts", None)
+                or getattr(agent, "first_seen_ts", None)
+                or 0.0
+            )
+            if registered_at and registered_at < self._apply_started_ts:
+                continue
+            # Match — clear the pending tuple so re-applies start a
+            # fresh wait.
+            self.status_text = (
+                f"✓ Agent {agent_id} registered "
+                f"(role={want_role}"
+                f"{', cluster=' + want_cluster if want_cluster else ''})"
+            )
+            self._pending_apply = None
+            self._apply_started_ts = 0.0
+            return
+
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
@@ -417,6 +492,84 @@ class InfuseScreen(Screen):
 
         self.app.post_message(_PublishMessage(subject_role_update(collective_id), payload))
         self.status_text = "Awaiting arbiter approval…"
+
+        # PR-D — write the (role, cluster_id, purpose) tuple to
+        # collective.yaml and ask the host-side apply-watcher to
+        # reconcile, so Apply actually CREATES the agent (not just
+        # updates the role on already-running ones).  Best-effort:
+        # any failure logs + leaves the legacy ROLE_UPDATE published
+        # above as the only effect.
+        cluster_id = self.query_one("#input-cluster-id", Input).value.strip() or None
+        self._apply_started_ts = time.time()
+        self._pending_apply = (role, cluster_id)
+        try:
+            self._spawn_via_collective(
+                role=role, cluster_id=cluster_id,
+                purpose=purpose.strip() or None,
+            )
+        except Exception:
+            logger.exception("infuse: collective spawn path failed; "
+                              "legacy ROLE_UPDATE still published")
+
+    def _spawn_via_collective(
+        self,
+        *,
+        role: str,
+        cluster_id: str | None,
+        purpose: str | None,
+    ) -> None:
+        """PR-D — Apply's NEW semantic: upsert into collective.yaml and
+        request a reconcile so a fresh agent actually comes up.
+
+        Writes the agent entry through
+        :func:`acc.collective.upsert_agent_entry` (idempotent — bumps
+        replicas on a matching role+cluster_id, else appends).  Then
+        touches ``./.acc-apply.request`` next to the spec; the
+        host-side watcher (or the operator running
+        ``./acc-deploy.sh apply`` by hand) reconciles podman state.
+
+        No-op when no collective.yaml is reachable — the legacy
+        ROLE_UPDATE path the caller already published remains the
+        only effect.
+        """
+        from acc.collective import upsert_agent_entry  # noqa: PLC0415
+
+        path = _resolve_collective_path()
+        if not path.exists():
+            logger.info(
+                "infuse: collective.yaml not found at %s — "
+                "spawn path skipped (legacy ROLE_UPDATE only)", path,
+            )
+            self.status_text = (
+                "Awaiting arbiter approval (no collective.yaml — "
+                "agent will NOT auto-spawn)"
+            )
+            return
+
+        try:
+            upsert_agent_entry(
+                path, role,
+                cluster_id=cluster_id,
+                purpose=purpose,
+                replicas=1,
+            )
+        except Exception:
+            logger.exception("infuse: upsert_agent_entry failed for %s", path)
+            return
+
+        # Touch the apply-request marker.  Same convention as PR-C's
+        # Ecosystem Agentset Apply: a host-side watcher picks it up
+        # and runs `./acc-deploy.sh apply <spec>`.
+        try:
+            (path.parent / ".acc-apply.request").write_text(
+                f"{path}\n", encoding="utf-8",
+            )
+        except OSError:
+            logger.exception("infuse: .acc-apply.request touch failed")
+
+        self.status_text = (
+            "Awaiting reconcile… (role applied; agent spawn requested)"
+        )
 
     def action_clear(self) -> None:
         """Reset all widgets to defaults."""

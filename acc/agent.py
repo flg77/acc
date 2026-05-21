@@ -486,6 +486,9 @@ class Agent:
                 "state": self.state,
                 "role": self.config.agent.role,
                 "role_version": self._active_role.version,
+                # PR-D: cluster_id propagation so Nucleus Apply can detect
+                # which freshly-registered agent matches its pending spawn.
+                "cluster_id": os.environ.get("ACC_CLUSTER_ID", ""),
                 # Live LLM-backend snapshot — populates the TUI's
                 # Configuration → LLM Endpoints "LIVE BACKENDS" table
                 # (acc/tui/client.py:_route_heartbeat reads

@@ -516,6 +516,12 @@ class NATSObserver:
             data.get("domain_drift_score", snap.domain_drift_score)
         )
 
+        # PR-D — cluster_id propagated from each agent's heartbeat
+        # so the Nucleus Apply path can match a freshly spawned
+        # agent against the (role, cluster_id) tuple the operator
+        # submitted.
+        snap.cluster_id = data.get("cluster_id", snap.cluster_id)
+
         # ACC-12: compliance fields (REQ-TUI-012)
         snap.compliance_health_score = float(
             data.get("compliance_health_score", snap.compliance_health_score)

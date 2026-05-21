@@ -62,6 +62,12 @@ class AgentSnapshot:
     domain_id: str = ""
     domain_drift_score: float = 0.0    # 0.0 (aligned) – 1.0 (drifted)
 
+    # PR-D — cluster_id propagated from the agent's ``ACC_CLUSTER_ID``
+    # env var via HEARTBEAT, so the Nucleus Apply path can match a
+    # newly-spawned agent against the (role, cluster_id) tuple the
+    # operator submitted.  Empty when the operator didn't set one.
+    cluster_id: str = ""
+
     # ACC-12: compliance health (REQ-TUI-015)
     compliance_health_score: float = 1.0   # 0.0 (critical) – 1.0 (clean)
     owasp_violation_count: int = 0
