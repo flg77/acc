@@ -86,6 +86,7 @@ class TUIPromptChannel:
         target_role: str,
         target_agent_id: str | None = None,
         on_progress=None,
+        operating_mode: str = "AUTO",
     ) -> str:
         """Build + publish a TASK_ASSIGN derived from *prompt*.
 
@@ -144,6 +145,13 @@ class TUIPromptChannel:
         # both None and the missing-key case; tighter to omit.
         if target_agent_id:
             payload["target_agent_id"] = target_agent_id
+        # PR-L (D-003) — per-session operating mode.  Only emit when
+        # the operator picked something other than the default so we
+        # don't bloat every TASK_ASSIGN on the bus.  Unknown values
+        # normalise to AUTO on the agent side via
+        # ``acc.operating_modes.normalise``.
+        if operating_mode and operating_mode != "AUTO":
+            payload["operating_mode"] = str(operating_mode)
 
         try:
             await self._observer.publish(

@@ -698,19 +698,32 @@ class Agent:
                 )
                 invocations = parse_invocations(result.output)
                 if invocations:
+                    # PR-L (D-003) — resolve the operating mode for
+                    # this task.  Precedence: task_payload field >
+                    # role.default_operating_mode > AUTO.  Unknown
+                    # strings normalise to AUTO so a typo can't
+                    # accidentally weaken the gate.
+                    from acc.operating_modes import normalise  # noqa: PLC0415
+                    task_mode = data.get("operating_mode") or getattr(
+                        self._active_role, "default_operating_mode", "AUTO",
+                    )
+                    operating_mode = normalise(task_mode)
                     outcomes = await dispatch_invocations(
                         invocations,
                         self._cognitive_core,  # type: ignore[arg-type]
                         self._active_role,
                         # Phase 4.5 — gate CRITICAL invocations on the
                         # human-oversight queue.  Non-CRITICAL items
-                        # bypass the queue entirely (cheap fast-path).
+                        # bypass the queue entirely (cheap fast-path
+                        # under AUTO; PR-L extends this for the other
+                        # operating modes).
                         oversight_queue=self._oversight_queue,
                         task_id=str(data.get("task_id", "")),
                         # Phase progress-emit — share the same callback
                         # so the prompt pane sees a continuous progress
                         # stream across the LLM steps + each invocation.
                         progress_callback=progress_callback,
+                        operating_mode=operating_mode,
                     )
                     logger.info(
                         "task_loop: dispatched %d capability invocation(s) "

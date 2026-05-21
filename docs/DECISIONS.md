@@ -153,7 +153,16 @@ latency matters more than the recall.
 
 ## D-003 — Operating modes: PLAN, ACCEPT_EDITS, ASK_PERMISSIONS, AUTO
 
-**Status:** PROPOSED
+**Status:** LANDED (PR-L, commit on `main` 2026-05-22; 43 new
+tests).  ``acc.operating_modes`` shipped (mode constants,
+normaliser, write-action classifier, ``should_gate_invocation``);
+``capability_dispatch.dispatch_invocations`` is now mode-aware;
+``RoleDefinitionConfig.default_operating_mode`` defaults to
+``AUTO``; Prompt-screen Select dropdown wires the per-session
+choice through ``TUIPromptChannel.send`` → ``task_payload`` →
+``_handle_task`` → ``dispatch_invocations``.  Constitutional
+Cat-A invariant pinned via
+``test_cat_a_block_propagates_through_all_modes``.
 **Date:** 2026-05-21
 **Context:** Today every operator prompt runs the agent in
 "unrestricted within constitutional rules" mode — Cat-A blocks

@@ -206,6 +206,7 @@ async def dispatch_invocations(
     oversight_queue: "Any | None" = None,
     task_id: str = "",
     progress_callback: "Any | None" = None,
+    operating_mode: str = "AUTO",
 ) -> list[InvocationOutcome]:
     """Execute each parsed marker through the cognitive core.
 
@@ -250,6 +251,28 @@ async def dispatch_invocations(
         One :class:`InvocationOutcome` per input marker, in the same
         order.  Empty input returns ``[]``.
     """
+    # PR-L (D-003) — PLAN mode short-circuits the entire dispatch.
+    # Each invocation is turned into a "would-have-fired" outcome
+    # (ok=True, error="PLAN_MODE: not executed").  The agent's reply
+    # downstream sees these as if they had run, which lets the LLM
+    # describe its plan honestly.  No skill / MCP code runs; no
+    # oversight items are submitted.  Cat-A guardrails do not apply
+    # here because nothing executes — the constitutional invariant is
+    # preserved trivially.
+    from acc.operating_modes import (  # noqa: PLC0415
+        MODE_PLAN, normalise, should_gate_invocation,
+    )
+    mode = normalise(operating_mode)
+    if mode == MODE_PLAN:
+        return [
+            InvocationOutcome(
+                parsed=inv, ok=True,
+                error="PLAN_MODE: not executed",
+                result={"plan_mode": True, "would_have_called": inv.target},
+            )
+            for inv in invocations
+        ]
+
     outcomes: list[InvocationOutcome] = []
     total = len(invocations)
     for idx, inv in enumerate(invocations, start=1):
@@ -281,6 +304,7 @@ async def dispatch_invocations(
             inv, core, role,
             oversight_queue=oversight_queue,
             task_id=task_id,
+            operating_mode=mode,
         ))
     return outcomes
 
@@ -292,12 +316,26 @@ async def _dispatch_one(
     *,
     oversight_queue: "Any | None" = None,
     task_id: str = "",
+    operating_mode: str = "AUTO",
 ) -> InvocationOutcome:
     """Run one marker; convert every exception path to an
     :class:`InvocationOutcome` with a populated ``error``.
 
-    CRITICAL invocations are gated on *oversight_queue* when one is
-    supplied; see :func:`dispatch_invocations` for the contract.
+    PR-L (D-003) — the gate decision is now mode-aware via
+    :func:`acc.operating_modes.should_gate_invocation`:
+
+    * AUTO — only CRITICAL invocations are gated (Phase 4.5
+      behaviour, preserved).
+    * ACCEPT_EDITS — CRITICAL invocations AND write actions
+      (classified by :func:`is_write_action`) are gated.
+    * ASK_PERMISSIONS — every invocation is gated.
+    * PLAN — never reaches here; ``dispatch_invocations``
+      short-circuits.
+
+    Cat-A constitutional rules still fire inside ``invoke_skill`` /
+    ``invoke_mcp_tool`` regardless of mode — modes only adjust what
+    HUMAN review applies to, not what the constitutional engine
+    decides.
     """
     if inv.args_error:
         logger.warning(
@@ -310,13 +348,28 @@ async def _dispatch_one(
     # for the oversight gate.  The registry round-trip is microseconds
     # and mirrors what invoke_skill / invoke_mcp_tool would do anyway.
     manifest = _resolve_manifest(inv, core)
-    if (
-        manifest is not None
-        and oversight_queue is not None
-        and getattr(manifest, "risk_level", "LOW") == "CRITICAL"
-    ):
+    from acc.operating_modes import should_gate_invocation  # noqa: PLC0415
+    risk_level = (
+        getattr(manifest, "risk_level", "LOW") if manifest is not None else "LOW"
+    )
+    needs_gate = (
+        oversight_queue is not None
+        and should_gate_invocation(
+            operating_mode, kind=inv.kind, target=inv.target,
+            risk_level=str(risk_level),
+        )
+    )
+    if needs_gate:
+        # In AUTO mode we still need a manifest to gate (CRITICAL is
+        # the only trigger); in ACCEPT_EDITS / ASK_PERMISSIONS we
+        # synthesise a minimal stand-in so the oversight item carries
+        # the same shape downstream.
+        gate_manifest = manifest if manifest is not None else _SyntheticManifest(
+            risk_level=str(risk_level),
+            target=inv.target,
+        )
         gate_outcome = await _gate_on_oversight(
-            inv, manifest, role, oversight_queue, task_id,
+            inv, gate_manifest, role, oversight_queue, task_id,
         )
         if gate_outcome is not None:
             # Either rejected or timed out — surface and skip dispatch.
@@ -486,3 +539,29 @@ def _build_oversight_summary(
         f"CRITICAL {inv.kind} {inv.target}: {purpose}\n"
         f"    args={args_repr}"
     )
+
+
+# ---------------------------------------------------------------------------
+# PR-L — synthetic manifest stand-in
+# ---------------------------------------------------------------------------
+
+
+class _SyntheticManifest:
+    """Minimal stand-in when a real manifest isn't available but a
+    PR-L operating-mode gate still needs to fire.
+
+    Carries just enough attributes for ``_gate_on_oversight`` /
+    ``_summarise_invocation_for_oversight`` to render a sensible
+    pending-item card: ``risk_level``, ``purpose``, ``target``.
+    Used by ACCEPT_EDITS / ASK_PERMISSIONS modes where the gate
+    decision doesn't depend on the manifest at all — operating mode
+    is the trigger.
+    """
+
+    def __init__(self, *, risk_level: str, target: str) -> None:
+        self.risk_level = risk_level
+        self.target = target
+        self.purpose = (
+            f"(synthesised — gated by operating mode, "
+            f"target={target!r})"
+        )

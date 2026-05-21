@@ -256,6 +256,23 @@ class PromptScreen(Screen):
                 placeholder="e.g. coding_agent-deadbeef",
                 id="input-target-agent-id",
             )
+            # PR-L (D-003) — operating-mode picker.  AUTO matches
+            # legacy behaviour; PLAN / ACCEPT_EDITS / ASK_PERMISSIONS
+            # adjust which invocations the human-oversight queue
+            # gates.  All four respect Cat-A constitutional rules
+            # unconditionally — see acc/operating_modes.py.
+            yield Label("Mode:")
+            yield Select(
+                [
+                    ("AUTO", "AUTO"),
+                    ("PLAN", "PLAN"),
+                    ("ACCEPT_EDITS", "ACCEPT_EDITS"),
+                    ("ASK_PERMISSIONS", "ASK_PERMISSIONS"),
+                ],
+                id="select-operating-mode",
+                value="AUTO",
+                allow_blank=False,
+            )
 
         # PR-4 — collapsible cluster topology panel.  Rendered above
         # the transcript so the operator can see active sub-agent
@@ -396,6 +413,17 @@ class PromptScreen(Screen):
         ).value.strip()
         target_aid = target_aid_raw or None
 
+        # PR-L (D-003) — per-session operating mode selector.  Empty /
+        # missing defaults to AUTO; the agent's task_loop normalises
+        # unknown values back to AUTO so a missing selector can't
+        # accidentally weaken the gate.
+        try:
+            operating_mode = str(
+                self.query_one("#select-operating-mode", Select).value or "AUTO",
+            )
+        except Exception:
+            operating_mode = "AUTO"
+
         observer = self._active_observer()
         if observer is None:
             self.notify(
@@ -413,6 +441,7 @@ class PromptScreen(Screen):
                 prompt=prompt,
                 target_role=target_role,
                 target_agent_id=target_aid,
+                operating_mode=operating_mode,
             )
         )
         self._workers.add(worker)
@@ -658,6 +687,7 @@ class PromptScreen(Screen):
         prompt: str,
         target_role: str,
         target_agent_id: str | None,
+        operating_mode: str = "AUTO",
     ) -> None:
         """Background worker.  One per Send click."""
         channel = TUIPromptChannel(observer, collective_id=collective_id)
@@ -680,6 +710,7 @@ class PromptScreen(Screen):
                 target_role=target_role,
                 target_agent_id=target_agent_id,
                 on_progress=_on_progress,
+                operating_mode=operating_mode,
             )
         except Exception as exc:
             logger.exception("prompt: send failed")

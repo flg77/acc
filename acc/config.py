@@ -61,6 +61,17 @@ class RoleDefinitionConfig(BaseModel):
     # one-shot agents).  See docs/DECISIONS.md D-002.
     memory_retrieval: bool = True
 
+    # D-003 (PR-L) — operator-controlled autonomy gate.
+    # ``AUTO`` (default) matches today's behaviour: Cat-A blocks,
+    # Cat-B observes, all other invocations run.  Other valid
+    # values: ``PLAN`` (no execution, plan-only), ``ACCEPT_EDITS``
+    # (gate write actions), ``ASK_PERMISSIONS`` (gate every
+    # invocation).  The Nucleus Apply form prefills the Prompt
+    # screen's mode selector from this value; the operator can
+    # override per task.  See docs/DECISIONS.md D-003 and
+    # ``acc/operating_modes.py``.
+    default_operating_mode: str = "AUTO"
+
     # Proposal 004 — first-class subrole hierarchy.
     # ``parent_role`` declares the role's logical parent in a flat
     # 2-level tree: a top-level role (``coding_agent``) is the
