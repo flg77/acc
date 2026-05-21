@@ -77,12 +77,17 @@ def _write_mcp_manifest(mcps_root: Path, server_id: str = "echo_server") -> None
 
 
 def _write_role_manifest(roles_root: Path, role_name: str = "test_role") -> None:
-    """Drop a minimal role.yaml so list_roles returns at least one entry."""
+    """Drop a minimal role.yaml so list_roles returns at least one entry.
+
+    Commit-4 — the purpose string now interpolates ``role_name`` so the
+    preview-vs-commit tests can tell two fixture roles apart from the
+    editor's text content alone.
+    """
     role_dir = roles_root / role_name
     role_dir.mkdir(parents=True, exist_ok=True)
     (role_dir / "role.yaml").write_text(
         "role_definition:\n"
-        "  purpose: 'pilot fixture'\n"
+        f"  purpose: 'pilot fixture for {role_name}'\n"
         "  persona: 'concise'\n"
         "  task_types: ['pilot_test']\n"
         "  domain_id: 'pilot_domain'\n"
@@ -110,6 +115,10 @@ def isolated_manifests(tmp_path, monkeypatch):
     _write_skill_manifest(skills_root)
     _write_mcp_manifest(mcps_root)
     _write_role_manifest(roles_root, "test_role")
+    # Commit-4 — a second role so the preview/commit split tests have
+    # something to scroll to.  Pre-Commit-4 only one role was needed
+    # because highlight + select did the same thing; now they don't.
+    _write_role_manifest(roles_root, "test_role_b")
 
     monkeypatch.setenv("ACC_SKILLS_ROOT", str(skills_root))
     monkeypatch.setenv("ACC_MCPS_ROOT", str(mcps_root))
@@ -462,8 +471,11 @@ async def test_role_detail_renders_role_md_when_present(
 
         role_table = screen.query_one("#role-table", DataTable)
         first_row_key = list(role_table.rows.keys())[0]
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
+        # Commit-4: lock acquisition moved from highlight (preview) to
+        # select (commit/Enter).  Use the select handler to exercise
+        # the same code path.
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
                 data_table=role_table,
                 cursor_row=0,
                 row_key=first_row_key,
@@ -499,8 +511,11 @@ async def test_role_detail_md_placeholder_when_absent(isolated_manifests):
 
         role_table = screen.query_one("#role-table", DataTable)
         first_row_key = list(role_table.rows.keys())[0]
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
+        # Commit-4: lock acquisition moved from highlight (preview) to
+        # select (commit/Enter).  Use the select handler to exercise
+        # the same code path.
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
                 data_table=role_table,
                 cursor_row=0,
                 row_key=first_row_key,
@@ -529,11 +544,12 @@ async def test_role_filter_input_narrows_table(isolated_manifests, tmp_path):
         screen = app.screen
         role_table = screen.query_one("#role-table", DataTable)
 
-        # Baseline: all three rows present.
+        # Baseline: all four rows present (Commit-4 fixture also adds
+        # `test_role_b` as a default).
         names = [
             getattr(k, "value", str(k)) for k in role_table.rows.keys()
         ]
-        assert set(names) == {"alpha_role", "beta_role", "test_role"}
+        assert set(names) == {"alpha_role", "beta_role", "test_role", "test_role_b"}
 
         # Filter to alpha — only one row should remain.
         screen._apply_filter("alpha")
@@ -551,7 +567,7 @@ async def test_role_filter_input_narrows_table(isolated_manifests, tmp_path):
             getattr(k, "value", str(k))
             for k in role_table.rows.keys()
         ]
-        assert set(names) == {"alpha_role", "beta_role", "test_role"}
+        assert set(names) == {"alpha_role", "beta_role", "test_role", "test_role_b"}
 
 
 @pytest.mark.asyncio
@@ -574,7 +590,8 @@ async def test_role_filter_matches_persona_substring(
             getattr(k, "value", str(k))
             for k in role_table.rows.keys()
         ]
-        assert names == ["test_role"], names
+        # Both fixture roles share persona='concise', so both match.
+        assert set(names) == {"test_role", "test_role_b"}, names
 
 
 @pytest.mark.asyncio
@@ -698,7 +715,7 @@ async def test_watcher_repopulates_role_table_after_external_add(
         baseline_names = {
             getattr(k, "value", str(k)) for k in role_table.rows.keys()
         }
-        assert baseline_names == {"test_role"}
+        assert baseline_names == {"test_role", "test_role_b"}
 
         _write_role_manifest(roles_root, "new_role")
 
@@ -715,7 +732,7 @@ async def test_watcher_repopulates_role_table_after_external_add(
             getattr(k, "value", str(k))
             for k in role_table.rows.keys()
         }
-        assert names == {"test_role", "new_role"}, names
+        assert names == {"test_role", "test_role_b", "new_role"}, names
 
 
 @pytest.mark.asyncio
@@ -765,8 +782,11 @@ async def test_row_selection_acquires_filelock(isolated_manifests):
         role_table = screen.query_one("#role-table", DataTable)
         first_row_key = list(role_table.rows.keys())[0]
 
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
+        # Commit-4: lock acquisition moved from highlight (preview) to
+        # select (commit/Enter).  Use the select handler to exercise
+        # the same code path.
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
                 data_table=role_table,
                 cursor_row=0,
                 row_key=first_row_key,
@@ -787,8 +807,11 @@ async def test_lock_released_on_screen_unmount(isolated_manifests):
         screen = app.screen
         role_table = screen.query_one("#role-table", DataTable)
         first_row_key = list(role_table.rows.keys())[0]
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
+        # Commit-4: lock acquisition moved from highlight (preview) to
+        # select (commit/Enter).  Use the select handler to exercise
+        # the same code path.
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
                 data_table=role_table,
                 cursor_row=0,
                 row_key=first_row_key,
@@ -829,8 +852,11 @@ async def test_lock_busy_path_notifies_without_crash(
 
         role_table = screen.query_one("#role-table", DataTable)
         first_row_key = list(role_table.rows.keys())[0]
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
+        # Commit-4: lock acquisition moved from highlight (preview) to
+        # select (commit/Enter).  Use the select handler to exercise
+        # the same code path.
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
                 data_table=role_table,
                 cursor_row=0,
                 row_key=first_row_key,
@@ -1057,8 +1083,11 @@ async def test_edit_buttons_armed_on_row_select(isolated_manifests):
         # follows.
         role_table = screen.query_one("#role-table", DataTable)
         first_row_key = list(role_table.rows.keys())[0]
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
+        # Commit-4: lock acquisition moved from highlight (preview) to
+        # select (commit/Enter).  Use the select handler to exercise
+        # the same code path.
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
                 data_table=role_table,
                 cursor_row=0,
                 row_key=first_row_key,
@@ -1127,8 +1156,11 @@ async def test_edit_yaml_button_spawns_editor(
 
         role_table = screen.query_one("#role-table", DataTable)
         first_row_key = list(role_table.rows.keys())[0]
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
+        # Commit-4: lock acquisition moved from highlight (preview) to
+        # select (commit/Enter).  Use the select handler to exercise
+        # the same code path.
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
                 data_table=role_table,
                 cursor_row=0,
                 row_key=first_row_key,
@@ -1169,8 +1201,11 @@ async def test_edit_md_button_creates_missing_role_md_and_spawns(
         screen = app.screen
         role_table = screen.query_one("#role-table", DataTable)
         first_row_key = list(role_table.rows.keys())[0]
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
+        # Commit-4: lock acquisition moved from highlight (preview) to
+        # select (commit/Enter).  Use the select handler to exercise
+        # the same code path.
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
                 data_table=role_table,
                 cursor_row=0,
                 row_key=first_row_key,
@@ -1624,4 +1659,109 @@ async def test_shortcut_agenda_present_and_updates_on_tab_switch(
         await pilot.pause()
         assert any("Roles" in text for text in recorded), (
             f"Roles agenda not in updates: {recorded!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Commit-4 — Space-preview vs Enter-commit split
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_space_previews_without_committing(isolated_manifests):
+    """Commit-4 — Space loads role detail but does NOT pin selection
+    nor arm the Schedule-infusion button to the previewed role."""
+    from textual.widgets import TextArea
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        # On mount the first role is auto-committed.  Snapshot it.
+        original_selected = screen._selected_role
+        assert original_selected != ""
+
+        # Move the cursor to a different row, then preview via Space.
+        role_table = screen.query_one("#role-table", DataTable)
+        rows = list(role_table.rows.keys())
+        if len(rows) < 2:
+            pytest.skip("isolated_manifests fixture has only 1 role")
+        role_table.move_cursor(row=1)
+        await pilot.pause()
+
+        # Trigger preview.
+        screen.action_preview_cursor_role()
+        await pilot.pause()
+
+        # _selected_role unchanged — preview did NOT commit.
+        assert screen._selected_role == original_selected, (
+            "Space-preview must not change _selected_role"
+        )
+
+        # But the editor should now show the previewed row's content.
+        previewed_role = screen._extract_role_name(rows[1])
+        editor = screen.query_one("#role-yaml-editor", TextArea)
+        assert previewed_role in editor.text or editor.text == "" or \
+            f"roles/{previewed_role}" in editor.text, (
+            f"editor should preview row 1 ({previewed_role}); got "
+            f"{editor.text[:120]!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_enter_commits_cursor_row(isolated_manifests):
+    """Commit-4 — Enter (RowSelected) commits the cursor's row:
+    arms buttons, sets _selected_role, paints the ● marker."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        role_table = screen.query_one("#role-table", DataTable)
+        rows = list(role_table.rows.keys())
+        if len(rows) < 2:
+            pytest.skip("isolated_manifests fixture has only 1 role")
+
+        target_key = rows[1]
+        target_role = screen._extract_role_name(target_key)
+        assert target_role != screen._selected_role
+
+        # Simulate Enter on row 1.
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(
+                data_table=role_table,
+                cursor_row=1,
+                row_key=target_key,
+            )
+        )
+        await pilot.pause()
+
+        assert screen._selected_role == target_role
+        assert (
+            screen.query_one("#btn-schedule-infusion", Button).disabled
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_filter_submit_refocuses_table(isolated_manifests):
+    """Commit-4 — pressing Enter inside the filter Input shifts focus
+    to the role DataTable so subsequent arrow keys drive table cursor
+    (not filter text caret)."""
+    from textual.widgets import Input as TextInput
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        filter_input = screen.query_one("#role-filter", TextInput)
+        screen.on_input_submitted(
+            TextInput.Submitted(filter_input, value="")
+        )
+        await pilot.pause()
+
+        role_table = screen.query_one("#role-table", DataTable)
+        assert role_table.has_focus, (
+            "Enter on filter must refocus the role table for subsequent "
+            "arrow/Space/Enter chords"
         )

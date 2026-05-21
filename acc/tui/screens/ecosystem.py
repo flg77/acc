@@ -364,6 +364,15 @@ class EcosystemScreen(Screen):
         ("e", "toggle_edit_yaml", "Edit role.yaml"),
         ("s", "save_yaml", "Save role.yaml"),
         ("i", "infuse", "Schedule infusion"),
+        # Commit-4 — operator-requested two-step selection:
+        #   Space = preview (load role.md + role.yaml into the right
+        #           pane WITHOUT arming buttons or pinning selection)
+        #   Enter = commit (sets _selected_role, arms buttons, paints ●)
+        # `space` is bound at screen level so it works even when the
+        # filter input has focus — pressing it from the filter previews
+        # the cursor's current row in the table without leaving the
+        # filter field.
+        ("space", "preview_cursor_role", "Preview role"),
     ]
 
     def action_toggle_edit_yaml(self) -> None:
@@ -386,6 +395,73 @@ class EcosystemScreen(Screen):
             self._handle_schedule_infusion()
         except Exception:
             logger.exception("ecosystem: action_infuse failed")
+
+    def action_preview_cursor_role(self) -> None:
+        """Commit-4 — Space-bar preview.
+
+        Operator-requested two-step selection workflow:
+
+        * **Space** — load role.md + role.yaml for the row under the
+          DataTable's cursor into the right pane.  Does NOT touch
+          ``_selected_role``, does NOT arm the Schedule-infusion /
+          Save / Edit buttons, does NOT paint the ● marker.  Cheap
+          preview.
+        * **Enter** — commit the cursor's row as the active selection
+          (``on_data_table_row_selected`` handler).  Arms buttons +
+          paints ● + pins ``_selected_role``.
+
+        This decouples "scrolling around to read several roles" from
+        "I'm about to act on this one".  Pre-Commit-4 the only way to
+        load detail was clicking a row (which fired BOTH highlight and
+        select) — after a filter input change focus stayed on the
+        filter, arrow-keys moved the filter cursor not the table
+        cursor, and the panel stayed pinned to the on-mount auto-
+        selection.
+        """
+        try:
+            table = self.query_one("#role-table", DataTable)
+        except Exception:
+            return
+        # `cursor_row` is the visual cursor position.  Read directly —
+        # do NOT trust `event.row_key` here because we may be invoked
+        # while focus is on the filter input (no event in flight).
+        try:
+            cursor_row = table.cursor_row
+        except Exception:
+            cursor_row = 0
+        rows = list(table.rows.keys())
+        if not rows or cursor_row < 0 or cursor_row >= len(rows):
+            return
+        row_key = rows[cursor_row]
+        role_name = self._extract_role_name(row_key)
+        if not role_name:
+            return
+        # Render detail panel.  Do NOT set _selected_role — the
+        # operator hasn't committed yet.
+        try:
+            self._show_role_detail(role_name)
+        except Exception:
+            logger.exception(
+                "ecosystem: preview render failed for role=%r", role_name,
+            )
+            return
+        # Surface the preview state in the infusion-hint label so the
+        # operator can see "previewing X, committed to Y" at a glance.
+        try:
+            hint = self.query_one("#infusion-hint", Static)
+            if self._selected_role:
+                hint.update(
+                    f"[dim]Previewing: [b]{role_name}[/b] · "
+                    f"Selected: [b]{self._selected_role}[/b] "
+                    f"(press Enter to commit preview)[/dim]",
+                )
+            else:
+                hint.update(
+                    f"[dim]Previewing: [b]{role_name}[/b] "
+                    f"(press Enter to commit)[/dim]",
+                )
+        except Exception:
+            pass
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
 
@@ -445,7 +521,8 @@ class EcosystemScreen(Screen):
         yield Static(
             "[b]Roles tab[/b] · "
             "[yellow]↑/↓[/yellow] navigate · "
-            "[yellow]Enter[/yellow] select · "
+            "[yellow]Space[/yellow] preview · "
+            "[yellow]Enter[/yellow] commit · "
             "[yellow]e[/yellow] edit role.yaml · "
             "[yellow]s[/yellow] save · "
             "[yellow]i[/yellow] schedule infusion · "
@@ -732,31 +809,54 @@ class EcosystemScreen(Screen):
     def on_data_table_row_highlighted(
         self, event: DataTable.RowHighlighted
     ) -> None:
-        """Cursor moved over a role row — populate ROLE DETAIL live.
+        """Cursor moved over a role row — preview the detail panel.
 
-        Textual's DataTable fires ``RowSelected`` only on Enter / mouse
-        click.  Pre-PR-A the operator had to know to press Enter to
-        see a role's definition; with this handler the detail panel
-        updates as the cursor scrolls, matching how every other
-        spreadsheet-style UI behaves.
+        Commit-4 — separated into preview vs commit semantics per
+        operator request:
 
-        ``RowHighlighted`` is also fired on the initial mount of the
-        table, so the operator sees a populated detail panel before
-        clicking anything.
+        * Cursor movement (this handler) — load role.md + role.yaml
+          into the right pane.  Does NOT arm buttons, does NOT pin
+          ``_selected_role``, does NOT paint ●.  Equivalent to
+          pressing Space.
+        * Enter (``on_data_table_row_selected``) — commit: arm +
+          pin + ●.
+
+        Pre-Commit-4 highlight did both, which made it impossible to
+        scroll through several roles without ratcheting the active
+        selection through every cursor stop along the way.
         """
         if event.data_table.id != "role-table":
             return
         role_name = self._extract_role_name(event.row_key)
         if not role_name:
             return
-        # Set _selected_role FIRST so a downstream detail-render failure
-        # doesn't leave the Schedule-infusion button disabled.  PR-A's
-        # central UX invariant: highlighting a row arms the button.
-        self._selected_role = role_name
-        self._arm_infusion_button(role_name)
-        self._show_role_detail(role_name)
-        # Proposal 003 PR-3 — advisory lock on the selected role's files.
-        self._acquire_selection_lock(role_name)
+        # Preview only — does not touch _selected_role.
+        try:
+            self._show_role_detail(role_name)
+        except Exception:
+            logger.exception(
+                "ecosystem: preview render failed for role=%r", role_name,
+            )
+        # Update the hint to show "previewing X, committed: Y".
+        try:
+            hint = self.query_one("#infusion-hint", Static)
+            if self._selected_role and self._selected_role != role_name:
+                hint.update(
+                    f"[dim]Previewing: [b]{role_name}[/b] · "
+                    f"Selected: [b]{self._selected_role}[/b] "
+                    f"(press Enter to commit preview)[/dim]",
+                )
+            elif self._selected_role == role_name:
+                hint.update(
+                    f"[dim]Selected: [b]{role_name}[/b][/dim]",
+                )
+            else:
+                hint.update(
+                    f"[dim]Previewing: [b]{role_name}[/b] "
+                    f"(press Enter to commit)[/dim]",
+                )
+        except Exception:
+            pass
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """Enter pressed on a role row — pin the selection.
@@ -1425,6 +1525,28 @@ class EcosystemScreen(Screen):
         if (event.input.id or "") != "role-filter":
             return
         self._apply_filter(event.value or "")
+
+    def on_input_submitted(self, event: "Input.Submitted") -> None:
+        """Commit-4 — pressing Enter in the filter input commits the
+        filter and shifts focus to the role table so the operator's
+        next arrow-key + Space + Enter chord drives table navigation,
+        not filter-text editing.  Pre-Commit-4 focus stayed on the
+        filter and arrow-keys moved the text caret instead of the
+        table cursor — by far the most common "why isn't selection
+        working" report."""
+        if (event.input.id or "") != "role-filter":
+            return
+        try:
+            table = self.query_one("#role-table", DataTable)
+            # Park the cursor on the first remaining (filtered) row.
+            if len(list(table.rows.keys())) > 0:
+                table.move_cursor(row=0)
+            table.focus()
+            # Auto-preview the top row so the operator sees something
+            # informative immediately after filtering.
+            self.action_preview_cursor_role()
+        except Exception:
+            logger.exception("ecosystem: focus-table-after-filter failed")
 
     # ------------------------------------------------------------------
     # Proposal 003 PR-3 — file-watcher + selection lock
