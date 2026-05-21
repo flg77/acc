@@ -26,13 +26,18 @@ from acc.tui.screens.compliance import ComplianceScreen, _OversightAction
 
 
 def _make_snapshot_with_oversight(oid: str) -> CollectiveSnapshot:
+    # PR-H — risk_level / summary intentionally chosen NOT to trigger
+    # the new high-consequence confirm-modal path; this test asserts
+    # the screen-level 'a' / 'r' BINDING mechanic only.  The modal
+    # branch has its own coverage in test_compliance_pane_detail.py.
     snap = CollectiveSnapshot(collective_id="sol-test")
     snap.agents["arbiter-1"] = AgentSnapshot(agent_id="arbiter-1", role="arbiter")
     snap.oversight_pending_items = [
         {
             "oversight_id": oid,
             "agent_id": "coding_agent-1",
-            "risk_level": "CRITICAL",
+            "risk_level": "LOW",
+            "summary": "cat-B observation drift below threshold",
             "submitted_at_ms": int(time.time() * 1000),
             "status": "PENDING",
         }

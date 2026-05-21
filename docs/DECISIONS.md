@@ -199,7 +199,7 @@ the Cat-A guardrails.
 
 ## D-004 — Compliance pane redesign comes FIRST (before D-001/D-002/D-003)
 
-**Status:** PROPOSED (immediate next implementation)
+**Status:** LANDED (PR-H, commit on `main` 2026-05-22; 15 new tests + 1 fixture refresh)
 **Date:** 2026-05-21
 **Context:** The operator-reported "not clear what the user is
 approving" — today the pending-item card shows `ID · Agent · Risk ·

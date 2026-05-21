@@ -127,11 +127,36 @@ class ComplianceScreen(Screen):
                 yield Static(id="health-score-value")
                 yield ProgressBar(id="health-progress-bar", total=100, show_eta=False)
 
-            # Right column: oversight queue + violation log
+            # Right column: oversight queue + master/detail context + violation log
+            #
+            # PR-H (D-004) — operator-reported: pre-PR-H the table
+            # showed only ``ID · Agent · Risk · Submitted · Status``,
+            # leaving the operator to Approve / Reject blind.  The
+            # master/detail layout below surfaces the inbound HEARTBEAT
+            # ``summary`` (gate reason), the originating ``task_id``,
+            # and explicit Approve / Reject preview lines so the
+            # operator sees what they're consenting to before pressing
+            # ``a`` / ``r``.
             with Vertical(id="compliance-right"):
                 yield Label("HUMAN OVERSIGHT QUEUE", classes="panel-label")
                 yield DataTable(id="oversight-table")
-                yield Label("  [bold]a[/bold]=Approve  [bold]r[/bold]=Reject", classes="key-hint")
+                yield Label(
+                    "  [bold]a[/bold]=Approve  [bold]r[/bold]=Reject  "
+                    "[dim](↑/↓ to inspect a row in the detail panel below)[/dim]",
+                    classes="key-hint",
+                )
+
+                yield Label(
+                    "PENDING ITEM DETAIL", classes="panel-label",
+                    id="oversight-detail-label",
+                )
+                with ScrollableContainer(id="oversight-detail-container"):
+                    yield Static(
+                        "[dim]Highlight a row above to see its full "
+                        "context (gate reason, payload preview, "
+                        "consequence of Approve vs Reject).[/dim]",
+                        id="oversight-detail",
+                    )
 
                 yield Label("OWASP VIOLATION LOG (last 50)", classes="panel-label")
                 with ScrollableContainer(id="violation-log-container"):
@@ -145,8 +170,11 @@ class ComplianceScreen(Screen):
         owasp.add_columns("Code", "Grade", "Pass%", "Description")
 
         oversight = self.query_one("#oversight-table", DataTable)
+        # PR-H — added "Gate reason" (truncated summary) so the operator
+        # can scan the queue without expanding every row into the
+        # detail panel.
         oversight.add_columns(
-            "ID", "Agent", "Risk", "Submitted", "Status"
+            "ID", "Agent", "Risk", "Submitted", "Gate reason", "Status",
         )
 
     def on_navigate_to(self, event: NavigateTo) -> None:
@@ -209,6 +237,10 @@ class ComplianceScreen(Screen):
         """
         table = self.query_one("#oversight-table", DataTable)
         table.clear()
+        # PR-H — cache the full item dicts keyed by oversight_id so the
+        # detail panel can render rich context without re-walking the
+        # snapshot on every cursor move.
+        self._pending_items_by_id: dict[str, dict] = {}
 
         items = snap.oversight_pending_items or []
         if items:
@@ -218,20 +250,31 @@ class ComplianceScreen(Screen):
                 oid = str(item.get("oversight_id", ""))
                 if not oid:
                     continue
+                self._pending_items_by_id[oid] = dict(item)
                 submitted_ms = int(item.get("submitted_at_ms") or 0)
                 ts_str = (
                     time.strftime("%H:%M:%S", time.localtime(submitted_ms / 1000.0))
                     if submitted_ms
                     else "—"
                 )
+                summary_full = str(item.get("summary") or "")
+                summary_cell = (
+                    summary_full[:40] + "…" if len(summary_full) > 40
+                    else summary_full or "—"
+                )
                 table.add_row(
                     oid[:14],
                     str(item.get("agent_id", ""))[:16],
                     str(item.get("risk_level", "HIGH")),
                     ts_str,
+                    summary_cell,
                     "PENDING",
                     key=oid,
                 )
+            # PR-H — refresh detail panel against the (possibly new) cursor
+            # row so the operator sees something useful immediately after
+            # the snapshot tick, without an explicit cursor move.
+            self._refresh_detail_for_cursor()
             return
 
         # Legacy fallback: aggregate per-agent count when no per-item list
@@ -243,9 +286,188 @@ class ComplianceScreen(Screen):
                     agent_id[:16],
                     "HIGH",
                     time.strftime("%H:%M:%S"),
+                    "[dim]legacy aggregate — no per-item detail[/dim]",
                     f"{agent.oversight_pending_count} pending",
                     key=f"agg-{agent_id}",
                 )
+        # No PENDING items at all → clear the detail panel back to the
+        # placeholder so a stale prior selection doesn't mislead.
+        if not self._pending_items_by_id:
+            self._render_oversight_detail(None)
+
+    # ------------------------------------------------------------------
+    # PR-H — master/detail context renderer
+    # ------------------------------------------------------------------
+
+    # Risk levels / summary substrings that demand a confirmation modal
+    # before the operator's Approve actually publishes the decision.
+    # Reject is never gated — withholding consent is always safe.
+    _HIGH_CONSEQUENCE_RISK = frozenset({"HIGH", "CRITICAL", "UNACCEPTABLE"})
+    _HIGH_CONSEQUENCE_SUMMARY_MARKERS = (
+        "CRITICAL invocation",
+        "delete", "destroy", "drop", "rm ",
+        "A-017", "A-018",  # ACC's hardcoded Cat-A skill/MCP gates
+        "spawn",
+        "external network",
+    )
+
+    @classmethod
+    def _is_high_consequence(cls, item: dict) -> bool:
+        """Decide whether an Approve action needs the confirmation modal.
+
+        PR-H rule: any of
+        * ``risk_level`` in ``{HIGH, CRITICAL, UNACCEPTABLE}``, OR
+        * ``summary`` contains a known dangerous marker
+          (case-insensitive substring of the gate reason).
+        Reject never needs confirmation — pulling consent is always
+        safe.  Returns ``False`` for unknown / aggregate rows.
+        """
+        if not item:
+            return False
+        risk = str(item.get("risk_level") or "").upper()
+        if risk in cls._HIGH_CONSEQUENCE_RISK:
+            return True
+        summary = str(item.get("summary") or "").lower()
+        return any(
+            marker.lower() in summary
+            for marker in cls._HIGH_CONSEQUENCE_SUMMARY_MARKERS
+        )
+
+    def _refresh_detail_for_cursor(self) -> None:
+        """Re-render the detail panel against the table's current cursor.
+
+        Called on snapshot ticks (to keep the panel fresh against the
+        latest item state) and on RowHighlighted events (cursor move).
+        Best-effort — a missing widget or empty cache renders the
+        placeholder instead of raising.
+        """
+        try:
+            table = self.query_one("#oversight-table", DataTable)
+        except Exception:
+            return
+        if table.row_count == 0:
+            self._render_oversight_detail(None)
+            return
+        try:
+            row_key = table.coordinate_to_cell_key(
+                table.cursor_coordinate,
+            ).row_key
+            value = getattr(row_key, "value", None) or str(row_key)
+        except Exception:
+            self._render_oversight_detail(None)
+            return
+        if not value or value.startswith("agg-"):
+            self._render_oversight_detail(None)
+            return
+        item = getattr(self, "_pending_items_by_id", {}).get(str(value))
+        self._render_oversight_detail(item)
+
+    def _render_oversight_detail(self, item: dict | None) -> None:
+        """Update ``#oversight-detail`` with the highlighted item's
+        full context — or restore the placeholder when no row is
+        selected / cache lookup misses.
+
+        Rendered as a rich-markup multi-line block so the operator can
+        see at a glance:
+
+        * Identity — agent_id, oversight_id, task_id.
+        * Risk classification — risk_level (colour-coded).
+        * Submitted timestamp.
+        * Gate reason — the agent's free-text summary explaining WHY
+          this item is gated; the most important field for an informed
+          approve/reject.
+        * Approve preview / Reject preview — one-line summary of what
+          each action will publish on NATS.
+        * High-consequence banner when the row qualifies for the
+          confirm-modal path.
+        """
+        try:
+            panel = self.query_one("#oversight-detail", Static)
+        except Exception:
+            return
+        if not item:
+            panel.update(
+                "[dim]Highlight a row above to see its full context "
+                "(gate reason, payload preview, consequence of Approve "
+                "vs Reject).[/dim]"
+            )
+            return
+
+        oid = str(item.get("oversight_id", "—"))
+        agent_id = str(item.get("agent_id", "—"))
+        task_id = str(item.get("task_id", "—"))
+        risk = str(item.get("risk_level") or "HIGH").upper()
+        summary = str(item.get("summary") or "—")
+        submitted_ms = int(item.get("submitted_at_ms") or 0)
+        submitted = (
+            time.strftime(
+                "%H:%M:%S",
+                time.localtime(submitted_ms / 1000.0),
+            )
+            if submitted_ms else "—"
+        )
+
+        risk_colour = (
+            "red" if risk in {"CRITICAL", "UNACCEPTABLE"}
+            else "yellow" if risk == "HIGH"
+            else "green"
+        )
+
+        approve_preview = (
+            f"publish [b]OVERSIGHT_DECISION[/b] decision=APPROVE "
+            f"oversight_id={oid[:12]} approver_id=<operator> — "
+            f"agent [b]{agent_id}[/b] resumes task [b]{task_id[:12]}[/b]."
+        )
+        reject_preview = (
+            f"publish [b]OVERSIGHT_DECISION[/b] decision=REJECT "
+            f"oversight_id={oid[:12]} approver_id=<operator> — "
+            f"agent [b]{agent_id}[/b] aborts task [b]{task_id[:12]}[/b]; "
+            f"TASK_COMPLETE will carry blocked=True, "
+            f"block_reason='oversight rejected'."
+        )
+
+        consequence_banner = ""
+        if self._is_high_consequence(item):
+            consequence_banner = (
+                "\n[red on white][b] ⚠ HIGH-CONSEQUENCE [/b][/red on white]  "
+                "[red]Approve will require an explicit confirmation; "
+                "Reject does not.[/red]\n"
+            )
+
+        block = (
+            f"[b]oversight_id:[/b] {oid}\n"
+            f"[b]agent_id:[/b]     {agent_id}\n"
+            f"[b]task_id:[/b]      {task_id}\n"
+            f"[b]risk_level:[/b]   [{risk_colour}]{risk}[/{risk_colour}]\n"
+            f"[b]submitted:[/b]    {submitted}\n"
+            f"\n"
+            f"[b]Gate reason[/b]\n"
+            f"  {summary}\n"
+            f"{consequence_banner}\n"
+            f"[b]On [green]Approve[/green][/b] (key: [bold]a[/bold]) →\n"
+            f"  {approve_preview}\n"
+            f"\n"
+            f"[b]On [yellow]Reject[/yellow][/b] (key: [bold]r[/bold]) →\n"
+            f"  {reject_preview}"
+        )
+        panel.update(block)
+
+    def on_data_table_row_highlighted(
+        self, event: "DataTable.RowHighlighted",
+    ) -> None:
+        """PR-H — refresh the detail panel as the operator scrolls
+        through the oversight queue.  Other DataTables on this screen
+        (the OWASP grading table) are show_cursor=False so they don't
+        fire RowHighlighted; the table-id filter is defensive."""
+        if event.data_table.id != "oversight-table":
+            return
+        row_key = event.row_key
+        value = getattr(row_key, "value", None) or str(row_key)
+        if not value or value.startswith("agg-"):
+            self._render_oversight_detail(None)
+            return
+        item = getattr(self, "_pending_items_by_id", {}).get(str(value))
+        self._render_oversight_detail(item)
 
     def _render_violation_log(self, snap: "CollectiveSnapshot") -> None:
         """Render scrollable violation log (REQ-TUI-027)."""
@@ -277,9 +499,42 @@ class ComplianceScreen(Screen):
     # ------------------------------------------------------------------
 
     async def action_approve_oversight(self) -> None:
-        """Approve the selected oversight queue item via NATS (REQ-TUI-026)."""
+        """Approve the selected oversight queue item via NATS (REQ-TUI-026).
+
+        PR-H — when the highlighted item is *high-consequence*
+        (:meth:`_is_high_consequence`), open the confirmation modal
+        first; the operator must explicitly press ``Confirm Approve``
+        before the OVERSIGHT_DECISION is published.  Cancelling the
+        modal (Escape / Cancel button) leaves the item PENDING and
+        publishes nothing.  Reject is never gated."""
         oid = self._selected_oversight_id()
         if oid is None:
+            return
+        item = getattr(self, "_pending_items_by_id", {}).get(oid)
+        if item and self._is_high_consequence(item):
+            from acc.tui.widgets.oversight_confirm_modal import (  # noqa: PLC0415
+                OversightConfirmModal,
+            )
+
+            def _on_confirm(confirmed: bool | None) -> None:
+                """Callback resolved when the modal dismisses with a
+                bool: ``True`` means the operator pressed
+                ``Confirm Approve`` → publish the OVERSIGHT_DECISION;
+                anything else (Cancel, Escape, X-close) → no-op so the
+                item stays PENDING."""
+                if confirmed:
+                    self.app.post_message(
+                        _OversightAction(action="approve", oversight_id=oid),
+                    )
+
+            # Callback form (matches the codebase's existing modal
+            # pattern in configuration.py / prompt.py — no
+            # ``push_screen_wait`` dependency on a specific Textual
+            # minor version).
+            self.app.push_screen(
+                OversightConfirmModal(item),
+                _on_confirm,
+            )
             return
         # The app's observer handles publishing; delegate up
         self.app.post_message(_OversightAction(action="approve", oversight_id=oid))
