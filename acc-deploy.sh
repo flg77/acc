@@ -209,7 +209,10 @@ BASE_CMD=(podman-compose -f "$COMPOSE_FILE")
 # does not source .env into its own environment).
 USERNS_VAL="${ACC_TUI_USERNS_MODE:-}"
 if [[ -z "$USERNS_VAL" && -f "$REPO_ROOT/.env" ]]; then
-    USERNS_VAL="$(grep -E '^ACC_TUI_USERNS_MODE=' "$REPO_ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+    # `|| true` is essential — without it, grep's exit-1 on no-match
+    # trips `set -euo pipefail` and silently kills the whole script
+    # before the compose command ever runs.
+    USERNS_VAL="$(grep -E '^ACC_TUI_USERNS_MODE=' "$REPO_ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
 fi
 USERNS_OVERLAY="$REPO_ROOT/container/production/podman-compose.userns.yml"
 if [[ "$STACK" == "production" && -n "$USERNS_VAL" && -f "$USERNS_OVERLAY" ]]; then
