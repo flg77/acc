@@ -469,11 +469,19 @@ services:
     # to the host's `./.env`, typically chmod 600 + owned by the
     # operator).  Without this mapping the in-container write hits
     # `[Errno 13] Permission denied` against the host file because
-    # the container's 1001 is a different namespace uid.  Requires
-    # rootless podman + an entry in /etc/subuid.  Falls back
-    # gracefully on rootful podman (the userns_mode keyword is then
-    # a no-op).
-    userns_mode: "keep-id:uid=1001,gid=0"
+    # the container's 1001 is a different namespace uid.
+    #
+    # PR-S — OPT-IN (default empty).  ``keep-id`` is incompatible with
+    # podman-compose's pod mode (``Error: --userns and --pod cannot be
+    # set together``), which broke the acc-tui container on pod-mode
+    # hosts (acc1).  So the default is now empty (no userns remap) —
+    # safe everywhere — and hosts that need the .env-writeback fix
+    # AND run non-pod rootless podman (lighthouse) opt in via:
+    #   ACC_TUI_USERNS_MODE=keep-id:uid=1001,gid=0   (in ./.env)
+    # On pod-mode hosts leave it unset; the Configuration Save then
+    # needs the host .env to be group-writable by gid 0 instead
+    # (chmod g+w ./.env), or edit ./.env on the host directly.
+    userns_mode: "${ACC_TUI_USERNS_MODE:-}"
     depends_on:
       nats:
         condition: service_healthy
