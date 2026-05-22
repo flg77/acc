@@ -239,3 +239,43 @@ class TestPayloadBytesHelper:
         # Deep-enough call to surface RecursionError if the bug returns.
         for _ in range(2000):
             _payload_bytes(b'{"k": "v"}')
+
+
+# ---------------------------------------------------------------------------
+# PR-T — configurable TASK_COMPLETE output cap
+# ---------------------------------------------------------------------------
+
+
+class TestTaskOutputCap:
+    """The 500-char cap truncated generated code mid-line in the
+    operator's Prompt window.  PR-T raises the default to 16000 and
+    makes it configurable; the full output is still persisted to
+    LanceDB by episode_id."""
+
+    def test_default_cap_is_16000(self, monkeypatch):
+        from acc.agent import _task_output_max_chars
+        monkeypatch.delenv("ACC_TASK_OUTPUT_MAX_CHARS", raising=False)
+        assert _task_output_max_chars() == 16000
+
+    def test_env_override(self, monkeypatch):
+        from acc.agent import _task_output_max_chars
+        monkeypatch.setenv("ACC_TASK_OUTPUT_MAX_CHARS", "32000")
+        assert _task_output_max_chars() == 32000
+
+    def test_invalid_override_falls_back(self, monkeypatch):
+        from acc.agent import _task_output_max_chars
+        monkeypatch.setenv("ACC_TASK_OUTPUT_MAX_CHARS", "not-a-number")
+        assert _task_output_max_chars() == 16000
+
+    def test_nonpositive_override_falls_back(self, monkeypatch):
+        from acc.agent import _task_output_max_chars
+        monkeypatch.setenv("ACC_TASK_OUTPUT_MAX_CHARS", "0")
+        assert _task_output_max_chars() == 16000
+
+    def test_cap_large_enough_for_a_real_script(self, monkeypatch):
+        """A ~2KB FastAPI scraper must fit well within the default cap
+        (the regression that made it look like the agent 'didn't
+        finish')."""
+        from acc.agent import _task_output_max_chars
+        monkeypatch.delenv("ACC_TASK_OUTPUT_MAX_CHARS", raising=False)
+        assert _task_output_max_chars() >= 2000

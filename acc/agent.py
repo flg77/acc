@@ -63,6 +63,29 @@ from acc.signals import (
 logger = logging.getLogger("acc.agent")
 
 
+def _task_output_max_chars() -> int:
+    """PR-T — max chars of LLM output echoed in the TASK_COMPLETE bus
+    payload.
+
+    The original 500-char cap was far too small for code generation:
+    the operator's Prompt window showed scripts truncated mid-line
+    (e.g. cut off at ``response = requests.get(url)``), making it look
+    like the agent "didn't finish".  The full output is ALWAYS
+    persisted to LanceDB by ``episode_id`` regardless of this cap —
+    this only bounds the bus echo.  Default 16000 chars (NATS/msgpack
+    handle far larger); override with ``ACC_TASK_OUTPUT_MAX_CHARS``.
+    """
+    raw = os.environ.get("ACC_TASK_OUTPUT_MAX_CHARS", "")
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return 16000
+
+
 def _payload_bytes(msg) -> bytes:
     """Return the JSON-bytes payload from a signaling subscribe callback arg.
 
@@ -773,7 +796,7 @@ class Agent:
                 "blocked": result.blocked,
                 "block_reason": result.block_reason,
                 "latency_ms": result.latency_ms,
-                "output": result.output[:500] if result.output else "",  # truncate for bus
+                "output": result.output[:_task_output_max_chars()] if result.output else "",  # truncate for bus
                 # Phase 4.4 — capability invocation summary.  Each
                 # outcome is reduced to (kind, target, ok, error) so the
                 # bus payload stays small even when the LLM fires many
@@ -933,7 +956,7 @@ class Agent:
             "blocked": result_data.get("blocked", False),
             "block_reason": result_data.get("block_reason", ""),
             "latency_ms": result_data.get("latency_ms", 0.0),
-            "output": (result_data.get("output", "") or "")[:500],
+            "output": (result_data.get("output", "") or "")[:_task_output_max_chars()],
         }).encode()
         await self.backends.signaling.publish(
             subject_task_complete(collective_id), complete_payload
