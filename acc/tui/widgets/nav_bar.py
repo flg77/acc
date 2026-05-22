@@ -31,6 +31,8 @@ _SCREENS: list[tuple[str, str, str]] = [
     ("6", "ecosystem",     "6 Ecosystem"),
     ("7", "prompt",        "7 Prompt"),
     ("8", "configuration", "8 Configuration"),
+    # PR-N (K-2) — golden-prompt diagnostics pane.
+    ("9", "diagnostics",   "9 Diagnostics"),
 ]
 
 
