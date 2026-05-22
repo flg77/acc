@@ -127,6 +127,9 @@ include = ["acc*"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--cov=acc --cov-report=term-missing --cov-fail-under=80"
+markers = [
+    "e2e: end-to-end tests that require a live ACC stack (NATS + agents). Opt-in: run with `pytest -m e2e` after `./acc-deploy.sh up`. See docs/TESTING.md.",
+]
 
 [tool.coverage.run]
 source = ["acc"]
