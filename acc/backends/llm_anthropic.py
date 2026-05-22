@@ -69,10 +69,40 @@ class AnthropicBackend:
             ) from exc
 
         content = message.content[0].text
+
+        # PR-R — return token usage so the agent's Cat-B token-budget
+        # tracking is accurate.  The Anthropic Messages API reports
+        # ``usage.input_tokens`` + ``usage.output_tokens`` separately;
+        # ``acc.cognitive_core`` reads ``usage.total_tokens`` (line ~1081
+        # for token_count, ~1104 for the over-budget deviation check),
+        # so we compute the total and expose all three.  Pre-PR-R this
+        # backend discarded usage entirely → token_count was always 0
+        # and every token_budget config silently read as 0% utilised.
+        usage_obj = getattr(message, "usage", None)
+        input_tokens = int(getattr(usage_obj, "input_tokens", 0) or 0)
+        output_tokens = int(getattr(usage_obj, "output_tokens", 0) or 0)
+        usage = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
+
+        # Canonical shape — matches ``acc.backends.llm_openai_compat`` and
+        # the PR-5 vLLM rewrite: always carry ``content`` + ``usage``;
+        # fold parsed-JSON keys in when the model emitted valid JSON;
+        # keep ``text`` populated for legacy readers.
+        result: dict = {"content": content, "usage": usage}
         try:
-            return json.loads(content)
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                for k, v in parsed.items():
+                    result.setdefault(k, v)
+                result["text"] = content
+            else:
+                result["text"] = content
         except json.JSONDecodeError:
-            return {"text": content}
+            result["text"] = content
+        return result
 
     async def embed(self, text: str) -> list[float]:
         """Generate embedding using local sentence-transformers model."""

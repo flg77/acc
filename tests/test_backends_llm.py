@@ -127,25 +127,67 @@ class TestAnthropicBackend:
             embedding_model_path="/app/models/all-MiniLM-L6-v2",
         )
 
+    @staticmethod
+    def _msg(text: str, *, input_tokens: int = 12, output_tokens: int = 34):
+        """Build a mock Anthropic Messages response with a usage block."""
+        m = MagicMock()
+        m.content = [MagicMock(text=text)]
+        m.usage = MagicMock(input_tokens=input_tokens, output_tokens=output_tokens)
+        return m
+
     @pytest.mark.asyncio
-    async def test_complete_returns_parsed_json(self):
+    async def test_complete_returns_parsed_json_with_usage(self):
+        """PR-R — canonical shape: parsed JSON keys folded in, plus
+        content + text + usage."""
         backend = self._backend()
-        mock_message = MagicMock()
-        mock_message.content = [MagicMock(text='{"status": "ok"}')]
+        mock_message = self._msg('{"status": "ok"}')
 
         with patch.object(backend._client.messages, "create", AsyncMock(return_value=mock_message)):
             result = await backend.complete("sys", "usr")
-        assert result == {"status": "ok"}
+        # Parsed JSON key still accessible.
+        assert result["status"] == "ok"
+        # Canonical fields present.
+        assert result["content"] == '{"status": "ok"}'
+        assert result["text"] == '{"status": "ok"}'
+        assert result["usage"]["total_tokens"] == 46  # 12 + 34
 
     @pytest.mark.asyncio
-    async def test_complete_non_json_wrapped_in_text(self):
+    async def test_complete_non_json_wrapped_in_text_with_usage(self):
         backend = self._backend()
-        mock_message = MagicMock()
-        mock_message.content = [MagicMock(text="plain text")]
+        mock_message = self._msg("plain text", input_tokens=5, output_tokens=7)
 
         with patch.object(backend._client.messages, "create", AsyncMock(return_value=mock_message)):
             result = await backend.complete("sys", "usr")
-        assert result == {"text": "plain text"}
+        assert result["text"] == "plain text"
+        assert result["content"] == "plain text"
+        assert result["usage"] == {
+            "input_tokens": 5, "output_tokens": 7, "total_tokens": 12,
+        }
+
+    @pytest.mark.asyncio
+    async def test_usage_total_drives_cognitive_core_token_count(self):
+        """PR-R — the budget-tracking contract: cognitive_core reads
+        ``response['usage']['total_tokens']``.  Prove the anthropic
+        backend now populates exactly that key."""
+        backend = self._backend()
+        mock_message = self._msg("hello", input_tokens=100, output_tokens=250)
+        with patch.object(backend._client.messages, "create", AsyncMock(return_value=mock_message)):
+            result = await backend.complete("sys", "usr")
+        token_count = result.get("usage", {}).get("total_tokens", 0)
+        assert token_count == 350
+
+    @pytest.mark.asyncio
+    async def test_missing_usage_defaults_to_zero_not_crash(self):
+        """PR-R — a response without a usage block (older SDK / mock)
+        yields total_tokens=0, never a crash."""
+        backend = self._backend()
+        m = MagicMock()
+        m.content = [MagicMock(text="hi")]
+        m.usage = None
+        with patch.object(backend._client.messages, "create", AsyncMock(return_value=m)):
+            result = await backend.complete("sys", "usr")
+        assert result["usage"]["total_tokens"] == 0
+        assert result["text"] == "hi"
 
     @pytest.mark.asyncio
     async def test_api_error_retryable_on_429(self):
