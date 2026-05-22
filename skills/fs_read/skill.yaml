@@ -1,0 +1,48 @@
+# skills/fs_read/skill.yaml — sandboxed workspace file read (D-007).
+#
+# Reads a file from the trusted working directory ONLY.  All paths
+# resolve through acc.workspace.safe_resolve, which rejects absolute
+# paths, parent traversal, and symlink escape.  risk_level MEDIUM:
+# read-only, but it touches the filesystem so it's above LOW.
+
+purpose:        "Read a UTF-8 text file from the trusted workspace."
+version:        "0.1.0"
+adapter_class:  "FsReadSkill"
+risk_level:     "MEDIUM"
+domain_id:      "workspace"
+tags:           ["filesystem", "workspace", "read"]
+
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+      description: "Path relative to the workspace root (no .. or absolute)."
+    max_bytes:
+      type: integer
+      minimum: 1
+      maximum: 1048576
+      description: "Cap the read size (default 65536)."
+  required: ["path"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    path:
+      type: string
+    content:
+      type: string
+    bytes:
+      type: integer
+      minimum: 0
+    truncated:
+      type: boolean
+  required: ["path", "content", "bytes", "truncated"]
+  additionalProperties: false
+
+description: |
+  Read a file from the operator's trusted working directory.  The
+  path is sandboxed to the workspace root; any escape attempt is
+  rejected by acc.workspace.safe_resolve.  Returns the file content
+  (UTF-8, errors replaced) capped at max_bytes.

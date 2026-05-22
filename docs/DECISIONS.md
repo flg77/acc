@@ -395,6 +395,79 @@ as PR-A through PR-F.
 
 ---
 
+## D-007 — Trusted working directory (workspace sandbox)
+
+**Status:** IN PROGRESS — **PR-U1 (foundation) LANDED** (commit on
+`main` 2026-05-22; 21 sandbox tests).  PR-U2 (TUI trust dialog) and
+PR-U3 (role wiring + compose mount + gating) are PROPOSED, pending
+operator review of the security model below.
+**Date:** 2026-05-22
+**Context:** Lighthouse testing surfaced that agents answer coding
+tasks as *text only* — they never create files, can't iterate on a
+real tree, and there's no notion of "where" they work.  The operator
+asked for a **trusted working directory** (like Claude Code's trust
+dialog): create a new directory or open an existing one; agents get
+filesystem access scoped ONLY to that folder; applies to every role.
+
+**Decision — a sandboxed workspace, gated three ways:**
+
+1. **Path sandbox (security core).** `acc/workspace.py:safe_resolve`
+   resolves every caller-supplied path against the workspace root to
+   a real (symlink-collapsed) absolute path and asserts containment.
+   Rejects absolute paths, `..` traversal, and symlink escape.  This
+   is the chokepoint every filesystem skill goes through.
+2. **Trust flag.** Writes additionally require the operator to have
+   *trusted* the directory — a `.acc-workspace-trust` sentinel at the
+   root (written by the TUI dialog).  An untrusted directory blocks
+   all writes even when the path is in-bounds.  Survives restarts;
+   visible to every agent that mounts the workspace.
+3. **Operating-mode gate (ties into D-003).** The write skill id is
+   `fs_write`, which the D-003 write-action classifier flags — so
+   under ACCEPT_EDITS / ASK_PERMISSIONS every file write is funnelled
+   through the human-oversight queue before touching disk.
+
+**Skills (separate ids for selective allow-listing + gating):**
+* `fs_read`  (risk MEDIUM, read-only, no trust required) — read a
+  file from the workspace.
+* `fs_write` (risk HIGH, trust required, write-action) — write a
+  file into the workspace.
+(`fs_list` / `fs_mkdir` are easy follow-ons if needed.)
+
+**PR breakdown:**
+* **PR-U1 (LANDED)** — `acc/workspace.py` sandbox (resolve + trust
+  helpers), `skills/fs_read` + `skills/fs_write` adapters, 21 tests
+  covering escape vectors (absolute / traversal / symlink), the
+  trust flag, the skill round-trip, and the D-003 write-classifier
+  integration.  **Not yet wired into any role's `allowed_skills`,
+  not yet mounted** — so building it grants NO live access; it's the
+  safe foundation + the thing that *prevents* escape.
+* **PR-U2 (PROPOSED)** — TUI trust dialog: a modal to create-new /
+  open-existing / trust a directory; writes the trust sentinel +
+  records the chosen path; surfaces the active workspace in the
+  Prompt / Ecosystem panes.  Applies to all roles.
+* **PR-U3 (PROPOSED)** — wiring: bind-mount the trusted host dir to
+  `/workspace` in the agent services (compose); add `fs_read` /
+  `fs_write` to the relevant roles' `allowed_skills`
+  (`coding_agent*` first, then opt-in for others); doc
+  (`docs/workspace_setup.md`).  Gated on operator sign-off of the
+  security model since this is where LLM agents gain real disk
+  access.
+
+**Open question for the operator (PR-U3):** which roles get
+`fs_write` by default?  Recommendation: coding_agent + its subroles
+only, with read-only `fs_read` available more broadly; everything
+else opt-in per role.yaml.  Also: is `/workspace` always a single
+host dir bind-mounted into every agent, or per-cluster/per-collective
+isolated dirs?
+
+**Related, not yet decided** — the "no interaction / no spawning"
+observation (agents don't run the implementer→reviewer→tester
+micro-cycle): that's a separate **coding-workflow PLAN** decision
+that combines the worker pool (D-001) + a PLAN that decomposes a
+coding task across subroles.  Tracked under "Future considerations".
+
+---
+
 ## Future considerations (not yet decided)
 
 * **Multi-collective infusion** — today PR-D writes to a single

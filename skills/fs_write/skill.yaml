@@ -1,0 +1,49 @@
+# skills/fs_write/skill.yaml — sandboxed workspace file write (D-007).
+#
+# Writes a file into the trusted working directory ONLY.  Paths
+# resolve through acc.workspace.require_writable_workspace, which
+# enforces BOTH the path sandbox (no escape) AND the trust flag (the
+# operator must have trusted the directory).  risk_level HIGH: it
+# creates/overwrites files, and the D-003 operating-mode classifier
+# treats "fs_write" as a write action (gated under ACCEPT_EDITS /
+# ASK_PERMISSIONS).
+
+purpose:        "Write a UTF-8 text file into the trusted workspace."
+version:        "0.1.0"
+adapter_class:  "FsWriteSkill"
+risk_level:     "HIGH"
+domain_id:      "workspace"
+tags:           ["filesystem", "workspace", "write"]
+
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+      description: "Path relative to the workspace root (no .. or absolute)."
+    content:
+      type: string
+      description: "UTF-8 text to write."
+    mkdirs:
+      type: boolean
+      description: "Create parent directories if missing (default true)."
+  required: ["path", "content"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    path:
+      type: string
+    bytes_written:
+      type: integer
+      minimum: 0
+  required: ["path", "bytes_written"]
+  additionalProperties: false
+
+description: |
+  Write a file into the operator's trusted working directory.  The
+  path is sandboxed to the workspace root AND the workspace must be
+  trusted (acc.workspace.require_writable_workspace).  Any escape
+  attempt or an untrusted workspace is rejected.  Parent dirs are
+  created when mkdirs is true (default).
