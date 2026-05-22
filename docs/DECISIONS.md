@@ -270,10 +270,16 @@ unmistakable when needed.
 ## D-005 — Golden-prompt suite in three runner modes (CLI / TUI / scheduled)
 
 **Status:** LANDED — Phase 1 (schema + CLI + 6 seed prompts; PR-K
-`9c79463`; 28 tests) + **Phase 2 / PR-N** (TUI Diagnostics pane #9;
-commit on `main` 2026-05-22; 6 pilot tests).  Phase 3 (scheduled
-maintenance-agent runner) lands in PR-O.  All three modes consume
-the same ``acc.golden_prompts`` loader + assertion engine.
+`9c79463`; 28 tests) + Phase 2 / PR-N (TUI Diagnostics pane #9;
+`0172bf3`; 6 pilot tests) + **Phase 3 / PR-O** (scheduled runner;
+commit on `main` 2026-05-22; 5 new tests).  PR-O adds
+``persist_results`` (JSONL history), the ``acc-cli e2e run
+--history PATH --loop SECONDS`` flags, and
+``docs/golden_prompts_scheduling.md`` (systemd-timer + k8s CronJob
++ CI-gate recipes).  A dedicated maintenance-agent that also writes
+to LanceDB + posts to Comms is a future enhancement; the
+timer/CronJob recipes are the supported scheduling paths today.
+All three modes share the same ``acc.golden_prompts`` engine.
 **Date:** 2026-05-21
 **Context:** Every operator session today is a manual smoke test.
 Regressions like the agent-side payload-decode bug (Commit-7) went

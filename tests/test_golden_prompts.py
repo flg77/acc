@@ -351,3 +351,69 @@ class TestCLIDispatcher:
         import argparse
         rc = _cmd_list(argparse.Namespace(root=str(tmp_path)))
         assert rc == 0
+
+    def test_e2e_run_accepts_history_and_loop_flags(self):
+        """PR-O — `run` grows --history and --loop without breaking
+        the existing positional/optional args."""
+        from acc.cli import _build_parser
+        parser = _build_parser()
+        ns = parser.parse_args([
+            "e2e", "run", "smoke_basic_reply",
+            "--history", "test/history/golden.jsonl",
+            "--loop", "1800",
+        ])
+        assert ns.e2e_command == "run"
+        assert ns.name == "smoke_basic_reply"
+        assert ns.history == "test/history/golden.jsonl"
+        assert ns.loop == 1800.0
+
+
+# ---------------------------------------------------------------------------
+# PR-O — persist_results (JSONL history)
+# ---------------------------------------------------------------------------
+
+
+class TestPersistResults:
+    def test_appends_one_row_per_result(self, tmp_path):
+        from acc.golden_prompts import GoldenResult, persist_results
+        import json
+        path = tmp_path / "history" / "golden.jsonl"
+        results = [
+            GoldenResult(name="a", passed=True, elapsed_ms=100),
+            GoldenResult(name="b", passed=False, elapsed_ms=200,
+                         failures=["empty"]),
+        ]
+        persist_results(results, path, run_meta={"host": "lighthouse"})
+        lines = path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 2
+        row0 = json.loads(lines[0])
+        assert row0["name"] == "a"
+        assert row0["passed"] is True
+        assert row0["host"] == "lighthouse"
+        assert "run_ts" in row0
+
+    def test_appends_across_multiple_runs(self, tmp_path):
+        from acc.golden_prompts import GoldenResult, persist_results
+        path = tmp_path / "golden.jsonl"
+        persist_results([GoldenResult(name="a", passed=True, elapsed_ms=1)], path)
+        persist_results([GoldenResult(name="a", passed=True, elapsed_ms=2)], path)
+        lines = path.read_text(encoding="utf-8").strip().split("\n")
+        assert len(lines) == 2
+
+    def test_creates_parent_dir(self, tmp_path):
+        from acc.golden_prompts import GoldenResult, persist_results
+        path = tmp_path / "deeply" / "nested" / "golden.jsonl"
+        persist_results([GoldenResult(name="a", passed=True, elapsed_ms=1)], path)
+        assert path.is_file()
+
+    def test_write_failure_does_not_raise(self, tmp_path, monkeypatch):
+        """A broken history path must not crash a scheduled run."""
+        from acc.golden_prompts import GoldenResult, persist_results
+        # Point at a path whose parent can't be created (a file, not a dir).
+        blocker = tmp_path / "blocker"
+        blocker.write_text("x", encoding="utf-8")
+        bad_path = blocker / "sub" / "golden.jsonl"
+        # Should log + return, not raise.
+        persist_results(
+            [GoldenResult(name="a", passed=True, elapsed_ms=1)], bad_path,
+        )

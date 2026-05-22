@@ -365,6 +365,48 @@ async def run_all(
 # ---------------------------------------------------------------------------
 
 
+def persist_results(
+    results: list[GoldenResult],
+    path: "str | Path",
+    *,
+    run_meta: "Optional[dict]" = None,
+) -> None:
+    """Append one JSONL row per result to *path* (PR-O, K-3).
+
+    The scheduled maintenance-agent runner calls this after each
+    cron tick so a history accrues at ``<repo>/test/history/golden.jsonl``
+    (or wherever the operator points ``--history``).  Each row is a
+    self-contained JSON object: the GoldenResult fields plus a
+    shared ``run_ts`` and any ``run_meta`` (host, model, git sha…).
+
+    Mirrors the JSONL-history pattern the operator's
+    ``acc-llm-test-history`` skill uses so the two archives are
+    greppable with the same tools.  Best-effort: a write failure
+    logs but never raises (a broken history file must not fail a
+    scheduled run).
+    """
+    import json as _json  # noqa: PLC0415
+    import time as _time  # noqa: PLC0415
+
+    p = Path(path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        logger.warning("golden_prompts: cannot create history dir %s", p.parent)
+        return
+    run_ts = _time.time()
+    meta = dict(run_meta or {})
+    try:
+        with p.open("a", encoding="utf-8") as fh:
+            for r in results:
+                row = r.model_dump()
+                row["run_ts"] = run_ts
+                row.update(meta)
+                fh.write(_json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("golden_prompts: history append failed: %s", exc)
+
+
 def format_summary(results: list[GoldenResult]) -> str:
     """Render a one-line-per-prompt summary suitable for stdout."""
     if not results:

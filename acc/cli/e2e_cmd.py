@@ -101,6 +101,18 @@ def register(sub: argparse._SubParsersAction) -> None:
         help="Emit results as JSON (one object per prompt) — useful "
              "for ingestion by the scheduled maintenance agent.",
     )
+    run_p.add_argument(
+        "--history", default=None, metavar="PATH",
+        help="Append one JSONL row per result to PATH (e.g. "
+             "test/history/golden.jsonl).  Builds a regression "
+             "archive across scheduled runs.",
+    )
+    run_p.add_argument(
+        "--loop", type=float, default=None, metavar="SECONDS",
+        help="Re-run the suite every SECONDS (scheduled mode).  "
+             "Runs forever until interrupted; combine with --history "
+             "to accrue a trend.  Omit for a single run.",
+    )
     run_p.set_defaults(func=_cmd_run)
 
 
@@ -187,11 +199,54 @@ def _cmd_show(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+async def _run_suite_once(prompts, *, cid: str, nats_url: str):
+    """Connect, run the prompts sequentially, disconnect; return the
+    results list.  Raises on connect failure so the caller can decide
+    whether to retry (loop mode) or exit (single-run mode)."""
+    from acc.golden_prompts import run_all, run_one  # noqa: PLC0415
+    from acc.tui.client import NATSObserver  # noqa: PLC0415
+    import asyncio as _asyncio  # noqa: PLC0415
+
+    queue = _asyncio.Queue(maxsize=50)
+    observer = NATSObserver(
+        nats_url=nats_url, collective_id=cid, update_queue=queue,
+    )
+    await observer.connect()
+    try:
+        async def _drain():
+            while True:
+                try:
+                    await queue.get()
+                except _asyncio.CancelledError:
+                    return
+                except Exception:
+                    return
+        drain_task = _asyncio.create_task(_drain(), name="e2e-drain")
+        try:
+            if len(prompts) == 1:
+                return [await run_one(
+                    prompts[0], observer=observer, collective_id=cid,
+                )]
+            return await run_all(
+                prompts, observer=observer, collective_id=cid,
+            )
+        finally:
+            drain_task.cancel()
+            try:
+                await drain_task
+            except Exception:
+                pass
+    finally:
+        try:
+            await observer.close()
+        except Exception:
+            pass
+
+
 async def _cmd_run(args: argparse.Namespace) -> int:
     from acc.golden_prompts import (  # noqa: PLC0415
-        format_summary, load_all, run_all, run_one,
+        format_summary, load_all, persist_results,
     )
-    from acc.tui.client import NATSObserver  # noqa: PLC0415
     import asyncio as _asyncio  # noqa: PLC0415
 
     prompts = load_all(_resolve_root(args.root))
@@ -211,57 +266,45 @@ async def _cmd_run(args: argparse.Namespace) -> int:
         "ACC_NATS_URL", "nats://localhost:4222",
     )
 
-    # Spin up an NATSObserver so the channel's task-listener registry
-    # shares the routing backend that processes inbound TASK_COMPLETE.
-    queue = _asyncio.Queue(maxsize=50)
-    observer = NATSObserver(
-        nats_url=nats_url, collective_id=cid, update_queue=queue,
-    )
-    try:
-        await observer.connect()
-    except Exception as exc:
-        print(f"ERROR: cannot connect to NATS {nats_url}: {exc}", file=sys.stderr)
-        return 2
+    async def _one_pass() -> int:
+        try:
+            results = await _run_suite_once(
+                prompts, cid=cid, nats_url=nats_url,
+            )
+        except Exception as exc:
+            print(
+                f"ERROR: cannot connect to NATS {nats_url}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
 
-    try:
-        # Background drain — the channel writes to the same queue;
-        # without a consumer it can stall on the bounded queue.
-        async def _drain():
+        if args.history:
+            persist_results(
+                results, args.history,
+                run_meta={"collective_id": cid, "nats_url": nats_url},
+            )
+        if args.json:
+            print(json.dumps([r.model_dump() for r in results], indent=2))
+        else:
+            print(format_summary(results))
+        failed = sum(1 for r in results if not r.passed)
+        return 1 if failed else 0
+
+    # Scheduled (loop) mode — re-run every --loop seconds until
+    # interrupted.  Exit code reflects the LAST pass.
+    if args.loop is not None and args.loop > 0:
+        last_rc = 0
+        try:
             while True:
-                try:
-                    await queue.get()
-                except _asyncio.CancelledError:
-                    return
-                except Exception:
-                    return
-        drain_task = _asyncio.create_task(_drain(), name="e2e-drain")
-        try:
-            if len(prompts) == 1:
-                results = [await run_one(
-                    prompts[0], observer=observer, collective_id=cid,
-                )]
-            else:
-                results = await run_all(
-                    prompts, observer=observer, collective_id=cid,
+                last_rc = await _one_pass()
+                print(
+                    f"[loop] next run in {args.loop:.0f}s "
+                    f"(Ctrl-C to stop)",
+                    file=sys.stderr,
                 )
-        finally:
-            drain_task.cancel()
-            try:
-                await drain_task
-            except Exception:
-                pass
-    finally:
-        try:
-            await observer.close()
-        except Exception:
-            pass
+                await _asyncio.sleep(args.loop)
+        except (KeyboardInterrupt, _asyncio.CancelledError):
+            print("[loop] stopped", file=sys.stderr)
+            return last_rc
 
-    if args.json:
-        print(json.dumps(
-            [r.model_dump() for r in results], indent=2,
-        ))
-    else:
-        print(format_summary(results))
-
-    failed = sum(1 for r in results if not r.passed)
-    return 1 if failed else 0
+    return await _one_pass()
