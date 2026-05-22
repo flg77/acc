@@ -169,6 +169,17 @@ choice through ``TUIPromptChannel.send`` → ``task_payload`` →
 ``_handle_task`` → ``dispatch_invocations``.  Constitutional
 Cat-A invariant pinned via
 ``test_cat_a_block_propagates_through_all_modes``.
+
+**L-2 follow-up — LANDED (PR-P, commit on `main` 2026-05-22; 3 new
+tests).**  The Prompt screen's Mode dropdown now auto-prefills from
+the selected target role's ``default_operating_mode`` via an
+``on_select_changed`` handler (the operator can still override
+per-task).  The handler ignores the Mode select's own Changed
+events (no feedback loop) and tolerates a missing / unloadable
+role (leaves the selector untouched).  The role's default flows
+from ``role.yaml`` → ``RoleDefinitionConfig.default_operating_mode``
+→ the dropdown, so a role infused via Nucleus carries its preferred
+mode into the Prompt screen.
 **Date:** 2026-05-21
 **Context:** Today every operator prompt runs the agent in
 "unrestricted within constitutional rules" mode — Cat-A blocks

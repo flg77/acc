@@ -591,3 +591,94 @@ def test_invocation_detail_modal_renders_known_fields():
     assert "permission denied" in body
     assert "raw record" in body
     assert '"target": "fs.read"' in body
+
+
+# ---------------------------------------------------------------------------
+# PR-P (L-2) — Mode dropdown auto-prefills from role.default_operating_mode
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mode_prefills_from_role_default(monkeypatch):
+    """PR-P — changing the target role sets the Mode dropdown to that
+    role's default_operating_mode."""
+    from acc.config import RoleDefinitionConfig
+    import acc.role_loader as rl
+
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        # Patch RoleLoader.load to return a role pinned to
+        # ASK_PERMISSIONS regardless of disk.
+        def _fake_load(self):
+            return RoleDefinitionConfig.model_validate({
+                "purpose": "p", "persona": "concise", "version": "0.1.0",
+                "default_operating_mode": "ASK_PERMISSIONS",
+            })
+        monkeypatch.setattr(rl.RoleLoader, "load", _fake_load)
+
+        # Fire the select-changed handler as if the operator picked a role.
+        screen.on_select_changed(
+            Select.Changed(
+                screen.query_one("#select-target-role", Select),
+                "coding_agent",
+            )
+        )
+        await pilot.pause()
+
+        mode = str(screen.query_one("#select-operating-mode", Select).value)
+        assert mode == "ASK_PERMISSIONS"
+
+
+@pytest.mark.asyncio
+async def test_mode_select_changed_does_not_recurse(monkeypatch):
+    """PR-P — the handler ignores the Mode Select's own Changed
+    events (no feedback loop)."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        called = {"n": 0}
+        import acc.role_loader as rl
+        orig = rl.RoleLoader.load
+
+        def _counting_load(self):
+            called["n"] += 1
+            return orig(self)
+        monkeypatch.setattr(rl.RoleLoader, "load", _counting_load)
+
+        # A Changed event from the MODE select must not trigger a role load.
+        screen.on_select_changed(
+            Select.Changed(
+                screen.query_one("#select-operating-mode", Select),
+                "PLAN",
+            )
+        )
+        await pilot.pause()
+        assert called["n"] == 0
+
+
+@pytest.mark.asyncio
+async def test_mode_prefill_tolerates_missing_role(monkeypatch):
+    """PR-P — a role that doesn't load leaves the Mode selector
+    untouched (no crash)."""
+    import acc.role_loader as rl
+    monkeypatch.setattr(rl.RoleLoader, "load", lambda self: None)
+
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        before = str(screen.query_one("#select-operating-mode", Select).value)
+        screen.on_select_changed(
+            Select.Changed(
+                screen.query_one("#select-target-role", Select),
+                "ghost_role",
+            )
+        )
+        await pilot.pause()
+        after = str(screen.query_one("#select-operating-mode", Select).value)
+        assert after == before

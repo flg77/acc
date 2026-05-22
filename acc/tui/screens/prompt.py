@@ -452,6 +452,42 @@ class PromptScreen(Screen):
         self._render_transcript()
         self.query_one("#prompt-status", Static).update("[dim]Cleared.[/dim]")
 
+    def on_select_changed(self, event: "Select.Changed") -> None:
+        """PR-P (L-2) — when the operator picks a different target
+        role, prefill the Mode dropdown from that role's
+        ``default_operating_mode`` (role.yaml).  The operator can
+        still override it per task; this just makes the role's
+        preferred mode the starting point.
+
+        Best-effort: a missing role / loader error leaves the Mode
+        selector untouched (whatever the operator last chose stays).
+        Only reacts to the target-role Select — the Mode Select's own
+        Changed events are ignored to avoid a feedback loop.
+        """
+        try:
+            if event.select.id != "select-target-role":
+                return
+        except Exception:
+            return
+        role_name = str(event.value or "").strip()
+        if not role_name:
+            return
+        try:
+            from acc.role_loader import RoleLoader  # noqa: PLC0415
+            from acc.tui.path_resolution import resolve_manifest_root  # noqa: PLC0415
+            from acc.operating_modes import normalise  # noqa: PLC0415
+            roots = str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
+            rd = RoleLoader(roots, role_name).load()
+            if rd is None:
+                return
+            mode = normalise(getattr(rd, "default_operating_mode", "AUTO"))
+            self.query_one("#select-operating-mode", Select).value = mode
+        except Exception:
+            logger.debug(
+                "prompt: mode prefill failed for role=%r", role_name,
+                exc_info=True,
+            )
+
     # ------------------------------------------------------------------
     # PR-5 — slash command dispatch
     # ------------------------------------------------------------------
