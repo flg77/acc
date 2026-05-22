@@ -1,7 +1,7 @@
-"""ACC TUI NavigationBar widget — persistent 8-screen navigation.
+"""ACC TUI NavigationBar widget — persistent 9-screen navigation.
 
-Displays eight named screen buttons; the active screen is highlighted.
-Keys ``1``–``8`` navigate directly from any screen (REQ-TUI-004).
+Displays nine named screen buttons; the active screen is highlighted.
+Keys ``1``–``9`` navigate directly from any screen (REQ-TUI-004).
 
 Pane 8 (Configuration) was added by proposal 003 PR-4; it absorbs
 the LLM endpoints + Skills + MCPs surfaces that previously crowded
@@ -90,6 +90,10 @@ class NavigationBar(Widget):
         ("6", "navigate('ecosystem')",     "Ecosystem"),
         ("7", "navigate('prompt')",        "Prompt"),
         ("8", "navigate('configuration')", "Configuration"),
+        # PR-N (K-2) — golden-prompt diagnostics pane.  The button was
+        # added to _SCREENS but the keyboard shortcut was missing, so
+        # `9` did nothing from any screen until now.
+        ("9", "navigate('diagnostics')",   "Diagnostics"),
     ]
 
     def __init__(self, active_screen: str = "soma", **kwargs) -> None:  # type: ignore[override]

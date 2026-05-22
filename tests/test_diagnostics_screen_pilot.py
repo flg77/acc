@@ -146,6 +146,29 @@ async def test_diagnostics_in_nav_bar():
     assert entry[0] == "9"
 
 
+def test_every_nav_screen_has_a_keyboard_binding():
+    """The button alone isn't enough — the keyboard shortcut must be
+    wired in BINDINGS too.  '9 Diagnostics' shipped a button but no
+    binding, so the `9` key did nothing; this guards the regression for
+    every nav entry."""
+    from acc.tui.widgets.nav_bar import NavigationBar, _SCREENS
+
+    # Map each binding key → the screen its action navigates to.
+    bound: dict[str, str] = {}
+    for b in NavigationBar.BINDINGS:
+        key, action = b[0], b[1]
+        # action looks like: navigate('diagnostics')
+        assert action.startswith("navigate(")
+        target = action[len("navigate('"):-len("')")]
+        bound[key] = target
+
+    for key, screen_name, _label in _SCREENS:
+        assert bound.get(key) == screen_name, (
+            f"nav entry {key!r}→{screen_name!r} has no matching keyboard "
+            f"binding (got {bound.get(key)!r})"
+        )
+
+
 def test_app_registers_diagnostics_screen():
     from acc.tui.app import ACCTUIApp
     assert "diagnostics" in ACCTUIApp.SCREENS
