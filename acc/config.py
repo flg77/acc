@@ -615,6 +615,17 @@ class SecurityConfig(BaseModel):
 
     arbiter_verify_key: str = ""
 
+    arbiter_signing_key: str = ""
+    """Base64-encoded raw 32-byte Ed25519 *private* key the arbiter
+    signs worker-pool ROLE_ASSIGN payloads with (PR-M, J-2).
+
+    Held ONLY by the arbiter process — set via the
+    ``ACC_ARBITER_SIGNING_KEY`` env var (typically from a mounted
+    secret).  Empty on every non-arbiter agent.  When empty the
+    arbiter's reconcile loop logs a warning and emits no
+    assignments (workers stay dormant) rather than publishing
+    unsigned payloads that every worker would reject anyway."""
+
     signing_mode: SigningMode = "auto"
     """How ROLE_UPDATE payloads are signed + verified.  ``auto``
     resolves to the deploy-mode default at validation time (see
@@ -944,6 +955,9 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     # ACC_ROLE_CONFIG_PATH is consumed by RoleStore.load_at_startup(), not here
     # Security (Phase 0a)
     "ACC_ARBITER_VERIFY_KEY":       ("security", "arbiter_verify_key"),
+    # PR-M (J-2) — arbiter-only private key for signing worker-pool
+    # ROLE_ASSIGN payloads.
+    "ACC_ARBITER_SIGNING_KEY":      ("security", "arbiter_signing_key"),
     # Working memory / Redis (Phase 0b)
     "ACC_REDIS_URL":                ("working_memory", "url"),
     "ACC_REDIS_PASSWORD":           ("working_memory", "password"),

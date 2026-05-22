@@ -21,14 +21,20 @@ decisions are marked but not deleted.
 
 ## D-001 — Spawn coding_agent via worker pool, not apply-watcher
 
-**Status:** LANDED (PR-J, commit on `main` 2026-05-22; 19 new tests).
-The agent-side primitive (dormant boot mode, signed ROLE_ASSIGN
-verifier, ``_promote_from_dormant``, universal ``_subscribe_role_assign``)
-ships in this PR.  The arbiter-side reconcile loop that watches
-``collective.yaml`` and emits ROLE_ASSIGN to dormant workers is
-deferred to a follow-up PR (J-2) — for now an operator (or the
-TUI's Apply path, via a small future patch) can publish a signed
-ROLE_ASSIGN manually using :func:`acc.role_assign.sign_role_assign`.
+**Status:** LANDED — PR-J (agent side; commit `d2c6842`; 19 tests)
++ **PR-M / J-2** (arbiter reconcile; commit on `main` 2026-05-22;
+16 new tests).  PR-J shipped the agent-side primitive (dormant
+boot mode, signed ROLE_ASSIGN verifier, ``_promote_from_dormant``,
+universal ``_subscribe_role_assign``).  PR-M closes the loop:
+``acc.worker_reconcile.compute_assignments`` (pure greedy
+idempotent matcher) + ``build_role_assign_payloads`` (signs via
+PR-J's ``sign_role_assign``).  Arbiter glue in ``acc.agent``:
+HEARTBEAT-fed ``_worker_roster``, a ``subject_collective_reconcile``
+trigger subscription, and ``_run_worker_reconcile`` that loads
+``collective.yaml``, diffs, and publishes.  New config field
+``security.arbiter_signing_key`` (env ``ACC_ARBITER_SIGNING_KEY``)
+holds the arbiter private key; empty → loop warns + emits nothing
+(no unsigned payloads).
 **Date:** 2026-05-21
 **Context:** PR-D (commit `83883fd`) wired "Nucleus Apply" to write
 the requested agent into `./collective.yaml` and touch

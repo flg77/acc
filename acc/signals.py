@@ -324,6 +324,20 @@ def subject_role_assign(collective_id: str) -> str:
     return f"acc.{collective_id}.role_assign"
 
 
+def subject_collective_reconcile(collective_id: str) -> str:
+    """Return the NATS subject that triggers a worker-pool reconcile
+    (PR-M, J-2).
+
+    Published by the TUI's Ecosystem Agentset Apply (or an operator
+    via ``acc-cli nats pub``) to ask the arbiter to diff
+    ``collective.yaml`` against the live roster and emit signed
+    ROLE_ASSIGN signals to promote dormant workers.  The payload is
+    advisory — the arbiter re-reads ``collective.yaml`` itself; the
+    trigger just says "now".
+    """
+    return f"acc.{collective_id}.collective.reconcile"
+
+
 def subject_config_reload(collective_id: str) -> str:
     """Return the NATS subject for `config.reload` signals.
 

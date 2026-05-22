@@ -48,6 +48,7 @@ from acc.signals import (
     SIG_BRIDGE_RESULT,
     subject_heartbeat,
     subject_register,
+    subject_collective_reconcile,
     subject_config_reload,
     subject_role_assign,
     subject_role_update,
@@ -338,6 +339,13 @@ class Agent:
             )
         else:
             self._plan_executor = None
+
+        # PR-M (J-2) — worker-pool roster.  Arbiter-only: a dict of
+        # ``agent_id -> RosterEntry`` rebuilt from inbound HEARTBEATs
+        # so the reconcile loop can diff desired (collective.yaml)
+        # against live (dormant + active) workers.  Empty on every
+        # non-arbiter agent (their reconcile subscription no-ops).
+        self._worker_roster: dict[str, Any] = {}
 
         # ACC-11: cached domain centroid from the most recent CENTROID_UPDATE
         # that carried a domain_centroid_vector.  Passed to CognitiveCore on
@@ -1229,6 +1237,163 @@ class Agent:
         )
 
     # ------------------------------------------------------------------
+    # Worker-pool reconcile — arbiter side (PR-M, J-2)
+    # ------------------------------------------------------------------
+
+    async def _subscribe_worker_reconcile(self) -> None:
+        """Arbiter-only.  Track the roster from HEARTBEATs and run a
+        worker-pool reconcile when a ``collective.reconcile`` trigger
+        arrives.
+
+        Non-arbiter agents return immediately — only the arbiter
+        holds the signing key and owns the desired-state authority.
+
+        The single subscription does double duty: it listens on the
+        broad ``acc.<cid>.>`` wildcard is NOT used (too noisy);
+        instead two narrow subscriptions are registered — one on
+        HEARTBEAT (roster tracking) and one on the reconcile trigger.
+        """
+        if self.config.agent.role != "arbiter":
+            return
+
+        collective_id = self.config.agent.collective_id
+
+        async def _track_heartbeat(msg: object) -> None:
+            try:
+                data = json.loads(_payload_bytes(msg))
+            except (json.JSONDecodeError, TypeError):
+                return
+            aid = str(data.get("agent_id", ""))
+            if not aid:
+                return
+            from acc.worker_reconcile import RosterEntry  # noqa: PLC0415
+            self._worker_roster[aid] = RosterEntry(
+                agent_id=aid,
+                role=str(data.get("role", "")),
+                state=str(data.get("state", "")),
+                cluster_id=str(data.get("cluster_id", "")),
+            )
+
+        async def _on_reconcile(msg: object) -> None:
+            # The trigger payload is advisory — re-read collective.yaml
+            # ourselves so the desired state is always authoritative.
+            try:
+                await self._run_worker_reconcile()
+            except Exception:
+                logger.exception("worker_reconcile: run failed")
+
+        try:
+            await self.backends.signaling.subscribe(
+                subject_heartbeat(collective_id), _track_heartbeat,
+            )
+            await self.backends.signaling.subscribe(
+                subject_collective_reconcile(collective_id), _on_reconcile,
+            )
+            await self._stop_event.wait()
+        except Exception as exc:
+            logger.error("worker_reconcile: subscription error: %s", exc)
+
+    async def _run_worker_reconcile(self) -> None:
+        """Diff ``collective.yaml`` against the roster; publish signed
+        ROLE_ASSIGN for each dormant worker that should be promoted.
+
+        Best-effort and idempotent — running twice is a no-op once
+        the promoted workers report ACTIVE on their next heartbeat.
+        """
+        from acc.worker_reconcile import (  # noqa: PLC0415
+            build_role_assign_payloads,
+            compute_assignments,
+        )
+
+        signing_key = getattr(
+            self.config.security, "arbiter_signing_key", "",
+        )
+        if not signing_key:
+            logger.warning(
+                "worker_reconcile: no arbiter_signing_key configured — "
+                "cannot sign ROLE_ASSIGN; workers stay dormant",
+            )
+            return
+
+        spec = self._load_collective_spec()
+        if spec is None:
+            logger.info("worker_reconcile: no collective.yaml — nothing to do")
+            return
+
+        roster = list(self._worker_roster.values())
+        result = compute_assignments(spec, roster)
+        logger.info(
+            "worker_reconcile: %d desired, %d already active, "
+            "%d assigning, %d unmet",
+            len(result.assignments) + result.already_satisfied + len(result.unmet),
+            result.already_satisfied,
+            len(result.assignments),
+            len(result.unmet),
+        )
+        if not result.assignments:
+            return
+
+        payloads = build_role_assign_payloads(
+            result.assignments,
+            approver_id=self.agent_id,
+            private_key_b64=signing_key,
+            role_definition_for=self._role_definition_for,
+        )
+        for payload in payloads:
+            try:
+                await self.backends.signaling.publish(
+                    subject_role_assign(self.config.agent.collective_id),
+                    payload,
+                )
+            except Exception:
+                logger.exception(
+                    "worker_reconcile: publish ROLE_ASSIGN failed for %s",
+                    payload.get("target_agent_id"),
+                )
+
+    def _load_collective_spec(self):
+        """Load ``collective.yaml`` from the resolved path; None on any
+        failure (absent file, parse error)."""
+        try:
+            from acc.collective import load_collective  # noqa: PLC0415
+            import os as _os  # noqa: PLC0415
+            from pathlib import Path  # noqa: PLC0415
+            explicit = _os.environ.get("ACC_COLLECTIVE_PATH", "").strip()
+            candidates = [
+                Path(explicit) if explicit else None,
+                Path("/app/collective.yaml"),
+                Path("collective.yaml"),
+            ]
+            for c in candidates:
+                if c is not None and c.is_file():
+                    return load_collective(c)
+        except Exception:
+            logger.debug("worker_reconcile: collective.yaml load failed", exc_info=True)
+        return None
+
+    def _role_definition_for(self, role_name: str) -> dict | None:
+        """Resolve a role definition dict for the reconcile signer.
+
+        Loads ``roles/<role_name>/role.yaml`` via RoleLoader and
+        returns its ``model_dump()``.  None when the role can't be
+        loaded — the signer skips that assignment.
+        """
+        try:
+            from acc.role_loader import RoleLoader  # noqa: PLC0415
+            import os as _os  # noqa: PLC0415
+            roots = _os.environ.get("ACC_ROLES_ROOT", "roles")
+            role_def = RoleLoader(roots, role_name).load()
+            if role_def is None:
+                return None
+            return role_def.model_dump()
+        except Exception:
+            logger.debug(
+                "worker_reconcile: role load failed for %r", role_name,
+                exc_info=True,
+            )
+            return None
+
+    # ------------------------------------------------------------------
     # config.reload subscription — TUI write-back hot-swap
     # ------------------------------------------------------------------
 
@@ -1647,6 +1812,10 @@ class Agent:
                 # ``target_agent_id`` matches.  Dormant workers depend
                 # on it; active workers no-op.
                 self._subscribe_role_assign(),
+                # PR-M (J-2) — arbiter-only worker-pool reconcile.
+                # Tracks the roster from HEARTBEATs + reacts to a
+                # collective.reconcile trigger.  No-ops on non-arbiters.
+                self._subscribe_worker_reconcile(),
                 self._subscribe_config_reload(),
                 self._subscribe_bridge_results(),
                 self._subscribe_centroid_updates(),
