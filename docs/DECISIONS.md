@@ -49,6 +49,9 @@ services (``ACC_AGENT_ROLE=dormant``) instead of concrete
 desired ``agents`` (commonly coding_agent subroles) onto the pool
 at runtime.  Shipped ``collective.worker-pool.yaml`` exemplar
 (2 implementer + 1 reviewer + 1 tester → ``worker_pool: 4``).
+Operator runbook (keypair provisioning, the down→up→apply→reconcile
+order, the network-name gotcha, troubleshooting table) lives in
+``docs/worker_pool_setup.md``.
 **Date:** 2026-05-21
 **Context:** PR-D (commit `83883fd`) wired "Nucleus Apply" to write
 the requested agent into `./collective.yaml` and touch
