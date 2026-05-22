@@ -201,6 +201,22 @@ fi
 # ── Build base command ─────────────────────────────────────────────────────────
 BASE_CMD=(podman-compose -f "$COMPOSE_FILE")
 
+# PR-S — opt-in userns overlay for the acc-tui Configuration .env
+# write-back fix.  `keep-id` breaks pod-mode hosts and an empty
+# `userns_mode` isn't omitted by podman-compose, so the remap lives
+# in an overlay applied ONLY when ACC_TUI_USERNS_MODE is set.  The
+# flag is read from the shell env first, then ./.env (this script
+# does not source .env into its own environment).
+USERNS_VAL="${ACC_TUI_USERNS_MODE:-}"
+if [[ -z "$USERNS_VAL" && -f "$REPO_ROOT/.env" ]]; then
+    USERNS_VAL="$(grep -E '^ACC_TUI_USERNS_MODE=' "$REPO_ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2-)"
+fi
+USERNS_OVERLAY="$REPO_ROOT/container/production/podman-compose.userns.yml"
+if [[ "$STACK" == "production" && -n "$USERNS_VAL" && -f "$USERNS_OVERLAY" ]]; then
+    export ACC_TUI_USERNS_MODE="$USERNS_VAL"
+    BASE_CMD+=(-f "$USERNS_OVERLAY")
+fi
+
 # TUI profile only available in production
 if [[ "$TUI" == "true" ]]; then
     if [[ "$STACK" != "production" ]]; then

@@ -464,24 +464,18 @@ services:
         ACC_VERSION: *acc-version
     image: localhost/acc-tui:0.2.0
     container_name: acc-tui
-    # Map the container's uid 1001 → the host operator's uid so the
-    # Configuration screen can write back to /app/.env (a bind mount
-    # to the host's `./.env`, typically chmod 600 + owned by the
-    # operator).  Without this mapping the in-container write hits
-    # `[Errno 13] Permission denied` against the host file because
-    # the container's 1001 is a different namespace uid.
-    #
-    # PR-S — OPT-IN (default empty).  ``keep-id`` is incompatible with
-    # podman-compose's pod mode (``Error: --userns and --pod cannot be
-    # set together``), which broke the acc-tui container on pod-mode
-    # hosts (acc1).  So the default is now empty (no userns remap) —
-    # safe everywhere — and hosts that need the .env-writeback fix
-    # AND run non-pod rootless podman (lighthouse) opt in via:
-    #   ACC_TUI_USERNS_MODE=keep-id:uid=1001,gid=0   (in ./.env)
-    # On pod-mode hosts leave it unset; the Configuration Save then
-    # needs the host .env to be group-writable by gid 0 instead
-    # (chmod g+w ./.env), or edit ./.env on the host directly.
-    userns_mode: "${ACC_TUI_USERNS_MODE:-}"
+    # PR-S — the userns remap that lets the Configuration screen write
+    # back to /app/.env is NOT set here.  ``keep-id`` is incompatible
+    # with podman-compose pod mode (``Error: --userns and --pod cannot
+    # be set together``), and an empty-string ``userns_mode`` is NOT
+    # omitted by podman-compose — it still emits ``--userns``.  Since a
+    # compose key can't be conditionally absent via interpolation, the
+    # remap lives in an OPT-IN overlay
+    # (``container/production/podman-compose.userns.yml``) that
+    # ``acc-deploy.sh`` layers on ONLY when ``ACC_TUI_USERNS_MODE`` is
+    # set in ./.env.  Non-pod hosts that want the .env-writeback fix
+    # (lighthouse) set it; pod-mode hosts (acc1) leave it unset and
+    # acc-tui starts clean.
     depends_on:
       nats:
         condition: service_healthy

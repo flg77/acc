@@ -1,0 +1,29 @@
+# PR-S — opt-in userns overlay for the acc-tui container.
+#
+# Layered on top of podman-compose.yml by acc-deploy.sh ONLY when
+# ACC_TUI_USERNS_MODE is set (non-empty) in ./.env.  It maps the
+# container's uid 1001 to the host operator's uid so the
+# Configuration screen can write back to the bind-mounted /app/.env.
+#
+# WHY an overlay instead of a key in the base file:
+#   * `keep-id` is incompatible with podman-compose pod mode
+#     (`Error: --userns and --pod cannot be set together`).
+#   * An empty-string `userns_mode` is NOT omitted by podman-compose;
+#     it still emits `--userns`.  A compose key cannot be made
+#     conditionally-absent via `${VAR:-}` interpolation.
+#
+# So the base compose carries no userns_mode at all (safe on every
+# host, pod or not), and only hosts that BOTH need the .env-writeback
+# fix AND run non-pod rootless podman opt in:
+#
+#   echo 'ACC_TUI_USERNS_MODE=keep-id:uid=1001,gid=0' >> ./.env
+#   ./acc-deploy.sh up      # acc-deploy.sh detects the var and adds this overlay
+#
+# Pod-mode hosts (e.g. acc1) leave ACC_TUI_USERNS_MODE unset; acc-tui
+# starts without --userns.  If they need Configuration Save there,
+# make ./.env group-writable (chgrp 0 ./.env && chmod g+w ./.env) or
+# edit ./.env on the host directly.
+
+services:
+  acc-tui:
+    userns_mode: "${ACC_TUI_USERNS_MODE}"
