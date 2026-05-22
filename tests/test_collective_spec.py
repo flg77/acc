@@ -244,6 +244,112 @@ class TestRolesToCompose:
 
 
 # ---------------------------------------------------------------------------
+# PR-Q — agentset-defined worker pool
+# ---------------------------------------------------------------------------
+
+
+class TestWorkerPool:
+    def test_worker_pool_defaults_zero(self):
+        spec = CollectiveSpec(collective_id="sol-01")
+        assert spec.worker_pool == 0
+
+    def test_worker_pool_field_validates_range(self):
+        import pytest
+        CollectiveSpec(collective_id="sol-01", worker_pool=4)
+        with pytest.raises(Exception):
+            CollectiveSpec(collective_id="sol-01", worker_pool=-1)
+        with pytest.raises(Exception):
+            CollectiveSpec(collective_id="sol-01", worker_pool=999)
+
+    def test_recommended_pool_size_sums_replicas(self):
+        from acc.collective import recommended_pool_size
+        spec = CollectiveSpec(
+            collective_id="sol-01",
+            agents=[
+                AgentSpec(role="coding_agent_implementer", replicas=2),
+                AgentSpec(role="coding_agent_reviewer", replicas=1),
+                AgentSpec(role="coding_agent_tester", replicas=1),
+            ],
+        )
+        assert recommended_pool_size(spec) == 4
+
+    def test_worker_pool_emits_dormant_services_not_concrete(self):
+        spec = CollectiveSpec(
+            collective_id="sol-01",
+            agents=[
+                AgentSpec(role="coding_agent_implementer", replicas=2),
+                AgentSpec(role="coding_agent_reviewer", replicas=1),
+            ],
+            worker_pool=3,
+        )
+        services = roles_to_compose(spec)["services"]
+        names = sorted(services.keys())
+        # 3 dormant workers; NO concrete acc-cell-* services.
+        assert names == ["acc-worker-1", "acc-worker-2", "acc-worker-3"]
+        assert not any(n.startswith("acc-cell-") for n in names)
+
+    def test_dormant_service_shape(self):
+        spec = CollectiveSpec(
+            collective_id="sol-01",
+            agents=[AgentSpec(role="coding_agent_implementer", replicas=1)],
+            worker_pool=1,
+        )
+        svc = roles_to_compose(spec)["services"]["acc-worker-1"]
+        env = svc["environment"]
+        assert env["ACC_AGENT_ROLE"] == "dormant"
+        assert env["ACC_AGENT_ID"] == "worker-1"
+        assert env["ACC_COLLECTIVE_ID"] == "sol-01"
+        # isolated lancedb path per worker.
+        assert env["ACC_LANCEDB_PATH"] == "/app/data/lancedb/worker-1"
+        # labelled so reconcile / podman ps can spot pool members.
+        assert svc["labels"]["acc.role"] == "dormant"
+        assert svc["labels"]["acc.worker_pool"] == "true"
+        # the .env env_file passthrough carries ACC_ARBITER_VERIFY_KEY.
+        assert {"path": "../../.env", "required": False} in svc["env_file"]
+
+    def test_zero_pool_keeps_concrete_agents(self):
+        """Default (worker_pool=0) is the PR-B path: concrete agents."""
+        spec = CollectiveSpec(
+            collective_id="sol-01",
+            agents=[AgentSpec(role="coding_agent", replicas=2)],
+            worker_pool=0,
+        )
+        names = sorted(roles_to_compose(spec)["services"].keys())
+        assert names == ["acc-cell-coding-agent-1", "acc-cell-coding-agent-2"]
+        assert not any(n.startswith("acc-worker-") for n in names)
+
+    def test_worker_pool_roundtrips_through_yaml(self, tmp_path):
+        from acc.collective import dump_collective, load_collective
+        spec = CollectiveSpec(
+            collective_id="sol-01",
+            agents=[AgentSpec(role="coding_agent_tester", replicas=1)],
+            worker_pool=2,
+        )
+        path = tmp_path / "collective.yaml"
+        dump_collective(spec, path)
+        loaded = load_collective(path)
+        assert loaded.worker_pool == 2
+
+    def test_shipped_worker_pool_preset_parses(self):
+        """The collective.worker-pool.yaml example must load + size
+        the pool to the sum of its subrole replicas."""
+        from pathlib import Path
+        from acc.collective import load_collective, recommended_pool_size
+        repo_root = Path(__file__).resolve().parent.parent
+        preset = repo_root / "collective.worker-pool.yaml"
+        spec = load_collective(preset)
+        assert spec.worker_pool == 4
+        assert recommended_pool_size(spec) == 4  # 2 + 1 + 1
+        # The agents are coding_agent subroles.
+        roles = {a.role for a in spec.agents}
+        assert roles == {
+            "coding_agent_implementer",
+            "coding_agent_reviewer",
+            "coding_agent_tester",
+        }
+
+
+# ---------------------------------------------------------------------------
 # reconcile
 # ---------------------------------------------------------------------------
 

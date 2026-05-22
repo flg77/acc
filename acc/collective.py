@@ -96,6 +96,18 @@ class CollectiveSpec(BaseModel):
 
     collective_id: str = Field(..., min_length=1)
     agents: list[AgentSpec] = Field(default_factory=list)
+    # PR-Q (D-001 worker pool) — number of DORMANT workers to
+    # pre-spawn.  Dormant workers boot without a CognitiveCore
+    # (``ACC_AGENT_ROLE=dormant``) and wait for a signed ROLE_ASSIGN
+    # from the arbiter's reconcile loop to be promoted into one of
+    # the desired ``agents`` slots above.  The agents list defines
+    # the DESIRED roles (commonly subroles like
+    # ``coding_agent_implementer``); ``worker_pool`` defines the
+    # CAPACITY to fill them.  0 (default) = no pool (agents are
+    # expected to come up as concrete containers via roles_to_compose
+    # directly, the PR-B path).  Use ``recommended_pool_size(spec)``
+    # to size it to the sum of replicas.
+    worker_pool: int = Field(default=0, ge=0, le=100)
     # Optional shared LLM block — schema mirrors the K8s CRD's LLMSpec
     # loosely; we don't validate its shape here so the operator can
     # keep the YAML close to acc-config.yaml's `llm:` section.
@@ -207,6 +219,68 @@ def _agent_id(agent: AgentSpec, n: int) -> str:
     return f"{prefix}-{n}"
 
 
+def recommended_pool_size(spec: CollectiveSpec) -> int:
+    """Sum of ``replicas`` across all desired agents (PR-Q).
+
+    The natural worker-pool size: exactly enough dormant capacity to
+    fill every desired slot the agentset declares.  The Ecosystem
+    Agentset tab uses this to prefill the ``worker_pool`` field and
+    to warn when the operator sets a pool smaller than the desired
+    total (some slots would stay unfilled — reported as ``unmet`` by
+    ``acc.worker_reconcile.compute_assignments``)."""
+    return sum(int(getattr(a, "replicas", 0) or 0) for a in spec.agents)
+
+
+def _dormant_service(
+    n: int,
+    spec: CollectiveSpec,
+    *,
+    image: str,
+) -> tuple[str, dict[str, Any]]:
+    """Build one DORMANT worker service block (PR-Q).
+
+    Boots with ``ACC_AGENT_ROLE=dormant`` — no CognitiveCore, no LLM
+    client — and waits for a signed ROLE_ASSIGN.  Carries the
+    ``ACC_ARBITER_VERIFY_KEY`` (via the .env env_file passthrough) so
+    it can verify the arbiter's signature before promoting.
+    """
+    svc_name = f"acc-worker-{n}"
+    aid = f"worker-{n}"
+    env: dict[str, Any] = {
+        "ACC_AGENT_ROLE": "dormant",
+        "ACC_AGENT_ID": aid,
+        "ACC_COLLECTIVE_ID": spec.collective_id,
+        "ACC_NATS_URL": "nats://nats:4222",
+        "ACC_LANCEDB_PATH": f"/app/data/lancedb/{aid}",
+        "ACC_REDIS_URL": "redis://acc-redis:6379",
+        "ACC_REDIS_PASSWORD": "${REDIS_PASSWORD:-}",
+    }
+    service = {
+        "image": image,
+        "container_name": svc_name,
+        "depends_on": {
+            "nats": {"condition": "service_healthy"},
+            "acc-redis": {"condition": "service_healthy"},
+        },
+        "env_file": [{"path": "../../.env", "required": False}],
+        "environment": env,
+        "volumes": [
+            "lancedb-data:/app/data/lancedb:U,z",
+            "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
+            "../../roles:/app/roles:ro,z",
+        ],
+        "networks": ["acc-net"],
+        "restart": "unless-stopped",
+        "labels": {
+            "acc.collective_id": spec.collective_id,
+            "acc.synthesized": "true",
+            "acc.role": "dormant",
+            "acc.worker_pool": "true",
+        },
+    }
+    return svc_name, service
+
+
 def roles_to_compose(
     spec: CollectiveSpec,
     *,
@@ -214,8 +288,22 @@ def roles_to_compose(
 ) -> dict[str, Any]:
     """Render *spec* as a podman-compose overlay dict.
 
-    Each ``AgentSpec`` with ``replicas=N`` produces N service blocks
-    named ``acc-cell-<prefix>-<n>``.  The shape mirrors the existing
+    **Two modes (PR-Q):**
+
+    * ``worker_pool == 0`` (default, the PR-B path) — each
+      ``AgentSpec`` with ``replicas=N`` produces N concrete service
+      blocks named ``acc-cell-<prefix>-<n>`` running that role
+      directly.
+    * ``worker_pool > 0`` — synthesize ``worker_pool`` DORMANT
+      services named ``acc-worker-<n>`` instead.  The concrete
+      agents are NOT emitted; the arbiter's reconcile loop assigns
+      the desired roles (from ``spec.agents``) to the dormant pool
+      at runtime via signed ROLE_ASSIGN.  This is the worker-pool
+      model: declare desired roles (often subroles like
+      ``coding_agent_implementer``) in ``agents`` and the pool
+      capacity in ``worker_pool``.
+
+    Each concrete ``acc-cell-*`` service shape mirrors the existing
     ``acc-coding-1`` service in ``podman-compose.yml`` so the overlay
     composes cleanly with the base file:
 
@@ -233,6 +321,21 @@ def roles_to_compose(
       so the reconciler can identify and stop drift.
     """
     services: dict[str, Any] = {}
+
+    # PR-Q — worker-pool mode: emit dormant workers, skip concrete
+    # agents (the arbiter fills them at runtime via ROLE_ASSIGN).
+    if spec.worker_pool > 0:
+        for n in range(1, spec.worker_pool + 1):
+            svc_name, service = _dormant_service(n, spec, image=image)
+            services[svc_name] = service
+        return {
+            "services": services,
+            "networks": {
+                "acc-net": {"external": True, "name": "production_acc-net"},
+            },
+            "volumes": {"lancedb-data": {"external": True}},
+        }
+
     for agent in spec.agents:
         for n in range(1, agent.replicas + 1):
             svc_name = _service_name(agent, n)

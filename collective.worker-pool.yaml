@@ -1,0 +1,44 @@
+# ACC collective spec — worker-pool preset (PR-Q, D-001).
+#
+# Demonstrates the worker-pool model: instead of booting each desired
+# agent as its own fixed container (the default PR-B path), we
+# pre-spawn a pool of DORMANT workers and let the arbiter's reconcile
+# loop assign roles to them at runtime via signed ROLE_ASSIGN.
+#
+# Apply with:
+#   ./acc-deploy.sh apply collective.worker-pool.yaml
+# then trigger the assignment:
+#   acc-cli nats pub acc.sol-01.collective.reconcile '{}'
+#
+# Requires the arbiter to hold its private signing key:
+#   ACC_ARBITER_SIGNING_KEY=<base64 ed25519 private key>   (arbiter only)
+#   ACC_ARBITER_VERIFY_KEY=<base64 ed25519 public key>     (every agent, via .env)
+#
+# The `agents` list defines the DESIRED roles — here the coding_agent
+# SUBROLES (per Role -> subrole definitions).  `worker_pool` defines
+# the CAPACITY to fill them.  Size the pool to the sum of replicas
+# (here 2 + 1 + 1 = 4) so every desired slot has a worker; add
+# headroom if you expect to infuse more roles at runtime via the TUI.
+
+collective_id: sol-01
+
+# Desired roles — the coding_agent micro-cycle subroles.
+agents:
+  - role: coding_agent_implementer
+    replicas: 2
+    cluster_id: backend
+    purpose: "Generate and modify code artefacts"
+  - role: coding_agent_reviewer
+    replicas: 1
+    cluster_id: backend
+    purpose: "Review diffs; emit PASS/FAIL/NEEDS_CHANGES verdicts"
+  - role: coding_agent_tester
+    replicas: 1
+    cluster_id: backend
+    purpose: "Write and run tests for generated code"
+
+# Pre-spawn 4 dormant workers (= 2 + 1 + 1).  The arbiter reconcile
+# loop assigns the three subroles above onto these four workers when
+# the collective.reconcile trigger fires.  A 5th would give headroom
+# for a runtime infusion without bringing the stack down.
+worker_pool: 4

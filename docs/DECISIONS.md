@@ -35,6 +35,20 @@ trigger subscription, and ``_run_worker_reconcile`` that loads
 ``security.arbiter_signing_key`` (env ``ACC_ARBITER_SIGNING_KEY``)
 holds the arbiter private key; empty → loop warns + emits nothing
 (no unsigned payloads).
+
+**Q follow-up — LANDED (PR-Q, commit on `main` 2026-05-22; 8 new
+tests).**  The dormant pool is now declared in the agentset itself,
+matching the operator's mental model (agentset → Role → subrole).
+``CollectiveSpec.worker_pool: int`` declares how many dormant
+workers to pre-spawn; ``recommended_pool_size(spec)`` = sum of
+replicas (size the pool to the desired subrole slots).
+``roles_to_compose`` gains a worker-pool mode: when
+``worker_pool > 0`` it synthesizes ``acc-worker-<n>`` dormant
+services (``ACC_AGENT_ROLE=dormant``) instead of concrete
+``acc-cell-*`` containers — the arbiter reconcile fills the
+desired ``agents`` (commonly coding_agent subroles) onto the pool
+at runtime.  Shipped ``collective.worker-pool.yaml`` exemplar
+(2 implementer + 1 reviewer + 1 tester → ``worker_pool: 4``).
 **Date:** 2026-05-21
 **Context:** PR-D (commit `83883fd`) wired "Nucleus Apply" to write
 the requested agent into `./collective.yaml` and touch
