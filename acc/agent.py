@@ -114,6 +114,36 @@ def _payload_bytes(msg) -> bytes:
     raw = getattr(msg, "data", None)
     return raw if isinstance(raw, (bytes, bytearray)) else b"{}"
 
+
+def _resolve_task_workspace_dir(data: dict, mount: str | None = None) -> str | None:
+    """PR-U2b — derive the per-task ACC_WORKSPACE_DIR from a TASK_ASSIGN.
+
+    When the operator selected a project directory in the Prompt
+    screen, the TASK_ASSIGN carries a ``workspace`` field — a path
+    RELATIVE to the ``/workspace`` mount (e.g. ``"myproject"``).  This
+    returns the absolute in-container directory (``<mount>/<project>``)
+    the sandboxed fs_read/fs_write skills should resolve under for this
+    task, or ``None`` when no usable workspace was supplied.
+
+    Defence-in-depth (the real containment check is
+    :func:`acc.workspace.safe_resolve`): reject absolute inputs and any
+    ``..`` traversal segment outright so a malformed/hostile field
+    can't repoint the mount root outside ``/workspace``.
+
+    Args:
+        data: The decoded TASK_ASSIGN payload dict.
+        mount: Mount root override; defaults to ``ACC_WORKSPACE_MOUNT``
+            env or ``/workspace``.
+    """
+    ws_project = str(data.get("workspace", "") or "").strip()
+    if not ws_project:
+        return None
+    if ws_project.startswith("/") or "/.." in ws_project or ws_project == "..":
+        return None
+    root = mount or os.environ.get("ACC_WORKSPACE_MOUNT", "/workspace")
+    return f"{root}/{ws_project}"
+
+
 # Bridge delegation timeout — if the peer collective does not respond within
 # this many seconds, the pending delegation is discarded (ACC-9).
 _BRIDGE_TIMEOUT_S: float = 30.0
@@ -645,6 +675,20 @@ class Agent:
             # missing key preserves the legacy broadcast-by-role
             # behaviour (every agent of ``target_role`` sees it; first
             # NATS-delivered wins on JetStream queues).
+            # PR-U2b — per-task trusted workspace.  When the operator
+            # selected a project directory, the TASK_ASSIGN carries a
+            # ``workspace`` field (a path relative to the /workspace
+            # mount).  Point ACC_WORKSPACE_DIR at it so the sandboxed
+            # fs_read/fs_write skills resolve under that project for
+            # this task.  The TUI already wrote the trust sentinel
+            # there (shared mount), so writes are permitted.  Tasks are
+            # handled serially per agent, so this env set is safe; the
+            # mount root is fixed (/workspace) and the project can't
+            # escape it (workspace.safe_resolve enforces containment).
+            ws_dir = _resolve_task_workspace_dir(data)
+            if ws_dir:
+                os.environ["ACC_WORKSPACE_DIR"] = ws_dir
+
             target_aid = data.get("target_agent_id")
             if target_aid and target_aid != self.agent_id:
                 logger.debug(

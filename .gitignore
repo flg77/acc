@@ -70,3 +70,10 @@ operator/bin/
 operator/internal/reconcilers/manifests/data/
 schedules/*.yaml
 !schedules/_example.yaml
+
+# D-007 trusted-workspace mount root.  Project subdirectories created
+# by operators at runtime (with their .acc-workspace-trust sentinels)
+# are local-only; only the .gitkeep that guarantees the mount source
+# exists is tracked.
+workspaces/*
+!workspaces/.gitkeep

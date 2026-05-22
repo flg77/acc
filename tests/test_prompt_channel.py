@@ -102,6 +102,46 @@ async def test_send_omits_target_agent_id_when_none():
 
 
 @pytest.mark.asyncio
+async def test_send_threads_workspace_when_set():
+    """PR-U2b — a selected project dir lands in ``payload['workspace']``."""
+    obs = _StubObserver()
+    channel = TUIPromptChannel(obs, collective_id="sol-test")
+
+    await channel.send(
+        prompt="write a scraper",
+        target_role="coding_agent",
+        workspace="myproject",
+    )
+
+    payload = obs.published[0][1]
+    assert payload["workspace"] == "myproject"
+
+
+@pytest.mark.asyncio
+async def test_send_omits_workspace_when_none():
+    """No directory selected → no ``workspace`` key (back-compat)."""
+    obs = _StubObserver()
+    channel = TUIPromptChannel(obs, collective_id="sol-test")
+
+    await channel.send(prompt="hi", target_role="coding_agent")
+
+    payload = obs.published[0][1]
+    assert "workspace" not in payload, payload
+
+
+@pytest.mark.asyncio
+async def test_send_omits_workspace_when_empty_string():
+    """Empty string is falsy → omitted, not sent as ``""``."""
+    obs = _StubObserver()
+    channel = TUIPromptChannel(obs, collective_id="sol-test")
+
+    await channel.send(prompt="hi", target_role="coding_agent", workspace="")
+
+    payload = obs.published[0][1]
+    assert "workspace" not in payload, payload
+
+
+@pytest.mark.asyncio
 async def test_receive_correlates_by_task_id():
     obs = _StubObserver()
     channel = TUIPromptChannel(obs, collective_id="sol-test")

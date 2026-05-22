@@ -1,0 +1,14 @@
+# D-007 trusted-workspace mount root.
+#
+# This directory is bind-mounted to /workspace inside every agent
+# container AND acc-tui (see container/production/podman-compose.yml,
+# ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z).
+#
+# Operators pick / create a per-project subdirectory here via the TUI
+# Prompt screen's "Select Directory" button; agents with
+# workspace_access (coding_agent + subroles by default) read/write
+# files ONLY under the trusted subdirectory.  See docs/workspace_setup.md.
+#
+# Project subdirectories created at runtime are intentionally NOT
+# committed; this .gitkeep just guarantees the mount source exists on
+# a clean checkout so podman doesn't create it root-owned.

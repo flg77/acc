@@ -397,10 +397,14 @@ as PR-A through PR-F.
 
 ## D-007 — Trusted working directory (workspace sandbox)
 
-**Status:** IN PROGRESS — **PR-U1 (foundation) LANDED** (commit on
-`main` 2026-05-22; 21 sandbox tests).  PR-U2 (TUI trust dialog) and
-PR-U3 (role wiring + compose mount + gating) are PROPOSED, pending
-operator review of the security model below.
+**Status:** LANDED — **PR-U1 (foundation)**, **PR-U2a (role flag +
+auto-grant)**, and **PR-U2b (TUI Select-Directory dialog + compose
+mount + payload threading)** all on `main` (2026-05-22).  The operator
+resolved the open questions below: coding_agent (+ subroles) gets
+`workspace_access: true` by default; every other role has the
+`workspace_access` flag available in its `role.yaml`, **deactivated by
+default**; a single host dir is bind-mounted to `/workspace` in every
+agent + the TUI, and the per-task project is selected at prompt time.
 **Date:** 2026-05-22
 **Context:** Lighthouse testing surfaced that agents answer coding
 tasks as *text only* — they never create files, can't iterate on a
@@ -441,24 +445,34 @@ filesystem access scoped ONLY to that folder; applies to every role.
   integration.  **Not yet wired into any role's `allowed_skills`,
   not yet mounted** — so building it grants NO live access; it's the
   safe foundation + the thing that *prevents* escape.
-* **PR-U2 (PROPOSED)** — TUI trust dialog: a modal to create-new /
-  open-existing / trust a directory; writes the trust sentinel +
-  records the chosen path; surfaces the active workspace in the
-  Prompt / Ecosystem panes.  Applies to all roles.
-* **PR-U3 (PROPOSED)** — wiring: bind-mount the trusted host dir to
-  `/workspace` in the agent services (compose); add `fs_read` /
-  `fs_write` to the relevant roles' `allowed_skills`
-  (`coding_agent*` first, then opt-in for others); doc
-  (`docs/workspace_setup.md`).  Gated on operator sign-off of the
-  security model since this is where LLM agents gain real disk
-  access.
+* **PR-U2a (LANDED)** — role wiring: `workspace_access: bool = False`
+  on `RoleDefinitionConfig`; a `model_validator` auto-grants
+  `fs_read` + `fs_write` (and raises `max_skill_risk_level` to HIGH)
+  whenever a role sets it true.  `coding_agent` + its 5 subroles ship
+  `workspace_access: true`; every other role.yaml inherits the
+  default-off flag, so the option is present but inert until the
+  operator opts in.
+* **PR-U2b (LANDED)** — TUI Select-Directory dialog + wiring:
+  `acc/tui/widgets/workspace_select_modal.py` (`WorkspaceSelectModal`)
+  browses `/workspace`, creates-new / highlights a project dir, marks
+  it trusted, and dismisses with the path.  The Prompt screen gets a
+  **"Select Directory"** button (bottom-left of the prompt input) +
+  a path-display `Static`; the chosen project rides the TASK_ASSIGN
+  as a `workspace` field (relative to the mount).  Agents honour it
+  per-task via `_resolve_task_workspace_dir` →
+  `ACC_WORKSPACE_DIR`.  The host workspace dir
+  (`${ACC_WORKSPACE_HOST_DIR:-../../workspaces}`) is bind-mounted
+  `:z` (SELinux-labelled) to `/workspace` on all six agent services
+  **and** acc-tui, so a directory trusted in the TUI is visible to
+  every agent.
 
-**Open question for the operator (PR-U3):** which roles get
-`fs_write` by default?  Recommendation: coding_agent + its subroles
-only, with read-only `fs_read` available more broadly; everything
-else opt-in per role.yaml.  Also: is `/workspace` always a single
-host dir bind-mounted into every agent, or per-cluster/per-collective
-isolated dirs?
+**Open questions — RESOLVED by the operator (2026-05-22):**
+* Which roles get `fs_write` by default? → **coding_agent + subroles
+  only.**  All other roles expose `workspace_access` in their
+  `role.yaml`, deactivated by default.
+* One host dir or per-cluster isolated dirs? → **a single host dir**
+  bind-mounted into every agent + the TUI (shared trust sentinel);
+  the per-project scoping is chosen at prompt time, not per cluster.
 
 **Related, not yet decided** — the "no interaction / no spawning"
 observation (agents don't run the implementer→reviewer→tester

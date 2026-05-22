@@ -279,3 +279,66 @@ class TestTaskOutputCap:
         from acc.agent import _task_output_max_chars
         monkeypatch.delenv("ACC_TASK_OUTPUT_MAX_CHARS", raising=False)
         assert _task_output_max_chars() >= 2000
+
+
+# ---------------------------------------------------------------------------
+# PR-U2b — per-task trusted workspace resolution
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTaskWorkspaceDir:
+    """``_resolve_task_workspace_dir`` turns the TASK_ASSIGN ``workspace``
+    field into the absolute in-container dir agents point
+    ACC_WORKSPACE_DIR at — rejecting absolute / traversal inputs as
+    defence-in-depth ahead of the real ``workspace.safe_resolve``
+    containment check."""
+
+    def test_relative_project_joins_mount(self, monkeypatch):
+        from acc.agent import _resolve_task_workspace_dir
+        monkeypatch.delenv("ACC_WORKSPACE_MOUNT", raising=False)
+        assert (
+            _resolve_task_workspace_dir({"workspace": "myproject"})
+            == "/workspace/myproject"
+        )
+
+    def test_mount_env_override(self, monkeypatch):
+        from acc.agent import _resolve_task_workspace_dir
+        monkeypatch.setenv("ACC_WORKSPACE_MOUNT", "/data/ws")
+        assert (
+            _resolve_task_workspace_dir({"workspace": "proj"})
+            == "/data/ws/proj"
+        )
+
+    def test_explicit_mount_arg_wins(self):
+        from acc.agent import _resolve_task_workspace_dir
+        assert (
+            _resolve_task_workspace_dir({"workspace": "p"}, mount="/m")
+            == "/m/p"
+        )
+
+    def test_missing_field_returns_none(self):
+        from acc.agent import _resolve_task_workspace_dir
+        assert _resolve_task_workspace_dir({}) is None
+
+    def test_empty_string_returns_none(self):
+        from acc.agent import _resolve_task_workspace_dir
+        assert _resolve_task_workspace_dir({"workspace": "  "}) is None
+
+    def test_absolute_path_rejected(self):
+        from acc.agent import _resolve_task_workspace_dir
+        assert _resolve_task_workspace_dir({"workspace": "/etc/passwd"}) is None
+
+    def test_parent_traversal_rejected(self):
+        from acc.agent import _resolve_task_workspace_dir
+        assert _resolve_task_workspace_dir({"workspace": "a/../../etc"}) is None
+
+    def test_bare_dotdot_rejected(self):
+        from acc.agent import _resolve_task_workspace_dir
+        assert _resolve_task_workspace_dir({"workspace": ".."}) is None
+
+    def test_nested_subdir_allowed(self):
+        from acc.agent import _resolve_task_workspace_dir
+        assert (
+            _resolve_task_workspace_dir({"workspace": "team/proj"})
+            == "/workspace/team/proj"
+        )

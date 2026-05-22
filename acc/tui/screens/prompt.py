@@ -222,6 +222,10 @@ class PromptScreen(Screen):
         super().__init__(**kwargs)
         # Track in-flight workers so screen unmount cancels them.
         self._workers: set[asyncio.Task] = set()
+        # PR-U2b — selected trusted workspace, as a path RELATIVE to the
+        # workspace mount root (e.g. "myproject").  None = no workspace
+        # selected; agents then have no file-write target for the task.
+        self._workspace_project: str | None = None
         # Task ids the screen has already cancelled (timeout path).
         # Cap at 256 entries so the set can't grow unboundedly under
         # a flood of timeouts; oldest entries fall off via FIFO eviction
@@ -307,10 +311,21 @@ class PromptScreen(Screen):
             yield Static(id="prompt-transcript")
 
         # ── Prompt input row (bottom) ───────────────────────────────
+        # PR-U2b — "Select Directory" sits bottom-left, before the
+        # textarea, with the chosen workspace path shown beside it.
+        # Agents with workspace_access write files under the selected
+        # (trusted) project directory.
         with Horizontal(id="prompt-input-row"):
+            yield Button("Select Directory", id="btn-select-workspace",
+                         variant="default")
             yield TextArea(id="prompt-textarea")
             yield Button("Send", id="btn-prompt-send", variant="primary")
 
+        yield Static(
+            "[dim]Workspace: (none — Select Directory to enable file "
+            "writes)[/dim]",
+            id="prompt-workspace-path",
+        )
         yield Static("[dim]Idle. Type a prompt and press Ctrl+S or Send.[/dim]",
                      id="prompt-status")
         yield Footer()
@@ -372,8 +387,44 @@ class PromptScreen(Screen):
         self.app.switch_screen(screen_name)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if (event.button.id or "") == "btn-prompt-send":
+        bid = event.button.id or ""
+        if bid == "btn-prompt-send":
             self.action_send()
+        elif bid == "btn-select-workspace":
+            self._open_workspace_select()
+
+    def _open_workspace_select(self) -> None:
+        """PR-U2b — open the directory picker; on confirm, store the
+        chosen project (relative to the workspace mount) + show it."""
+        from acc.tui.widgets.workspace_select_modal import (  # noqa: PLC0415
+            WorkspaceSelectModal,
+        )
+        from acc.workspace import workspace_root  # noqa: PLC0415
+
+        root = workspace_root()
+
+        def _on_pick(chosen) -> None:
+            if chosen is None:
+                return
+            try:
+                # Express the chosen dir relative to the mount root so
+                # the agent (sharing the same /workspace mount) resolves
+                # the same project.  Falls back to the basename when the
+                # pick is outside the root (dev workstation / home).
+                rel = chosen.resolve().relative_to(root.resolve())
+                project = str(rel)
+            except (ValueError, OSError):
+                project = chosen.name
+            self._workspace_project = project
+            try:
+                self.query_one("#prompt-workspace-path", Static).update(
+                    f"[green]Workspace:[/green] {root}/{project}  "
+                    f"[dim](trusted)[/dim]"
+                )
+            except Exception:
+                pass
+
+        self.app.push_screen(WorkspaceSelectModal(root), _on_pick)
 
     def action_send(self) -> None:
         """Read the form, dispatch a task, await the reply in a worker.
@@ -442,6 +493,7 @@ class PromptScreen(Screen):
                 target_role=target_role,
                 target_agent_id=target_aid,
                 operating_mode=operating_mode,
+                workspace=self._workspace_project,
             )
         )
         self._workers.add(worker)
@@ -724,6 +776,7 @@ class PromptScreen(Screen):
         target_role: str,
         target_agent_id: str | None,
         operating_mode: str = "AUTO",
+        workspace: str | None = None,
     ) -> None:
         """Background worker.  One per Send click."""
         channel = TUIPromptChannel(observer, collective_id=collective_id)
@@ -747,6 +800,7 @@ class PromptScreen(Screen):
                 target_agent_id=target_agent_id,
                 on_progress=_on_progress,
                 operating_mode=operating_mode,
+                workspace=workspace,
             )
         except Exception as exc:
             logger.exception("prompt: send failed")

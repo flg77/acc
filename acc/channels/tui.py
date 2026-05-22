@@ -87,6 +87,7 @@ class TUIPromptChannel:
         target_agent_id: str | None = None,
         on_progress=None,
         operating_mode: str = "AUTO",
+        workspace: str | None = None,
     ) -> str:
         """Build + publish a TASK_ASSIGN derived from *prompt*.
 
@@ -152,6 +153,11 @@ class TUIPromptChannel:
         # ``acc.operating_modes.normalise``.
         if operating_mode and operating_mode != "AUTO":
             payload["operating_mode"] = str(operating_mode)
+        # PR-U2b — the trusted workspace project (relative to the
+        # /workspace mount) the agent should resolve fs_read/fs_write
+        # paths under.  Omitted when no directory was selected.
+        if workspace:
+            payload["workspace"] = str(workspace)
 
         try:
             await self._observer.publish(

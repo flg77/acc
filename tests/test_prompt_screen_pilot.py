@@ -105,6 +105,55 @@ async def test_send_publishes_task_assign_with_form_values():
 
 
 @pytest.mark.asyncio
+async def test_select_directory_button_present():
+    """PR-U2b — the Prompt screen exposes a Select-Directory button."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        btn = screen.query_one("#btn-select-workspace", Button)
+        assert "Select Directory" in str(btn.label)
+
+
+@pytest.mark.asyncio
+async def test_send_threads_selected_workspace_into_payload():
+    """PR-U2b — a chosen project dir rides along on the TASK_ASSIGN."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, PromptScreen)
+
+        screen.query_one("#prompt-textarea", TextArea).text = "write a scraper"
+        # Simulate the modal callback having stored a relative project.
+        screen._workspace_project = "myproject"
+        screen.action_send()
+        for _ in range(4):
+            await pilot.pause()
+
+        assert len(app.observer.published) == 1
+        _, payload = app.observer.published[0]
+        assert payload["workspace"] == "myproject"
+
+
+@pytest.mark.asyncio
+async def test_send_without_workspace_omits_field():
+    """No directory selected → no ``workspace`` key in the payload."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        screen.query_one("#prompt-textarea", TextArea).text = "hello"
+        screen.action_send()
+        for _ in range(4):
+            await pilot.pause()
+
+        _, payload = app.observer.published[0]
+        assert "workspace" not in payload, payload
+
+
+@pytest.mark.asyncio
 async def test_send_with_empty_prompt_notifies_and_skips_publish():
     app = _PromptHarness()
     async with app.run_test() as pilot:

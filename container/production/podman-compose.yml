@@ -139,6 +139,8 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
@@ -165,6 +167,8 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
@@ -191,6 +195,8 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
     networks:
       - acc-net
@@ -230,6 +236,8 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
@@ -259,6 +267,8 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
@@ -288,6 +298,8 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
@@ -514,6 +526,12 @@ services:
       # mount on this file.  Apply writes `.acc-apply.request` in the
       # same dir (the repo root) for a host-side watcher to pick up.
       - ../../collective.yaml:/app/collective.yaml:rw,z
+      # D-007 (PR-U2b) -- trusted workspace mount, SELinux-labelled (:z).
+      # The TUI's "Select Directory" modal (WorkspaceSelectModal) browses
+      # this shared host dir to let the operator pick / create + trust a
+      # per-project working directory.  Same host path the agents mount,
+      # so a directory trusted via the TUI is visible to every agent.
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
     # Uncomment when WebBridge is enabled (ACC_TUI_WEB_PORT=8765):
     # ports:
     #   - "8765:8765"
