@@ -46,6 +46,7 @@ role_definition:
   default_skills:
     - code_review
   max_skill_risk_level: "MEDIUM"
+  workspace_access: true   # D-007 PR-U2 — coding subrole works in the trusted workspace
   allowed_mcps:
     - echo_server
   default_mcps:

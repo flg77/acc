@@ -99,6 +99,13 @@ role_definition:
   default_skills:
     - echo
   max_skill_risk_level: "MEDIUM"
+  # D-007 (PR-U2) — coding_agent ships with workspace access ON.
+  # The ``_grant_workspace_skills`` validator auto-adds fs_read /
+  # fs_write to allowed+default skills and raises the risk ceiling to
+  # HIGH, so this single flag is all that's needed.  The actual
+  # working directory is still selected per-project at prompt time
+  # (TUI "Select Directory") and must be trusted before any write.
+  workspace_access: true
   allowed_mcps:
     - echo_server
   default_mcps:

@@ -224,3 +224,70 @@ def test_fs_write_is_write_action_for_operating_modes():
     ) is True
     # fs_read is not a write action.
     assert is_write_action("skill", "fs_read") is False
+
+
+# ---------------------------------------------------------------------------
+# PR-U2a — workspace_access role flag + auto-grant
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspaceAccessRoleFlag:
+    def test_default_deactivated(self):
+        from acc.config import RoleDefinitionConfig
+        rd = RoleDefinitionConfig.model_validate({
+            "purpose": "p", "persona": "concise", "version": "0.1.0",
+        })
+        assert rd.workspace_access is False
+        assert "fs_write" not in rd.allowed_skills
+
+    def test_enabling_grants_fs_skills(self):
+        from acc.config import RoleDefinitionConfig
+        rd = RoleDefinitionConfig.model_validate({
+            "purpose": "p", "persona": "concise", "version": "0.1.0",
+            "workspace_access": True,
+        })
+        assert "fs_read" in rd.allowed_skills
+        assert "fs_write" in rd.allowed_skills
+        assert "fs_read" in rd.default_skills
+        assert "fs_write" in rd.default_skills
+
+    def test_enabling_raises_risk_ceiling_to_high(self):
+        """fs_write is HIGH risk; the flag must lift the MEDIUM default
+        ceiling so A-017 doesn't reject it."""
+        from acc.config import RoleDefinitionConfig
+        rd = RoleDefinitionConfig.model_validate({
+            "purpose": "p", "persona": "concise", "version": "0.1.0",
+            "workspace_access": True,
+            "max_skill_risk_level": "MEDIUM",
+        })
+        assert rd.max_skill_risk_level == "HIGH"
+
+    def test_enabling_does_not_downgrade_critical_ceiling(self):
+        from acc.config import RoleDefinitionConfig
+        rd = RoleDefinitionConfig.model_validate({
+            "purpose": "p", "persona": "concise", "version": "0.1.0",
+            "workspace_access": True,
+            "max_skill_risk_level": "CRITICAL",
+        })
+        assert rd.max_skill_risk_level == "CRITICAL"
+
+    def test_no_duplicate_skills_when_already_listed(self):
+        from acc.config import RoleDefinitionConfig
+        rd = RoleDefinitionConfig.model_validate({
+            "purpose": "p", "persona": "concise", "version": "0.1.0",
+            "workspace_access": True,
+            "allowed_skills": ["fs_read", "echo"],
+        })
+        assert rd.allowed_skills.count("fs_read") == 1
+
+    def test_coding_agent_role_ships_with_access(self):
+        from acc.role_loader import RoleLoader
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent / "roles"
+        rd = RoleLoader(str(root), "coding_agent").load()
+        if rd is None:
+            import pytest
+            pytest.skip("coding_agent role not loadable")
+        assert rd.workspace_access is True
+        assert "fs_write" in rd.allowed_skills
+        assert rd.max_skill_risk_level == "HIGH"

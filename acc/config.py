@@ -61,6 +61,21 @@ class RoleDefinitionConfig(BaseModel):
     # one-shot agents).  See docs/DECISIONS.md D-002.
     memory_retrieval: bool = True
 
+    # D-007 (PR-U2) — trusted-workspace filesystem access.
+    # When True the role may read/write files in the operator's
+    # trusted working directory (via the sandboxed ``fs_read`` /
+    # ``fs_write`` skills).  Default False — every role carries the
+    # option but it is DEACTIVATED until explicitly enabled in
+    # role.yaml (operator's requirement).  ``coding_agent`` + its
+    # subroles ship with it True; the actual working directory is
+    # still selected per-project at prompt time (TUI Select Directory)
+    # and must be trusted before any write lands.  When True, the
+    # ``_grant_workspace_skills`` validator auto-adds ``fs_read`` /
+    # ``fs_write`` to allowed+default skills and raises the skill-risk
+    # ceiling to HIGH (fs_write is a HIGH-risk skill), so the operator
+    # only flips one boolean.
+    workspace_access: bool = False
+
     # D-003 (PR-L) — operator-controlled autonomy gate.
     # ``AUTO`` (default) matches today's behaviour: Cat-A blocks,
     # Cat-B observes, all other invocations run.  Other valid
@@ -210,6 +225,35 @@ class RoleDefinitionConfig(BaseModel):
     :func:`acc.estimator.build_estimator`, and operators may register
     custom strategies in the future via the ``module:`` form without
     needing to touch this config schema."""
+
+    _WORKSPACE_SKILLS = ("fs_read", "fs_write")
+    _RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+
+    @model_validator(mode="after")
+    def _grant_workspace_skills(self) -> "RoleDefinitionConfig":
+        """D-007 (PR-U2) — when ``workspace_access`` is True, auto-grant
+        the sandboxed filesystem skills so the operator only flips one
+        boolean in role.yaml.
+
+        Adds ``fs_read`` + ``fs_write`` to both ``allowed_skills`` (the
+        Cat-A A-017 gate) and ``default_skills`` (advertised in the
+        system prompt so the LLM knows it can write files), and raises
+        ``max_skill_risk_level`` to at least HIGH because ``fs_write``
+        is a HIGH-risk skill that A-017 would otherwise reject.
+
+        No-op when ``workspace_access`` is False — every role keeps the
+        option, deactivated by default.
+        """
+        if not getattr(self, "workspace_access", False):
+            return self
+        for sid in self._WORKSPACE_SKILLS:
+            if sid not in self.allowed_skills:
+                self.allowed_skills.append(sid)
+            if sid not in self.default_skills:
+                self.default_skills.append(sid)
+        if self._RISK_ORDER.get(self.max_skill_risk_level, 1) < self._RISK_ORDER["HIGH"]:
+            self.max_skill_risk_level = "HIGH"
+        return self
 
 
 class AgentConfig(BaseModel):
