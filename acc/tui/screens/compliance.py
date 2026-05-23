@@ -25,9 +25,11 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import (
+    Button,
     Collapsible,
     DataTable,
     Footer,
+    Input,
     Label,
     ProgressBar,
     Static,
@@ -164,6 +166,23 @@ class ComplianceScreen(Screen):
                         title="Cat C", collapsed=True, id="gov-cat-c",
                     ):
                         yield DataTable(id="gov-table-c", classes="gov-table")
+                    # PR-Z2c — enterprise frameworks: built-in + imported
+                    # catalogs to gap-analyse the loaded rules against.
+                    with Collapsible(
+                        title="Frameworks", collapsed=True, id="gov-frameworks",
+                    ):
+                        yield DataTable(id="fw-table", classes="gov-table")
+                        with Horizontal(id="fw-actions"):
+                            yield Input(
+                                placeholder="catalog to import, e.g. "
+                                "/host-home/bsi_c5.yaml",
+                                id="fw-add-input",
+                            )
+                            yield Button("+ Add", id="btn-fw-add",
+                                         variant="default")
+                            yield Button("Run gap scan", id="btn-fw-scan",
+                                         variant="primary")
+                        yield Static("", id="fw-status")
 
             # Right column: oversight queue + master/detail context + violation log
             #
@@ -224,6 +243,9 @@ class ComplianceScreen(Screen):
         # don't change per snapshot).
         self._gov_rules_by_key: dict[str, object] = {}
         self._populate_governance()
+        # PR-Z2c — load the framework catalogs (built-in + imported).
+        self._coverage_by_fw: dict[str, str] = {}
+        self._populate_frameworks()
 
     def _populate_governance(self) -> None:
         """Fill the Cat-A/B/C tables + titles from the inventory loader."""
@@ -267,6 +289,103 @@ class ComplianceScreen(Screen):
                     f"{layer.title}{ver} — {layer.rule_count} rules{lock}"
                 )
 
+    # ------------------------------------------------------------------
+    # PR-Z2c — frameworks + gap analysis
+    # ------------------------------------------------------------------
+
+    def _populate_frameworks(self) -> None:
+        """Fill the frameworks table from built-in + imported catalogs."""
+        from acc.frameworks import load_all_frameworks  # noqa: PLC0415
+
+        try:
+            table = self.query_one("#fw-table", DataTable)
+        except Exception:
+            return
+        if not table.columns:
+            table.add_columns("Framework", "Name", "Controls", "Coverage")
+        table.clear()
+        try:
+            frameworks = load_all_frameworks()
+        except Exception:
+            frameworks = []
+        for fw in frameworks:
+            cov = self._coverage_by_fw.get(fw.framework_id, "—")
+            table.add_row(
+                fw.framework_id, fw.name[:34], str(fw.control_count), cov,
+                key=fw.framework_id,
+            )
+
+    def _set_fw_status(self, markup: str) -> None:
+        try:
+            self.query_one("#fw-status", Static).update(markup)
+        except Exception:
+            pass
+
+    def _selected_framework_id(self) -> str | None:
+        try:
+            table = self.query_one("#fw-table", DataTable)
+            if table.row_count == 0:
+                return None
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            value = getattr(row_key, "value", None) or str(row_key)
+            return str(value) if value else None
+        except Exception:
+            return None
+
+    def _import_framework(self) -> None:
+        from acc.frameworks import import_framework  # noqa: PLC0415
+
+        try:
+            path = self.query_one("#fw-add-input", Input).value.strip()
+        except Exception:
+            path = ""
+        if not path:
+            self._set_fw_status("[yellow]Enter a catalog path to import.[/yellow]")
+            return
+        try:
+            out = import_framework(path)
+        except Exception as exc:
+            self._set_fw_status(f"[red]import failed: {exc}[/red]")
+            return
+        self._set_fw_status(f"[green]✓ imported[/green] [dim]{out.name}[/dim]")
+        self._populate_frameworks()
+
+    def _run_gap_scan(self) -> None:
+        """Run the deterministic gap analysis for the highlighted
+        framework, write the audit doc, and open the markdown report."""
+        from acc.frameworks import load_all_frameworks  # noqa: PLC0415
+        from acc.gap_analysis import analyze_gaps, dump_gap_report  # noqa: PLC0415
+        from acc.governance_inventory import load_all_layers  # noqa: PLC0415
+
+        fw_id = self._selected_framework_id()
+        if fw_id is None:
+            self._set_fw_status("[yellow]Highlight a framework first.[/yellow]")
+            return
+        framework = next(
+            (f for f in load_all_frameworks() if f.framework_id == fw_id), None,
+        )
+        if framework is None:
+            self._set_fw_status("[red]framework not found[/red]")
+            return
+        try:
+            report = analyze_gaps(load_all_layers(), framework)
+            json_path = dump_gap_report(report)
+        except Exception as exc:
+            self._set_fw_status(f"[red]gap scan failed: {exc}[/red]")
+            return
+        cov = f"{report.coverage_pct:.0f}% ({report.gap_count} gaps)"
+        self._coverage_by_fw[fw_id] = cov
+        self._populate_frameworks()
+        self._set_fw_status(
+            f"[green]✓ scanned[/green] {fw_id}: {cov} "
+            f"[dim]→ {json_path.with_suffix('.md').name}[/dim]"
+        )
+        # Show the markdown audit doc in the read-only viewer.
+        from acc.tui.widgets.policy_viewer_modal import (  # noqa: PLC0415
+            PolicyViewerModal,
+        )
+        self.app.push_screen(PolicyViewerModal(json_path.with_suffix(".md")))
+
     def action_focus_governance(self) -> None:
         """`g` — focus the Cat-A governance table for keyboard nav."""
         try:
@@ -280,6 +399,13 @@ class ComplianceScreen(Screen):
             self.query_one("#oversight-table", DataTable).focus()
         except Exception:
             pass
+
+    def on_button_pressed(self, event: "Button.Pressed") -> None:
+        bid = event.button.id or ""
+        if bid == "btn-fw-add":
+            self._import_framework()
+        elif bid == "btn-fw-scan":
+            self._run_gap_scan()
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)

@@ -48,6 +48,11 @@ volumes:
   # named volume (mounted :U) is writable by the uid-1001 TUI without
   # the host-uid mismatch a bind mount would hit.
   acc-golden-data:
+  # PR-Z2 — imported compliance framework catalogs (BSI / custom) +
+  # generated gap-analysis audit reports.  Named volumes (:U) so the
+  # uid-1001 TUI can write them.
+  acc-frameworks-data:
+  acc-compliance-data:
 
 services:
 
@@ -526,6 +531,9 @@ services:
       ACC_GOLDEN_WRITABLE_ROOT: /app/.acc-golden
       # PR-Z1 — governance policy root the Compliance pane browses.
       ACC_REGULATORY_ROOT: /app/regulatory_layer
+      # PR-Z2 — imported framework catalogs + gap-analysis report store.
+      ACC_FRAMEWORKS_IMPORT_ROOT: /app/.acc-frameworks
+      ACC_COMPLIANCE_REPORTS_ROOT: /app/.acc-compliance
     volumes:
       - acc-tui-logs:/app/logs:U,z
       # Mount the host's acc-config.yaml so the Configuration screen
@@ -566,6 +574,10 @@ services:
       # PR-Z1 -- governance policy files (read-only) so the Compliance
       # pane can show + browse the loaded Cat-A/B/C rules.
       - ../../regulatory_layer:/app/regulatory_layer:ro
+      # PR-Z2 -- writable stores for imported framework catalogs + the
+      # generated gap-analysis audit reports (named volumes, :U).
+      - acc-frameworks-data:/app/.acc-frameworks:U,z
+      - acc-compliance-data:/app/.acc-compliance:U,z
     # Uncomment when WebBridge is enabled (ACC_TUI_WEB_PORT=8765):
     # ports:
     #   - "8765:8765"
