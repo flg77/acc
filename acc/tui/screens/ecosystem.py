@@ -363,7 +363,15 @@ class EcosystemScreen(Screen):
         # with screen-level Tab/Enter input handling.
         ("e", "toggle_edit_yaml", "Edit role.yaml"),
         ("s", "save_yaml", "Save role.yaml"),
+        # PR-W — operator reported `i` was inconsistent: it's a printable
+        # letter, so when focus is in the role filter Input or the inline
+        # role.yaml TextArea (PR-A) the keystroke is typed into the text
+        # box instead of firing infusion.  `f2` is a function key that
+        # text widgets never consume, so it bubbles to the screen and
+        # triggers infusion reliably from ANY focus.  `i` stays as the
+        # quick shortcut for when the role table has focus.
         ("i", "infuse", "Schedule infusion"),
+        ("f2", "infuse", "Infuse → Nucleus"),
         # Commit-4 — operator-requested two-step selection:
         #   Space = preview (load role.md + role.yaml into the right
         #           pane WITHOUT arming buttons or pinning selection)

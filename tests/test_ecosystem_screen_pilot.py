@@ -388,6 +388,55 @@ async def test_button_press_with_selection_dispatches_role_preload(
 
 
 @pytest.mark.asyncio
+async def test_f2_infuses_even_when_filter_input_focused(isolated_manifests):
+    """PR-W — `f2` triggers infusion reliably regardless of focus.
+
+    The plain-letter `i` shortcut is swallowed when focus is in the
+    role-filter Input (it types 'i' into the box).  `f2` is a function
+    key text widgets never consume, so it bubbles to the screen binding
+    and fires infusion even from the filter.
+    """
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._selected_role = "test_role"
+
+        # Focus the filter Input — the exact state where `i` failed.
+        filt = screen.query_one("#role-filter", Input)
+        filt.focus()
+        await pilot.pause()
+
+        await pilot.press("f2")
+        await pilot.pause()
+
+        assert len(app.captured) == 1
+        assert app.captured[0].role_name == "test_role"
+
+
+@pytest.mark.asyncio
+async def test_letter_i_typed_into_filter_does_not_infuse(isolated_manifests):
+    """PR-W — documents the contrast: `i` while the filter is focused
+    types into the box and does NOT infuse (which is why `f2` exists)."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._selected_role = "test_role"
+
+        filt = screen.query_one("#role-filter", Input)
+        filt.focus()
+        await pilot.pause()
+
+        await pilot.press("i")
+        await pilot.pause()
+
+        # 'i' landed in the filter, no infusion dispatched.
+        assert "i" in filt.value
+        assert app.captured == []
+
+
+@pytest.mark.asyncio
 async def test_button_press_without_selection_notifies(
     isolated_manifests, monkeypatch,
 ):
