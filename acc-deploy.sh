@@ -201,6 +201,14 @@ fi
 # ── Build base command ─────────────────────────────────────────────────────────
 BASE_CMD=(podman-compose -f "$COMPOSE_FILE")
 
+# PR-X — the trusted-workspace browse base.  Defaults to the deploying
+# user's home; the acc-tui Prompt picker browses this (mounted at
+# /host-home, read-only) and apply-workspace refuses any path outside
+# it.  Export so podman-compose can interpolate ${ACC_WORKSPACE_BASE}
+# in the acc-tui volume mount.  Narrow it (e.g. ~/acc-workspaces) to
+# reduce host exposure.
+export ACC_WORKSPACE_BASE="${ACC_WORKSPACE_BASE:-$HOME}"
+
 # PR-S — opt-in userns overlay for the acc-tui Configuration .env
 # write-back fix.  `keep-id` breaks pod-mode hosts and an empty
 # `userns_mode` isn't omitted by podman-compose, so the remap lives
@@ -321,6 +329,13 @@ case "$COMMAND" in
             echo "ERROR: $ENV_EXAMPLE not found — cannot scaffold." >&2
             exit 1
         fi
+        # PR-X — scaffold the apply dir (bind-mounted into acc-tui) and
+        # start the host-side workspace apply-watcher so the Prompt
+        # screen's directory picker can recreate agents onto a chosen
+        # working directory.  Idempotent.
+        mkdir -p "$REPO_ROOT/.acc-apply"
+        echo "✓ Apply dir ready: $REPO_ROOT/.acc-apply"
+        "$0" watcher start || true
         ;;
 
     build)
@@ -407,6 +422,16 @@ case "$COMMAND" in
         esac
         echo "▶ Workspace → $PATH_REAL"
         mkdir -p "$PATH_REAL" || { echo "ERROR: mkdir failed" >&2; exit 1; }
+        # Establish trust HOST-side (correct uid) so the container never
+        # needs write access to the operator's home just to browse.  The
+        # sentinel sits at the mount root; once the agents mount this dir
+        # as /workspace, acc.workspace.is_trusted() sees it and fs_write
+        # is permitted.
+        if [[ ! -f "$PATH_REAL/.acc-workspace-trust" ]]; then
+            printf 'trusted_at=%s\nnote=%s\n' "$(date +%s)" \
+                "selected via TUI (apply-workspace)" \
+                > "$PATH_REAL/.acc-workspace-trust"
+        fi
         # Persist for subsequent `up` so the mount survives a manual
         # restart.  Upsert into ./.env (touch first if absent).
         ENV_FILE="$REPO_ROOT/.env"
@@ -427,6 +452,52 @@ case "$COMMAND" in
         echo "✓ Agents now mount $PATH_REAL at /workspace."
         podman ps --filter "name=acc-agent-" \
             --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || true
+        ;;
+
+    watcher)
+        # PR-X — manage the host-side workspace apply-watcher.
+        #   ./acc-deploy.sh watcher start|stop|status
+        WATCHER_SCRIPT="$REPO_ROOT/scripts/acc-apply-watcher.sh"
+        APPLY_DIR="${ACC_APPLY_DIR:-$REPO_ROOT/.acc-apply}"
+        PIDFILE="$APPLY_DIR/watcher.pid"
+        SUBCMD="${1:-status}"
+        mkdir -p "$APPLY_DIR"
+        _watcher_running() {
+            [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
+        }
+        case "$SUBCMD" in
+            start)
+                if _watcher_running; then
+                    echo "✓ apply-watcher already running (PID $(cat "$PIDFILE"))."
+                    exit 0
+                fi
+                chmod +x "$WATCHER_SCRIPT" 2>/dev/null || true
+                nohup "$WATCHER_SCRIPT" >/dev/null 2>&1 &
+                echo $! > "$PIDFILE"
+                echo "✓ apply-watcher started (PID $(cat "$PIDFILE"))."
+                echo "  Log: $APPLY_DIR/watcher.log"
+                ;;
+            stop)
+                if _watcher_running; then
+                    kill "$(cat "$PIDFILE")" 2>/dev/null || true
+                    rm -f "$PIDFILE"
+                    echo "✓ apply-watcher stopped."
+                else
+                    echo "apply-watcher not running."
+                fi
+                ;;
+            status)
+                if _watcher_running; then
+                    echo "apply-watcher: running (PID $(cat "$PIDFILE"))"
+                else
+                    echo "apply-watcher: not running"
+                fi
+                ;;
+            *)
+                echo "usage: ./acc-deploy.sh watcher {start|stop|status}" >&2
+                exit 1
+                ;;
+        esac
         ;;
 
     rebuild)

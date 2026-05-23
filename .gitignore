@@ -77,3 +77,8 @@ schedules/*.yaml
 # exists is tracked.
 workspaces/*
 !workspaces/.gitkeep
+
+# PR-X apply-request channel.  Runtime files are local-only; only the
+# .gitkeep is tracked so the bind-mount source exists on a clean clone.
+.acc-apply/*
+!.acc-apply/.gitkeep

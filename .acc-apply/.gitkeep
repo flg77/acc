@@ -1,0 +1,9 @@
+# PR-X apply-request channel.
+#
+# Bind-mounted into acc-tui at /app/.acc-apply.  The TUI writes
+# workspace.request here when the operator picks a working directory;
+# the host-side scripts/acc-apply-watcher.sh reads it and runs
+# `acc-deploy.sh apply-workspace <host_path>` to recreate the agents
+# onto that directory.  Runtime files (workspace.request / .status /
+# watcher.log / watcher.pid) are git-ignored; this .gitkeep just
+# guarantees the mount source exists on a clean checkout.
