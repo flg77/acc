@@ -32,7 +32,15 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Button, DataTable, Footer, Label, Static
+from textual.widgets import (
+    Button,
+    DataTable,
+    Footer,
+    Input,
+    Label,
+    Static,
+    TextArea,
+)
 
 from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar
 
@@ -96,6 +104,26 @@ class DiagnosticsScreen(Screen):
                         "detail.[/dim]",
                         id="diagnostics-detail",
                     )
+                # PR-Y-2 — in-pane editor: write/edit golden prompts.
+                # Highlighting a row loads its YAML here; Save validates
+                # + writes to the writable store; New starts a blank
+                # template.  "+ Add" attaches a directory (e.g. of
+                # markdown prompts) that the pane watches + reloads.
+                yield Label("EDIT / NEW (YAML)", classes="panel-label")
+                yield TextArea("", id="golden-editor", language="yaml")
+                with Horizontal(id="golden-editor-actions"):
+                    yield Button("New", id="btn-golden-new", variant="default")
+                    yield Button(
+                        "Save", id="btn-golden-save", variant="primary",
+                    )
+                with Horizontal(id="golden-attach-row"):
+                    yield Input(
+                        placeholder="dir to watch, e.g. /host-home/golden",
+                        id="golden-attach-input",
+                    )
+                    yield Button(
+                        "+ Add", id="btn-golden-add-dir", variant="default",
+                    )
 
         yield Footer()
 
@@ -103,6 +131,12 @@ class DiagnosticsScreen(Screen):
         table = self.query_one("#golden-table", DataTable)
         table.add_columns("Name", "Role", "Mode", "Last")
         self._reload_prompts()
+        # PR-Y-2 — live-reload: poll the load roots' file mtimes every
+        # 2s and refresh the table when a golden file changes (mirrors
+        # the Ecosystem role watcher).  The editor is independent of the
+        # table, so a reload never clobbers in-progress edits.
+        self._files_sig = self._compute_files_sig()
+        self.set_interval(2.0, self._poll_changes)
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
@@ -115,22 +149,24 @@ class DiagnosticsScreen(Screen):
     # ------------------------------------------------------------------
 
     def _reload_prompts(self) -> None:
-        """Populate the table from the golden-prompts library."""
-        from acc.golden_prompts import load_all  # noqa: PLC0415
+        """Populate the table from the merged golden-prompts library
+        (shipped suite + writable store + attached watch dirs)."""
+        from acc.golden_prompts import load_merged  # noqa: PLC0415
 
         table = self.query_one("#golden-table", DataTable)
         table.clear()
         self._prompts.clear()
         try:
-            prompts = load_all()
+            prompts = load_merged()
         except Exception:
-            logger.exception("diagnostics: load_all failed")
+            logger.exception("diagnostics: load_merged failed")
             prompts = []
 
         if not prompts:
             self._set_status(
                 "[yellow]No golden prompts found — see "
-                "examples/golden_prompts/.[/yellow]"
+                "examples/golden_prompts/, or write one in the editor "
+                "→ Save.[/yellow]"
             )
             return
 
@@ -162,6 +198,7 @@ class DiagnosticsScreen(Screen):
             return
         name = self._row_key_value(event.row_key)
         self._render_detail(name)
+        self._load_into_editor(name)
 
     @staticmethod
     def _row_key_value(row_key) -> str:
@@ -211,6 +248,128 @@ class DiagnosticsScreen(Screen):
             self.action_run_selected()
         elif bid == "btn-run-all":
             self.action_run_all()
+        elif bid == "btn-golden-new":
+            self._editor_new()
+        elif bid == "btn-golden-save":
+            self._editor_save()
+        elif bid == "btn-golden-add-dir":
+            self._attach_dir()
+
+    # ------------------------------------------------------------------
+    # PR-Y-2 — in-pane editor + attach/watch
+    # ------------------------------------------------------------------
+
+    _EDITOR_TEMPLATE = (
+        "name: my_prompt\n"
+        "description: \"\"\n"
+        "prompt: |\n"
+        "  Write a Python function that returns the nth Fibonacci number.\n"
+        "target_role: coding_agent\n"
+        "operating_mode: AUTO\n"
+        "timeout_s: 60.0\n"
+        "expects:\n"
+        "  reply_non_empty: true\n"
+    )
+
+    def _editor(self) -> "TextArea":
+        return self.query_one("#golden-editor", TextArea)
+
+    def _load_into_editor(self, name: str) -> None:
+        """Dump the highlighted prompt's definition into the editor so
+        the operator can tweak + Save it."""
+        import yaml  # noqa: PLC0415
+
+        prompt = self._prompts.get(name)
+        if prompt is None:
+            return
+        try:
+            text = yaml.safe_dump(
+                prompt.model_dump(), sort_keys=False, allow_unicode=True,
+            )
+            self._editor().text = text
+        except Exception:
+            logger.debug("diagnostics: editor load failed", exc_info=True)
+
+    def _editor_new(self) -> None:
+        try:
+            self._editor().text = self._EDITOR_TEMPLATE
+        except Exception:
+            pass
+        self._set_status("[dim]New prompt template — edit + Save.[/dim]")
+
+    def _editor_save(self) -> None:
+        """Validate the editor YAML and write it to the writable store."""
+        import yaml  # noqa: PLC0415
+        from acc.golden_prompts import GoldenPrompt, save_prompt  # noqa: PLC0415
+
+        try:
+            raw = self._editor().text
+        except Exception:
+            return
+        try:
+            data = yaml.safe_load(raw) or {}
+            prompt = GoldenPrompt.model_validate(data)
+        except Exception as exc:
+            self._set_status(f"[red]invalid prompt: {exc}[/red]")
+            return
+        try:
+            out = save_prompt(prompt)
+        except OSError as exc:
+            self._set_status(f"[red]save failed: {exc}[/red]")
+            return
+        self._set_status(f"[green]✓ saved[/green] [dim]{out}[/dim]")
+        self._reload_prompts()
+        self._files_sig = self._compute_files_sig()
+
+    def _attach_dir(self) -> None:
+        """Attach the directory in the input as a watched golden root."""
+        from acc.golden_prompts import add_watch_dir  # noqa: PLC0415
+
+        try:
+            path = self.query_one("#golden-attach-input", Input).value.strip()
+        except Exception:
+            path = ""
+        if not path:
+            self._set_status("[yellow]Enter a directory to attach.[/yellow]")
+            return
+        try:
+            add_watch_dir(path)
+        except OSError as exc:
+            self._set_status(f"[red]attach failed: {exc}[/red]")
+            return
+        self._set_status(f"[green]✓ watching[/green] [dim]{path}[/dim]")
+        self._reload_prompts()
+        self._files_sig = self._compute_files_sig()
+
+    # ------------------------------------------------------------------
+    # PR-Y-2 — live reload watcher
+    # ------------------------------------------------------------------
+
+    def _compute_files_sig(self) -> tuple:
+        """A cheap signature of (path, mtime) across all load roots."""
+        from acc.golden_prompts import golden_roots  # noqa: PLC0415
+        sig: list[tuple[str, float]] = []
+        try:
+            for root in golden_roots():
+                if not root or not root.is_dir():
+                    continue
+                for pat in ("*.yaml", "*.md"):
+                    for f in root.glob(pat):
+                        try:
+                            sig.append((str(f), f.stat().st_mtime))
+                        except OSError:
+                            continue
+        except Exception:
+            logger.debug("diagnostics: files-sig failed", exc_info=True)
+        return tuple(sorted(sig))
+
+    def _poll_changes(self) -> None:
+        if self._running:
+            return  # don't reshuffle the table mid-run
+        sig = self._compute_files_sig()
+        if sig != getattr(self, "_files_sig", None):
+            self._files_sig = sig
+            self._reload_prompts()
 
     def action_run_selected(self) -> None:
         if self._running:

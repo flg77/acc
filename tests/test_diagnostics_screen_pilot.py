@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, DataTable, Static
+from textual.widgets import Button, DataTable, Input, Static, TextArea
 
 from acc.tui.screens.diagnostics import DiagnosticsScreen
 
@@ -172,3 +172,82 @@ def test_every_nav_screen_has_a_keyboard_binding():
 def test_app_registers_diagnostics_screen():
     from acc.tui.app import ACCTUIApp
     assert "diagnostics" in ACCTUIApp.SCREENS
+
+
+# ---------------------------------------------------------------------------
+# PR-Y-2 — in-pane editor + attach/watch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_editor_new_loads_template(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._editor_new()
+        await pilot.pause()
+        editor = screen.query_one("#golden-editor", TextArea)
+        assert "name:" in editor.text and "target_role:" in editor.text
+
+
+@pytest.mark.asyncio
+async def test_editor_save_writes_and_reloads(tmp_path, monkeypatch):
+    """Save validates the editor YAML and writes it to the writable
+    store, after which it appears in the table."""
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        editor = screen.query_one("#golden-editor", TextArea)
+        editor.text = (
+            "name: editor_made\nprompt: hi\ntarget_role: analyst\n"
+        )
+        screen._editor_save()
+        await pilot.pause()
+
+        assert (tmp_path / "editor_made.yaml").is_file()
+        assert "editor_made" in screen._prompts
+
+
+@pytest.mark.asyncio
+async def test_editor_save_rejects_invalid_yaml(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        # Missing required `prompt`/`target_role`.
+        screen.query_one("#golden-editor", TextArea).text = "name: broken\n"
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+        screen._editor_save()
+        await pilot.pause()
+        assert any("invalid" in s.lower() for s in statuses)
+        assert not list(tmp_path.glob("*.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_attach_dir_registers_and_loads(tmp_path, monkeypatch):
+    from textual.widgets import Input
+    store = tmp_path / "store"
+    store.mkdir()
+    watched = tmp_path / "watched"
+    watched.mkdir()
+    (watched / "extra.md").write_text(
+        "---\ntarget_role: analyst\n---\nSummarise.\n", encoding="utf-8",
+    )
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(store))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#golden-attach-input", Input).value = str(watched)
+        screen._attach_dir()
+        await pilot.pause()
+        # The markdown prompt from the attached dir now shows up.
+        assert "extra" in screen._prompts

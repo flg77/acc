@@ -43,6 +43,11 @@ volumes:
   # Or follow live:
   #   tail -f $(podman volume inspect acc-tui-logs --format '{{.Mountpoint}}')/acc-tui.log
   acc-tui-logs:
+  # PR-Y-2 — writable golden-prompt store.  Operator-authored prompts
+  # (Diagnostics editor) + captured executed prompts land here.  A
+  # named volume (mounted :U) is writable by the uid-1001 TUI without
+  # the host-uid mismatch a bind mount would hit.
+  acc-golden-data:
 
 services:
 
@@ -515,6 +520,10 @@ services:
       # bind-mounted dir the request file lands in for the host watcher.
       ACC_WORKSPACE_BASE: ${ACC_WORKSPACE_BASE:-/root}
       ACC_APPLY_DIR: /app/.acc-apply
+      # PR-Y-2 — writable golden-prompt store (Diagnostics editor +
+      # captured executed prompts).  Merged with the shipped suite +
+      # any attached watch dirs at load time.
+      ACC_GOLDEN_WRITABLE_ROOT: /app/.acc-golden
     volumes:
       - acc-tui-logs:/app/logs:U,z
       # Mount the host's acc-config.yaml so the Configuration screen
@@ -549,6 +558,9 @@ services:
       # path here; the host-side acc-apply-watcher reads it and recreates
       # the agents onto that directory.  rw so the TUI can write.
       - ../../.acc-apply:/app/.acc-apply:rw,z
+      # PR-Y-2 -- writable golden-prompt store (named volume, :U so the
+      # uid-1001 TUI can write without a host-uid mismatch).
+      - acc-golden-data:/app/.acc-golden:U,z
     # Uncomment when WebBridge is enabled (ACC_TUI_WEB_PORT=8765):
     # ports:
     #   - "8765:8765"
