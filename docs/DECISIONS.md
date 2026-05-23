@@ -474,6 +474,26 @@ filesystem access scoped ONLY to that folder; applies to every role.
   bind-mounted into every agent + the TUI (shared trust sentinel);
   the per-project scoping is chosen at prompt time, not per cluster.
 
+* **PR-X (LANDED 2026-05-23)** — **recreate-on-select** rework after
+  operator testing showed the fixed-mount picker hit `mkdir: Permission
+  denied` (the `:z`-only mount + container uid mismatch).  New model:
+  the picker browses the host base (`ACC_WORKSPACE_BASE`, default
+  `$HOME`) mounted **read-only** at `/host-home`; on Confirm the TUI
+  writes an apply request (`acc/workspace_apply.py`) naming the host
+  path; a host-side watcher (`scripts/acc-apply-watcher.sh`, started by
+  `acc-deploy.sh setup`) runs `acc-deploy.sh apply-workspace <path>`
+  which mkdir's it, writes the trust sentinel host-side (correct uid),
+  re-points `ACC_WORKSPACE_HOST_DIR`, and **force-recreates only the
+  agent services** — the selected dir *becomes* `/workspace`.  acc-tui
+  + the LanceDB/Redis/NATS named volumes survive, so the operator's
+  session and agent memory are untouched.  Concurrency: `fs_write` now
+  uses `locked_atomic_write` (atomic temp+replace under a per-root
+  `flock` + in-process lock).  Operator decisions (2026-05-23):
+  mechanism = recreate-on-select; browse base = home directory.
+  Caveat: agents restart (~seconds) per pick; `ACC_WORKSPACE_BASE`
+  bounds the browsable/ mountable blast radius.  See
+  `docs/workspace_setup.md`.
+
 **Related, not yet decided** — the "no interaction / no spawning"
 observation (agents don't run the implementer→reviewer→tester
 micro-cycle): that's a separate **coding-workflow PLAN** decision

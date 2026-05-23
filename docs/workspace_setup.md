@@ -73,97 +73,124 @@ The two skills:
 
 ---
 
-## 3. The mount
+## 3. The mount model — recreate-on-select (PR-X)
 
-`container/production/podman-compose.yml` bind-mounts the host
-workspace into every agent **and** acc-tui:
+A containerised TUI **cannot** mount a new host path into
+already-running agent containers. So picking a directory does not mount
+it directly — it triggers a host-side recreate of **only the agent
+services** onto the chosen directory. The TUI session and the agents'
+LanceDB / Redis / NATS named volumes (their memory) survive.
 
-```yaml
-- ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+Flow:
+
+```
+TUI "+" picker  ──writes──▶  .acc-apply/workspace.request  (host path)
+                                      │
+                       acc-apply-watcher.sh (host) polls it
+                                      │
+                  ./acc-deploy.sh apply-workspace <host_path>
+                    • mkdir -p <host_path>
+                    • write .acc-workspace-trust there (host-side uid)
+                    • re-point agents' /workspace → <host_path>
+                    • force-recreate acc-agent-* ONLY (acc-tui stays up)
 ```
 
-* `${ACC_WORKSPACE_HOST_DIR}` defaults to `./workspaces` at the repo
-  root (the path is relative to `container/production/`). Override it
-  in `./.env` to point somewhere else on the host.
-* `:z` applies the shared SELinux relabel so every container in the
-  pod can access it (required on RHEL / Fedora hosts like acc1).
-* The same host path is mounted into the TUI so its **Select
-  Directory** modal browses the *same* tree the agents see — a folder
-  trusted in the TUI is immediately trusted for the agents.
+Relevant mounts in `container/production/podman-compose.yml`:
 
-`./workspaces/.gitkeep` ships in-repo so the mount source exists on a
-clean checkout (podman would otherwise create it root-owned). Project
-subdirectories created at runtime are git-ignored.
+* Agents: `${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z` —
+  `apply-workspace` rewrites `ACC_WORKSPACE_HOST_DIR` in `./.env` to the
+  selected path, so the *selected directory itself becomes* `/workspace`.
+* acc-tui: `${ACC_WORKSPACE_BASE:-/root}:/host-home:ro` — the browse
+  root, mounted **read-only** so the container never writes to your
+  home; `../../.acc-apply:/app/.acc-apply:rw` — the request channel.
+
+`ACC_WORKSPACE_BASE` (default the deploying user's `$HOME`) is the
+*only* tree the picker can browse and the *only* root `apply-workspace`
+will accept — any path outside it is refused. Narrow it (e.g.
+`ACC_WORKSPACE_BASE=~/acc-workspaces`) to reduce host exposure.
+
+### One-time setup
+
+```bash
+./acc-deploy.sh setup          # scaffolds ./.env + .acc-apply/, starts the watcher
+./acc-deploy.sh watcher status # confirm it's running
+```
+
+`setup` starts `scripts/acc-apply-watcher.sh` (a dependency-free
+polling loop — no inotify/jq). Manage it with
+`./acc-deploy.sh watcher {start|stop|status}`; its log is
+`.acc-apply/watcher.log`.
 
 ---
 
 ## 4. Operator workflow
 
 1. Open the TUI → **Prompt** screen.
-2. Click **Select Directory** (bottom-left of the prompt input row).
+2. Click **`+`** (bottom-left of the input row; tooltip "Select working
+   directory"). The Mode picker sits just left of it.
 3. In the modal:
-   * highlight an existing project directory under `/workspace`, **or**
-   * type a new folder name in the *"new folder name"* box to create
-     one (path separators and `..` are rejected).
-   * **Confirm** (Ctrl+S). This creates the folder if needed, writes
-     the `.acc-workspace-trust` sentinel, and closes the modal.
-4. The chosen path is shown beside the button: `Workspace:
-   /workspace/<project> (trusted)`.
-5. Type your prompt and **Send**. The task carries a `workspace`
-   field (relative to the mount, e.g. `myproject`); the receiving
-   agent points `ACC_WORKSPACE_DIR` at `/workspace/myproject` for that
-   task, so `fs_read` / `fs_write` resolve under it.
+   * highlight an existing directory under the browse root, **or**
+   * type a new folder name in the *"new folder name"* box (path
+     separators and `..` are rejected).
+   * **Confirm** (Ctrl+S). This writes the apply request and closes.
+4. The chosen host path shows beside the input: `Workspace: <path>
+   (applying — agents restarting, ~a few seconds)`.
+5. The host watcher recreates the agents onto that directory. Once
+   they're back (watch the Soma pane heartbeats), **Send** your prompt.
+   Agents write to the `/workspace` root (= your selected directory),
+   which `apply-workspace` already marked trusted.
 
-If no directory is selected, the task is sent without a `workspace`
-field and agents fall back to the default `/workspace` root (writes
-still require a trusted root, so an unselected, untrusted root blocks
-writes — fail-closed).
+If no directory is selected, agents use the default `/workspace` mount
+(`./workspaces`); writes still require trust, so an untrusted root
+blocks writes — fail-closed.
 
 ---
 
 ## 5. Wire-level detail
 
-`TASK_ASSIGN` payload (only present when a directory was selected):
+Apply request (`.acc-apply/workspace.request`, written by the TUI):
 
 ```json
-{
-  "signal_type": "TASK_ASSIGN",
-  "task_id": "…",
-  "content": "write a web scraper",
-  "target_role": "coding_agent",
-  "workspace": "myproject"
-}
+{ "host_path": "/home/flg/projects/foo", "ts": 1747000000.0, "requested_by": "tui" }
 ```
 
-Agent side (`acc/agent.py`):
+* `acc/workspace_apply.py:write_apply_request` writes it atomically;
+  `is_within_base` is the symlink-safe guard the watcher reuses.
+* `acc-deploy.sh apply-workspace` re-validates the path is under
+  `ACC_WORKSPACE_BASE` (pure-bash `realpath`), mkdir's it, writes the
+  trust sentinel, and `up -d --force-recreate`s the baseline agents.
+* The agents then resolve `fs_read`/`fs_write` under `/workspace` =
+  the selected directory; `safe_resolve` + `locked_atomic_write`
+  (atomic + flock) still apply.
 
-* `_resolve_task_workspace_dir(data)` validates the field
-  (rejects absolute / `..` / empty) and returns
-  `<ACC_WORKSPACE_MOUNT or /workspace>/<project>`, or `None`.
-* On a non-`None` result the handler sets `os.environ["ACC_WORKSPACE_DIR"]`
-  before dispatching capabilities. Tasks are handled serially per
-  agent, so this per-task env set is safe.
-* `acc/workspace.py:workspace_root()` reads `ACC_WORKSPACE_DIR`
-  (falling back to `/workspace`); `safe_resolve` enforces containment
-  regardless of what the field claimed.
+> The legacy per-task `workspace` subpath field (PR-U2b) +
+> `_resolve_task_workspace_dir` remain in the codebase and still work if
+> a subpath is ever sent, but the recreate-on-select flow leaves it
+> empty — the whole mount is the project.
 
 ---
 
 ## 6. Security notes & foot-guns
 
-* **Absolute paths and `..` are rejected twice** — once defensively in
-  `_resolve_task_workspace_dir` (the `workspace` field can't repoint
-  the mount root outside `/workspace`) and again, authoritatively, in
-  `safe_resolve` (the actual file path the skill resolves).
-* **Symlink escape** is caught: `safe_resolve` resolves through
-  symlinks and asserts the *real* path is under the *real* root.
-* **Trust is per-directory, not global.** Trusting `myproject` does
-  not trust its siblings. The sentinel lives at the project root.
-* **Removing a trusted dir on the host** drops access immediately
-  (the sentinel disappears with it).
-* **Do not** point `ACC_WORKSPACE_HOST_DIR` at a sensitive host path
-  (`/`, `$HOME`, a repo with secrets). The sandbox bounds agents
-  *within* the mount, but the mount itself is whatever you bind in.
+* **The container browses read-only.** `/host-home` is `:ro`; the TUI
+  never writes to your home. mkdir + trust happen host-side with the
+  correct uid via `apply-workspace`.
+* **Out-of-base paths are refused twice** — once in
+  `acc.workspace_apply.is_within_base` (TUI/watcher) and again in
+  `acc-deploy.sh apply-workspace` (host, `realpath` containment).
+* **Path escapes within the workspace** are caught by
+  `acc.workspace.safe_resolve` (absolute / `..` / symlink escape) for
+  every `fs_read`/`fs_write`.
+* **Concurrent writes** go through `locked_atomic_write` — atomic
+  temp+replace under a per-root `flock` + in-process lock, so
+  cooperating agents can't tear or interleave files.
+* **Trust is per-directory.** The `.acc-workspace-trust` sentinel lives
+  at the selected directory's root; removing the dir drops trust.
+* **Agents restart on each pick** (a few seconds). Memory (named
+  volumes) survives; any in-flight task on those agents is interrupted.
+* **`ACC_WORKSPACE_BASE` bounds the blast radius.** Set it to a
+  dedicated projects dir rather than leaving it at `$HOME` if you want
+  agents/operators unable to reach the rest of your home.
 
 ---
 
@@ -176,15 +203,18 @@ Agent side (`acc/agent.py`):
   workspace resolution + the defensive guards.
 * `tests/test_prompt_channel.py` — `workspace` field threading on the
   TUIPromptChannel.
-* `tests/test_prompt_screen_pilot.py` — Select-Directory button +
-  payload threading from the Prompt screen.
-* `tests/test_workspace_select_modal.py` — the modal: confirm trusts +
-  returns, new-folder creation, traversal-name rejection, cancel.
+* `tests/test_workspace_apply.py` — apply-request write/read + the
+  `is_within_base` containment guard (traversal + symlink escape).
+* `tests/test_prompt_screen_pilot.py` — `+` button, Mode-in-input-row.
+* `tests/test_workspace_select_modal.py` — the modal: browse + apply
+  request with the host path, new-folder append, traversal-name +
+  missing-base rejection, cancel.
 
 Run the slice:
 
 ```bash
 pytest tests/test_workspace_sandbox.py \
+       tests/test_workspace_apply.py \
        tests/test_workspace_select_modal.py \
        tests/test_prompt_channel.py \
        tests/test_prompt_screen_pilot.py \

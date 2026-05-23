@@ -1,25 +1,28 @@
 """`WorkspaceSelectModal` — pick / create the trusted working directory
-(D-007 / PR-U2b).
+(D-007 / PR-X recreate-on-select).
 
-The operator opens this from the Prompt screen's "Select Directory"
-button.  It browses the workspace mount root (``/workspace`` inside
-the acc-tui container, bind-mounted from the host with an SELinux
-``:z`` label), lets the operator highlight an existing project
-directory OR type a new folder name to create one, and on Confirm:
+The operator opens this from the Prompt screen's "+" button.  It
+browses the host **browse root** (``ACC_WORKSPACE_BASE``, mounted
+READ-ONLY into the TUI at ``/host-home``), lets the operator highlight
+an existing directory OR type a new folder name to create one, and on
+Confirm writes an *apply request* naming the chosen **host** path.
 
-* creates the new folder if a name was given,
-* marks the chosen directory *trusted*
-  (``acc.workspace.mark_trusted`` writes the ``.acc-workspace-trust``
-  sentinel — visible to every agent via the shared mount),
-* dismisses with the chosen absolute :class:`Path`.
+Why an apply request rather than mounting directly: a containerised
+TUI cannot mount a new path into already-running agent containers.  So
+the host-side ``acc-apply-watcher`` picks up the request and runs
+``acc-deploy.sh apply-workspace <host_path>``, which mkdir's the path,
+writes the trust sentinel, and recreates ONLY the agent services with
+that directory bind-mounted at ``/workspace``.  The operator's TUI
+session and the agents' LanceDB / Redis / NATS memory survive.
 
-Result type is ``Path | None`` (None on cancel).  The Prompt screen
-turns the absolute path into a project-relative path it threads into
-the TASK_ASSIGN payload so agents resolve files under it.
+The container browses read-only and never writes to the operator's
+home — mkdir + trust happen host-side.  Result is the chosen host path
+``str`` (or ``None`` on cancel); the Prompt screen surfaces it.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -29,8 +32,32 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, DirectoryTree, Input, Static
 
 
-class WorkspaceSelectModal(ModalScreen[Path | None]):
-    """Directory picker rooted at the workspace mount."""
+def browse_root() -> Path:
+    """In-container path the picker browses (the read-only home mount).
+
+    Override via ``ACC_WORKSPACE_BROWSE_ROOT`` (tests / non-container
+    runs); defaults to ``/host-home`` where the compose file mounts
+    ``ACC_WORKSPACE_BASE`` read-only.
+    """
+    raw = os.environ.get("ACC_WORKSPACE_BROWSE_ROOT", "").strip()
+    return Path(raw) if raw else Path("/host-home")
+
+
+def base_host_path() -> str:
+    """Host path that ``browse_root`` corresponds to (``ACC_WORKSPACE_BASE``).
+
+    A pick of ``<browse_root>/<rel>`` maps to host ``<base>/<rel>`` —
+    that host path is what rides the apply request, because the watcher
+    mounts the host path into the agents.
+    """
+    return os.environ.get("ACC_WORKSPACE_BASE", "").strip()
+
+
+class WorkspaceSelectModal(ModalScreen[str | None]):
+    """Read-only directory picker rooted at the host browse mount.
+
+    Dismisses with the chosen HOST path (str), or ``None`` on cancel.
+    """
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", priority=True),
@@ -44,36 +71,41 @@ class WorkspaceSelectModal(ModalScreen[Path | None]):
         border: thick $primary; background: $surface; padding: 1;
     }
     WorkspaceSelectModal #ws-title { height: 1; text-style: bold; color: $primary; }
-    WorkspaceSelectModal #ws-status { height: 1; color: $text-muted; }
+    WorkspaceSelectModal #ws-status { height: 2; color: $text-muted; }
     WorkspaceSelectModal DirectoryTree { height: 1fr; margin: 1 0; }
     WorkspaceSelectModal #ws-newrow { height: 3; }
     WorkspaceSelectModal #ws-actions { height: 3; align: right middle; }
     WorkspaceSelectModal #ws-actions Button { margin: 0 1; }
     """
 
-    def __init__(self, root: Path | None = None, **kwargs) -> None:
+    def __init__(
+        self,
+        browse: Path | None = None,
+        base: str | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
-        from acc.workspace import workspace_root  # noqa: PLC0415
-        self._root = root or workspace_root()
-        # The directory currently highlighted in the tree (defaults to
-        # the root).  Confirm trusts + returns this (or the new folder
-        # created under it).
-        self._selected: Path = self._root
+        self._browse = browse or browse_root()
+        self._base = base if base is not None else base_host_path()
+        # Directory currently highlighted in the tree, as a container
+        # path under self._browse.  Defaults to the browse root.
+        self._selected: Path = self._browse
 
     def compose(self) -> ComposeResult:
         with Vertical():
             yield Static(
-                f"Select working directory (under {self._root})",
+                f"Select working directory (host: {self._base or '?'})",
                 id="ws-title",
             )
             yield Static(
                 "[dim]Highlight a directory, or type a new folder name "
-                "below to create one.  Confirm trusts it.[/dim]",
+                "below to create one.  Confirm requests it — the agents "
+                "restart onto it (your TUI session + memory survive).[/dim]",
                 id="ws-status",
             )
             # DirectoryTree needs an existing root; fall back to home
             # when the mount is absent (dev workstation).
-            tree_root = self._root if self._root.is_dir() else Path.home()
+            tree_root = self._browse if self._browse.is_dir() else Path.home()
             yield DirectoryTree(str(tree_root), id="ws-tree")
             with Horizontal(id="ws-newrow"):
                 yield Input(
@@ -100,31 +132,46 @@ class WorkspaceSelectModal(ModalScreen[Path | None]):
         self.dismiss(None)
 
     def action_confirm(self) -> None:
-        from acc.workspace import mark_trusted  # noqa: PLC0415
+        from acc.workspace_apply import write_apply_request  # noqa: PLC0415
 
-        target = self._selected
+        if not self._base:
+            self._set_status(
+                "[red]ACC_WORKSPACE_BASE not set — the host browse root "
+                "is not configured (redeploy with PR-X compose).[/red]"
+            )
+            return
+
+        # Path of the highlighted dir RELATIVE to the browse root.
+        try:
+            rel = self._selected.resolve().relative_to(self._browse.resolve())
+        except (ValueError, OSError):
+            # Highlight outside the browse root (dev fallback) — treat the
+            # browse root itself as the selection.
+            rel = Path(".")
+
         try:
             newname = self.query_one("#ws-newname", Input).value.strip()
         except Exception:
             newname = ""
         if newname:
-            # Reject path separators in a new-folder name so the
-            # operator can't traverse out of the highlighted dir.
             if "/" in newname or "\\" in newname or newname in ("..", "."):
                 self._set_status("[red]invalid folder name[/red]")
                 return
-            target = target / newname
-            try:
-                target.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:
-                self._set_status(f"[red]mkdir failed: {exc}[/red]")
-                return
+            rel = rel / newname
+
+        # Compose the HOST path: <base>/<rel>.  ``rel`` of "." means the
+        # base itself.
+        rel_str = "" if str(rel) == "." else str(rel)
+        host_path = self._base.rstrip("/")
+        if rel_str:
+            host_path = f"{host_path}/{rel_str}"
+
         try:
-            mark_trusted(target, note="selected via TUI")
+            write_apply_request(host_path, requested_by="tui")
         except OSError as exc:
-            self._set_status(f"[red]trust failed: {exc}[/red]")
+            self._set_status(f"[red]could not write apply request: {exc}[/red]")
             return
-        self.dismiss(target)
+        self.dismiss(host_path)
 
     def _set_status(self, markup: str) -> None:
         try:

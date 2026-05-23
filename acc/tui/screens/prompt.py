@@ -406,37 +406,32 @@ class PromptScreen(Screen):
             self._open_workspace_select()
 
     def _open_workspace_select(self) -> None:
-        """PR-U2b — open the directory picker; on confirm, store the
-        chosen project (relative to the workspace mount) + show it."""
+        """PR-X — open the directory picker.  The modal browses the
+        read-only host mount and, on confirm, writes an apply request;
+        the host-side watcher then recreates the agents onto the chosen
+        directory (which becomes ``/workspace``).  We surface the chosen
+        host path with an "applying" hint — tasks then write to the
+        ``/workspace`` root, so no per-task subpath is threaded."""
         from acc.tui.widgets.workspace_select_modal import (  # noqa: PLC0415
             WorkspaceSelectModal,
         )
-        from acc.workspace import workspace_root  # noqa: PLC0415
 
-        root = workspace_root()
-
-        def _on_pick(chosen) -> None:
-            if chosen is None:
+        def _on_pick(host_path) -> None:
+            if not host_path:
                 return
-            try:
-                # Express the chosen dir relative to the mount root so
-                # the agent (sharing the same /workspace mount) resolves
-                # the same project.  Falls back to the basename when the
-                # pick is outside the root (dev workstation / home).
-                rel = chosen.resolve().relative_to(root.resolve())
-                project = str(rel)
-            except (ValueError, OSError):
-                project = chosen.name
-            self._workspace_project = project
+            # The selected dir IS the agents' /workspace after the
+            # host-side remount, so clear any per-task subpath.
+            self._workspace_project = None
             try:
                 self.query_one("#prompt-workspace-path", Static).update(
-                    f"[green]Workspace:[/green] {root}/{project}  "
-                    f"[dim](trusted)[/dim]"
+                    f"[green]Workspace:[/green] {host_path}  "
+                    f"[yellow](applying — agents restarting, ~a few "
+                    f"seconds)[/yellow]"
                 )
             except Exception:
                 pass
 
-        self.app.push_screen(WorkspaceSelectModal(root), _on_pick)
+        self.app.push_screen(WorkspaceSelectModal(), _on_pick)
 
     def action_send(self) -> None:
         """Read the form, dispatch a task, await the reply in a worker.
