@@ -144,6 +144,39 @@ def _resolve_task_workspace_dir(data: dict, mount: str | None = None) -> str | N
     return f"{root}/{ws_project}"
 
 
+def _extract_eval_outcome(output: str) -> "Optional[dict]":
+    """PR-MM3 — surface a reviewer's structured verdict from its LLM
+    output so the arbiter's PlanExecutor critic loop
+    (``plan._maybe_reissue_for_revise``) can act on it.
+
+    A reviewer role's seed_context asks the model to emit JSON with a
+    ``verdict`` in {GOOD, PARTIAL, NEEDS_REVISE, BAD} (+ optional
+    ``critique`` / ``prompt_patch``).  Accepts that object either at the
+    top level or nested under an ``eval_outcome`` key.  Returns the
+    normalised eval_outcome dict, or ``None`` when the output isn't a
+    recognised verdict (the vast majority of non-reviewer tasks) — in
+    which case TASK_COMPLETE carries no eval_outcome and the loop is a
+    no-op, exactly as before.
+    """
+    try:
+        parsed = json.loads(output)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    nested = parsed.get("eval_outcome")
+    eo = nested if isinstance(nested, dict) else parsed
+    verdict = str(eo.get("verdict", "") or "").upper()
+    if verdict not in {"GOOD", "PARTIAL", "NEEDS_REVISE", "BAD"}:
+        return None
+    out: dict[str, Any] = {"verdict": verdict}
+    if eo.get("critique"):
+        out["critique"] = str(eo["critique"])
+    if isinstance(eo.get("prompt_patch"), dict):
+        out["prompt_patch"] = eo["prompt_patch"]
+    return out
+
+
 # Bridge delegation timeout — if the peer collective does not respond within
 # this many seconds, the pending delegation is discarded (ACC-9).
 _BRIDGE_TIMEOUT_S: float = 30.0
@@ -864,6 +897,13 @@ class Agent:
             # match this completion to its originating cluster spawn.
             if inbound_cluster_id:
                 complete_body["cluster_id"] = inbound_cluster_id
+            # PR-MM3 — when this was a reviewer task whose output is a
+            # structured verdict, surface it as eval_outcome so the
+            # PlanExecutor's per-step critic loop can re-issue the
+            # reviewed step on NEEDS_REVISE.  None for ordinary tasks.
+            _eo = _extract_eval_outcome(result.output or "")
+            if _eo is not None:
+                complete_body["eval_outcome"] = _eo
             complete_payload = json.dumps(complete_body).encode()
             await self.backends.signaling.publish(
                 subject_task_complete(collective_id), complete_payload
