@@ -106,13 +106,34 @@ async def test_send_publishes_task_assign_with_form_values():
 
 @pytest.mark.asyncio
 async def test_select_directory_button_present():
-    """PR-U2b — the Prompt screen exposes a Select-Directory button."""
+    """PR-U2b/PR-V — the Prompt screen exposes a compact '+' workspace
+    button (relabelled from 'Select Directory' to save space)."""
     app = _PromptHarness()
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
         btn = screen.query_one("#btn-select-workspace", Button)
-        assert "Select Directory" in str(btn.label)
+        assert str(btn.label) == "+"
+        # Its purpose is discoverable via the tooltip.
+        assert "working directory" in (btn.tooltip or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_mode_selector_in_bottom_input_row():
+    """PR-V — the Mode picker moved from the top target row into the
+    bottom input row, left of the '+' workspace button."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        from textual.containers import Horizontal
+        input_row = screen.query_one("#prompt-input-row", Horizontal)
+        mode = screen.query_one("#select-operating-mode", Select)
+        # The mode select is a descendant of the bottom input row.
+        assert mode in input_row.query(Select)
+        # And it is no longer in the top target row.
+        target_row = screen.query_one("#prompt-target-row", Horizontal)
+        assert mode not in target_row.query(Select)
 
 
 @pytest.mark.asyncio

@@ -192,6 +192,16 @@ class PromptScreen(Screen):
         background: $surface;
         border-top: solid $primary;
     }
+    PromptScreen #select-operating-mode {
+        width: 20;
+        margin: 1 1 0 0;
+    }
+    PromptScreen #btn-select-workspace {
+        height: 3;
+        width: 5;
+        min-width: 5;
+        margin: 1 1 0 0;
+    }
     PromptScreen #prompt-textarea {
         height: 5;
         width: 1fr;
@@ -260,23 +270,6 @@ class PromptScreen(Screen):
                 placeholder="e.g. coding_agent-deadbeef",
                 id="input-target-agent-id",
             )
-            # PR-L (D-003) — operating-mode picker.  AUTO matches
-            # legacy behaviour; PLAN / ACCEPT_EDITS / ASK_PERMISSIONS
-            # adjust which invocations the human-oversight queue
-            # gates.  All four respect Cat-A constitutional rules
-            # unconditionally — see acc/operating_modes.py.
-            yield Label("Mode:")
-            yield Select(
-                [
-                    ("AUTO", "AUTO"),
-                    ("PLAN", "PLAN"),
-                    ("ACCEPT_EDITS", "ACCEPT_EDITS"),
-                    ("ASK_PERMISSIONS", "ASK_PERMISSIONS"),
-                ],
-                id="select-operating-mode",
-                value="AUTO",
-                allow_blank=False,
-            )
 
         # PR-4 — collapsible cluster topology panel.  Rendered above
         # the transcript so the operator can see active sub-agent
@@ -311,13 +304,32 @@ class PromptScreen(Screen):
             yield Static(id="prompt-transcript")
 
         # ── Prompt input row (bottom) ───────────────────────────────
-        # PR-U2b — "Select Directory" sits bottom-left, before the
-        # textarea, with the chosen workspace path shown beside it.
-        # Agents with workspace_access write files under the selected
-        # (trusted) project directory.
+        # PR-V — the bottom row carries, left-to-right: the operating-
+        # mode picker, a compact "+" workspace button, the textarea,
+        # then Send.  PR-L's Mode picker moved here (was top row) so the
+        # two per-prompt controls (mode + workspace) sit together beside
+        # the input.  The "+" opens WorkspaceSelectModal (PR-U2b); the
+        # chosen path shows in #prompt-workspace-path below.
         with Horizontal(id="prompt-input-row"):
-            yield Button("Select Directory", id="btn-select-workspace",
-                         variant="default")
+            # PR-L (D-003) — operating-mode picker.  AUTO matches legacy
+            # behaviour; PLAN / ACCEPT_EDITS / ASK_PERMISSIONS adjust
+            # which invocations the human-oversight queue gates.  All
+            # four respect Cat-A constitutional rules unconditionally —
+            # see acc/operating_modes.py.
+            yield Select(
+                [
+                    ("AUTO", "AUTO"),
+                    ("PLAN", "PLAN"),
+                    ("ACCEPT_EDITS", "ACCEPT_EDITS"),
+                    ("ASK_PERMISSIONS", "ASK_PERMISSIONS"),
+                ],
+                id="select-operating-mode",
+                value="AUTO",
+                allow_blank=False,
+            )
+            ws_btn = Button("+", id="btn-select-workspace", variant="default")
+            ws_btn.tooltip = "Select working directory (enables file writes)"
+            yield ws_btn
             yield TextArea(id="prompt-textarea")
             yield Button("Send", id="btn-prompt-send", variant="primary")
 
