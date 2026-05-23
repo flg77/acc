@@ -558,6 +558,52 @@ Cat-B/C only and routed through the signed bundle overlay.  See
 
 ---
 
+## D-009 — Prompt caching · Multimodel reviewer · Self-reflective memory
+
+**Status:** LANDED on `main` (2026-05-23). **Date:** 2026-05-23
+**Context:** three cost/quality levers requested together, designed to
+work in DC **and** on the edge / autonomous deployments.
+
+**Operator decisions (locked):**
+* Order: Caching → Multimodel/Reviewer → Memory.
+* Caching: a **backend-independent core first** (stable prompt prefix),
+  Anthropic `cache_control` only an optional DC accelerator, optional in
+  all modes.
+* Reviewer: **extend the existing per-step critic loop**, run on a
+  powerful model — no new plan-level gate.
+* Per-agent model: **central `models.yaml` registry + Agentset dropdown**
+  (1:1), via `AgentSpec.model`, not hand-edited env.
+* Memory notes persistence: **dual-layer** (small LanceDB `memory_notes`
+  table + Redis per-role hot-cache), all writes out-of-band, O(1) read.
+
+**Phase 1 — Caching (PR-CA1..3):** `build_system_prompt` is now a stable
+per-role prefix; RAG + memory notes moved to the LLM user message so
+every backend's prefix cache hits (vLLM/Ollama/Anthropic) — works on the
+edge, no dependency. Optional `cache_prefix` on `complete()`; Anthropic
+`cache_control` + cache-token usage behind `enable_prompt_cache`
+(default off). Best-effort cache metrics in the Performance pane.
+See `docs/prompt_caching.md`.
+
+**Phase 2 — Multimodel + reviewer (PR-MM1..3):** central `models.yaml`
+(`acc.models`) + `AgentSpec.model` → per-agent LLM env via
+`roles_to_compose`; Agentset **Model dropdown** (1:1); generic
+`roles/reviewer` emits a JSON verdict that `acc.agent._extract_eval_outcome`
+surfaces as `eval_outcome` on TASK_COMPLETE so the existing
+`plan._maybe_reissue_for_revise` re-issues the reviewed step on
+NEEDS_REVISE. `collective.reviewer.yaml` = cheap workers + powerful
+reviewer. See `docs/multimodel_reviewer.md`.
+
+**Phase 3 — Self-reflective memory (PR-MEM1..3):**
+`acc.memory_reflection.consolidate` clusters recent episodes → durable
+LLM memory notes (excludes MEMORY_NOTE); dual-layer persistence
+(`memory_notes` LanceDB table + Redis hot-cache,
+`redis_memory_notes_key`); out-of-band `Agent._reflection_loop`
+(`ACC_REFLECTION_INTERVAL_S`, default off; role flag `memory_reflection`);
+O(1) hot-path read prepends notes to the user message. See
+`docs/memory_reflection.md`.
+
+---
+
 ## Future considerations (not yet decided)
 
 * **Multi-collective infusion** — today PR-D writes to a single

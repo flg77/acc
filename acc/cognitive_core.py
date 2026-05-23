@@ -463,8 +463,13 @@ class CognitiveCore:
         # RAG), so every backend's prefix cache hits.  The variable RAG
         # block rides the LLM user message instead.
         system_prompt = self.build_system_prompt(role)
+        # PR-MEM3 — O(1) hot-cache read of durable memory notes (gated by
+        # the same memory_retrieval flag as RAG; empty/miss → no block).
+        memory_notes: list[str] = []
+        if getattr(role, "memory_retrieval", True):
+            memory_notes = self._read_memory_notes()
         llm_user_content = self._compose_user_content(
-            user_content, retrieved_episodes,
+            user_content, retrieved_episodes, memory_notes,
         )
 
         # ACC-12 — PRE-GUARDRAIL (OWASP LLM01/04/06/08)
@@ -1077,17 +1082,48 @@ class CognitiveCore:
         )
         return "\n".join(lines)
 
+    def _read_memory_notes(self) -> list[str]:
+        """PR-MEM3 — O(1) read of this role's consolidated memory notes
+        from the Redis hot-cache.  Best-effort: returns ``[]`` on miss or
+        any error (no LanceDB hit on the hot path)."""
+        try:
+            from acc.memory_reflection import read_hot_cache  # noqa: PLC0415
+            return read_hot_cache(self._redis, self._collective_id, self._role_label)
+        except Exception:
+            return []
+
+    @staticmethod
+    def _render_memory_notes_block(notes: list[str]) -> str:
+        """Render the durable MEMORY_NOTES block for the user message."""
+        if not notes:
+            return ""
+        lines = ["MEMORY_NOTES (durable lessons from your past work):"]
+        lines += [f"- {str(n).strip()}" for n in notes if str(n).strip()]
+        return "\n".join(lines) if len(lines) > 1 else ""
+
     def _compose_user_content(
-        self, user_content: str, retrieved_episodes: list[dict] | None,
+        self,
+        user_content: str,
+        retrieved_episodes: list[dict] | None,
+        memory_notes: list[str] | None = None,
     ) -> str:
-        """Prepend the RAG block (if any) to the task content for the LLM
-        user message.  The bare task content is still what guardrails,
-        Cat-A, embedding + persistence see — only the LLM call gets the
-        memory-augmented message."""
-        block = self._render_episode_block(retrieved_episodes)
-        if not block:
-            return user_content
-        return f"{block}\n\n{user_content}"
+        """Prepend durable memory notes + the RAG episode block (if any)
+        to the task content for the LLM user message.  The bare task
+        content is still what guardrails, Cat-A, embedding + persistence
+        see — only the LLM call gets the memory-augmented message.
+
+        Order: MEMORY_NOTES (high-level lessons) → RECENT_RELEVANT_EPISODES
+        (recent specifics) → task.  Both blocks live in the user message
+        so the role system prompt stays a cacheable prefix (PR-CA1)."""
+        parts: list[str] = []
+        notes_block = self._render_memory_notes_block(memory_notes or [])
+        if notes_block:
+            parts.append(notes_block)
+        rag_block = self._render_episode_block(retrieved_episodes)
+        if rag_block:
+            parts.append(rag_block)
+        parts.append(user_content)
+        return "\n\n".join(parts)
 
     # ------------------------------------------------------------------
     # Pipeline stages
