@@ -21,7 +21,11 @@ from __future__ import annotations
 from typing import Any
 
 from acc.skills import Skill
-from acc.workspace import WorkspaceError, require_writable_workspace
+from acc.workspace import (
+    WorkspaceError,
+    locked_atomic_write,
+    require_writable_workspace,
+)
 
 
 class FsWriteSkill(Skill):
@@ -43,6 +47,9 @@ class FsWriteSkill(Skill):
                 f"(set mkdirs=true to create it)"
             )
 
+        # PR-X — atomic + advisory-locked so concurrent writers (multi-
+        # agent cooperation in one shared workspace) can't tear or
+        # interleave file contents.
         data = content.encode("utf-8")
-        target.write_bytes(data)
-        return {"path": rel, "bytes_written": len(data)}
+        n = locked_atomic_write(target, data)
+        return {"path": rel, "bytes_written": n}

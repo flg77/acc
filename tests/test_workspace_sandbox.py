@@ -210,6 +210,85 @@ class TestFsSkills:
 
 
 # ---------------------------------------------------------------------------
+# PR-X — locked_atomic_write: concurrency-safe shared writes
+# ---------------------------------------------------------------------------
+
+
+class TestLockedAtomicWrite:
+    def test_writes_content(self, ws):
+        from acc.workspace import locked_atomic_write
+        target = ws / "a.txt"
+        n = locked_atomic_write(target, b"hello")
+        assert n == 5
+        assert target.read_bytes() == b"hello"
+
+    def test_overwrite_is_atomic_full_content(self, ws):
+        """A second write fully replaces the first — no leftover bytes
+        from a longer previous file (the temp+replace guarantees the
+        final file is exactly the new content)."""
+        from acc.workspace import locked_atomic_write
+        target = ws / "a.txt"
+        locked_atomic_write(target, b"AAAAAAAAAA")
+        locked_atomic_write(target, b"BB")
+        assert target.read_bytes() == b"BB"
+
+    def test_no_tmp_files_left_behind(self, ws):
+        from acc.workspace import locked_atomic_write
+        locked_atomic_write(ws / "a.txt", b"x")
+        leftovers = [p.name for p in ws.iterdir() if ".tmp" in p.name]
+        assert leftovers == [], leftovers
+
+    def test_concurrent_writers_do_not_interleave(self, ws):
+        """Many threads each write their OWN full payload to the SAME
+        file; the final content must equal exactly one writer's payload
+        (never a torn mix), proving writes serialise + are atomic."""
+        import threading
+        from acc.workspace import locked_atomic_write
+
+        target = ws / "shared.txt"
+        payloads = [bytes([65 + i]) * 2000 for i in range(8)]  # AAA..,BBB..
+
+        barrier = threading.Barrier(len(payloads))
+
+        def _writer(data: bytes) -> None:
+            barrier.wait()
+            for _ in range(20):
+                locked_atomic_write(target, data)
+
+        threads = [threading.Thread(target=_writer, args=(p,)) for p in payloads]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        final = target.read_bytes()
+        # Exactly one writer's homogeneous payload — never interleaved.
+        assert final in payloads, (
+            f"torn write: {len(set(final))} distinct bytes, len={len(final)}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fs_write_uses_locked_write(self, ws, monkeypatch):
+        """fs_write routes through locked_atomic_write (so the lock +
+        atomicity apply to the agent-facing skill, not just the helper).
+
+        The adapter binds the helper into its own namespace at import,
+        so we patch it there, not on acc.workspace."""
+        import skills.fs_write.adapter as adapter
+        calls: list = []
+        real = adapter.locked_atomic_write
+
+        def _spy(target, data, **kw):
+            calls.append((target, data))
+            return real(target, data, **kw)
+
+        monkeypatch.setattr(adapter, "locked_atomic_write", _spy)
+        mark_trusted()
+        await adapter.FsWriteSkill().invoke({"path": "x.py", "content": "x = 1\n"})
+        assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
 # D-003 integration — fs_write classifies as a write action
 # ---------------------------------------------------------------------------
 

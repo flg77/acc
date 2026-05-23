@@ -30,7 +30,14 @@ and is visible to every agent that mounts the workspace.
 from __future__ import annotations
 
 import os
+import tempfile
+import threading
 from pathlib import Path
+
+try:  # POSIX advisory locking — absent on Windows dev boxes.
+    import fcntl  # type: ignore
+except ImportError:  # pragma: no cover - exercised on the Windows dev host
+    fcntl = None  # type: ignore[assignment]
 
 # The in-container mount point for the trusted workspace.  The host
 # directory the operator trusts is bind-mounted here (PR-U2 wiring).
@@ -38,6 +45,29 @@ from pathlib import Path
 _DEFAULT_WORKSPACE = "/workspace"
 
 _TRUST_SENTINEL = ".acc-workspace-trust"
+
+# PR-X — a single advisory-lock sentinel per workspace root.  All
+# fs_write calls across every agent sharing the mount serialise on
+# this one file (see :func:`locked_atomic_write`).
+_WRITE_LOCK = ".acc-workspace.lock"
+
+# PR-X — per-root in-process lock.  ``fcntl.flock`` serialises writers
+# in DIFFERENT processes (the separate agent containers); this
+# threading.Lock serialises writers in the SAME process (multiple
+# agent threads, the test harness).  Both layers together give clean
+# serialisation on Linux (prod) and Windows (dev, no fcntl).
+_PROC_LOCKS: dict[str, threading.Lock] = {}
+_PROC_LOCKS_GUARD = threading.Lock()
+
+
+def _proc_lock_for(root: Path) -> threading.Lock:
+    key = str(root)
+    with _PROC_LOCKS_GUARD:
+        lock = _PROC_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PROC_LOCKS[key] = lock
+        return lock
 
 
 class WorkspaceError(ValueError):
@@ -149,6 +179,84 @@ def safe_resolve(rel_path: str, *, root: Path | None = None) -> Path:
             f"resolved to {resolved} (outside {real_root})"
         )
     return resolved
+
+
+def locked_atomic_write(
+    target: Path, data: bytes, *, root: Path | None = None,
+) -> int:
+    """Write *data* to *target* atomically, under a workspace-wide flock.
+
+    PR-X — multi-agent cooperation: several agents share one workspace
+    mount and may write concurrently.  Two hazards:
+
+    * **Torn writes** — a reader (or another writer) seeing a
+      half-written file.  Solved by writing to a temp file in the same
+      directory then :func:`os.replace` (atomic rename on POSIX).
+    * **Interleaved writers** — two agents writing the *same* file at
+      once.  Solved by an advisory ``flock`` on a single per-root lock
+      sentinel (``.acc-workspace.lock``): every fs_write across every
+      agent serialises on it.  A single coarse lock (rather than
+      per-file) keeps it simple and litter-free — writes are short, so
+      contention cost is negligible.
+
+    Falls back to a plain atomic write when ``fcntl`` is unavailable
+    (Windows dev host); production agents run on Linux where the lock
+    is in force.  This is the "write locks as fallback if RWX-many is
+    not allowed" path the operator asked for — it works on any POSIX
+    filesystem, no shared-write fs feature required.
+
+    Returns the number of bytes written.
+    """
+    root = (root or workspace_root())
+    lock_path = root / _WRITE_LOCK
+    lock_fd: int | None = None
+    proc_lock = _proc_lock_for(root)
+    proc_lock.acquire()
+    try:
+        if fcntl is not None:
+            # Best-effort: if the lock file can't be opened (e.g. root
+            # not yet present), fall through to an unlocked write
+            # rather than failing the whole skill.
+            try:
+                lock_fd = os.open(
+                    str(lock_path), os.O_CREAT | os.O_RDWR, 0o644,
+                )
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            except OSError:
+                if lock_fd is not None:
+                    os.close(lock_fd)
+                    lock_fd = None
+
+        # Unique temp name per call (mkstemp) so concurrent writers in
+        # the SAME process — multiple agent threads, or the test
+        # harness — never collide on the temp path.  os.replace is
+        # atomic on the same volume, so even without the flock (Windows
+        # dev) the final file is always exactly one writer's full
+        # payload, never a torn mix.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp",
+        )
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, target)
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return len(data)
+    finally:
+        if lock_fd is not None:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_UN)  # type: ignore[union-attr]
+            except OSError:
+                pass
+            os.close(lock_fd)
+        proc_lock.release()
 
 
 def require_writable_workspace(rel_path: str, *, root: Path | None = None) -> Path:
