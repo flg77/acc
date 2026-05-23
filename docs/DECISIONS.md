@@ -513,8 +513,8 @@ coding task across subroles.  Tracked under "Future considerations".
 
 ## D-008 — Compliance / governance pane enhancements
 
-**Status:** Phase 1 + Phase 2 LANDED on `main` (2026-05-23); Phase 3
-PROPOSED. **Date:** 2026-05-23
+**Status:** Phase 1 + Phase 2 + Phase 3 LANDED on `main` (2026-05-23).
+**Date:** 2026-05-23
 **Context:** Operator testing found the Compliance pane showed outcomes
 (OWASP grading, health, oversight queue, violation log) but gave no
 visibility into *what governance is loaded* and no way to browse it,
@@ -542,11 +542,18 @@ audit doc + LLM prompt builder (PR-Z2b); a Frameworks collapsible with
 import + Run-gap-scan that writes the audit report and opens it (PR-Z2c).
 Writable named volumes `acc-frameworks-data` + `acc-compliance-data`.
 
-**Phase 3 (PROPOSED)** — agent-driven (LLM) gap analysis +
-`self_challenge` red-team skill via an extended `compliance_officer`
-role; generate enforceable Cat-B/C rules from gaps through the signed
-`RULE_UPDATE` path (gated by the propose/auto choice); learn-from-
-violations → Cat-C proposals; scheduled gap-scan loop.  See
+**Phase 3 (LANDED)** — `compliance_officer` role extended with
+COMPLIANCE_GAP_SCAN / SELF_CHALLENGE / LEARNED_RULE_PROPOSE +
+workspace_access (PR-Z3a); `acc/rule_proposals.py` — Cat-B/C-only
+proposals with a `learned_rule_promotion` setpoint (propose|auto) +
+pending-proposals overlay the arbiter consumes (PR-Z3b); 
+`acc/violation_learning.py` clusters the violation log → Cat-C
+proposals (PR-Z3c); a Rule Proposals review surface in the pane with
+per-item Approve/Reject (PR-Z3d); `acc/self_challenge.py` red-teams
+Cat-A → mitigation proposals + a button (PR-Z3e); `acc/compliance_scan.py`
+runs gap-scan + self-challenge on demand / `--loop` for scheduling
+(PR-Z3f).  Cat-A is never machine-edited — proposals are validated
+Cat-B/C only and routed through the signed bundle overlay.  See
 `docs/compliance_governance.md`.
 
 ---

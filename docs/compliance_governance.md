@@ -121,11 +121,61 @@ pytest tests/test_governance_inventory.py \
        tests/test_compliance_pane_detail.py -v
 ```
 
-## Not yet (Phase 3)
+## Rule proposals (close the gaps)
 
-- Agent-driven (LLM) gap analysis + `self_challenge` red-team skill via
-  an extended `compliance_officer` role.
-- Generating enforceable Cat-B/C rules from gaps (operator-selectable
-  *propose-pending-approval* vs *auto-activate*) through the signed
-  `RULE_UPDATE` path.
-- Learn-from-violations → proposed Cat-C rules; scheduled gap-scan loop.
+Findings never edit enforced policy directly (that would bypass the
+arbiter-signed bundle and could touch immutable Cat-A). Instead they
+become **RuleProposals** (`acc/rule_proposals.py`, Cat-B/C only) shown
+in the **Rule Proposals** collapsible:
+
+- Sources: `gap` (from a gap scan), `violation` (learn-from-violations,
+  `acc/violation_learning.py`), `self_challenge`.
+- Press **`p`** to focus; **Approve** writes the proposal to the
+  pending-proposals overlay (`proposed_rules.jsonl`) the arbiter ICL
+  pipeline consolidates + signs into a Cat-C bundle; **Reject** drops it.
+- The **`learned_rule_promotion`** Cat-B setpoint
+  (`data_rhoai.json`, default `propose`) chooses the policy:
+  - `propose` — proposals wait for operator Approve (human-in-the-loop).
+  - `auto` — proposals auto-approve straight into the overlay.
+  Override per-run with `ACC_LEARNED_RULE_PROMOTION`.
+
+**Cat-A is never machine-edited** — proposals are validated to be
+Cat-B/C only.
+
+## Self-challenge (red-team Cat-A)
+
+The **Self-challenge Cat-A** button (proposals area) runs
+`acc/self_challenge.py`: per Cat-A rule it generates a literal-vs-intent
+adversarial scenario + likelihood + a Cat-B/C mitigation, writes an
+audit doc, and emits mitigation proposals for HIGH/MEDIUM findings.
+
+## Agent-driven (LLM) analysis
+
+The deterministic gap scan + self-challenge are lexical first-passes.
+For semantic depth, dispatch a task to the **`compliance_officer`** role
+(extended with `COMPLIANCE_GAP_SCAN` / `SELF_CHALLENGE` /
+`LEARNED_RULE_PROPOSE` task types) from the **Prompt** pane — the
+agent's LLM produces the rich mapping + refined proposed rules
+(`gap_analysis.build_gap_prompt` / `self_challenge.build_challenge_prompt`
+are the prompt builders). Its `workspace_access` lets it write audit
+docs to the trusted workspace.
+
+## Scheduled scans
+
+`acc/compliance_scan.py` runs gap analysis for every framework + a
+Cat-A self-challenge and emits proposals — on demand or on a loop:
+
+```bash
+python -m acc.compliance_scan                 # one-shot (prints JSON summary)
+python -m acc.compliance_scan --loop 86400    # daily
+```
+
+Schedule it like the golden-prompt runner (see
+`docs/golden_prompts_scheduling.md`):
+
+- **systemd timer** — a `compliance-scan.service` + `.timer` unit.
+- **k8s CronJob** — `schedule: "0 3 * * *"` running the same module.
+
+Scheduled findings land in the same stores, so they appear in the Rule
+Proposals table for review (or auto-activate when the setpoint is
+`auto`).
