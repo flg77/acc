@@ -119,6 +119,7 @@ class ComplianceScreen(Screen):
         # queue (o) so the operator can navigate them by keyboard.
         Binding("g", "focus_governance", "Governance", priority=True),
         Binding("o", "focus_oversight", "Oversight", priority=True),
+        Binding("p", "focus_proposals", "Proposals", priority=True),
         ("q", "app.quit", "Quit"),
         ("1", "navigate('soma')", "Soma"),
         ("2", "navigate('nucleus')", "Nucleus"),
@@ -183,6 +184,21 @@ class ComplianceScreen(Screen):
                             yield Button("Run gap scan", id="btn-fw-scan",
                                          variant="primary")
                         yield Static("", id="fw-status")
+                    # PR-Z3d — proposed Cat-B/C rules (from gap analysis,
+                    # violation learning, self-challenge) awaiting human
+                    # review.  Select a row + Approve (→ signed-bundle
+                    # overlay) or Reject.  Press `p` to focus.
+                    with Collapsible(
+                        title="Rule Proposals", collapsed=True,
+                        id="gov-proposals",
+                    ):
+                        yield DataTable(id="proposals-table", classes="gov-table")
+                        with Horizontal(id="proposals-actions"):
+                            yield Button("Approve", id="btn-proposal-approve",
+                                         variant="primary")
+                            yield Button("Reject", id="btn-proposal-reject",
+                                         variant="default")
+                        yield Static("", id="proposals-status")
 
             # Right column: oversight queue + master/detail context + violation log
             #
@@ -246,6 +262,9 @@ class ComplianceScreen(Screen):
         # PR-Z2c — load the framework catalogs (built-in + imported).
         self._coverage_by_fw: dict[str, str] = {}
         self._populate_frameworks()
+        # PR-Z3d — load any pending rule proposals.
+        self._proposals_by_id: dict[str, object] = {}
+        self._refresh_proposals()
 
     def _populate_governance(self) -> None:
         """Fill the Cat-A/B/C tables + titles from the inventory loader."""
@@ -440,12 +459,61 @@ class ComplianceScreen(Screen):
         except Exception:
             pass
 
+    def action_focus_proposals(self) -> None:
+        """`p` — focus the rule-proposals table."""
+        try:
+            self.query_one("#proposals-table", DataTable).focus()
+        except Exception:
+            pass
+
+    def _set_proposals_status(self, markup: str) -> None:
+        try:
+            self.query_one("#proposals-status", Static).update(markup)
+        except Exception:
+            pass
+
+    def _selected_proposal_id(self) -> str | None:
+        try:
+            table = self.query_one("#proposals-table", DataTable)
+            if table.row_count == 0:
+                return None
+            row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
+            value = getattr(row_key, "value", None) or str(row_key)
+            return str(value) if value else None
+        except Exception:
+            return None
+
+    def _decide_proposal(self, approve: bool) -> None:
+        pid = self._selected_proposal_id()
+        if pid is None:
+            self._set_proposals_status("[yellow]Highlight a proposal first.[/yellow]")
+            return
+        try:
+            from acc.rule_proposals import (  # noqa: PLC0415
+                approve_proposal, reject_proposal,
+            )
+            if approve:
+                approve_proposal(pid, by="operator")
+                msg = f"[green]✓ approved[/green] {pid[:8]} → bundle overlay"
+            else:
+                reject_proposal(pid, by="operator")
+                msg = f"[dim]rejected {pid[:8]}[/dim]"
+        except Exception as exc:
+            self._set_proposals_status(f"[red]decision failed: {exc}[/red]")
+            return
+        self._refresh_proposals()
+        self._set_proposals_status(msg)
+
     def on_button_pressed(self, event: "Button.Pressed") -> None:
         bid = event.button.id or ""
         if bid == "btn-fw-add":
             self._import_framework()
         elif bid == "btn-fw-scan":
             self._run_gap_scan()
+        elif bid == "btn-proposal-approve":
+            self._decide_proposal(approve=True)
+        elif bid == "btn-proposal-reject":
+            self._decide_proposal(approve=False)
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
