@@ -308,6 +308,15 @@ commit on `main` 2026-05-22; 5 new tests).  PR-O adds
 to LanceDB + posts to Comms is a future enhancement; the
 timer/CronJob recipes are the supported scheduling paths today.
 All three modes share the same ``acc.golden_prompts`` engine.
+**Phase 4 / PR-Y** (2026-05-23) — usability after operator testing
+found the pane unusable: the TUI image now COPYs the shipped suite
+(`9d3dfce`); `load_merged` reads `*.yaml` + `*.md` across shipped <
+writable store < attached dirs; the Diagnostics pane gained an in-pane
+YAML editor (New/Save), a "+ Add" watch-dir attach, and a 2 s
+live-reload poll; markdown import (`parse_markdown_prompt`, front
+matter + body); and the Prompt screen now captures each successful
+execution as a deduped golden candidate in the writable store
+(named volume `acc-golden-data` mounted `:U` at `/app/.acc-golden`).
 **Date:** 2026-05-21
 **Context:** Every operator session today is a manual smoke test.
 Regressions like the agent-side payload-decode bug (Commit-7) went
