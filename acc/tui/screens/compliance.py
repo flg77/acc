@@ -24,7 +24,14 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Label, ProgressBar, Static
+from textual.widgets import (
+    Collapsible,
+    DataTable,
+    Footer,
+    Label,
+    ProgressBar,
+    Static,
+)
 
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
@@ -97,9 +104,19 @@ class ComplianceScreen(Screen):
     #   focus(table); press('r')      →  reject dispatched correctly
     # We use 'a' / 'r' as the mnemonic pair and mark both priority=True
     # so they fire even if a future child widget claims the keys.
+    DEFAULT_CSS = """
+    ComplianceScreen #owasp-table { height: 13; }
+    ComplianceScreen #governance-layers { height: 1fr; margin-top: 1; }
+    ComplianceScreen .gov-table { height: auto; max-height: 10; }
+    """
+
     BINDINGS = [
         Binding("a", "approve_oversight", "Approve", priority=True),
         Binding("r", "reject_oversight", "Reject", priority=True),
+        # PR-Z1b/c — focus the governance layers (g) or the oversight
+        # queue (o) so the operator can navigate them by keyboard.
+        Binding("g", "focus_governance", "Governance", priority=True),
+        Binding("o", "focus_oversight", "Oversight", priority=True),
         ("q", "app.quit", "Quit"),
         ("1", "navigate('soma')", "Soma"),
         ("2", "navigate('nucleus')", "Nucleus"),
@@ -126,6 +143,27 @@ class ComplianceScreen(Screen):
                 yield Label("COMPLIANCE HEALTH", classes="panel-label")
                 yield Static(id="health-score-value")
                 yield ProgressBar(id="health-progress-bar", total=100, show_eta=False)
+
+                # PR-Z1b — Governance layers: three collapsible sections
+                # (Cat A / B / C) showing WHAT is loaded.  Cat-A starts
+                # expanded (the constitution); B/C collapsed to keep the
+                # dashboard scannable.  Each holds a rule_id | summary
+                # table; selecting a row opens the source policy file in
+                # a read-only viewer.  Press `g` to focus this area.
+                yield Label("GOVERNANCE LAYERS", classes="panel-label")
+                with ScrollableContainer(id="governance-layers"):
+                    with Collapsible(
+                        title="Cat A", collapsed=False, id="gov-cat-a",
+                    ):
+                        yield DataTable(id="gov-table-a", classes="gov-table")
+                    with Collapsible(
+                        title="Cat B", collapsed=True, id="gov-cat-b",
+                    ):
+                        yield DataTable(id="gov-table-b", classes="gov-table")
+                    with Collapsible(
+                        title="Cat C", collapsed=True, id="gov-cat-c",
+                    ):
+                        yield DataTable(id="gov-table-c", classes="gov-table")
 
             # Right column: oversight queue + master/detail context + violation log
             #
@@ -176,6 +214,70 @@ class ComplianceScreen(Screen):
         oversight.add_columns(
             "ID", "Agent", "Risk", "Submitted", "Gate reason", "Status",
         )
+        # PR-Z1c — whole-row cursor so the operator clearly sees which
+        # item `a`/`r` will act on (matches the Ecosystem table feel).
+        oversight.cursor_type = "row"
+
+        # PR-Z1b — load the governance layers once (display-only; they
+        # don't change per snapshot).
+        self._gov_rules_by_key: dict[str, object] = {}
+        self._populate_governance()
+
+    def _populate_governance(self) -> None:
+        """Fill the Cat-A/B/C tables + titles from the inventory loader."""
+        from acc.governance_inventory import load_all_layers  # noqa: PLC0415
+
+        try:
+            layers = load_all_layers()
+        except Exception:
+            layers = []
+        by_cat = {layer.category: layer for layer in layers}
+        for cat, tbl_id, coll_id in (
+            ("A", "gov-table-a", "gov-cat-a"),
+            ("B", "gov-table-b", "gov-cat-b"),
+            ("C", "gov-table-c", "gov-cat-c"),
+        ):
+            layer = by_cat.get(cat)
+            try:
+                table = self.query_one(f"#{tbl_id}", DataTable)
+            except Exception:
+                continue
+            if not table.columns:
+                table.add_columns("Rule", "Summary")
+            table.clear()
+            collapsible = None
+            try:
+                collapsible = self.query_one(f"#{coll_id}", Collapsible)
+            except Exception:
+                pass
+            if layer is None or layer.rule_count == 0:
+                if collapsible is not None:
+                    collapsible.title = f"Cat {cat} — (none loaded)"
+                continue
+            for rule in layer.rules:
+                self._gov_rules_by_key[rule.rule_id] = rule
+                summary = rule.summary or "[dim]—[/dim]"
+                table.add_row(rule.rule_id, summary[:80], key=rule.rule_id)
+            if collapsible is not None:
+                lock = " 🔒" if layer.immutable else ""
+                ver = f" v{layer.version}" if layer.version else ""
+                collapsible.title = (
+                    f"{layer.title}{ver} — {layer.rule_count} rules{lock}"
+                )
+
+    def action_focus_governance(self) -> None:
+        """`g` — focus the Cat-A governance table for keyboard nav."""
+        try:
+            self.query_one("#gov-table-a", DataTable).focus()
+        except Exception:
+            pass
+
+    def action_focus_oversight(self) -> None:
+        """`o` — focus the human-oversight queue table."""
+        try:
+            self.query_one("#oversight-table", DataTable).focus()
+        except Exception:
+            pass
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
@@ -468,6 +570,27 @@ class ComplianceScreen(Screen):
             return
         item = getattr(self, "_pending_items_by_id", {}).get(str(value))
         self._render_oversight_detail(item)
+
+    def on_data_table_row_selected(
+        self, event: "DataTable.RowSelected",
+    ) -> None:
+        """PR-Z1b — selecting a governance rule row opens the source
+        policy file in a read-only viewer.  Only the gov-table-* tables
+        react; the oversight table uses `a`/`r` instead of RowSelected."""
+        table_id = getattr(event.data_table, "id", "") or ""
+        if not table_id.startswith("gov-table-"):
+            return
+        row_key = event.row_key
+        value = getattr(row_key, "value", None) or str(row_key)
+        rule = getattr(self, "_gov_rules_by_key", {}).get(str(value))
+        if rule is None:
+            return
+        from acc.tui.widgets.policy_viewer_modal import (  # noqa: PLC0415
+            PolicyViewerModal,
+        )
+        self.app.push_screen(
+            PolicyViewerModal(rule.source_path, highlight_line=rule.line),
+        )
 
     def _render_violation_log(self, snap: "CollectiveSnapshot") -> None:
         """Render scrollable violation log (REQ-TUI-027)."""
