@@ -198,6 +198,9 @@ class ComplianceScreen(Screen):
                                          variant="primary")
                             yield Button("Reject", id="btn-proposal-reject",
                                          variant="default")
+                            yield Button("Self-challenge Cat-A",
+                                         id="btn-self-challenge",
+                                         variant="default")
                         yield Static("", id="proposals-status")
 
             # Right column: oversight queue + master/detail context + violation log
@@ -514,6 +517,33 @@ class ComplianceScreen(Screen):
             self._decide_proposal(approve=True)
         elif bid == "btn-proposal-reject":
             self._decide_proposal(approve=False)
+        elif bid == "btn-self-challenge":
+            self._run_self_challenge()
+
+    def _run_self_challenge(self) -> None:
+        """Red-team the Cat-A constitution: write the audit doc, emit
+        Cat-B/C mitigation proposals, and open the report."""
+        from acc.governance_inventory import load_all_layers  # noqa: PLC0415
+        from acc.self_challenge import (  # noqa: PLC0415
+            challenge_cat_a, dump_challenge_report, proposals_from_challenge,
+        )
+        try:
+            report = challenge_cat_a(load_all_layers())
+            json_path = dump_challenge_report(report)
+            n = len(proposals_from_challenge(report))
+        except Exception as exc:
+            self._set_proposals_status(f"[red]self-challenge failed: {exc}[/red]")
+            return
+        self._refresh_proposals()
+        self._set_proposals_status(
+            f"[green]✓ self-challenge[/green] {report.total} findings, "
+            f"{n} mitigation proposal(s) "
+            f"[dim]→ {json_path.with_suffix('.md').name}[/dim]"
+        )
+        from acc.tui.widgets.policy_viewer_modal import (  # noqa: PLC0415
+            PolicyViewerModal,
+        )
+        self.app.push_screen(PolicyViewerModal(json_path.with_suffix(".md")))
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
