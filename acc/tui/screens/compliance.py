@@ -179,8 +179,10 @@ class ComplianceScreen(Screen):
                 yield Label("HUMAN OVERSIGHT QUEUE", classes="panel-label")
                 yield DataTable(id="oversight-table")
                 yield Label(
-                    "  [bold]a[/bold]=Approve  [bold]r[/bold]=Reject  "
-                    "[dim](↑/↓ to inspect a row in the detail panel below)[/dim]",
+                    "  [bold]o[/bold]=focus queue  [bold]↑/↓[/bold]=move  "
+                    "[bold]a[/bold]=Approve highlighted  "
+                    "[bold]r[/bold]=Reject highlighted  "
+                    "[dim](detail panel below tracks the highlighted row)[/dim]",
                     classes="key-hint",
                 )
 

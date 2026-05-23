@@ -524,6 +524,8 @@ services:
       # captured executed prompts).  Merged with the shipped suite +
       # any attached watch dirs at load time.
       ACC_GOLDEN_WRITABLE_ROOT: /app/.acc-golden
+      # PR-Z1 — governance policy root the Compliance pane browses.
+      ACC_REGULATORY_ROOT: /app/regulatory_layer
     volumes:
       - acc-tui-logs:/app/logs:U,z
       # Mount the host's acc-config.yaml so the Configuration screen
@@ -561,6 +563,9 @@ services:
       # PR-Y-2 -- writable golden-prompt store (named volume, :U so the
       # uid-1001 TUI can write without a host-uid mismatch).
       - acc-golden-data:/app/.acc-golden:U,z
+      # PR-Z1 -- governance policy files (read-only) so the Compliance
+      # pane can show + browse the loaded Cat-A/B/C rules.
+      - ../../regulatory_layer:/app/regulatory_layer:ro
     # Uncomment when WebBridge is enabled (ACC_TUI_WEB_PORT=8765):
     # ports:
     #   - "8765:8765"
