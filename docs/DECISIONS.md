@@ -511,6 +511,46 @@ coding task across subroles.  Tracked under "Future considerations".
 
 ---
 
+## D-008 — Compliance / governance pane enhancements
+
+**Status:** Phase 1 + Phase 2 LANDED on `main` (2026-05-23); Phase 3
+PROPOSED. **Date:** 2026-05-23
+**Context:** Operator testing found the Compliance pane showed outcomes
+(OWASP grading, health, oversight queue, violation log) but gave no
+visibility into *what governance is loaded* and no way to browse it,
+measure it against enterprise frameworks, or act per-item on oversight.
+
+**Decision (operator-locked 2026-05-23):**
+* Enterprise policy = **BOTH** built-in reference frameworks + import of
+  unsupported/custom ones (BSI), with gap analysis → generated
+  enforceable Cat-B/C rulesets (Cat-A immutable).
+* Learned rules = **operator-selectable** *propose-pending-approval*
+  (default) vs *auto-activate*.
+* **TUI rework first**, then the agent/learning phases.
+
+**Phase 1 (LANDED)** — `acc/governance_inventory.py` (PR-Z1a) parses the
+Cat-A/B/C Rego files into version + rule lists; the pane gains three
+collapsible Cat-A/B/C sections + a read-only `PolicyViewerModal`
+(PR-Z1b); the Human Oversight queue became a focusable row-cursor table
+(`o`/↑↓/`a`/`r`, per-item approve, HIGH_CONSEQUENCE confirm) and
+`regulatory_layer` is mounted `:ro` into acc-tui (PR-Z1c).
+
+**Phase 2 (LANDED)** — `acc/frameworks.py` + four built-in catalogs
+(NIST AI RMF, EU AI Act, ISO 42001, SOC 2) with custom import (PR-Z2a);
+`acc/gap_analysis.py` deterministic coverage mapping + JSON/markdown
+audit doc + LLM prompt builder (PR-Z2b); a Frameworks collapsible with
+import + Run-gap-scan that writes the audit report and opens it (PR-Z2c).
+Writable named volumes `acc-frameworks-data` + `acc-compliance-data`.
+
+**Phase 3 (PROPOSED)** — agent-driven (LLM) gap analysis +
+`self_challenge` red-team skill via an extended `compliance_officer`
+role; generate enforceable Cat-B/C rules from gaps through the signed
+`RULE_UPDATE` path (gated by the propose/auto choice); learn-from-
+violations → Cat-C proposals; scheduled gap-scan loop.  See
+`docs/compliance_governance.md`.
+
+---
+
 ## Future considerations (not yet decided)
 
 * **Multi-collective infusion** — today PR-D writes to a single
