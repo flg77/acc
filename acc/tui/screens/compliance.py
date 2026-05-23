@@ -321,6 +321,31 @@ class ComplianceScreen(Screen):
         except Exception:
             pass
 
+    def _refresh_proposals(self) -> None:
+        """Refresh the Rule Proposals table (PR-Z3d wires the widget;
+        safe no-op until then)."""
+        try:
+            from acc.rule_proposals import list_proposals  # noqa: PLC0415
+            table = self.query_one("#proposals-table", DataTable)
+        except Exception:
+            return
+        if not table.columns:
+            table.add_columns("ID", "Src", "Cat", "Sev", "Status", "Rationale")
+        table.clear()
+        self._proposals_by_id = {}
+        for p in list_proposals():
+            self._proposals_by_id[p.proposal_id] = p
+            status_cell = {
+                "PROPOSED": "[yellow]PROPOSED[/yellow]",
+                "APPROVED": "[green]APPROVED[/green]",
+                "REJECTED": "[dim]REJECTED[/dim]",
+            }.get(p.status, p.status)
+            table.add_row(
+                p.proposal_id[:8], p.source, p.category, p.severity,
+                status_cell, (p.rationale or "")[:50],
+                key=p.proposal_id,
+            )
+
     def _selected_framework_id(self) -> str | None:
         try:
             table = self.query_one("#fw-table", DataTable)
@@ -373,11 +398,26 @@ class ComplianceScreen(Screen):
         except Exception as exc:
             self._set_fw_status(f"[red]gap scan failed: {exc}[/red]")
             return
+        # PR-Z3b — turn each gap into a Cat-B/C rule proposal (auto-
+        # approved into the overlay or left PENDING per the
+        # learned_rule_promotion setpoint).  Best-effort.
+        n_proposals = 0
+        mode = "propose"
+        try:
+            from acc.rule_proposals import (  # noqa: PLC0415
+                promotion_mode, proposals_from_gap_report,
+            )
+            mode = promotion_mode()
+            n_proposals = len(proposals_from_gap_report(report))
+        except Exception:
+            logger.debug("compliance: proposal emit failed", exc_info=True)
         cov = f"{report.coverage_pct:.0f}% ({report.gap_count} gaps)"
         self._coverage_by_fw[fw_id] = cov
         self._populate_frameworks()
+        self._refresh_proposals()
         self._set_fw_status(
-            f"[green]✓ scanned[/green] {fw_id}: {cov} "
+            f"[green]✓ scanned[/green] {fw_id}: {cov} — "
+            f"{n_proposals} proposal(s) [{mode}] "
             f"[dim]→ {json_path.with_suffix('.md').name}[/dim]"
         )
         # Show the markdown audit doc in the read-only viewer.
