@@ -222,6 +222,11 @@ class CognitiveCore:
         self._stress = StressIndicators()
         # Sliding window: list of timestamps for RPM tracking
         self._task_timestamps: list[float] = []
+        # PR-MEM2 — bounded ring of recent episode rows (the same dicts
+        # persisted to LanceDB) so the out-of-band reflection loop can
+        # consolidate without a vector-table scan.
+        from collections import deque  # noqa: PLC0415
+        self._recent_episodes: deque = deque(maxlen=64)
         # ACC-11: shared domain centroid vector (updated by CENTROID_UPDATE signal)
         self._domain_centroid: list[float] = []
 
@@ -1298,15 +1303,25 @@ class CognitiveCore:
             UUID of the new episode row.
         """
         episode_id = str(uuid.uuid4())
-        self._vector.insert("episodes", [{
+        row = {
             "id": episode_id,
             "agent_id": self._agent_id,
             "ts": time.time(),
             "signal_type": task_payload.get("signal_type", "TASK_ASSIGN"),
             "payload_json": json.dumps(task_payload),
             "embedding": output_embedding,
-        }])
+        }
+        self._vector.insert("episodes", [row])
+        # PR-MEM2 — feed the reflection ring (kept even if the vector
+        # insert above raised in a degraded mode, since the caller wraps
+        # this best-effort).
+        self._recent_episodes.append(row)
         return episode_id
+
+    def recent_episodes(self) -> list[dict]:
+        """PR-MEM2 — a copy of the recent-episode ring for the
+        out-of-band reflection loop (no vector-table scan needed)."""
+        return list(self._recent_episodes)
 
     async def _compute_drift(
         self,

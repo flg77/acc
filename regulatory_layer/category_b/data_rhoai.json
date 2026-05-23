@@ -29,7 +29,8 @@
     "plan_max_parallel_steps": 5,
     "eval_outcome_retention_days": 7,
     "backpressure_hysteresis_pct": 0.80,
-    "learned_rule_promotion": "propose"
+    "learned_rule_promotion": "propose",
+    "reflection_interval_s": 0
   },
   "constitutional": {
     "max_generation": 10

@@ -1899,6 +1899,72 @@ class Agent:
     # Main lifecycle (Phase 4e)
     # ------------------------------------------------------------------
 
+    async def _run_reflection_once(self) -> None:
+        """PR-MEM2 — one out-of-band reflection pass: consolidate recent
+        episodes into durable memory notes, persist them to the
+        ``memory_notes`` table, and refresh the role's Redis hot-cache.
+
+        Best-effort: gated on the role's ``memory_reflection`` flag +
+        a live CognitiveCore; any failure is logged, never raised — this
+        runs off the task hot path and must not disturb it.
+        """
+        core = self._cognitive_core
+        role = getattr(self, "_active_role", None)
+        if core is None or role is None:
+            return
+        if not getattr(role, "memory_reflection", False):
+            return
+        try:
+            from acc.memory_reflection import (  # noqa: PLC0415
+                consolidate, persist_notes, write_hot_cache,
+            )
+            episodes = core.recent_episodes()
+            if not episodes:
+                return
+            notes = await consolidate(
+                self.agent_id,
+                self.config.agent.role,
+                episodes,
+                self.backends.llm,
+            )
+            if not notes:
+                return
+            persist_notes(notes, self.backends.vector)
+            write_hot_cache(
+                self._redis,
+                self.config.agent.collective_id,
+                self.config.agent.role,
+                notes,
+            )
+            logger.info(
+                "reflection: wrote %d memory note(s) for role=%s",
+                len(notes), self.config.agent.role,
+            )
+        except Exception:
+            logger.exception("reflection: pass failed (non-fatal)")
+
+    async def _reflection_loop(self) -> None:
+        """PR-MEM2 — periodic out-of-band memory consolidation.
+
+        Disabled (returns immediately) unless ``ACC_REFLECTION_INTERVAL_S``
+        > 0 and a CognitiveCore is present.  Sleeps on the stop-event so
+        shutdown is prompt; never blocks the task loop.
+        """
+        try:
+            interval = float(os.environ.get("ACC_REFLECTION_INTERVAL_S", "0") or "0")
+        except ValueError:
+            interval = 0.0
+        if interval <= 0 or self._cognitive_core is None:
+            return
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+            if self._stop_event.is_set():
+                break
+            await self._run_reflection_once()
+
     async def run(self) -> None:
         """Start the full agent lifecycle with all concurrent loops."""
         logging.basicConfig(
@@ -1933,6 +1999,10 @@ class Agent:
                 self._subscribe_plan_submit(),
                 self._subscribe_plan_task_completes(),
                 self._subscribe_kernel_events(),
+                # PR-MEM2 — out-of-band self-reflective memory loop.
+                # No-ops unless ACC_REFLECTION_INTERVAL_S > 0 + a
+                # CognitiveCore is present + the role opted in.
+                self._reflection_loop(),
                 return_exceptions=True,
             )
         finally:

@@ -61,6 +61,13 @@ class RoleDefinitionConfig(BaseModel):
     # one-shot agents).  See docs/DECISIONS.md D-002.
     memory_retrieval: bool = True
 
+    # PR-MEM2 — self-reflective memory.  When True, an out-of-band loop
+    # periodically consolidates this agent's recent episodes into durable
+    # "memory notes" (LLM summaries) that sharpen future retrieval.
+    # Default False: it makes extra LLM calls, so opt in per role.  The
+    # cadence is the ``reflection_interval_s`` Cat-B setpoint.
+    memory_reflection: bool = False
+
     # D-007 (PR-U2) — trusted-workspace filesystem access.
     # When True the role may read/write files in the operator's
     # trusted working directory (via the sandboxed ``fs_read`` /
