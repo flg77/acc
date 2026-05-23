@@ -278,6 +278,18 @@ class PerformanceScreen(Screen):
                 bar_str = f"[{bar}]  {pct:>4.0f}%"
 
             lines.append(f"[bold]{agent_id[:14]}[/bold]  {bar_str}")
+            # PR-CA3 — prompt-cache hit telemetry (best-effort).  Shown
+            # only when the backend reports cache reads (Anthropic);
+            # edge backends auto-cache server-side without a signal.
+            cache_read = getattr(agent, "cache_read_tokens", 0)
+            in_toks = getattr(agent, "prompt_input_tokens", 0)
+            if cache_read:
+                ratio = (cache_read / (cache_read + in_toks) * 100.0
+                         if (cache_read + in_toks) else 0.0)
+                lines.append(
+                    f"  [green]cache:[/green] {cache_read} read "
+                    f"({ratio:.0f}% of input)"
+                )
 
         if not lines:
             lines = ["[dim]No agents observed.[/dim]"]

@@ -41,6 +41,9 @@ class AgentSnapshot:
     drift_score: float = 0.0
     cat_b_deviation_score: float = 0.0
     token_budget_utilization: float = 0.0
+    # PR-CA3 — prompt-cache telemetry (best-effort).
+    cache_read_tokens: int = 0
+    prompt_input_tokens: int = 0
     reprogramming_level: int = 0
     task_count: int = 0
     last_task_latency_ms: float = 0.0

@@ -520,6 +520,13 @@ class NATSObserver:
         snap.token_budget_utilization = float(
             data.get("token_budget_utilization", snap.token_budget_utilization)
         )
+        # PR-CA3 — prompt-cache telemetry (best-effort).
+        snap.cache_read_tokens = int(
+            data.get("cache_read_tokens", snap.cache_read_tokens)
+        )
+        snap.prompt_input_tokens = int(
+            data.get("prompt_input_tokens", snap.prompt_input_tokens)
+        )
         snap.reprogramming_level = int(
             data.get("reprogramming_level", snap.reprogramming_level)
         )

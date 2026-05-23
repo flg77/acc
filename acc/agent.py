@@ -609,6 +609,9 @@ class Agent:
                 "drift_score": stress.drift_score,
                 "cat_b_deviation_score": stress.cat_b_deviation_score,
                 "token_budget_utilization": stress.token_budget_utilization,
+                # PR-CA3 — prompt-cache telemetry (best-effort).
+                "cache_read_tokens": getattr(stress, "cache_read_tokens", 0),
+                "prompt_input_tokens": getattr(stress, "prompt_input_tokens", 0),
                 "reprogramming_level": stress.reprogramming_level,
                 "task_count": stress.task_count,
                 "last_task_latency_ms": stress.last_task_latency_ms,

@@ -95,6 +95,15 @@ class StressIndicators:
     oversight_pending_count: int = 0
     """Current items in the human oversight queue awaiting approval."""
 
+    # PR-CA3: prompt-cache telemetry (best-effort).
+    cache_read_tokens: int = 0
+    """Cumulative input tokens served from the prompt cache (Anthropic
+    ``cache_read_input_tokens``; 0 on backends that don't report it —
+    their server-side prefix cache is still active, just unmeasured)."""
+
+    prompt_input_tokens: int = 0
+    """Cumulative LLM input tokens (for the cache-hit ratio denominator)."""
+
 
 @dataclass
 class CognitiveResult:
@@ -542,6 +551,12 @@ class CognitiveCore:
         response, latency_ms, token_count = await self._call_llm(
             system_prompt, llm_user_content,
         )
+        # PR-CA3 — accumulate best-effort prompt-cache telemetry.
+        _usage = response.get("usage", {}) if isinstance(response, dict) else {}
+        self._stress.cache_read_tokens += int(
+            _usage.get("cache_read_input_tokens", 0) or 0
+        )
+        self._stress.prompt_input_tokens += int(_usage.get("input_tokens", 0) or 0)
         # Backend shape tolerance — historical inconsistency:
         #   * ``acc.backends.llm_openai_compat.complete`` returns
         #     ``{"content": <str>, "usage": {...}}``.
