@@ -107,6 +107,22 @@ class TestLoader:
             prompts = load_all(missing)
         assert prompts == []
 
+    def test_shipped_suite_loads(self):
+        """PR-Y — the repo ships a golden-prompt suite that must load.
+
+        Guards two regressions at once: (1) someone deleting/renaming
+        the shipped YAMLs, and (2) the loader's default repo-anchor
+        resolution drifting.  The Diagnostics pane (#9) showed "No
+        golden prompts found" in the container because the image didn't
+        COPY examples/golden_prompts; this asserts the source-of-truth
+        suite is present so the baked image has something to copy."""
+        prompts = load_all()  # default root = <repo>/examples/golden_prompts
+        names = {p.name for p in prompts}
+        assert len(prompts) >= 6, names
+        # A couple of stable anchors so a rename is caught.
+        assert "smoke_basic_reply" in names
+        assert "coding_webscraper_basic" in names
+
 
 # ---------------------------------------------------------------------------
 # Assertion engine
