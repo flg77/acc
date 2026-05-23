@@ -377,6 +377,58 @@ case "$COMMAND" in
         echo "  Stop:     ./acc-deploy.sh down"
         ;;
 
+    apply-workspace)
+        # PR-X — recreate-on-select trusted workspace.  Re-points the
+        # AGENTS' /workspace bind mount at the operator-chosen host path
+        # and recreates ONLY the agent services.  acc-tui (the operator's
+        # live session) and the LanceDB / Redis / NATS named volumes
+        # (agent memory) are untouched.  Invoked by the host-side
+        # apply-watcher when the TUI writes an apply request, or run
+        # manually:  ./acc-deploy.sh apply-workspace /home/flg/proj/foo
+        HOST_PATH="${1:?usage: apply-workspace <host-abs-path>}"
+        if [[ "$STACK" != "production" ]]; then
+            echo "ERROR: apply-workspace is production-only." >&2
+            exit 1
+        fi
+        # Security: the path must resolve within the allowed base
+        # (ACC_WORKSPACE_BASE, default the deploying user's $HOME).  Pure
+        # bash + realpath so no Python is required on the host.  `-m`
+        # tolerates not-yet-existing paths.
+        BASE="${ACC_WORKSPACE_BASE:-$HOME}"
+        BASE_REAL="$(realpath -m "$BASE")"
+        PATH_REAL="$(realpath -m "$HOST_PATH")"
+        case "$PATH_REAL/" in
+            "$BASE_REAL"/*) : ;;
+            *)
+                echo "REFUSED: $PATH_REAL is not within $BASE_REAL" >&2
+                echo "         (set ACC_WORKSPACE_BASE to widen the allowed root)" >&2
+                exit 2
+                ;;
+        esac
+        echo "▶ Workspace → $PATH_REAL"
+        mkdir -p "$PATH_REAL" || { echo "ERROR: mkdir failed" >&2; exit 1; }
+        # Persist for subsequent `up` so the mount survives a manual
+        # restart.  Upsert into ./.env (touch first if absent).
+        ENV_FILE="$REPO_ROOT/.env"
+        touch "$ENV_FILE"
+        if grep -qE '^ACC_WORKSPACE_HOST_DIR=' "$ENV_FILE"; then
+            sed -i "s|^ACC_WORKSPACE_HOST_DIR=.*|ACC_WORKSPACE_HOST_DIR=$PATH_REAL|" "$ENV_FILE"
+        else
+            echo "ACC_WORKSPACE_HOST_DIR=$PATH_REAL" >> "$ENV_FILE"
+        fi
+        # Recreate ONLY the baseline agent services with the new mount
+        # source.  --force-recreate picks up the changed bind source even
+        # though the rest of the service definition is unchanged.  Profile
+        # agents (coding-split / worker pool) re-apply the same way; pass
+        # them explicitly or re-run with the relevant profile.
+        echo "▶ Recreating agents on the new workspace (acc-tui untouched)..."
+        ACC_WORKSPACE_HOST_DIR="$PATH_REAL" "${BASE_CMD[@]}" up -d --force-recreate \
+            acc-agent-ingester acc-agent-analyst acc-agent-arbiter
+        echo "✓ Agents now mount $PATH_REAL at /workspace."
+        podman ps --filter "name=acc-agent-" \
+            --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || true
+        ;;
+
     rebuild)
         # Pull + no-cache build.  Two-stage so a git failure aborts BEFORE
         # we burn 5+ minutes on a no-cache rebuild that won't reflect new
