@@ -40,11 +40,20 @@ class AnthropicBackend:
         system: str,
         user: str,
         response_schema: dict | None = None,
+        cache_prefix: bool = False,
     ) -> dict:
         """Send a chat completion request to Anthropic.
 
         When *response_schema* is provided, the user message is augmented with
         an instruction to respond with valid JSON only.
+
+        PR-CA2 — when *cache_prefix* is set, the (stable per-role) system
+        prompt is sent as a single text block marked
+        ``cache_control={"type":"ephemeral"}`` so Anthropic caches it and
+        subsequent identical-prefix calls read from cache.  Cache token
+        counts are surfaced in ``usage``.  Only worthwhile above
+        Anthropic's minimum-cacheable-prefix size; below it the API
+        silently treats it as a normal request.
         """
         user_content = user
         if response_schema is not None:
@@ -53,11 +62,21 @@ class AnthropicBackend:
                 f"Schema: {json.dumps(response_schema)}"
             )
 
+        # When caching is hinted, pass the system prompt as a block list so
+        # we can attach cache_control; otherwise the plain string form.
+        system_arg = system
+        if cache_prefix and system:
+            system_arg = [{
+                "type": "text",
+                "text": system,
+                "cache_control": {"type": "ephemeral"},
+            }]
+
         try:
             message = await self._client.messages.create(
                 model=self._model,
                 max_tokens=4096,
-                system=system,
+                system=system_arg,
                 messages=[{"role": "user", "content": user_content}],
             )
         except anthropic.APIStatusError as exc:
@@ -81,10 +100,19 @@ class AnthropicBackend:
         usage_obj = getattr(message, "usage", None)
         input_tokens = int(getattr(usage_obj, "input_tokens", 0) or 0)
         output_tokens = int(getattr(usage_obj, "output_tokens", 0) or 0)
+        # PR-CA2 — prompt-cache token accounting.  Anthropic reports
+        # cache_creation_input_tokens (written to cache this call) +
+        # cache_read_input_tokens (served from cache).  total_tokens
+        # keeps counting input+output for the existing Cat-B budget; the
+        # cache fields are additive metrics for the Performance pane.
+        cache_creation = int(getattr(usage_obj, "cache_creation_input_tokens", 0) or 0)
+        cache_read = int(getattr(usage_obj, "cache_read_input_tokens", 0) or 0)
         usage = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
+            "cache_creation_input_tokens": cache_creation,
+            "cache_read_input_tokens": cache_read,
         }
 
         # Canonical shape — matches ``acc.backends.llm_openai_compat`` and

@@ -113,6 +113,7 @@ class LLMBackend(Protocol):
         system: str,
         user: str,
         response_schema: dict | None = None,
+        cache_prefix: bool = False,
     ) -> dict:
         """Request a chat completion.
 
@@ -121,6 +122,14 @@ class LLMBackend(Protocol):
             user: User turn content.
             response_schema: Optional JSON Schema dict.  When provided, the
                 backend SHOULD request structured JSON output.
+            cache_prefix: PR-CA2 — hint that the (stable) *system* prompt
+                is a cacheable prefix.  Backends with an explicit
+                prompt-cache API (Anthropic ``cache_control``) act on it;
+                backends whose server caches prefixes automatically
+                (vLLM ``--enable-prefix-caching``, Ollama/llama.cpp) and
+                those without any cache API simply ignore it — the win
+                there comes from sending a stable prefix (PR-CA1), not a
+                client hint.
 
         Returns:
             Parsed response as a plain dict.

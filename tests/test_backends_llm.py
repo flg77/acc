@@ -128,11 +128,18 @@ class TestAnthropicBackend:
         )
 
     @staticmethod
-    def _msg(text: str, *, input_tokens: int = 12, output_tokens: int = 34):
+    def _msg(text: str, *, input_tokens: int = 12, output_tokens: int = 34,
+             cache_creation: int = 0, cache_read: int = 0):
         """Build a mock Anthropic Messages response with a usage block."""
         m = MagicMock()
         m.content = [MagicMock(text=text)]
-        m.usage = MagicMock(input_tokens=input_tokens, output_tokens=output_tokens)
+        # PR-CA2 — set cache fields explicitly so the backend reads real
+        # ints (an unset MagicMock attr would int() to 1).
+        m.usage = MagicMock(
+            input_tokens=input_tokens, output_tokens=output_tokens,
+            cache_creation_input_tokens=cache_creation,
+            cache_read_input_tokens=cache_read,
+        )
         return m
 
     @pytest.mark.asyncio
@@ -162,6 +169,7 @@ class TestAnthropicBackend:
         assert result["content"] == "plain text"
         assert result["usage"] == {
             "input_tokens": 5, "output_tokens": 7, "total_tokens": 12,
+            "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
         }
 
     @pytest.mark.asyncio

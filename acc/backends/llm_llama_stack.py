@@ -44,6 +44,7 @@ class LlamaStackBackend:
         system: str,
         user: str,
         response_schema: dict | None = None,
+        cache_prefix: bool = False,  # PR-CA2: ignored — no client cache API
     ) -> dict:
         """POST to ``/inference/chat-completion``."""
         body: dict = {

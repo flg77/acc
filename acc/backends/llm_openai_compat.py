@@ -133,6 +133,7 @@ class OpenAICompatBackend:
         system: str,
         user: str,
         response_schema: dict | None = None,
+        cache_prefix: bool = False,  # PR-CA2: ignored — provider/proxy-dependent
     ) -> dict:
         """POST to ``{base_url}/chat/completions`` (OpenAI Chat Completions format).
 

@@ -362,6 +362,14 @@ class LLMConfig(BaseModel):
     """HTTP request timeout in seconds for inference calls (openai_compat)."""
     max_retries: int = 3
     """Maximum retry attempts on retryable errors — 429, 5xx (openai_compat)."""
+    enable_prompt_cache: bool = False
+    """PR-CA2 — opt-in per-backend prompt-cache HINT (env
+    ``ACC_LLM_ENABLE_PROMPT_CACHE``).  When true, the agent hints the
+    backend that the stable system prompt is a cacheable prefix; the
+    Anthropic backend attaches ``cache_control`` (a DC accelerator).
+    Backends whose server auto-caches prefixes (vLLM, Ollama) ignore the
+    hint — they already benefit from the stable prefix (PR-CA1), so this
+    is optional in all modes and off by default."""
 
 
 class ObservabilityConfig(BaseModel):
@@ -960,6 +968,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_LLM_API_KEY_ENV":          ("llm", "api_key_env"),
     "ACC_LLM_TIMEOUT_S":            ("llm", "request_timeout_s"),
     "ACC_LLM_MAX_RETRIES":          ("llm", "max_retries"),
+    "ACC_LLM_ENABLE_PROMPT_CACHE":  ("llm", "enable_prompt_cache"),
     "ACC_METRICS_BACKEND":          ("observability", "backend"),
     "ACC_OTEL_SERVICE_NAME":        ("observability", "otel_service_name"),
     # Role definition overrides (ACC-6a)

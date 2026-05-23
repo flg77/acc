@@ -1108,11 +1108,27 @@ class CognitiveCore:
     ) -> tuple[dict, float, int]:
         """Async call to the LLM backend with latency measurement.
 
+        PR-CA2 — when ``ACC_LLM_ENABLE_PROMPT_CACHE`` is truthy, hint the
+        backend that the (stable, PR-CA1) system prompt is a cacheable
+        prefix.  Default off → opt-in in all modes.  Backends without an
+        explicit cache API ignore the hint (their server-side prefix
+        cache already benefits from the stable prefix).
+
         Returns:
             ``(response_dict, latency_ms, token_count)``
         """
+        import os  # noqa: PLC0415
+        cache_prefix = os.environ.get(
+            "ACC_LLM_ENABLE_PROMPT_CACHE", "",
+        ).strip().lower() in ("1", "true", "yes", "on")
         t0 = time.monotonic()
-        response = await self._llm.complete(system, user)
+        try:
+            response = await self._llm.complete(
+                system, user, cache_prefix=cache_prefix,
+            )
+        except TypeError:
+            # Legacy backend / test double without the PR-CA2 kwarg.
+            response = await self._llm.complete(system, user)
         latency_ms = (time.monotonic() - t0) * 1000.0
         token_count: int = response.get("usage", {}).get("total_tokens", 0)
         return response, latency_ms, token_count
