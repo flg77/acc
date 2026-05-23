@@ -69,6 +69,13 @@ class AgentSpec(BaseModel):
     replicas: int = Field(default=1, ge=0, le=100)
     cluster_id: Optional[str] = None
     purpose: Optional[str] = None
+    # PR-MM1 — multimodel: a model_id from the central models.yaml
+    # registry (acc.models).  When set, roles_to_compose resolves it to
+    # the per-agent LLM env (ACC_LLM_BACKEND/ACC_*_MODEL/...), so this
+    # sub-agent runs on a different model from the collective default —
+    # e.g. cheap workers + one powerful reviewer.  None = collective
+    # default model.
+    model: Optional[str] = None
     extra_env: dict[str, str] = Field(default_factory=dict)
     # When unset, ``roles_to_compose`` defaults to the role name with
     # ``_`` replaced by ``-`` (e.g. coding_agent -> coding).
@@ -353,6 +360,14 @@ def roles_to_compose(
                 env["ACC_CLUSTER_ID"] = agent.cluster_id
             if agent.purpose:
                 env["ACC_AGENT_PURPOSE"] = agent.purpose
+            # PR-MM1 — multimodel: resolve the chosen model_id from the
+            # central registry into LLM env vars for this agent.  Applied
+            # BEFORE extra_env so an operator's explicit extra_env can
+            # still override.  Unknown/unset model_id → no env (the agent
+            # uses the collective default model).
+            if agent.model:
+                from acc.models import model_env_for_id  # noqa: PLC0415
+                env.update(model_env_for_id(agent.model))
             # Operator-supplied extras win over the defaults above.
             env.update(agent.extra_env)
 
