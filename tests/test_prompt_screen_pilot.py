@@ -249,6 +249,71 @@ async def test_synthetic_task_complete_appended_to_history():
 
 
 @pytest.mark.asyncio
+async def test_executed_prompt_captured_as_golden_candidate(
+    tmp_path, monkeypatch,
+):
+    """PR-Y-2c — a successful reply captures the prompt into the
+    writable golden store so it shows up in Diagnostics."""
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#prompt-textarea", TextArea).text = (
+            "Write a unique capture probe prompt"
+        )
+        screen.action_send()
+        for _ in range(8):
+            await pilot.pause()
+            if app.observer.published:
+                break
+        task_id = app.observer.published[0][1]["task_id"]
+        app.observer.deliver(task_id, {
+            "signal_type": "TASK_COMPLETE", "task_id": task_id,
+            "agent_id": "coding_agent-x", "output": "done",
+            "blocked": False, "latency_ms": 10.0, "episode_id": "ep",
+        })
+        for _ in range(8):
+            await pilot.pause()
+            if list(tmp_path.glob("*.yaml")):
+                break
+
+    from acc.golden_prompts import load_merged
+    captured = [
+        p for p in load_merged([tmp_path])
+        if "capture probe" in p.prompt
+    ]
+    assert captured, "executed prompt was not captured as a candidate"
+
+
+@pytest.mark.asyncio
+async def test_blocked_reply_not_captured(tmp_path, monkeypatch):
+    """A blocked reply must NOT be captured (we only persist
+    successful executions)."""
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#prompt-textarea", TextArea).text = "blocked probe"
+        screen.action_send()
+        for _ in range(8):
+            await pilot.pause()
+            if app.observer.published:
+                break
+        task_id = app.observer.published[0][1]["task_id"]
+        app.observer.deliver(task_id, {
+            "signal_type": "TASK_COMPLETE", "task_id": task_id,
+            "agent_id": "a", "output": "nope", "blocked": True,
+            "block_reason": "cat-a", "latency_ms": 1.0, "episode_id": "e",
+        })
+        for _ in range(8):
+            await pilot.pause()
+
+    assert not list(tmp_path.glob("*.yaml"))
+
+
+@pytest.mark.asyncio
 async def test_history_render_shows_operator_and_agent_blocks():
     """Synthesise two history entries and confirm the Static render
     contains both — exercises ``_render_history`` directly, no NATS."""

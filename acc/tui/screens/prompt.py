@@ -912,6 +912,34 @@ class PromptScreen(Screen):
             f"agent={reply.agent_id[:14]} latency={reply.latency_ms:.0f}ms[/dim]"
         )
 
+        # PR-Y-2c — capture the executed prompt as a golden candidate so
+        # it shows up in the Diagnostics pane for review + persistence.
+        # Only successful, non-empty replies; deduped by prompt text so
+        # re-running the same prompt doesn't flood the store.  Strictly
+        # best-effort — a capture failure must never affect the reply.
+        if not reply.blocked and (reply.output or "").strip():
+            self._capture_golden_candidate(prompt, target_role, operating_mode)
+
+    def _capture_golden_candidate(
+        self, prompt: str, target_role: str, operating_mode: str,
+    ) -> None:
+        try:
+            from acc.golden_prompts import (  # noqa: PLC0415
+                load_merged, save_candidate,
+            )
+            normalised = (prompt or "").strip()
+            if not normalised:
+                return
+            # Dedup: skip if an identical prompt is already in the suite.
+            for existing in load_merged():
+                if existing.prompt.strip() == normalised:
+                    return
+            save_candidate(
+                normalised, target_role, operating_mode=operating_mode,
+            )
+        except Exception:
+            logger.debug("prompt: golden capture failed", exc_info=True)
+
     # ------------------------------------------------------------------
     # Transcript render
     # ------------------------------------------------------------------
