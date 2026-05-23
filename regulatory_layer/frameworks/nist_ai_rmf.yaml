@@ -1,0 +1,72 @@
+framework_id: nist_ai_rmf
+name: "NIST AI Risk Management Framework"
+version: "1.0"
+source: "NIST AI 100-1 (2023)"
+# Representative subcategories across the four RMF functions. Summarised
+# for gap-analysis use; consult NIST AI 100-1 for the full catalog.
+controls:
+  - control_id: GOVERN-1.1
+    category: GOVERN
+    title: "Legal and regulatory requirements understood and managed"
+    description: >
+      Legal and regulatory requirements involving AI are understood,
+      managed, and documented.
+  - control_id: GOVERN-1.2
+    category: GOVERN
+    title: "Trustworthy AI characteristics integrated into policies"
+    description: >
+      The characteristics of trustworthy AI are integrated into
+      organizational policies, processes, and procedures.
+  - control_id: GOVERN-2.1
+    category: GOVERN
+    title: "Roles and responsibilities and lines of communication"
+    description: >
+      Roles, responsibilities, and lines of communication related to
+      mapping, measuring, and managing AI risks are documented.
+  - control_id: GOVERN-4.1
+    category: GOVERN
+    title: "Organizational practices for safe AI"
+    description: >
+      Organizational practices are in place to foster critical thinking
+      and a safety-first mindset in the design, development, and use of AI.
+  - control_id: MAP-1.1
+    category: MAP
+    title: "Context established and understood"
+    description: >
+      Intended purpose, setting, and requirements for the AI system are
+      understood and documented.
+  - control_id: MAP-2.3
+    category: MAP
+    title: "AI capabilities, limitations, and risks documented"
+    description: >
+      Scientific integrity and TEVV (test, evaluation, verification,
+      validation) considerations are identified and documented.
+  - control_id: MEASURE-2.1
+    category: MEASURE
+    title: "Test sets, metrics, and tools documented"
+    description: >
+      Test sets, metrics, and details about the tools used during TEVV
+      are documented.
+  - control_id: MEASURE-2.7
+    category: MEASURE
+    title: "AI system security and resilience evaluated"
+    description: >
+      AI system security and resilience are evaluated and documented
+      (e.g., adversarial robustness, prompt injection).
+  - control_id: MEASURE-2.11
+    category: MEASURE
+    title: "Fairness and bias evaluated"
+    description: >
+      Fairness and bias are evaluated and results documented.
+  - control_id: MANAGE-2.1
+    category: MANAGE
+    title: "Resources to manage AI risks allocated"
+    description: >
+      Resources are allocated to respond to, recover from, and
+      communicate about incidents.
+  - control_id: MANAGE-4.1
+    category: MANAGE
+    title: "Post-deployment monitoring in place"
+    description: >
+      Post-deployment AI system monitoring plans are implemented,
+      including mechanisms for capturing and evaluating input from users.

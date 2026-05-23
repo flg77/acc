@@ -1,0 +1,60 @@
+framework_id: soc2
+name: "SOC 2 — Trust Services Criteria"
+version: "2017 (rev. 2022)"
+source: "AICPA Trust Services Criteria"
+controls:
+  - control_id: CC2.1
+    category: SECURITY
+    title: "Information quality for internal control"
+    description: >
+      The entity obtains or generates relevant, quality information to
+      support the functioning of internal control.
+  - control_id: CC5.2
+    category: SECURITY
+    title: "Control activities over technology"
+    description: >
+      The entity selects and develops general control activities over
+      technology to support the achievement of objectives.
+  - control_id: CC6.1
+    category: SECURITY
+    title: "Logical access security"
+    description: >
+      Logical access security software, infrastructure, and
+      architectures are implemented to protect information assets.
+  - control_id: CC6.6
+    category: SECURITY
+    title: "Boundary protection"
+    description: >
+      The entity implements controls to protect against threats from
+      sources outside its system boundaries.
+  - control_id: CC7.2
+    category: SECURITY
+    title: "Security monitoring"
+    description: >
+      The entity monitors system components for anomalies indicative of
+      malicious acts, natural disasters, and errors.
+  - control_id: CC7.3
+    category: SECURITY
+    title: "Incident evaluation"
+    description: >
+      The entity evaluates security events to determine whether they
+      could or did result in a failure to meet objectives (incidents).
+  - control_id: CC8.1
+    category: CHANGE_MGMT
+    title: "Change management"
+    description: >
+      The entity authorizes, designs, develops, tests, approves, and
+      implements changes to infrastructure, data, software, and
+      procedures.
+  - control_id: A1.2
+    category: AVAILABILITY
+    title: "Environmental / capacity availability"
+    description: >
+      The entity authorizes, designs, and manages environmental
+      protections, backup, and recovery to meet availability commitments.
+  - control_id: PI1.2
+    category: PROCESSING_INTEGRITY
+    title: "Processing integrity — inputs"
+    description: >
+      System inputs are measured and recorded completely, accurately, and
+      timely.

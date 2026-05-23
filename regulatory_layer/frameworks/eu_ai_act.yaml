@@ -1,0 +1,50 @@
+framework_id: eu_ai_act
+name: "EU AI Act — High-Risk System Obligations"
+version: "Regulation (EU) 2024/1689"
+source: "EU AI Act, Chapter III Section 2 (Arts 9–15)"
+controls:
+  - control_id: ART-9
+    category: RISK_MANAGEMENT
+    title: "Risk management system"
+    description: >
+      Establish, implement, document and maintain a risk management
+      system run as a continuous iterative process across the lifecycle.
+  - control_id: ART-10
+    category: DATA_GOVERNANCE
+    title: "Data and data governance"
+    description: >
+      Training, validation and testing data sets are subject to data
+      governance and management practices appropriate to the purpose.
+  - control_id: ART-11
+    category: DOCUMENTATION
+    title: "Technical documentation"
+    description: >
+      Technical documentation is drawn up before the system is placed on
+      the market and kept up to date.
+  - control_id: ART-12
+    category: LOGGING
+    title: "Record-keeping / automatic logging"
+    description: >
+      High-risk AI systems automatically record events (logs) over their
+      lifetime to ensure traceability of functioning.
+  - control_id: ART-13
+    category: TRANSPARENCY
+    title: "Transparency and provision of information to deployers"
+    description: >
+      Operation is sufficiently transparent to enable deployers to
+      interpret output and use it appropriately.
+  - control_id: ART-14
+    category: HUMAN_OVERSIGHT
+    title: "Human oversight"
+    description: >
+      High-risk AI systems are designed so they can be effectively
+      overseen by natural persons, including the ability to intervene or
+      interrupt (stop button).
+  - control_id: ART-15
+    category: ROBUSTNESS
+    title: "Accuracy, robustness and cybersecurity"
+    description: >
+      Systems achieve appropriate accuracy, robustness and cybersecurity,
+      and are resilient against attempts to alter use or performance by
+      exploiting vulnerabilities (e.g., data poisoning, adversarial
+      examples, prompt injection).

@@ -1,0 +1,59 @@
+framework_id: iso_42001
+name: "ISO/IEC 42001 — AI Management System"
+version: "2023"
+source: "ISO/IEC 42001:2023 (Annex A controls, summarised)"
+controls:
+  - control_id: A.2.2
+    category: POLICIES
+    title: "AI policy"
+    description: >
+      The organization documents an AI policy aligned with business
+      strategy and risk appetite.
+  - control_id: A.3.2
+    category: ORGANIZATION
+    title: "AI roles and responsibilities"
+    description: >
+      Roles and responsibilities for AI are defined and allocated.
+  - control_id: A.4.2
+    category: RESOURCES
+    title: "Resource documentation"
+    description: >
+      Resources for the AI system (data, tooling, compute, human) are
+      identified and documented.
+  - control_id: A.5.2
+    category: IMPACT_ASSESSMENT
+    title: "AI system impact assessment process"
+    description: >
+      A process to assess potential consequences of the AI system to
+      individuals and society is established.
+  - control_id: A.6.2
+    category: LIFECYCLE
+    title: "AI system lifecycle management"
+    description: >
+      Requirements for responsible design and development across the AI
+      lifecycle are defined (objectives, verification, deployment,
+      operation, monitoring).
+  - control_id: A.7.2
+    category: DATA
+    title: "Data management for AI systems"
+    description: >
+      Data quality, provenance, and preparation for AI systems are
+      managed.
+  - control_id: A.8.2
+    category: INFORMATION
+    title: "Information for interested parties"
+    description: >
+      Documentation and information are provided to users and other
+      interested parties.
+  - control_id: A.9.2
+    category: USE
+    title: "Responsible use of AI systems"
+    description: >
+      Objectives and guidance for the responsible use of AI systems are
+      defined.
+  - control_id: A.10.2
+    category: THIRD_PARTY
+    title: "Third-party and supplier relationships"
+    description: >
+      Responsibilities are allocated for third-party / supplier
+      relationships involving AI.
