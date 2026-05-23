@@ -23,11 +23,116 @@ import yaml
 from acc.golden_prompts import (
     ExpectsBlock,
     GoldenPrompt,
+    add_watch_dir,
+    attached_watch_dirs,
+    candidate_from_task,
+    dump_prompt,
     evaluate,
     format_summary,
     load_all,
+    load_merged,
     load_one,
+    load_one_md,
+    parse_markdown_prompt,
+    save_candidate,
+    save_prompt,
 )
+
+
+# ---------------------------------------------------------------------------
+# PR-Y-2 — markdown import, serialization, capture, watch-dir registry
+# ---------------------------------------------------------------------------
+
+
+class TestMarkdownImport:
+    def test_front_matter_and_body(self):
+        text = (
+            "---\n"
+            "target_role: coding_agent\n"
+            "expects:\n"
+            "  output_contains: ['def ']\n"
+            "---\n"
+            "Write a Python function that returns the nth Fibonacci number.\n"
+        )
+        p = parse_markdown_prompt(text, name_hint="fib")
+        assert p.name == "fib"
+        assert p.target_role == "coding_agent"
+        assert "Fibonacci" in p.prompt
+        assert p.expects.output_contains == ["def "]
+
+    def test_no_front_matter_defaults(self):
+        p = parse_markdown_prompt("Just write a scraper.", name_hint="scrape")
+        assert p.name == "scrape"
+        assert p.target_role == "coding_agent"  # default
+        assert p.prompt == "Just write a scraper."
+
+    def test_front_matter_name_wins_over_hint(self):
+        text = "---\nname: explicit\ntarget_role: analyst\n---\nbody\n"
+        p = parse_markdown_prompt(text, name_hint="filename_stem")
+        assert p.name == "explicit"
+
+    def test_load_one_md_from_file(self, tmp_path):
+        f = tmp_path / "smoke.md"
+        f.write_text("---\ntarget_role: analyst\n---\nSay hi.\n", encoding="utf-8")
+        p = load_one_md(f)
+        assert p.name == "smoke"
+        assert p.target_role == "analyst"
+
+
+class TestDumpAndSave:
+    def test_dump_roundtrips(self, tmp_path):
+        p = GoldenPrompt(name="x", prompt="hello", target_role="analyst")
+        path = dump_prompt(p, tmp_path / "x.yaml")
+        assert path.is_file()
+        assert load_one(path).prompt == "hello"
+        # No temp file left behind.
+        assert not any(n.name.endswith(".tmp") for n in tmp_path.iterdir())
+
+    def test_save_prompt_to_writable_root(self, tmp_path):
+        p = GoldenPrompt(name="mine", prompt="p", target_role="analyst")
+        out = save_prompt(p, root=tmp_path)
+        assert out == tmp_path / "mine.yaml"
+        assert load_one(out).name == "mine"
+
+
+class TestCapture:
+    def test_candidate_from_task_slugifies(self):
+        c = candidate_from_task(
+            "Write a Python web scraper!", "coding_agent",
+        )
+        assert c.target_role == "coding_agent"
+        assert c.prompt.startswith("Write a Python")
+        # slug is lowercase alnum+underscore.
+        assert c.name and all(ch.isalnum() or ch == "_" for ch in c.name)
+
+    def test_save_candidate_unique_names(self, tmp_path):
+        a = save_candidate("same prompt", "analyst", root=tmp_path)
+        b = save_candidate("same prompt", "analyst", root=tmp_path)
+        assert a != b
+        assert a.is_file() and b.is_file()
+        # Both load + are part of a merged view.
+        merged = load_merged([tmp_path])
+        assert len(merged) == 2
+
+
+class TestWatchDirs:
+    def test_add_and_list(self, tmp_path, monkeypatch):
+        store = tmp_path / "store"
+        store.mkdir()
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(store))
+        watch = tmp_path / "watched"
+        watch.mkdir()
+        add_watch_dir(watch)
+        assert Path(watch) in attached_watch_dirs()
+
+    def test_add_is_idempotent(self, tmp_path, monkeypatch):
+        store = tmp_path / "store"
+        store.mkdir()
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(store))
+        watch = tmp_path / "watched"
+        add_watch_dir(watch)
+        add_watch_dir(watch)
+        assert attached_watch_dirs().count(Path(watch)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +211,36 @@ class TestLoader:
         with caplog.at_level("WARNING", logger="acc.golden_prompts"):
             prompts = load_all(missing)
         assert prompts == []
+
+    def test_load_merged_overrides_by_name(self, tmp_path):
+        """A prompt in a later root overrides the same name in an
+        earlier one (writable/attached beats shipped)."""
+        from acc.golden_prompts import load_merged
+        shipped = tmp_path / "shipped"
+        writable = tmp_path / "writable"
+        shipped.mkdir()
+        writable.mkdir()
+        (shipped / "dup.yaml").write_text(
+            "name: dup\nprompt: shipped\ntarget_role: analyst\n",
+            encoding="utf-8",
+        )
+        (writable / "dup.yaml").write_text(
+            "name: dup\nprompt: writable\ntarget_role: analyst\n",
+            encoding="utf-8",
+        )
+        merged = load_merged([shipped, writable])
+        assert len(merged) == 1
+        assert merged[0].prompt == "writable"
+
+    def test_load_merged_includes_markdown(self, tmp_path):
+        from acc.golden_prompts import load_merged
+        (tmp_path / "from_md.md").write_text(
+            "---\ntarget_role: coding_agent\n---\nWrite a function.\n",
+            encoding="utf-8",
+        )
+        merged = load_merged([tmp_path])
+        names = {p.name for p in merged}
+        assert "from_md" in names
 
     def test_shipped_suite_loads(self):
         """PR-Y — the repo ships a golden-prompt suite that must load.

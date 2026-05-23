@@ -407,6 +407,219 @@ def persist_results(
         logger.warning("golden_prompts: history append failed: %s", exc)
 
 
+# ---------------------------------------------------------------------------
+# PR-Y-2 — writable store, multi-root load, markdown import, capture
+# ---------------------------------------------------------------------------
+#
+# The Diagnostics pane (#9) must be usable: operators expect executed
+# prompts to land there for review, to write/edit prompts in-pane, and
+# to attach a directory of markdown files that the pane watches.  The
+# shipped suite (examples/golden_prompts) is read-only in the image, so
+# additions go to a *writable* store and any number of *attached* dirs;
+# all are merged by name (later roots override earlier).
+
+
+def writable_root() -> Path:
+    """The writable golden-prompt store.
+
+    Operator-authored prompts (in-pane editor) and captured executed
+    prompts land here.  ``ACC_GOLDEN_WRITABLE_ROOT`` overrides; the
+    container default ``/app/.acc-golden`` is a writable mount.
+    """
+    import os  # noqa: PLC0415
+    raw = os.environ.get("ACC_GOLDEN_WRITABLE_ROOT", "").strip()
+    return Path(raw) if raw else Path("/app/.acc-golden")
+
+
+def _watch_cfg_path() -> Path:
+    return writable_root() / ".watch-dirs"
+
+
+def attached_watch_dirs() -> list[Path]:
+    """Directories the operator attached via the pane's "+ Add" button.
+
+    Persisted one-path-per-line in ``<writable_root>/.watch-dirs`` so
+    the attachment survives restarts.  Used as extra load roots."""
+    try:
+        lines = _watch_cfg_path().read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [
+        Path(ln.strip()) for ln in lines
+        if ln.strip() and not ln.lstrip().startswith("#")
+    ]
+
+
+def add_watch_dir(path: Path | str) -> None:
+    """Register *path* as a watched golden-prompt directory (idempotent)."""
+    cfg = _watch_cfg_path()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    entry = str(Path(path))
+    existing = {str(p) for p in attached_watch_dirs()}
+    if entry in existing:
+        return
+    with cfg.open("a", encoding="utf-8") as fh:
+        fh.write(entry + "\n")
+
+
+def golden_roots() -> list[Path]:
+    """All load roots, lowest-precedence first.
+
+    shipped suite < writable store < attached dirs.  ``load_merged``
+    walks them in order so a later root's prompt (same ``name``)
+    overrides an earlier one."""
+    return [_default_root(), writable_root(), *attached_watch_dirs()]
+
+
+_FRONT_MATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
+
+
+def parse_markdown_prompt(text: str, *, name_hint: str) -> GoldenPrompt:
+    """Parse a markdown golden prompt into a :class:`GoldenPrompt`.
+
+    Supports optional YAML front matter delimited by ``---`` lines::
+
+        ---
+        target_role: coding_agent
+        expects:
+          output_contains: ["def "]
+        ---
+        Write a Python function that returns the nth Fibonacci number.
+
+    The body becomes ``prompt`` (unless front matter sets ``prompt``);
+    ``name`` defaults to *name_hint* (the filename stem) and
+    ``target_role`` defaults to ``coding_agent`` when not given.
+    """
+    body = text.lstrip("﻿")
+    fm: dict[str, Any] = {}
+    m = _FRONT_MATTER_RE.match(body)
+    if m:
+        fm = yaml.safe_load(m.group(1)) or {}
+        if not isinstance(fm, dict):
+            fm = {}
+        body = m.group(2)
+    data: dict[str, Any] = dict(fm)
+    data.setdefault("name", name_hint)
+    data.setdefault("target_role", "coding_agent")
+    if "prompt" not in data:
+        data["prompt"] = body.strip()
+    return GoldenPrompt.model_validate(data)
+
+
+def load_one_md(path: Path) -> GoldenPrompt:
+    """Load + validate one markdown golden prompt."""
+    return parse_markdown_prompt(
+        path.read_text(encoding="utf-8"), name_hint=path.stem,
+    )
+
+
+def load_merged(roots: Optional[list[Path]] = None) -> list[GoldenPrompt]:
+    """Load ``*.yaml`` + ``*.md`` across all *roots*, merged by name.
+
+    Later roots override earlier ones (writable / attached beat the
+    shipped suite).  Malformed files are skipped with a warning so one
+    bad addition can't blank the pane.  Sorted by name for determinism.
+    """
+    roots = roots if roots is not None else golden_roots()
+    by_name: dict[str, GoldenPrompt] = {}
+    for root in roots:
+        if not root:
+            continue
+        rp = Path(root)
+        if not rp.is_dir():
+            continue
+        for path in sorted(rp.glob("*.yaml")):
+            try:
+                p = load_one(path)
+            except Exception as exc:
+                logger.warning("golden_prompts: skipped %s (%s)", path, exc)
+                continue
+            by_name[p.name] = p
+        for path in sorted(rp.glob("*.md")):
+            try:
+                p = load_one_md(path)
+            except Exception as exc:
+                logger.warning("golden_prompts: skipped %s (%s)", path, exc)
+                continue
+            by_name[p.name] = p
+    return sorted(by_name.values(), key=lambda gp: gp.name)
+
+
+def dump_prompt(prompt: GoldenPrompt, path: Path | str) -> Path:
+    """Atomically serialise *prompt* to a YAML file at *path*."""
+    import os  # noqa: PLC0415
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    text = yaml.safe_dump(
+        prompt.model_dump(), sort_keys=False, allow_unicode=True,
+    )
+    tmp = p.with_name(f".{p.name}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, p)
+    return p
+
+
+def save_prompt(prompt: GoldenPrompt, root: Optional[Path] = None) -> Path:
+    """Save *prompt* into the writable store as ``<name>.yaml``."""
+    root = root or writable_root()
+    return dump_prompt(prompt, Path(root) / f"{prompt.name}.yaml")
+
+
+def _slugify(text: str) -> str:
+    """Lowercase, alnum+underscore slug for a generated prompt name."""
+    slug = re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_")
+    return slug[:40] or "captured"
+
+
+def candidate_from_task(
+    prompt_text: str,
+    target_role: str,
+    *,
+    operating_mode: str = "AUTO",
+    name: Optional[str] = None,
+) -> GoldenPrompt:
+    """Build a candidate :class:`GoldenPrompt` from an executed task.
+
+    The Prompt screen calls this on TASK_COMPLETE so an executed prompt
+    can be reviewed + persisted as a golden prompt.  The default
+    ``expects`` only asserts a non-empty reply — the operator tightens
+    it in the in-pane editor."""
+    return GoldenPrompt(
+        name=name or _slugify(prompt_text),
+        description="captured from the Prompt screen",
+        prompt=prompt_text,
+        target_role=target_role or "coding_agent",
+        operating_mode=operating_mode or "AUTO",
+    )
+
+
+def save_candidate(
+    prompt_text: str,
+    target_role: str,
+    *,
+    operating_mode: str = "AUTO",
+    root: Optional[Path] = None,
+) -> Path:
+    """Capture an executed prompt into the writable store under a
+    unique ``<slug>-<n>.yaml`` filename (never clobbers a prior
+    capture).  Returns the written path."""
+    root = root or writable_root()
+    cand = candidate_from_task(
+        prompt_text, target_role, operating_mode=operating_mode,
+    )
+    base = cand.name
+    n = 1
+    target = Path(root) / f"{base}.yaml"
+    while target.exists():
+        n += 1
+        target = Path(root) / f"{base}-{n}.yaml"
+        cand = candidate_from_task(
+            prompt_text, target_role, operating_mode=operating_mode,
+            name=f"{base}-{n}",
+        )
+    return dump_prompt(cand, target)
+
+
 def format_summary(results: list[GoldenResult]) -> str:
     """Render a one-line-per-prompt summary suitable for stdout."""
     if not results:
