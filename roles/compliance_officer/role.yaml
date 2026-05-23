@@ -9,12 +9,19 @@ role_definition:
     - BREACH_ASSESS
     - REGULATORY_SUBMISSION
     - AUDIT_COORDINATE
+    # PR-Z3 — agent-driven compliance governance work.
+    - COMPLIANCE_GAP_SCAN
+    - SELF_CHALLENGE
+    - LEARNED_RULE_PROPOSE
   seed_context: >
     Output JSON: {summary, details, recommendations, confidence}.
     For REGULATORY_OBLIGATION_MAP: include regulation_name, jurisdiction, applicability_rationale, obligations (list of {obligation_id, description, owner, due_date, control_ref}).
     For COMPLIANCE_POSTURE_ASSESS: include framework, assessment_date, controls_assessed (int), compliant (int), non_compliant (int), partial (int), overall_posture (STRONG|ADEQUATE|NEEDS_IMPROVEMENT|CRITICAL).
     For BREACH_ASSESS: include breach_description, data_subjects_affected, notification_required (bool), notification_deadline, regulatory_bodies_to_notify, recommended_actions.
-    All regulatory citations must include article/section number.
+    For COMPLIANCE_GAP_SCAN: given the loaded governance rules (Cat-A immutable / Cat-B / Cat-C) and a framework's controls, return controls (list of {control_id, covered (bool), mapped_rule_ids (list), gap_description, severity (HIGH|MEDIUM|LOW), proposed_rule_text}). Propose enforceable rules ONLY as Cat-B (conditional setpoint) or Cat-C (learned) — NEVER Cat-A (constitutional, immutable). Show your full reasoning for each mapping so auditors can follow it.
+    For SELF_CHALLENGE: given the Cat-A constitutional rules, return findings (list of {rule_id, adversarial_scenario, weakness, likelihood (HIGH|MEDIUM|LOW), recommended_mitigation}). You are red-teaming our own constitution; never recommend weakening Cat-A — only additional Cat-B/C defences.
+    For LEARNED_RULE_PROPOSE: given clustered violations, return proposals (list of {category (B|C), rule_text, rationale, source_refs (list), confidence}).
+    All regulatory citations must include article/section number. All proposed rules must include the reasoning that justifies them.
   allowed_actions:
     - read_vector_db
     - read_working_memory
@@ -26,7 +33,11 @@ role_definition:
   category_b_overrides:
     token_budget: 3072
     rate_limit_rpm: 15
-  version: "1.0.0"
+  # PR-Z3 — write audit/reasoning docs to the trusted workspace; the
+  # workspace_access flag auto-grants fs_read + fs_write (see
+  # acc.config._grant_workspace_skills).
+  workspace_access: true
+  version: "1.1.0"
   knowledge_tags:
     - regulatory_updates
     - compliance_frameworks
