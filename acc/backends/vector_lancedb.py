@@ -72,6 +72,20 @@ _SCHEMAS: dict[str, pa.Schema] = {
         pa.field("diff_summary", pa.utf8()),
         pa.field("approver_id", pa.utf8()),  # arbiter agent_id for ROLE_UPDATE events
     ]),
+    # PR-MEM1: self-reflective memory notes — durable, curated summaries
+    # of clustered episodes.  Kept in a SEPARATE small table so vector
+    # search over notes stays fast (few rows) and reads never scan the
+    # large episodes table.  Written out-of-band by the reflection loop.
+    "memory_notes": pa.schema([
+        pa.field("id", pa.utf8()),
+        pa.field("agent_id", pa.utf8()),
+        pa.field("role_label", pa.utf8()),
+        pa.field("ts", pa.float64()),
+        pa.field("summary", pa.utf8()),
+        pa.field("source_count", pa.int64()),   # episodes folded into this note
+        pa.field("confidence", pa.float32()),
+        pa.field("embedding", pa.list_(pa.float32(), 384)),
+    ]),
 }
 
 _STANDARD_TABLES = list(_SCHEMAS.keys())
