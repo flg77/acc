@@ -34,6 +34,7 @@ from textual.widgets import (
     Input,
     Label,
     Markdown,
+    Select,
     Static,
     TabbedContent,
     TabPane,
@@ -681,7 +682,20 @@ class EcosystemScreen(Screen):
                 "Edit + Save to persist; Apply to reconcile podman state.",
                 classes="panel-label",
             )
-            yield DataTable(id="agentset-table", show_cursor=False)
+            yield DataTable(id="agentset-table", cursor_type="row")
+            # PR-MM2 — assign a model (from the central registry) to the
+            # highlighted sub-agent (1:1).  Updates the editor YAML; Save
+            # + Apply persist and recreate that agent on the new model.
+            with Horizontal(id="agentset-model-row"):
+                yield Label("Model →")
+                yield Select(
+                    [("(collective default)", "")],
+                    id="agentset-model-select",
+                    value="",
+                    allow_blank=False,
+                )
+                yield Button("Set model on selected",
+                             id="btn-agentset-set-model", variant="default")
             yield Label("collective.yaml", classes="panel-label")
             yield TextArea(
                 "",
@@ -721,10 +735,18 @@ class EcosystemScreen(Screen):
         try:
             ag_table = self.query_one("#agentset-table", DataTable)
             ag_table.add_columns(
-                "Role", "Replicas", "cluster_id", "purpose", "live",
+                "Role", "Replicas", "cluster_id", "purpose", "Model", "live",
             )
         except Exception:
             logger.exception("ecosystem: agentset table init failed")
+        # PR-MM2 — populate the model dropdown from the central registry.
+        try:
+            from acc.models import load_models  # noqa: PLC0415
+            options = [("(collective default)", "")]
+            options += [(m.display(), m.model_id) for m in load_models()]
+            self.query_one("#agentset-model-select", Select).set_options(options)
+        except Exception:
+            logger.debug("ecosystem: model dropdown init failed", exc_info=True)
         self._load_collective_into_editor()
 
         self._load_roles()
@@ -1000,6 +1022,8 @@ class EcosystemScreen(Screen):
             self._handle_collective_validate()
         elif bid == "btn-collective-apply":
             self._handle_collective_apply()
+        elif bid == "btn-agentset-set-model":
+            self._handle_agentset_set_model()
         # Proposal 009 — Upload skill / Upload MCP buttons moved to
         # the Configuration pane (pane 8).
 
@@ -1263,6 +1287,9 @@ class EcosystemScreen(Screen):
         except Exception:
             return
         table.clear()
+        # PR-MM2 — cache the spec so the model dropdown can mutate the
+        # highlighted agent + re-render the editor.
+        self._agentset_spec = spec
         if spec is None:
             return
         # Build a role → live-count map from the current snapshot.
@@ -1283,6 +1310,7 @@ class EcosystemScreen(Screen):
                 str(agent.replicas),
                 agent.cluster_id or "—",
                 (agent.purpose or "—")[:60],
+                getattr(agent, "model", None) or "—",
                 live,
             )
 
@@ -1354,6 +1382,49 @@ class EcosystemScreen(Screen):
             f"agents={len(spec.agents)}[/dim]"
         )
         self._refresh_agentset_table(spec)
+
+    def _handle_agentset_set_model(self) -> None:
+        """PR-MM2 — assign the dropdown's model to the highlighted agent
+        (1:1) and re-render the editor YAML.  The operator then Saves +
+        Applies to persist + recreate that agent on the new model."""
+        from acc.collective import (  # noqa: PLC0415
+            CollectiveSpec, collective_to_yaml,
+        )
+        import yaml as _yaml  # noqa: PLC0415
+        from rich.markup import escape  # noqa: PLC0415
+
+        try:
+            table = self.query_one("#agentset-table", DataTable)
+            editor = self.query_one("#collective-editor", TextArea)
+            status = self.query_one("#agentset-status", Static)
+            select = self.query_one("#agentset-model-select", Select)
+        except Exception:
+            return
+        # The editor text is the source of truth (operator may have made
+        # unsaved edits).  Parse → spec → mutate → re-render.
+        try:
+            data = _yaml.safe_load(editor.text) or {}
+            spec = CollectiveSpec.model_validate(data)
+        except Exception as exc:  # noqa: BLE001
+            status.update(
+                "[red]⚠ fix collective.yaml first[/red]\n"
+                f"  • {escape(str(exc))}"
+            )
+            return
+        idx = table.cursor_row
+        if idx is None or not (0 <= idx < len(spec.agents)):
+            status.update("[yellow]Highlight an agent row first.[/yellow]")
+            return
+        value = select.value
+        model_id = None if value in ("", Select.BLANK) else str(value)
+        spec.agents[idx].model = model_id
+        editor.text = collective_to_yaml(spec)
+        self._refresh_agentset_table(spec)
+        shown = model_id or "(collective default)"
+        status.update(
+            f"[green]✓ model set[/green] {spec.agents[idx].role} → {shown}  "
+            f"[dim]— Save + Apply to persist[/dim]"
+        )
 
     def _handle_collective_apply(self) -> None:
         """Save + signal the apply-watcher to reconcile podman state.

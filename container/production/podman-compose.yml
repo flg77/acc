@@ -552,6 +552,9 @@ services:
       # mount on this file.  Apply writes `.acc-apply.request` in the
       # same dir (the repo root) for a host-side watcher to pick up.
       - ../../collective.yaml:/app/collective.yaml:rw,z
+      # PR-MM2 -- central model registry, read-only, for the Agentset
+      # Model dropdown (acc.models.load_models).
+      - ../../models.yaml:/app/models.yaml:ro,z
       # D-007 (PR-U2b) -- trusted workspace mount, SELinux-labelled (:z).
       # The TUI's "Select Directory" modal (WorkspaceSelectModal) browses
       # this shared host dir to let the operator pick / create + trust a

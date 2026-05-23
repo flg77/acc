@@ -160,6 +160,19 @@ def load_collective(path: Path | str) -> CollectiveSpec:
     return CollectiveSpec.model_validate(data)
 
 
+def collective_to_yaml(spec: CollectiveSpec) -> str:
+    """Serialise *spec* to the canonical collective.yaml text (the same
+    rendering :func:`dump_collective` writes).  Used by the TUI to
+    re-render the editor after a programmatic edit (PR-MM2 model dropdown)
+    without persisting."""
+    return yaml.safe_dump(
+        spec.model_dump(exclude_none=True),
+        sort_keys=False,
+        default_flow_style=False,
+        indent=2,
+    )
+
+
 def dump_collective(spec: CollectiveSpec, path: Path | str) -> None:
     """Atomically write *spec* to *path* as YAML.
 
@@ -168,14 +181,8 @@ def dump_collective(spec: CollectiveSpec, path: Path | str) -> None:
     ``<path>.bak`` + POSIX flock all apply.  Mode 0o644 — collective.yaml
     is tracked config, not secret-bearing.
     """
-    text = yaml.safe_dump(
-        spec.model_dump(exclude_none=True),
-        sort_keys=False,
-        default_flow_style=False,
-        indent=2,
-    )
-    atomic_write_text(path, text, mode=0o644,
-                       tmp_prefix=".collective.yaml.tmp.")
+    atomic_write_text(path, collective_to_yaml(spec), mode=0o644,
+                      tmp_prefix=".collective.yaml.tmp.")
 
 
 def upsert_agent_entry(
