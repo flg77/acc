@@ -445,7 +445,13 @@ class CognitiveCore:
                 user_content, role, top_k=5,
             )
         _emit(2, "Building system prompt")
-        system_prompt = self.build_system_prompt(role, retrieved_episodes)
+        # PR-CA1 — the system prompt is the STABLE per-role prefix (no
+        # RAG), so every backend's prefix cache hits.  The variable RAG
+        # block rides the LLM user message instead.
+        system_prompt = self.build_system_prompt(role)
+        llm_user_content = self._compose_user_content(
+            user_content, retrieved_episodes,
+        )
 
         # ACC-12 — PRE-GUARDRAIL (OWASP LLM01/04/06/08)
         pre_guard_result = None
@@ -533,7 +539,9 @@ class CognitiveCore:
         # Confidence bumps slightly as we leave the gates and start
         # actual reasoning — captures "we got past the guards".
         _emit(3, "Calling LLM", confidence=0.55)
-        response, latency_ms, token_count = await self._call_llm(system_prompt, user_content)
+        response, latency_ms, token_count = await self._call_llm(
+            system_prompt, llm_user_content,
+        )
         # Backend shape tolerance — historical inconsistency:
         #   * ``acc.backends.llm_openai_compat.complete`` returns
         #     ``{"content": <str>, "usage": {...}}``.
@@ -943,26 +951,15 @@ class CognitiveCore:
         if seed:
             parts.append(f"\n{seed}")
 
-        # PR-I — recent-episodes RAG block.  Lives before the
-        # skill / MCP advertisement blocks so the LLM weighs prior
-        # experience BEFORE deciding which tool to fire.
-        if retrieved_episodes:
-            rag_lines = ["", "RECENT_RELEVANT_EPISODES (your past work, most-similar first):"]
-            for ep in retrieved_episodes:
-                ts_str = ep.get("ts_str", "")
-                signal_type = ep.get("signal_type", "TASK_ASSIGN")
-                excerpt = ep.get("excerpt", "").strip().replace("\n", " ")
-                if len(excerpt) > 160:
-                    excerpt = excerpt[:157] + "…"
-                rag_lines.append(
-                    f"- [{ts_str}] [{signal_type}] {excerpt}"
-                )
-            rag_lines.append(
-                "(Use these to ground your answer.  If the operator "
-                "asks 'do you remember…?' you DO — these are your prior "
-                "tasks.  Cite the timestamp when you reference one.)"
-            )
-            parts.append("\n".join(rag_lines))
+        # PR-CA1 — prompt caching: the *variable* recent-episodes RAG
+        # block USED to live here, in the middle of the system prompt.
+        # That defeated every backend's prefix cache (vLLM / Ollama /
+        # Anthropic) because the stable role context was never a
+        # contiguous, identical prefix.  The RAG block now rides the
+        # LLM *user message* instead (see ``_render_episode_block`` +
+        # ``process_task``), leaving this system prompt stable per role
+        # so the server-side prefix cache hits.  ``retrieved_episodes``
+        # is accepted for backward-compat but no longer injected here.
 
         # Phase 4.3 — Available skills block.  Only listed when the role
         # opts in via default_skills (a subset of allowed_skills).  Empty
@@ -1032,6 +1029,45 @@ class CognitiveCore:
             )
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _render_episode_block(retrieved_episodes: list[dict] | None) -> str:
+        """PR-CA1 — render the RECENT_RELEVANT_EPISODES RAG block.
+
+        Returns the block as a string for prepending to the LLM *user*
+        message (NOT the system prompt — keeping the system prompt a
+        stable, cacheable per-role prefix).  Empty string when there are
+        no episodes, so the legacy single-message shape is preserved for
+        roles with ``memory_retrieval: false``.
+        """
+        if not retrieved_episodes:
+            return ""
+        lines = ["RECENT_RELEVANT_EPISODES (your past work, most-similar first):"]
+        for ep in retrieved_episodes:
+            ts_str = ep.get("ts_str", "")
+            signal_type = ep.get("signal_type", "TASK_ASSIGN")
+            excerpt = ep.get("excerpt", "").strip().replace("\n", " ")
+            if len(excerpt) > 160:
+                excerpt = excerpt[:157] + "…"
+            lines.append(f"- [{ts_str}] [{signal_type}] {excerpt}")
+        lines.append(
+            "(Use these to ground your answer.  If the operator asks "
+            "'do you remember…?' you DO — these are your prior tasks.  "
+            "Cite the timestamp when you reference one.)"
+        )
+        return "\n".join(lines)
+
+    def _compose_user_content(
+        self, user_content: str, retrieved_episodes: list[dict] | None,
+    ) -> str:
+        """Prepend the RAG block (if any) to the task content for the LLM
+        user message.  The bare task content is still what guardrails,
+        Cat-A, embedding + persistence see — only the LLM call gets the
+        memory-augmented message."""
+        block = self._render_episode_block(retrieved_episodes)
+        if not block:
+            return user_content
+        return f"{block}\n\n{user_content}"
 
     # ------------------------------------------------------------------
     # Pipeline stages

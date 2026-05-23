@@ -134,9 +134,11 @@ async def test_retrieve_is_called_with_query_embedding():
 
 
 @pytest.mark.asyncio
-async def test_retrieved_episodes_land_in_system_prompt():
-    """PR-I — when search returns rows, they appear in the LLM's
-    system_prompt under the RECENT_RELEVANT_EPISODES header."""
+async def test_retrieved_episodes_land_in_user_message():
+    """PR-CA1 — when search returns rows, they appear in the LLM's
+    USER message (not the system prompt) under the
+    RECENT_RELEVANT_EPISODES header.  Keeping the system prompt a stable
+    per-role prefix is what lets every backend's prefix cache hit."""
     now = time.time()
     rows = [
         {
@@ -157,12 +159,17 @@ async def test_retrieved_episodes_land_in_system_prompt():
         {"content": "do you remember the Fibonacci task?"},
         role=_make_role(),
     )
-    # Inspect the system_prompt passed to llm.complete().
     assert llm.complete.called
     call_args = llm.complete.call_args
     system_prompt = call_args[0][0] if call_args[0] else call_args[1].get("system", "")
-    assert "RECENT_RELEVANT_EPISODES" in system_prompt
-    assert "Fibonacci function" in system_prompt
+    user_msg = call_args[0][1] if len(call_args[0]) > 1 else call_args[1].get("user", "")
+    # RAG rides the USER message…
+    assert "RECENT_RELEVANT_EPISODES" in user_msg
+    assert "Fibonacci function" in user_msg
+    # …and the task content is still present after it.
+    assert "do you remember the Fibonacci task?" in user_msg
+    # …NOT the system prompt (the cacheable prefix stays clean).
+    assert "RECENT_RELEVANT_EPISODES" not in system_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -376,52 +383,62 @@ async def test_retrieve_renders_ts_str_for_prompt():
 # ---------------------------------------------------------------------------
 
 
-def test_build_system_prompt_skips_block_when_episodes_empty():
-    """PR-I — backwards compat: no episodes arg or empty list means
-    legacy prompt verbatim (no RAG section)."""
+def test_build_system_prompt_is_stable_prefix_regardless_of_episodes():
+    """PR-CA1 — the system prompt NEVER contains the RAG block, even
+    when episodes are passed (back-compat arg).  The prefix is stable +
+    cacheable across tasks for the same role."""
     core = _make_core()
     role = _make_role()
+    eps = [{"ts_str": "12:34:56", "signal_type": "TASK_ASSIGN", "excerpt": "x"}]
     sp_no_arg = core.build_system_prompt(role)
     sp_empty = core.build_system_prompt(role, retrieved_episodes=[])
+    sp_with_eps = core.build_system_prompt(role, retrieved_episodes=eps)
     assert "RECENT_RELEVANT_EPISODES" not in sp_no_arg
-    assert "RECENT_RELEVANT_EPISODES" not in sp_empty
-    # The legacy text is unchanged.
-    assert sp_no_arg == sp_empty
+    # Passing episodes must NOT change the (cacheable) system prompt.
+    assert sp_no_arg == sp_empty == sp_with_eps
 
 
-def test_build_system_prompt_renders_episode_lines():
-    """PR-I — episodes render as `- [HH:MM:SS] [signal_type] excerpt`"""
+def test_render_episode_block_renders_lines():
+    """PR-CA1 — episodes render as `- [HH:MM:SS] [signal_type] excerpt`
+    in the (user-message) RAG block."""
     core = _make_core()
-    role = _make_role()
     eps = [
-        {
-            "ts_str": "12:34:56",
-            "signal_type": "TASK_ASSIGN",
-            "excerpt": "wrote Fibonacci function",
-        },
-        {
-            "ts_str": "12:35:10",
-            "signal_type": "TASK_ASSIGN",
-            "excerpt": "explained mergesort complexity",
-        },
+        {"ts_str": "12:34:56", "signal_type": "TASK_ASSIGN",
+         "excerpt": "wrote Fibonacci function"},
+        {"ts_str": "12:35:10", "signal_type": "TASK_ASSIGN",
+         "excerpt": "explained mergesort complexity"},
     ]
-    sp = core.build_system_prompt(role, retrieved_episodes=eps)
-    assert "RECENT_RELEVANT_EPISODES" in sp
-    assert "[12:34:56]" in sp
-    assert "Fibonacci function" in sp
-    assert "mergesort" in sp
+    block = core._render_episode_block(eps)
+    assert "RECENT_RELEVANT_EPISODES" in block
+    assert "[12:34:56]" in block
+    assert "Fibonacci function" in block
+    assert "mergesort" in block
 
 
-def test_build_system_prompt_truncates_long_excerpts():
-    """PR-I — excerpts over 160 chars are truncated with an ellipsis
-    so the system prompt stays bounded."""
+def test_render_episode_block_empty_is_blank():
     core = _make_core()
-    role = _make_role()
-    long_excerpt = "x" * 500
-    sp = core.build_system_prompt(role, retrieved_episodes=[{
-        "ts_str": "00:00:00",
-        "signal_type": "TASK_ASSIGN",
-        "excerpt": long_excerpt,
+    assert core._render_episode_block([]) == ""
+    assert core._render_episode_block(None) == ""
+
+
+def test_render_episode_block_truncates_long_excerpts():
+    """PR-CA1 — excerpts over 160 chars are truncated with an ellipsis."""
+    core = _make_core()
+    block = core._render_episode_block([{
+        "ts_str": "00:00:00", "signal_type": "TASK_ASSIGN",
+        "excerpt": "x" * 500,
     }])
-    assert "x" * 200 not in sp  # not the full 500
-    assert "…" in sp
+    assert "x" * 200 not in block  # not the full 500
+    assert "…" in block
+
+
+def test_compose_user_content_prepends_block():
+    """PR-CA1 — the RAG block is prepended to the task content for the
+    LLM user message; bare task content when there are no episodes."""
+    core = _make_core()
+    eps = [{"ts_str": "00:00:00", "signal_type": "TASK_ASSIGN", "excerpt": "prior"}]
+    composed = core._compose_user_content("the task", eps)
+    assert composed.startswith("RECENT_RELEVANT_EPISODES")
+    assert composed.endswith("the task")
+    # No episodes → unchanged task content.
+    assert core._compose_user_content("the task", []) == "the task"
