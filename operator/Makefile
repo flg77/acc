@@ -16,8 +16,10 @@ BUNDLE_IMG ?= quay.io/redhat-ai-dev/acc-operator-bundle:$(VERSION)
 # Override to the blackbox3 internal registry for the RHOAI bring-up, e.g.
 #   CATALOG_IMG=image-registry.openshift-image-registry.svc:5000/acc-operator/acc-operator-index:0.1.0
 CATALOG_IMG ?= quay.io/redhat-ai-dev/acc-operator-index:$(VERSION)
-# Container tool for opm index builds (docker or podman).
-CONTAINER_TOOL ?= docker
+# Container tool for image build/push + opm index builds. Auto-detects,
+# preferring podman (the operator/OpenShift context has no docker); override
+# with CONTAINER_TOOL=docker on a docker host.
+CONTAINER_TOOL ?= $(shell command -v podman >/dev/null 2>&1 && echo podman || echo docker)
 
 # Platforms
 PLATFORMS ?= linux/arm64,linux/amd64
@@ -108,11 +110,11 @@ run: manifests generate fmt vet sync-manifests ## Run the operator locally again
 
 .PHONY: docker-build
 docker-build: sync-manifests ## Build container image (data/ tree must be in place before COPY).
-	docker build -t ${IMG} .
+	$(CONTAINER_TOOL) build -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push container image.
-	docker push ${IMG}
+	$(CONTAINER_TOOL) push ${IMG}
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated install YAML.
@@ -151,11 +153,11 @@ bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metada
 
 .PHONY: bundle-build
 bundle-build: ## Build bundle image.
-	docker build -f bundle.Dockerfile -t $(BUNDLE_IMG) .
+	$(CONTAINER_TOOL) build -f bundle.Dockerfile -t $(BUNDLE_IMG) .
 
 .PHONY: bundle-push
 bundle-push: ## Push bundle image.
-	docker push $(BUNDLE_IMG)
+	$(CONTAINER_TOOL) push $(BUNDLE_IMG)
 
 .PHONY: catalog-build
 catalog-build: opm ## Build the opm index (catalog) image from the bundle.
