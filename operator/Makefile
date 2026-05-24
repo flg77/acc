@@ -161,11 +161,14 @@ bundle-push: ## Push bundle image.
 
 .PHONY: catalog-build
 catalog-build: opm ## Build the opm index (catalog) image from the bundle.
+	# OPM_EXTRA_ARGS lets a host build pass registry flags, e.g.
+	#   OPM_EXTRA_ARGS="--skip-tls-verify"   (self-signed internal-registry route)
 	$(OPM) index add \
 		--bundles $(BUNDLE_IMG) \
 		--tag $(CATALOG_IMG) \
 		--container-tool $(CONTAINER_TOOL) \
-		$(if $(FROM_INDEX),--from-index $(FROM_INDEX),)
+		$(if $(FROM_INDEX),--from-index $(FROM_INDEX),) \
+		$(OPM_EXTRA_ARGS)
 
 .PHONY: catalog-push
 catalog-push: ## Push the catalog (index) image.
