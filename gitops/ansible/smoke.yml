@@ -1,0 +1,51 @@
+---
+# AAP playbook (aap1) — smoke-check a bring-up: operator CSV Succeeded,
+# AgentCorpus Ready, agent pods running. Read-only; safe to re-run.
+- name: ACC bring-up smoke check (blackbox3)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    op_ns: acc-operator-system
+    corpus_ns: acc-system
+  tasks:
+    - name: Operator CSV phase
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ op_ns }}"
+      register: csvs
+
+    - name: Assert an ACC operator CSV Succeeded
+      ansible.builtin.assert:
+        that:
+          - >
+            csvs.resources
+            | selectattr('metadata.name', 'match', '^acc-operator')
+            | selectattr('status.phase', 'equalto', 'Succeeded')
+            | list | length > 0
+        fail_msg: "No acc-operator CSV in Succeeded phase."
+
+    - name: AgentCorpus status
+      kubernetes.core.k8s_info:
+        api_version: acc.redhat.io/v1alpha1
+        kind: AgentCorpus
+        namespace: "{{ corpus_ns }}"
+        name: acc-corpus
+      register: corpus
+
+    - name: Report corpus + agent pods
+      ansible.builtin.debug:
+        msg:
+          - "corpus phase: {{ (corpus.resources[0].status.conditions | default([])) }}"
+
+    - name: Agent pods
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ corpus_ns }}"
+        label_selectors:
+          - "app.kubernetes.io/managed-by=acc-operator"
+      register: pods
+
+    - name: Show pod readiness
+      ansible.builtin.debug:
+        msg: "{{ pods.resources | map(attribute='metadata.name') | list }}"

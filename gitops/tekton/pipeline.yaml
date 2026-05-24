@@ -1,0 +1,108 @@
+# Tekton Pipeline (OpenShift Pipelines) — build the ACC operator image, OLM
+# bundle, and opm index, pushing all three to the blackbox3 INTERNAL registry.
+# The CatalogSource (gitops/olm) then points at the index image.
+#
+# Assumes OpenShift Pipelines' built-in `git-clone` + `buildah` ClusterTasks.
+# On clusters where ClusterTask is removed, swap taskRef for the resolver form
+# (resolver: cluster / bundles). Live run is via a PipelineRun (see
+# pipelinerun.yaml) or the Ansible kickoff (gitops/ansible/bringup.yml).
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: acc-operator-build
+  namespace: acc-operator-system
+spec:
+  params:
+    - name: git-url
+      type: string
+      default: https://github.com/flg77/acc.git
+    - name: git-revision
+      type: string
+      default: main
+    - name: registry
+      type: string
+      default: image-registry.openshift-image-registry.svc:5000/acc-operator
+    - name: version
+      type: string
+      default: "0.1.0"
+  workspaces:
+    - name: shared          # cloned source, shared across tasks
+    - name: dockerconfig    # registry auth (internal registry SA token)
+  tasks:
+    - name: fetch
+      taskRef: { name: git-clone, kind: ClusterTask }
+      params:
+        - { name: url, value: $(params.git-url) }
+        - { name: revision, value: $(params.git-revision) }
+      workspaces:
+        - { name: output, workspace: shared }
+
+    # Mirror repo-root roles/skills/mcps into the operator module so the
+    # operator image's //go:embed COPY has data/ present (make sync-manifests).
+    - name: sync-manifests
+      runAfter: [fetch]
+      workspaces:
+        - { name: source, workspace: shared }
+      taskSpec:
+        workspaces: [{ name: source }]
+        steps:
+          - name: sync
+            image: registry.access.redhat.com/ubi9/go-toolset:1.23
+            workingDir: $(workspaces.source.path)/operator
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              make sync-manifests
+
+    - name: build-operator
+      runAfter: [sync-manifests]
+      taskRef: { name: buildah, kind: ClusterTask }
+      params:
+        - { name: IMAGE, value: "$(params.registry)/acc-operator:$(params.version)" }
+        - { name: DOCKERFILE, value: ./operator/Containerfile }
+        - { name: CONTEXT, value: ./operator }
+        - { name: TLSVERIFY, value: "false" }
+      workspaces:
+        - { name: source, workspace: shared }
+        - { name: dockerconfig, workspace: dockerconfig }
+
+    - name: build-bundle
+      runAfter: [build-operator]
+      taskRef: { name: buildah, kind: ClusterTask }
+      params:
+        - { name: IMAGE, value: "$(params.registry)/acc-operator-bundle:$(params.version)" }
+        - { name: DOCKERFILE, value: ./operator/bundle.Dockerfile }
+        - { name: CONTEXT, value: ./operator }
+        - { name: TLSVERIFY, value: "false" }
+      workspaces:
+        - { name: source, workspace: shared }
+        - { name: dockerconfig, workspace: dockerconfig }
+
+    # Build the opm index (file-based catalog) from the bundle and push it.
+    # Wraps `make catalog-build/catalog-push` (operator/Makefile, R1a) using
+    # an image that carries opm + a container tool.
+    - name: build-index
+      runAfter: [build-bundle]
+      workspaces:
+        - { name: source, workspace: shared }
+        - { name: dockerconfig, workspace: dockerconfig }
+      taskSpec:
+        workspaces: [{ name: source }, { name: dockerconfig }]
+        steps:
+          - name: opm-index
+            image: quay.io/operator-framework/opm:v1.47.0
+            workingDir: $(workspaces.source.path)/operator
+            env:
+              - { name: REGISTRY_AUTH_FILE, value: $(workspaces.dockerconfig.path)/config.json }
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              REG="image-registry.openshift-image-registry.svc:5000/acc-operator"
+              opm index add \
+                --bundles "$REG/acc-operator-bundle:0.1.0" \
+                --tag "$REG/acc-operator-index:0.1.0" \
+                --container-tool none \
+                --skip-tls-verify
+              # opm with --container-tool none emits a Dockerfile + db; push via
+              # the buildah step on most clusters. See gitops/tekton/README.md
+              # for the build-and-push variant for your OpenShift Pipelines.

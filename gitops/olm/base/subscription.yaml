@@ -1,0 +1,12 @@
+# Subscribes to the ACC operator from the local catalog (channel alpha).
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: acc-operator
+  namespace: acc-operator-system
+spec:
+  channel: alpha
+  name: acc-operator
+  source: acc-operator-catalog
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic

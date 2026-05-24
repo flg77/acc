@@ -1,0 +1,13 @@
+# blackbox3 overlay — point the CatalogSource at the internal-registry index.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  - target:
+      kind: CatalogSource
+      name: acc-operator-catalog
+    patch: |-
+      - op: replace
+        path: /spec/image
+        value: image-registry.openshift-image-registry.svc:5000/acc-operator/acc-operator-index:0.1.0

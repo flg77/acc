@@ -1,0 +1,9 @@
+# Scopes the operator to its own namespace (own-namespace install mode).
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: acc-operator-group
+  namespace: acc-operator-system
+spec:
+  targetNamespaces:
+    - acc-operator-system

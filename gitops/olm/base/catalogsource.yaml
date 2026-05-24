@@ -1,0 +1,18 @@
+# Local operator catalog — points at the opm index image built by Tekton
+# (`make catalog-build`).  The overlay sets .spec.image to the blackbox3
+# internal-registry path.  Lives in openshift-marketplace so it surfaces in
+# OperatorHub.
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: acc-operator-catalog
+  namespace: openshift-marketplace
+spec:
+  sourceType: grpc
+  # Overlay replaces this with the internal-registry index image.
+  image: quay.io/redhat-ai-dev/acc-operator-index:0.1.0
+  displayName: ACC Operator Catalog
+  publisher: Red Hat AI Dev
+  updateStrategy:
+    registryPoll:
+      interval: 10m

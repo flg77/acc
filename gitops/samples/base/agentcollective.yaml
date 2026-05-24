@@ -1,0 +1,33 @@
+# Baseline agentset for the first bring-up: the ingester/analyst/arbiter trio,
+# one replica each, on a single collective-level LLM.
+#
+# NOTE (tracked gap — see docs/operator-standalone-parity.md): the CRD has no
+# per-agent `model` yet, so the standalone multimodel agentset (cheap workers +
+# powerful reviewer) is NOT expressible here until the parity follow-up lands.
+# This collective uses ONE llm backend for all agents.
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCollective
+metadata:
+  name: acc-collective-01
+  namespace: acc-system
+spec:
+  collectiveId: acc-01
+  corpusRef:
+    name: acc-corpus
+  heartbeatIntervalSeconds: 30
+  agents:
+    - role: ingester
+      replicas: 1
+    - role: analyst
+      replicas: 1
+    - role: arbiter
+      replicas: 1
+  llm:
+    # vllm via KServe. deploy:false → reference an EXISTING InferenceService;
+    # set deploy:true (+ GPU + modelStoragePVC) to let the operator create one.
+    # No KServe? switch backend to a reachable OpenAI-compatible URL.
+    backend: vllm
+    vllm:
+      inferenceServiceRef: "acc-01-llm"
+      model: "meta-llama/Llama-3.2-3B-Instruct"
+      deploy: false

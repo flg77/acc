@@ -1,0 +1,43 @@
+# First-bring-up AgentCorpus for blackbox3 (rhoai mode, LAB profile).
+# Trimmed from operator/config/samples/acc_v1alpha1_agentcorpus_rhoai.yaml:
+# single-replica NATS/Redis, log observability, Gatekeeper/Kafka/OTel off so
+# the operator degrades gracefully when those prereqs are absent. Tune up as
+# the cluster gains KServe / Milvus / Gatekeeper / KEDA.
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCorpus
+metadata:
+  name: acc-corpus
+  namespace: acc-system
+spec:
+  deployMode: rhoai
+  version: "0.1.0"
+  imageRegistry: image-registry.openshift-image-registry.svc:5000
+  collectives:
+    - name: acc-collective-01
+  infrastructure:
+    nats:
+      version: "2.10"
+      replicas: 1
+      storageSize: 2Gi
+    redis:
+      version: "6"
+      replicas: 1
+      storageSize: 1Gi
+    milvus:
+      # rhoai mode needs a vector store; point at your Milvus (or stand one
+      # up). If absent, the operator emits a Warning and degrades.
+      uri: "http://milvus.milvus-system.svc.cluster.local:19530"
+      collectionPrefix: "acc_"
+  governance:
+    categoryA:
+      wasmConfigMapRef: acc-cat-a-wasm
+    categoryB:
+      pollIntervalSeconds: 30
+      bundlePVCSize: 500Mi
+    gatekeeperIntegration: false
+  observability:
+    backend: log
+    prometheusRules: false
+  upgradePolicy:
+    mode: manual
+    requireApproval: true

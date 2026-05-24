@@ -5,11 +5,19 @@
 ENVTEST_K8S_VERSION ?= 1.31.0
 CONTROLLER_TOOLS_VERSION ?= v0.16.1
 OPERATOR_SDK_VERSION ?= v1.36.0
+OPM_VERSION ?= v1.47.0
 
 # Image settings
 IMG ?= quay.io/redhat-ai-dev/acc-operator:$(VERSION)
 VERSION ?= 0.1.0
 BUNDLE_IMG ?= quay.io/redhat-ai-dev/acc-operator-bundle:$(VERSION)
+# CATALOG_IMG — the opm index (file-based catalog) image that a
+# CatalogSource points at (Method C / GitOps local-catalog install).
+# Override to the blackbox3 internal registry for the RHOAI bring-up, e.g.
+#   CATALOG_IMG=image-registry.openshift-image-registry.svc:5000/acc-operator/acc-operator-index:0.1.0
+CATALOG_IMG ?= quay.io/redhat-ai-dev/acc-operator-index:$(VERSION)
+# Container tool for opm index builds (docker or podman).
+CONTAINER_TOOL ?= docker
 
 # Platforms
 PLATFORMS ?= linux/arm64,linux/amd64
@@ -23,6 +31,7 @@ $(LOCALBIN):
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 OPERATOR_SDK ?= $(LOCALBIN)/operator-sdk
+OPM ?= $(LOCALBIN)/opm
 
 # Go settings
 GOFLAGS ?=
@@ -148,6 +157,18 @@ bundle-build: ## Build bundle image.
 bundle-push: ## Push bundle image.
 	docker push $(BUNDLE_IMG)
 
+.PHONY: catalog-build
+catalog-build: opm ## Build the opm index (catalog) image from the bundle.
+	$(OPM) index add \
+		--bundles $(BUNDLE_IMG) \
+		--tag $(CATALOG_IMG) \
+		--container-tool $(CONTAINER_TOOL) \
+		$(if $(FROM_INDEX),--from-index $(FROM_INDEX),)
+
+.PHONY: catalog-push
+catalog-push: ## Push the catalog (index) image.
+	$(CONTAINER_TOOL) push $(CATALOG_IMG)
+
 ##@ Dependencies
 
 .PHONY: controller-gen
@@ -168,6 +189,16 @@ $(OPERATOR_SDK): $(LOCALBIN)
 	mkdir -p $(LOCALBIN); \
 	curl -sSLo $(OPERATOR_SDK) https://github.com/operator-framework/operator-sdk/releases/download/$(OPERATOR_SDK_VERSION)/operator-sdk_linux_amd64; \
 	chmod +x $(OPERATOR_SDK); \
+	}
+
+.PHONY: opm
+opm: $(OPM) ## Download opm (operator package manager) for catalog builds.
+$(OPM): $(LOCALBIN)
+	@{ \
+	set -e; \
+	mkdir -p $(LOCALBIN); \
+	curl -sSLo $(OPM) https://github.com/operator-framework/operator-registry/releases/download/$(OPM_VERSION)/linux-amd64-opm; \
+	chmod +x $(OPM); \
 	}
 
 define go-install-tool
