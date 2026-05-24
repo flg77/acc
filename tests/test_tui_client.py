@@ -16,6 +16,7 @@ import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import msgpack
 import pytest
 
 from acc.tui.client import NATSObserver, _HANDLERS
@@ -38,7 +39,8 @@ def _make_observer(queue_size: int = 10) -> tuple[NATSObserver, asyncio.Queue]:
 
 def _make_msg(data: dict) -> MagicMock:
     msg = MagicMock()
-    msg.data = json.dumps(data).encode()
+    # Wire format must match NATSBackend.publish(): msgpack(utf-8 JSON bytes).
+    msg.data = msgpack.packb(json.dumps(data).encode(), use_bin_type=True)
     msg.subject = f"acc.sol-01.{data.get('signal_type', 'unknown').lower()}"
     return msg
 

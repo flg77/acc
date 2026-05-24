@@ -606,25 +606,28 @@ O(1) hot-path read prepends notes to the user message. See
 
 ## D-010 — RHOAI operator bring-up via GitOps (blackbox3)
 
-**Status:** Docs + pipeline plumbing LANDED on `main` (2026-05-23); live test
-(Phase R4) + CRD parity closers deferred. **Date:** 2026-05-23
+**Status:** acc-side LANDED (2026-05-23); the **GitOps deploy procedure lives
+in the separate `lab-gitops` project, NOT in `acc`** (operator decision). Live
+test (Phase R4) + CRD parity closers deferred. **Date:** 2026-05-23
 **Context:** install the ACC operator into the local operator catalog of the
-**blackbox3** OpenShift+RHOAI3 cluster, GitOps-driven, ops separated from code.
+**blackbox3** OpenShift+RHOAI3 cluster, GitOps-driven. Deploy/ops are kept out
+of the `acc` repo entirely.
 
 **Decisions (locked):** target `blackbox3` (88.99.192.92), **internal
 registry**; install **Method C** (local CatalogSource) via **OpenShift GitOps
-(ArgoCD on acc1) + OpenShift Pipelines (Tekton, in-cluster build) + Ansible AAP
-(aap1) job templates**; ops live in a dedicated **`gitops/`** tree (in-repo,
-liftable to its own repo later); **docs first, then review, then live test**.
+(ArgoCD) + OpenShift Pipelines (Tekton, in-cluster build) + Ansible AAP
+(aap1)**; **all GitOps manifests + the deploy runbook live in `lab-gitops`**
+(`github.com/flg77/lab-gitops`, ArgoCD app-of-apps) — coordinated with the
+instance managing that repo; `acc` keeps **no** `gitops/` tree or deploy doc.
 
-**Landed:** `operator/Makefile` `catalog-build/catalog-push/CATALOG_IMG` (+ opm);
-`gitops/` (olm CatalogSource/OperatorGroup/Subscription Kustomize + blackbox3
-overlay; samples AgentCorpus(rhoai)/Collective + Cat-A WASM CM; Tekton
-build pipeline; ArgoCD app-of-apps; AAP playbooks). Docs:
-`docs/rhoai-bringup-blackbox3.md` (runbook), `docs/operator-agentset-guide.md`
+**In `acc` (kept):** `operator/` (the operator itself) + `operator/Makefile`
+`catalog-build/catalog-push/CATALOG_IMG` (+ opm) — operator *packaging*
+capability the lab-gitops pipeline calls. Docs: `operator-agentset-guide.md`
 (instantiate agentsets via the CRD; per-agent model/memory/cache via
-`AgentRoleSpec.extraEnv` today), `docs/operator-standalone-parity.md`
-(dev↔DC gap table + process rule + parity-test/CI closers).
+`AgentRoleSpec.extraEnv` today), `operator-standalone-parity.md` (dev↔DC gap
+table + process rule + parity closers). The `gitops/` tree +
+`rhoai-bringup-blackbox3.md` runbook that briefly lived here were **removed**
+and handed off to lab-gitops.
 
 **Key finding:** the recent standalone features (multimodel, memory reflection,
 prompt cache) are **expressible on the operator today via `extraEnv` + the
@@ -634,7 +637,8 @@ in-cluster `compliance_officer` gap scans).
 
 **Deferred (tracked follow-up):** clean CRD fields (`AgentRoleSpec.model`,
 `RoleDefinition.memory*`) + `acc_config.go` template rendering + `sync-manifests`
-frameworks embed + Python↔Go parity test + CI; the live bring-up on blackbox3.
+frameworks embed + Python↔Go parity test + CI; the lab-gitops manifests + the
+live bring-up on blackbox3.
 
 ---
 

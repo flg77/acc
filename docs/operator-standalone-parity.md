@@ -52,7 +52,8 @@ The one genuine delivery gap is **frameworks not embedded** — only matters if 
    standalone `AgentSpec`/`RoleDefinitionConfig` field sets agree (fail when a
    new standalone field has no operator counterpart).
 5. **CI** — run the parity test + `make -C operator manifests generate` (no
-   diff) + a `kustomize build gitops/...` lint on every PR.
+   diff) on every PR. (The GitOps deploy manifests live in the separate
+   **lab-gitops** project and are linted there.)
 
 ## Process rule (the no-conflict contract)
 
@@ -63,5 +64,6 @@ The one genuine delivery gap is **frameworks not embedded** — only matters if 
 > enforces (b) once it lands.
 
 This lets standalone dev keep moving (podman is the fast loop) while the
-operator path catches up deliberately — ops stay in `gitops/`, code stays in
-`acc/` + `operator/`, and drift is visible, not silent.
+operator path catches up deliberately — deploy/ops live in the separate
+**lab-gitops** project, code stays in `acc/` + `operator/`, and drift is
+visible, not silent.
