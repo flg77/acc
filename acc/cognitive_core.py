@@ -139,6 +139,12 @@ class CognitiveResult:
     latency_ms: float = 0.0
     """Wall-clock latency of the LLM call only (0 if blocked)."""
 
+    reasoning: str = ""
+    """Externalized deliberation parsed from a ``<reasoning>…</reasoning>``
+    block when the role sets ``reasoning_trace: true`` (PR-V3b).  Empty for
+    roles that don't opt in, or when the model emitted no block.  The clean
+    deliverable is in ``output``; this is the "why"."""
+
 
 # ---------------------------------------------------------------------------
 # Bridge delegation marker (ACC-9)
@@ -161,6 +167,51 @@ def _parse_delegation(text: str) -> tuple[str, str]:
     if match:
         return match.group(1).strip(), match.group(2).strip()
     return "", ""
+
+
+# ---------------------------------------------------------------------------
+# Reasoning externalization (PR-V3b — role flag ``reasoning_trace``)
+# ---------------------------------------------------------------------------
+
+# This is the canonical reasoning-externalization instruction.  It MUST stay in
+# sync with acc-dev-harness/tools/trace_eval/reasoning_prompt.py so a bench
+# score is comparable to live-agent output (bump REASONING_BLOCK_VERSION there
+# when changing this text).
+_REASONING_SYSTEM_BLOCK = (
+    "\n\nBefore your final answer, think out loud inside a single "
+    "<reasoning>...</reasoning> block, then give the answer AFTER the closing "
+    "tag. In the reasoning block, work through — using these exact headings — :\n"
+    "Prior learnings: what relevant prior experience / context you are drawing "
+    "on (or \"none found\").\n"
+    "Options: at least two distinct approaches, each on its own line as "
+    "\"Option A: ...\", \"Option B: ...\".\n"
+    "Evaluation: weigh the options — trade-offs, risks, why one wins.\n"
+    "Plan: the concrete approach you will execute.\n"
+    "Review: what you would ask a peer reviewer to check, or a self-critique.\n"
+    "Then, after </reasoning>, write only the final deliverable. Do not repeat "
+    "the reasoning in the answer."
+)
+
+_REASONING_RE = re.compile(r"<reasoning>(.*?)</reasoning>", re.IGNORECASE | re.DOTALL)
+
+
+def _split_reasoning(text: str) -> tuple[str, str]:
+    """Split a completion into ``(reasoning, answer)``.
+
+    When a ``<reasoning>…</reasoning>`` block is present, the block body is the
+    reasoning and everything after the closing tag is the answer.  When no block
+    is present, reasoning is ``""`` and the whole text is the answer — so a
+    model that ignored the instruction degrades gracefully (operator still gets
+    the answer, just no trace).
+    """
+    if not text:
+        return "", ""
+    m = _REASONING_RE.search(text)
+    if not m:
+        return "", text
+    reasoning = m.group(1).strip()
+    answer = (text[: m.start()] + text[m.end():]).strip()
+    return reasoning, answer
 
 
 # ---------------------------------------------------------------------------
@@ -458,16 +509,27 @@ class CognitiveCore:
             retrieved_episodes = await self._retrieve_episodes(
                 user_content, role, top_k=5,
             )
-        _emit(2, "Building system prompt")
+        # PR-MEM3 — O(1) hot-cache read of durable memory notes (gated by
+        # the same memory_retrieval flag as RAG; empty/miss → no block).
+        # Read BEFORE the progress emit so the step label can surface what
+        # prior learnings were pulled in (PR-V3b — cause #5: memory was
+        # injected silently; now the operator sees "Checking prior learnings").
+        memory_notes: list[str] = []
+        if getattr(role, "memory_retrieval", True):
+            memory_notes = self._read_memory_notes()
+        if retrieved_episodes or memory_notes:
+            bits = []
+            if retrieved_episodes:
+                bits.append(f"{len(retrieved_episodes)} episodes")
+            if memory_notes:
+                bits.append(f"{len(memory_notes)} notes")
+            _emit(2, f"Checking prior learnings ({', '.join(bits)})")
+        else:
+            _emit(2, "Building system prompt")
         # PR-CA1 — the system prompt is the STABLE per-role prefix (no
         # RAG), so every backend's prefix cache hits.  The variable RAG
         # block rides the LLM user message instead.
         system_prompt = self.build_system_prompt(role)
-        # PR-MEM3 — O(1) hot-cache read of durable memory notes (gated by
-        # the same memory_retrieval flag as RAG; empty/miss → no block).
-        memory_notes: list[str] = []
-        if getattr(role, "memory_retrieval", True):
-            memory_notes = self._read_memory_notes()
         llm_user_content = self._compose_user_content(
             user_content, retrieved_episodes, memory_notes,
         )
@@ -592,6 +654,17 @@ class CognitiveCore:
             except Exception:
                 output_text = str(response)
         output_text = str(output_text)
+
+        # PR-V3b — reasoning externalization.  When the role opted in, split the
+        # <reasoning>…</reasoning> block out of the completion: the deliberation
+        # is surfaced to the operator separately (CognitiveResult.reasoning) and
+        # the clean deliverable stays in ``output`` (and is what gets persisted,
+        # embedded, and delegation-parsed).  No block found → graceful no-op.
+        reasoning_text = ""
+        if getattr(role, "reasoning_trace", False):
+            reasoning_text, answer_text = _split_reasoning(output_text)
+            if reasoning_text:
+                output_text = answer_text
 
         # Update token utilisation
         token_budget = role.category_b_overrides.get("token_budget", 0)
@@ -729,6 +802,7 @@ class CognitiveCore:
             stress=self._snapshot_stress(),
             episode_id=episode_id,
             latency_ms=latency_ms,
+            reasoning=reasoning_text,
         )
 
     # ------------------------------------------------------------------
@@ -975,6 +1049,13 @@ class CognitiveCore:
         parts = [purpose, f"\nPersona: {persona_instruction}"]
         if seed:
             parts.append(f"\n{seed}")
+
+        # PR-V3b — reasoning externalization.  Opt-in per role; keeps the
+        # system prompt a stable cacheable prefix (the block is constant per
+        # role, so it does not break prefix caching).  Placed after the seed so
+        # role-specific context still leads.
+        if getattr(role, "reasoning_trace", False):
+            parts.append(_REASONING_SYSTEM_BLOCK)
 
         # PR-CA1 — prompt caching: the *variable* recent-episodes RAG
         # block USED to live here, in the middle of the system prompt.

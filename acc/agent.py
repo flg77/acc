@@ -877,6 +877,10 @@ class Agent:
                 "block_reason": result.block_reason,
                 "latency_ms": result.latency_ms,
                 "output": result.output[:_task_output_max_chars()] if result.output else "",  # truncate for bus
+                # PR-V3b — externalized reasoning (role flag reasoning_trace);
+                # empty for roles that don't opt in.  Truncated for the bus like
+                # output; the full text is in the persisted episode.
+                "reasoning": (result.reasoning or "")[:_task_output_max_chars()],
                 # Phase 4.4 — capability invocation summary.  Each
                 # outcome is reduced to (kind, target, ok, error) so the
                 # bus payload stays small even when the LLM fires many

@@ -962,6 +962,19 @@ class PromptScreen(Screen):
             # PR-V3 — reply (or timeout) landed: stop the activity line.
             self._end_activity(task_id)
 
+        # PR-V3b — surface the agent's externalized reasoning (role flag
+        # reasoning_trace) ABOVE the answer so the operator sees the "why":
+        # prior learnings, options considered, evaluation, plan, review.
+        reasoning = getattr(reply, "reasoning", "") or ""
+        if reasoning.strip():
+            self._append_history({
+                "role": "reasoning",
+                "task_id": task_id,
+                "agent_id": reply.agent_id,
+                "text": reasoning,
+                "ts": time.time(),
+            })
+
         # Append one trace line per invocation BEFORE the agent's reply
         # so the transcript reads chronologically: operator → traces →
         # agent.  Cat-A blocks (ok=False) get an ✗ marker; successes ✓.
@@ -1343,6 +1356,18 @@ class PromptScreen(Screen):
                 lines.append(header)
                 for body_line in entry.get("text", "").splitlines() or [""]:
                     lines.append(f"  {body_line}")
+
+            elif role == "reasoning":
+                # PR-V3b — the agent's externalized deliberation, rendered dim
+                # above the answer so the "why" is visible without competing
+                # with the deliverable.
+                aid = entry.get("agent_id", "")[:14]
+                lines.append(
+                    f"[dim]{ts}[/dim]  [bold magenta]🧠 {aid} reasoning[/bold magenta]  "
+                    f"[dim]task={tid}[/dim]"
+                )
+                for body_line in entry.get("text", "").splitlines() or [""]:
+                    lines.append(f"  [dim italic]{body_line}[/dim italic]")
 
             elif role == "agent":
                 aid = entry.get("agent_id", "")[:14]

@@ -63,6 +63,10 @@ class PromptResponse:
     block_reason: str = ""
     latency_ms: float = 0.0
     invocations: list[dict] = field(default_factory=list)
+    reasoning: str = ""
+    """Externalized deliberation from the agent's CognitiveCore when the role
+    set ``reasoning_trace: true`` (PR-V3b).  Empty for roles that don't opt in.
+    The clean answer is in ``output``; this is the "why" behind it."""
 
 
 @runtime_checkable

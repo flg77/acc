@@ -68,6 +68,18 @@ class RoleDefinitionConfig(BaseModel):
     # cadence is the ``reflection_interval_s`` Cat-B setpoint.
     memory_reflection: bool = False
 
+    # PR-V3b — externalize reasoning.  When True, the CognitiveCore appends a
+    # reasoning-externalization block to the system prompt asking the model to
+    # think out loud inside a ``<reasoning>…</reasoning>`` block (prior
+    # learnings → options → evaluation → plan → review) before the final
+    # answer.  The block is parsed back out into ``CognitiveResult.reasoning``
+    # and surfaced to the operator (TUI Prompt screen), while the clean answer
+    # remains the deliverable.  Default False: it costs extra output tokens and
+    # latency, so opt in per role (e.g. the coding agent).  The same prompt
+    # text is mirrored in acc-dev-harness/tools/trace_eval/reasoning_prompt.py
+    # so bench scores match live-agent output.
+    reasoning_trace: bool = False
+
     # D-007 (PR-U2) — trusted-workspace filesystem access.
     # When True the role may read/write files in the operator's
     # trusted working directory (via the sandboxed ``fs_read`` /

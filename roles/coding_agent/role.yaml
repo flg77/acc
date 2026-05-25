@@ -106,6 +106,11 @@ role_definition:
   # working directory is still selected per-project at prompt time
   # (TUI "Select Directory") and must be trusted before any write.
   workspace_access: true
+  # PR-V3b — externalize the agent's deliberation.  The coding agent opts in so
+  # the operator sees the "why" (prior learnings → options → evaluation → plan →
+  # review) on the Prompt screen, not just the final code.  Costs extra output
+  # tokens/latency; other roles leave this off by default.
+  reasoning_trace: true
   allowed_mcps:
     - echo_server
   default_mcps:

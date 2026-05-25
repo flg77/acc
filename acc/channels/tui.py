@@ -256,4 +256,5 @@ def _payload_to_response(task_id: str, data: dict) -> PromptResponse:
         block_reason=str(data.get("block_reason", "")),
         latency_ms=float(data.get("latency_ms", 0.0) or 0.0),
         invocations=list(invocations),
+        reasoning=str(data.get("reasoning", "")),
     )
