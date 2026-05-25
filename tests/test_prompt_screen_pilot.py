@@ -693,6 +693,98 @@ async def test_render_task_progress_line_none_resets_to_idle():
         assert captured and captured[-1] == ""
 
 
+def _capture_line(screen):
+    """Patch `#task-progress-line`.update to record painted strings."""
+    from textual.widgets import Static
+    line = screen.query_one("#task-progress-line", Static)
+    captured: list[str] = []
+    real = line.update
+
+    def rec(content="", **kw):
+        captured.append(str(content))
+        return real(content, **kw)
+
+    line.update = rec  # type: ignore[assignment]
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_begin_activity_paints_continuous_line():
+    """PR-V3 — `_begin_activity` shows a live processing line before any
+    TASK_PROGRESS arrives, and `_tick_activity` keeps repainting it."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        captured = _capture_line(screen)
+
+        screen._begin_activity("task-xyz")
+        await pilot.pause()
+        assert captured and "processing" in captured[-1]
+        assert screen._active_progress is not None
+
+        # The ticker advances the spinner without an agent event.
+        before = screen._spinner_i
+        screen._tick_activity()
+        await pilot.pause()
+        assert screen._spinner_i == before + 1
+        assert "processing" in captured[-1]
+
+
+@pytest.mark.asyncio
+async def test_activity_line_shows_token_tally():
+    """PR-V3 — a TASK_PROGRESS carrying tokens renders `N tok` on the
+    activity line (the field the pre-V3 line never populated)."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        captured = _capture_line(screen)
+
+        screen._append_progress_entry({
+            "task_id": "abcd1234",
+            "progress": {
+                "current_step": 2,
+                "total_steps_estimated": 6,
+                "step_label": "Generating",
+                "confidence": 0.8,
+                "confidence_trend": "RISING",
+                "tokens_in_so_far": 1000,
+                "tokens_out_so_far": 536,
+            },
+        })
+        await pilot.pause()
+        text = captured[-1]
+        assert "1536 tok" in text
+        assert "2/6" in text
+        assert "Generating" in text
+
+
+@pytest.mark.asyncio
+async def test_end_activity_clears_and_is_task_scoped():
+    """PR-V3 — `_end_activity` blanks the line, but only for the task it
+    is showing (a slow task finishing must not wipe a newer one)."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        captured = _capture_line(screen)
+
+        screen._begin_activity("task-new")
+        await pilot.pause()
+        # An older task finishing must NOT clear the newer one's line.
+        screen._end_activity("task-old")
+        await pilot.pause()
+        assert screen._active_progress is not None
+        assert "processing" in captured[-1]
+
+        # Ending the shown task clears it.
+        screen._end_activity("task-new")
+        await pilot.pause()
+        assert screen._active_progress is None
+        assert captured[-1] == ""
+
+
 @pytest.mark.asyncio
 async def test_trace_entry_appends_invocation_waterfall_row():
     """A `trace` history entry adds a row to `#invocation-waterfall`

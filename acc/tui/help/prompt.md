@@ -82,11 +82,31 @@ that do not honour streaming (e.g. `SlackPromptChannel` today) ignore
 the `on_progress` kwarg silently and return `False`.  Callers gate
 their UX on the capability, never on the concrete class.
 
-> **Agent-side note**: as of this PR, only the **receive** side is
-> wired.  `CognitiveCore` does not yet emit `TASK_PROGRESS` during
-> `process_task` — that's a separate follow-up.  Until it lands, the
-> only way to exercise the surface end-to-end on a live stack is to
-> inject synthetic events via:
+### Continuous activity line (PR-V3)
+
+Step-boundary `TASK_PROGRESS` events can be seconds apart (or absent on
+pre-progress backends), so a single floating line just above the input
+guarantees a *continuous* sign of life.  It starts the instant you
+Send, and a 1 s ticker advances a spinner + elapsed clock so the pane
+never looks frozen:
+
+```
+⠹ processing [2/6 · 1536 tok · 12s]  ██████░░░░░░░░░░░░░░ 33% ↑80% … Generating tests
+```
+
+* spinner + `processing` — the heartbeat (always moving while in flight);
+* `[step/total · tokens · elapsed]` — the running token tally comes from
+  `tokens_in_so_far + tokens_out_so_far` on the progress struct;
+* bar + `%` + confidence-trend arrow — refined on each step event;
+* trailing `… <label>` — the agent's current `step_label` ("what am I
+  doing").
+
+The line blanks the moment the reply (or timeout) lands, and is
+task-scoped — a slow task finishing won't wipe the line of a newer one
+you already fired.  The per-step `→` entries still accumulate in the
+scrollable transcript above, so the full reasoning trace is preserved.
+
+> **Exercising it without an agent**: inject synthetic events via
 >
 >     acc-cli nats pub acc.sol-01.task.progress '{
 >       "signal_type": "TASK_PROGRESS",
@@ -94,10 +114,13 @@ their UX on the capability, never on the concrete class.
 >       "agent_id": "coding-1",
 >       "progress": {"current_step": 1, "total_steps_estimated": 3,
 >                    "step_label": "Drafting", "confidence": 0.6,
->                    "confidence_trend": "RISING"}
+>                    "confidence_trend": "RISING",
+>                    "tokens_in_so_far": 800, "tokens_out_so_far": 120}
 >     }'
 >
-> The prompt pane will render the line correctly.
+> On a live stack the agent emits these itself — `agent.py`'s task loop
+> publishes `TASK_PROGRESS` at every `process_task` / invocation step
+> boundary (`_publish_progress`).
 
 The pane is one concrete implementation of the open
 :class:`acc.channels.PromptChannel` Protocol — Slack / Telegram /
@@ -175,10 +198,9 @@ Below the form, one of:
 
 ## Out of scope
 
-* Agent-side `TASK_PROGRESS` emission during `CognitiveCore.process_task`
-  — the receive pipe ships in this PR (see "Live thinking" above);
-  the matching emitter follows in a separate PR so the agent surfaces
-  step boundaries without operators having to inject synthetic events.
+* Token-level LLM streaming — the activity line ticks on step boundaries
+  + a local heartbeat, not per-token deltas; true token streaming from
+  the backend is a separate follow-up.
 * Slack / Telegram / WhatsApp — those are separate channels
   (each a small follow-up PR) constructing the same `PromptChannel`
   Protocol from a bot daemon.

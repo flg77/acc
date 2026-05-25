@@ -119,6 +119,12 @@ def _resolve_timeout() -> float:
 # ~50 prompt round-trips with traces before the oldest fall off.
 _MAX_HISTORY: int = 200
 
+# PR-V3 — braille spinner frames for the live activity line.  The
+# screen advances one frame per ticker tick while a task is in flight so
+# the operator always sees motion, even between the agent's sparse
+# TASK_PROGRESS step-boundary events.
+_SPINNER: str = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
 # PR-F — cap on rows shown in the invocation-waterfall DataTable.
 # Operator typically wants to see the most recent task's tool fires;
 # 50 rows survives a 10-step chain plus a few retries without being
@@ -286,6 +292,14 @@ class PromptScreen(Screen):
         # here to populate the InvocationDetailModal so the full
         # record (not just the table cells) is preserved.
         self._waterfall_records: dict[str, dict[str, Any]] = {}
+        # PR-V3 — live activity state for the floating "sign of activity"
+        # line.  ``None`` ⇒ idle (line blank).  While a task is in flight
+        # this holds the latest known {task_id, started, step, total,
+        # label, conf, trend, tokens}; a 1 s ticker repaints it so the
+        # elapsed clock + spinner advance even when the agent emits no new
+        # TASK_PROGRESS between step boundaries.
+        self._active_progress: dict[str, Any] | None = None
+        self._spinner_i: int = 0
 
     # ------------------------------------------------------------------
     # Compose / mount / lifecycle
@@ -388,6 +402,14 @@ class PromptScreen(Screen):
             self.query_one("#prompt-textarea", TextArea).focus()
         except Exception:
             logger.exception("prompt: textarea focus failed")
+        # PR-V3 — heartbeat ticker for the live activity line.  Repaints
+        # the floating progress line once a second while a task is in
+        # flight (no-op when idle), so the elapsed clock + spinner always
+        # tick — the operator never stares at a frozen pane.
+        try:
+            self.set_interval(1.0, self._tick_activity)
+        except Exception:
+            logger.exception("prompt: activity ticker init failed")
 
     def on_unmount(self) -> None:
         """Cancel any in-flight workers so screen-switch is clean."""
@@ -893,6 +915,9 @@ class PromptScreen(Screen):
         self.query_one("#prompt-status", Static).update(
             f"[yellow]Sent task_id={task_id[:12]} — awaiting reply…[/yellow]"
         )
+        # PR-V3 — start the live activity line immediately so the operator
+        # sees motion before the agent's first TASK_PROGRESS arrives.
+        self._begin_activity(task_id)
         # Clear the prompt textarea so the operator can start the next one.
         self.query_one("#prompt-textarea", TextArea).clear()
 
@@ -934,6 +959,8 @@ class PromptScreen(Screen):
             return
         finally:
             await channel.close()
+            # PR-V3 — reply (or timeout) landed: stop the activity line.
+            self._end_activity(task_id)
 
         # Append one trace line per invocation BEFORE the agent's reply
         # so the transcript reads chronologically: operator → traces →
@@ -1040,48 +1067,123 @@ class PromptScreen(Screen):
     # ------------------------------------------------------------------
 
     def _render_task_progress_line(self, entry: dict | None) -> None:
-        """Refresh ``#task-progress-line`` from one TASK_PROGRESS entry.
+        """Fold one TASK_PROGRESS entry into the live activity state.
 
-        Pass ``None`` to reset to the idle placeholder (used when a
-        fresh ``operator`` prompt lands).
+        Pass ``None`` to reset to idle (blank line).  Otherwise merge the
+        entry's step / label / confidence / tokens into ``_active_progress``
+        (preserving the in-flight ``started`` clock) and repaint.  The
+        actual drawing lives in :meth:`_paint_activity` so the 1 s ticker
+        and the step-boundary events share one renderer + one format.
+        """
+        if not entry:
+            self._active_progress = None
+            self._paint_activity()
+            return
+        prev = self._active_progress or {}
+        self._active_progress = {
+            "task_id": entry.get("task_id", "") or prev.get("task_id", ""),
+            "started": prev.get("started") or time.time(),
+            "step": int(entry.get("current_step", 0) or 0),
+            "total": int(entry.get("total_steps", 0) or 0),
+            "label": (entry.get("step_label", "") or "") or prev.get("label", ""),
+            "conf": float(entry.get("confidence", 0.0) or 0.0),
+            "trend": entry.get("confidence_trend", "") or "",
+            "tokens": int(
+                entry.get("tokens", entry.get("tokens_used", prev.get("tokens", 0)))
+                or 0
+            ),
+        }
+        self._paint_activity()
+
+    # PR-V3 — live "sign of activity" line.
+    #
+    # The agent emits TASK_PROGRESS only at step boundaries, which for a
+    # single LLM call can be seconds apart (or absent on pre-progress
+    # backends).  To guarantee a continuous signal, ``_begin_activity``
+    # seeds the state on Send, a 1 s ticker advances the spinner +
+    # elapsed clock, step events refine it, and ``_end_activity`` clears
+    # it when the reply (or timeout) lands.
+
+    def _begin_activity(self, task_id: str) -> None:
+        """Start the activity line for a freshly-dispatched task."""
+        self._active_progress = {
+            "task_id": task_id,
+            "started": time.time(),
+            "step": 0,
+            "total": 0,
+            "label": "sent — waiting for the agent",
+            "conf": 0.0,
+            "trend": "",
+            "tokens": 0,
+        }
+        self._spinner_i = 0
+        self._paint_activity()
+
+    def _end_activity(self, task_id: str | None = None) -> None:
+        """Clear the activity line.
+
+        When ``task_id`` is given, only clears if it matches the task
+        currently shown — so a slow task finishing doesn't wipe the
+        activity line of a newer one the operator already fired.
+        """
+        ap = self._active_progress
+        if ap is not None and task_id and ap.get("task_id") != task_id:
+            return
+        self._active_progress = None
+        self._paint_activity()
+
+    def _tick_activity(self) -> None:
+        """Ticker callback — repaint while a task is in flight (else no-op)."""
+        if self._active_progress is None:
+            return
+        self._spinner_i += 1
+        self._paint_activity()
+
+    def _paint_activity(self) -> None:
+        """Draw ``#task-progress-line`` from ``_active_progress``.
+
+        Format (the operator's "process [token] … message" ask)::
+
+            ⠹ processing [2/6 · 1536 tok · 12s]  ████░░░ 33% ↑80% … <label>
         """
         try:
             line = self.query_one("#task-progress-line", Static)
         except Exception:
             return
-        if not entry:
-            line.update("")   # blank when idle — the line only shows during activity
+        ap = self._active_progress
+        if not ap:
+            line.update("")  # blank when idle — only shows during activity
             return
-        cur = entry.get("current_step", 0) or 0
-        tot = entry.get("total_steps", 0) or 0
-        label = entry.get("step_label", "") or ""
-        conf = entry.get("confidence", 0.0) or 0.0
-        trend = entry.get("confidence_trend", "")
+        frame = _SPINNER[self._spinner_i % len(_SPINNER)]
+        step = ap.get("step", 0) or 0
+        total = ap.get("total", 0) or 0
+        bar_w = 20
+        if total > 0:
+            ratio = min(1.0, step / total)
+            filled = int(ratio * bar_w)
+            bar = "█" * filled + "░" * (bar_w - filled)
+            step_str = f"{step}/{total}"
+            pct = f"{ratio:.0%}"
+        else:
+            bar = "░" * bar_w
+            step_str = f"{step}/?" if step else "?"
+            pct = "—"
+        elapsed = max(0, int(time.time() - (ap.get("started") or time.time())))
+        tokens = ap.get("tokens", 0) or 0
+        tok_str = f" · {tokens} tok" if tokens else ""
+        conf = ap.get("conf", 0.0) or 0.0
+        trend = ap.get("trend", "")
         trend_arrow = (
             "↑" if trend == "RISING"
             else "↓" if trend == "FALLING"
             else "→"
         )
-        tid = (entry.get("task_id", "") or "")[:8]
-        bar_w = 30
-        if tot > 0:
-            ratio = min(1.0, cur / tot)
-            filled = int(ratio * bar_w)
-            bar = "█" * filled + "░" * (bar_w - filled)
-            step_str = f"{cur}/{tot}"
-            pct = f"{ratio:.0%}"
-        else:
-            bar = "░" * bar_w
-            step_str = f"{cur}/?" if cur else "?"
-            pct = "—"
-        # PR-V2 — "sign of activity" line: ⏳ processing [step · tokens] …
-        # <what the agent is currently doing>.
-        tok = entry.get("tokens") or entry.get("tokens_used") or 0
-        tok_str = f" · {tok} tok" if tok else ""
-        doing = label or "working"
+        conf_str = f" {trend_arrow}{conf:.0%}" if conf > 0 else ""
+        doing = ap.get("label") or "working"
         line.update(
-            f"⏳ [bold]processing[/bold] [{step_str}{tok_str}]  "
-            f"[blue]{bar}[/blue] [dim]{pct} {trend_arrow}{conf:.0%}[/dim] … {doing}"
+            f"[blue]{frame}[/blue] [bold]processing[/bold] "
+            f"[{step_str}{tok_str} · {elapsed}s]  "
+            f"[blue]{bar}[/blue] [dim]{pct}{conf_str}[/dim] … {doing}"
         )
 
     def _waterfall_add_row(self, entry: dict) -> None:
@@ -1182,6 +1284,15 @@ class PromptScreen(Screen):
             progress.get("confidence_trend", payload.get("confidence_trend", ""))
             or ""
         )
+        # PR-V3 — running token tally (in + out) so the activity line can
+        # show "[… · N tok …]".  Accept both the nested progress struct and
+        # any top-level fallback from legacy emitters.
+        tokens_in = int(
+            progress.get("tokens_in_so_far", payload.get("tokens_in_so_far", 0)) or 0
+        )
+        tokens_out = int(
+            progress.get("tokens_out_so_far", payload.get("tokens_out_so_far", 0)) or 0
+        )
         self._append_history({
             "role": "progress",
             "task_id": payload.get("task_id", ""),
@@ -1191,6 +1302,7 @@ class PromptScreen(Screen):
             "step_label": step_label,
             "confidence": confidence,
             "confidence_trend": trend,
+            "tokens": tokens_in + tokens_out,
             "ts": time.time(),
         })
 
@@ -1290,10 +1402,13 @@ class PromptScreen(Screen):
                     f"  [dim]{trend_arrow} {conf:.0%}[/dim]"
                     if conf > 0 else ""
                 )
+                tok = entry.get("tokens", 0) or 0
+                tok_str = f" [dim]· {tok} tok[/dim]" if tok else ""
                 label_str = f" — {label}" if label else ""
                 lines.append(
                     f"  [blue]→[/blue] [dim]{step_str}[/dim]"
                     f"{label_str}"
+                    f"{tok_str}"
                     f"{conf_str}"
                 )
 
