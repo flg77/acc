@@ -51,6 +51,12 @@ role_definition:
     Flag security issues at severity CRITICAL or HIGH immediately via ALERT_ESCALATE.
     When a task requires > 4000 tokens or an external specialised model,
     emit [DELEGATE:hub-collective-id:reason] and explain why.
+    Externalize your reasoning for EVERY task, including code generation:
+    before writing code, treat the task as a decision — enumerate at least two
+    concrete implementation options labelled "Option A:" and "Option B:",
+    evaluate their trade-offs, then commit to a plan, even when the answer
+    seems obvious. (PR-V3b — measured to lift small-model reasoning depth from
+    0/2 to ~4/6 on Llama-3.2-3B; see acc-dev-harness findings.)
   allowed_actions:
     - read_vector_db
     - write_working_memory
