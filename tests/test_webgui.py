@@ -120,6 +120,64 @@ class TestReadRoutes:
         assert r.json()["info"]["title"] == "acc-webgui"
 
 
+class TestGovernanceParityRoutes:
+    """PR-W — webgui parity for the latest TUI: governance layers,
+    frameworks, rule proposals, golden prompts, model registry."""
+
+    def test_governance_layers(self, client):
+        r = client.get("/api/governance/layers")
+        assert r.status_code == 200
+        layers = {l["category"]: l for l in r.json()["layers"]}
+        # The repo ships Cat-A/B/C; A is immutable with real rules.
+        assert "A" in layers and layers["A"]["immutable"] is True
+        assert layers["A"]["rule_count"] >= 1
+
+    def test_frameworks(self, client):
+        r = client.get("/api/governance/frameworks")
+        assert r.status_code == 200
+        ids = {f["framework_id"] for f in r.json()["frameworks"]}
+        assert {"nist_ai_rmf", "soc2"} <= ids
+
+    def test_models_registry(self, client):
+        r = client.get("/api/models")
+        assert r.status_code == 200
+        ids = {m["model_id"] for m in r.json()["models"]}
+        assert "claude-sonnet" in ids
+
+    def test_golden_prompts(self, client):
+        r = client.get("/api/diagnostics/golden")
+        assert r.status_code == 200
+        assert isinstance(r.json()["prompts"], list)
+
+    def test_proposals_empty_ok(self, client, monkeypatch, tmp_path):
+        monkeypatch.setenv("ACC_RULE_PROPOSALS_ROOT", str(tmp_path / "none"))
+        r = client.get("/api/governance/proposals")
+        assert r.status_code == 200
+        assert r.json()["proposals"] == []
+
+    def test_gap_scan_unknown_framework_404(self, client):
+        r = client.post("/api/governance/gap-scan", json={"framework_id": "nope"})
+        assert r.status_code == 404
+
+    def test_gap_scan_and_proposal_decision(self, client, monkeypatch, tmp_path):
+        monkeypatch.setenv("ACC_RULE_PROPOSALS_ROOT", str(tmp_path / "props"))
+        monkeypatch.setenv("ACC_COMPLIANCE_REPORTS_ROOT", str(tmp_path / "reports"))
+        monkeypatch.setenv("ACC_LEARNED_RULE_PROMOTION", "propose")
+        r = client.post("/api/governance/gap-scan", json={"framework_id": "soc2"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["framework_id"] == "soc2"
+        assert body["proposals"] >= 1
+        # A proposal now exists → approve it.
+        from acc.rule_proposals import list_proposals
+        pid = list_proposals()[0].proposal_id
+        r2 = client.post(
+            f"/api/governance/proposals/{pid}/decision",
+            json={"decision": "approve"},
+        )
+        assert r2.status_code == 200 and r2.json()["decision"] == "approve"
+
+
 # ---------------------------------------------------------------------------
 # ObserverHub
 # ---------------------------------------------------------------------------

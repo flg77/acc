@@ -631,6 +631,13 @@ services:
       ACC_WEBGUI_SESSION_SECRET: ${ACC_WEBGUI_SESSION_SECRET:-}
       ACC_WEBGUI_SESSION_TTL: ${ACC_WEBGUI_SESSION_TTL:-43200}
       ACC_WEBGUI_OPERATOR_USERS: ${ACC_WEBGUI_OPERATOR_USERS:-}
+      # PR-W — governance/compliance/diagnostics/models parity reads
+      # (same roots the TUI uses; shared named volumes so proposals +
+      # gap reports are visible from both surfaces).
+      ACC_REGULATORY_ROOT: /app/regulatory_layer
+      ACC_MODELS_PATH: /app/models.yaml
+      ACC_FRAMEWORKS_IMPORT_ROOT: /app/.acc-frameworks
+      ACC_COMPLIANCE_REPORTS_ROOT: /app/.acc-compliance
     volumes:
       # htpasswd mode — bind the bcrypt password file in at the
       # default container path.  `required: false` semantics: when the
@@ -638,6 +645,12 @@ services:
       # the bind fails; the safe workaround is to keep an empty
       # placeholder at the repo root (or just don't use htpasswd mode).
       - ../../acc-webgui.htpasswd:/app/acc-webgui.htpasswd:ro,z
+      # PR-W — governance parity: the policy files + model registry
+      # (read-only) and the writable stores shared with acc-tui.
+      - ../../regulatory_layer:/app/regulatory_layer:ro
+      - ../../models.yaml:/app/models.yaml:ro,z
+      - acc-frameworks-data:/app/.acc-frameworks:U,z
+      - acc-compliance-data:/app/.acc-compliance:U,z
     ports:
       - "8080:8080"
     networks:
