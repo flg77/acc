@@ -23,6 +23,7 @@ import {
   Performance,
   Comms,
   Configuration,
+  Diagnostics,
   Help,
 } from "./screens";
 import { TraceWaterfall, PlanDag, AuditTimeline } from "./tracing";
@@ -36,6 +37,7 @@ const SCREENS: Record<string, () => JSX.Element> = {
   Performance,
   Comms,
   Configuration,
+  Diagnostics,
   Help,
   "Trace · Waterfall": TraceWaterfall,
   "Trace · PLAN DAG": PlanDag,

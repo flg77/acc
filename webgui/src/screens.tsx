@@ -3,7 +3,7 @@
 // CollectiveSnapshot from the shared context; the interactive ones
 // (Infuse, Prompt, Compliance, Configuration) also call the action API.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSnapshot } from "./state/snapshot";
 import { Card, KV, DataTable, Empty } from "./common";
 import {
@@ -11,6 +11,13 @@ import {
   sendPrompt,
   oversightDecision,
   testLLM,
+  fetchGovernanceLayers,
+  fetchFrameworks,
+  fetchProposals,
+  fetchGoldenPrompts,
+  fetchModels,
+  runGapScan,
+  decideProposal,
 } from "./api/client";
 
 const obj = (v: unknown): Record<string, any> =>
@@ -129,21 +136,38 @@ export function Prompt() {
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder="Ask the collective…"
+        onKeyDown={(e) => {
+          // Enter sends; Shift+Enter inserts a newline (mirrors the TUI).
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            if (text.trim()) send();
+          }
+        }}
+        placeholder="Ask the collective…  (Enter to send, Shift+Enter for a newline)"
       />
-      <button onClick={send} disabled={!text}>
-        Send
-      </button>
     </Card>
   );
 }
 
-// 4 ── Compliance — OWASP grading + oversight queue (interactive) ─────────
+// 4 ── Compliance — OWASP grading + governance layers + frameworks +
+//      gap analysis + rule proposals + oversight queue (interactive).
+//      Mirrors the latest acc-tui Compliance pane (PR-Z1/Z2/Z3).
 export function Compliance() {
   const { collectiveId, snapshot } = useSnapshot();
   const [msg, setMsg] = useState("");
-  if (!snapshot) return <Empty what="compliance data" />;
-  const pending = arr(snapshot.oversight_pending_items);
+  const [layers, setLayers] = useState<any[]>([]);
+  const [frameworks, setFrameworks] = useState<any[]>([]);
+  const [proposals, setProposals] = useState<any[]>([]);
+  const [scanMsg, setScanMsg] = useState("");
+
+  const loadGovernance = () => {
+    fetchGovernanceLayers().then((r) => setLayers(r.layers)).catch(() => {});
+    fetchFrameworks().then((r) => setFrameworks(r.frameworks)).catch(() => {});
+    fetchProposals().then((r) => setProposals(r.proposals)).catch(() => {});
+  };
+  useEffect(loadGovernance, []);
+
+  const pending = arr(snapshot?.oversight_pending_items);
   const decide = async (id: string, decision: "APPROVE" | "REJECT") => {
     try {
       await oversightDecision(collectiveId, id, decision);
@@ -152,11 +176,88 @@ export function Compliance() {
       setMsg(`error: ${e}`);
     }
   };
+  const scan = async (fwId: string) => {
+    setScanMsg(`scanning ${fwId}…`);
+    try {
+      const r = await runGapScan(fwId);
+      setScanMsg(
+        `${fwId}: ${r.coverage_pct}% covered, ${r.gaps} gaps → ` +
+          `${r.proposals} proposal(s) [${r.mode}]`,
+      );
+      loadGovernance();
+    } catch (e) {
+      setScanMsg(`error: ${e}`);
+    }
+  };
+  const decideProp = async (id: string, decision: "approve" | "reject") => {
+    try {
+      await decideProposal(id, decision);
+      loadGovernance();
+    } catch (e) {
+      setScanMsg(`error: ${e}`);
+    }
+  };
+
   return (
     <>
       <Card title="Compliance health">
-        <KV data={{ score: snapshot.compliance_health_score }} />
+        <KV data={{ score: snapshot?.compliance_health_score }} />
       </Card>
+
+      {/* Governance layers — Cat A/B/C (PR-Z1) */}
+      {layers.map((l: any) => (
+        <Card
+          key={l.category}
+          title={`Cat ${l.category} — ${l.title} ${
+            l.version ? "v" + l.version : ""
+          } (${l.rule_count} rules)${l.immutable ? " 🔒" : ""}`}
+        >
+          <DataTable
+            columns={["rule_id", "summary"]}
+            rows={arr(l.rules).map((r: any) => ({
+              rule_id: r.rule_id,
+              summary: r.summary,
+            }))}
+          />
+        </Card>
+      ))}
+
+      {/* Frameworks + gap scan (PR-Z2) */}
+      <Card title="Frameworks — gap analysis">
+        {frameworks.length === 0 && <Empty what="frameworks" />}
+        {frameworks.map((f: any) => (
+          <div key={f.framework_id} className="oversight-row">
+            <span>{f.framework_id}</span>
+            <span>{f.name} ({f.control_count} controls)</span>
+            <button onClick={() => scan(f.framework_id)}>Run gap scan</button>
+          </div>
+        ))}
+        <p className="status">{scanMsg}</p>
+      </Card>
+
+      {/* Rule proposals (PR-Z3) */}
+      <Card title="Rule proposals">
+        {proposals.length === 0 && <Empty what="rule proposals" />}
+        {proposals.map((p: any) => (
+          <div key={p.proposal_id} className="oversight-row">
+            <span>{p.proposal_id?.slice(0, 8)}</span>
+            <span>
+              {p.source} · {p.category} · {p.severity} · {p.status}
+            </span>
+            {p.status === "PROPOSED" && (
+              <>
+                <button onClick={() => decideProp(p.proposal_id, "approve")}>
+                  Approve
+                </button>
+                <button onClick={() => decideProp(p.proposal_id, "reject")}>
+                  Reject
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+      </Card>
+
       <Card title="Human-oversight queue">
         {pending.length === 0 && <Empty what="pending oversight items" />}
         {pending.map((it: any) => (
@@ -173,32 +274,53 @@ export function Compliance() {
         ))}
         <p className="status">{msg}</p>
       </Card>
+
       <Card title="OWASP violation log">
         <DataTable
           columns={["owasp_code", "risk_level", "pattern", "source"]}
-          rows={arr(snapshot.owasp_violation_log)}
+          rows={arr(snapshot?.owasp_violation_log)}
         />
       </Card>
     </>
   );
 }
 
-// 5 ── Ecosystem — role library (read-only) ──────────────────────────────
+// 5 ── Ecosystem — role library + model registry (read-only) ─────────────
 export function Ecosystem() {
   const { snapshot } = useSnapshot();
   const agents = obj(snapshot?.agents);
+  const [models, setModels] = useState<any[]>([]);
+  useEffect(() => {
+    fetchModels().then((r) => setModels(r.models)).catch(() => {});
+  }, []);
   return (
-    <Card title="Roles in use">
-      <DataTable
-        columns={["agent_id", "role", "domain", "backend"]}
-        rows={Object.entries(agents).map(([id, a]) => ({
-          agent_id: id,
-          role: obj(a).role,
-          domain: obj(a).domain_id,
-          backend: obj(a).llm_backend,
-        }))}
-      />
-    </Card>
+    <>
+      <Card title="Roles in use">
+        <DataTable
+          columns={["agent_id", "role", "domain", "backend"]}
+          rows={Object.entries(agents).map(([id, a]) => ({
+            agent_id: id,
+            role: obj(a).role,
+            domain: obj(a).domain_id,
+            backend: obj(a).llm_backend,
+          }))}
+        />
+      </Card>
+      {/* Central model registry (PR-MM1) — the per-agent model dropdown's
+          source. Agentset edits land in collective.yaml on the host. */}
+      <Card title="Model registry (models.yaml)">
+        {models.length === 0 && <Empty what="models" />}
+        <DataTable
+          columns={["model_id", "backend", "model", "label"]}
+          rows={models.map((m: any) => ({
+            model_id: m.model_id,
+            backend: m.backend,
+            model: m.model,
+            label: m.label,
+          }))}
+        />
+      </Card>
+    </>
   );
 }
 
@@ -282,7 +404,31 @@ export function Configuration() {
   );
 }
 
-// 9 ── Help ───────────────────────────────────────────────────────────────
+// 9 ── Diagnostics — golden-prompt suite (read-only list) ─────────────────
+//      Mirrors the acc-tui Diagnostics pane (PR-N/Y).  Running a prompt
+//      against the live stack happens via the Prompt screen / TUI; here
+//      we surface the suite (shipped + writable store + attached dirs).
+export function Diagnostics() {
+  const [prompts, setPrompts] = useState<any[]>([]);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    fetchGoldenPrompts()
+      .then((r) => setPrompts(r.prompts))
+      .catch((e) => setErr(String(e)));
+  }, []);
+  return (
+    <Card title="Golden prompts">
+      {err && <p className="status">{err}</p>}
+      {prompts.length === 0 && !err && <Empty what="golden prompts" />}
+      <DataTable
+        columns={["name", "target_role", "operating_mode", "description"]}
+        rows={prompts}
+      />
+    </Card>
+  );
+}
+
+// 10 ── Help ──────────────────────────────────────────────────────────────
 export function Help() {
   return (
     <Card title="Help">

@@ -138,6 +138,40 @@ export const testLLM = (baseUrl: string) =>
     { base_url: baseUrl },
   );
 
+// --- governance / compliance / diagnostics / models (PR-W parity) ---------
+
+export const fetchGovernanceLayers = () =>
+  getJSON<{ layers: any[] }>("/api/governance/layers");
+
+export const fetchFrameworks = () =>
+  getJSON<{ frameworks: any[] }>("/api/governance/frameworks");
+
+export const fetchProposals = () =>
+  getJSON<{ proposals: any[] }>("/api/governance/proposals");
+
+export const fetchGoldenPrompts = () =>
+  getJSON<{ prompts: any[] }>("/api/diagnostics/golden");
+
+export const fetchModels = () => getJSON<{ models: any[] }>("/api/models");
+
+export const runGapScan = (frameworkId: string) =>
+  postJSON<{
+    framework_id: string;
+    coverage_pct: number;
+    gaps: number;
+    proposals: number;
+    mode: string;
+  }>("/api/governance/gap-scan", { framework_id: frameworkId });
+
+export const decideProposal = (
+  proposalId: string,
+  decision: "approve" | "reject",
+) =>
+  postJSON(
+    `/api/governance/proposals/${encodeURIComponent(proposalId)}/decision`,
+    { decision },
+  );
+
 // --- live WebSocket --------------------------------------------------------
 
 // Opens /ws/{cid}; calls onSnapshot for every CollectiveSnapshot push.
