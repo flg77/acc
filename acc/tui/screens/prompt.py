@@ -45,9 +45,11 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
+from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import (
@@ -124,6 +126,31 @@ _MAX_HISTORY: int = 200
 _WATERFALL_CAP: int = 50
 
 
+class _PromptInput(TextArea):
+    """Prompt textarea where **Enter sends** (no Send button) and
+    **Shift+Enter** inserts a newline for multi-line prompts.
+
+    TextArea normally inserts a newline on Enter; we intercept it in
+    ``_on_key`` (async, runs before TextArea's own insertion) and post
+    a :class:`PromptSubmitted` message the screen turns into a send."""
+
+    class PromptSubmitted(Message):
+        pass
+
+    async def _on_key(self, event: events.Key) -> None:
+        if event.key == "enter":
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.PromptSubmitted())
+            return
+        if event.key in ("shift+enter", "ctrl+j"):
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+            return
+        await super()._on_key(event)
+
+
 class PromptScreen(Screen):
     """Chat-style direct-prompt screen.
 
@@ -136,6 +163,12 @@ class PromptScreen(Screen):
 
     BINDINGS = [
         Binding("ctrl+s", "send", "Send", priority=True),
+        # PR-V2 — Enter sends (handled by _PromptInput); shift+tab cycles
+        # the operating mode; ctrl+shift+'+' (and ctrl+'+') open the
+        # working-directory picker.
+        Binding("shift+tab", "cycle_mode", "Mode", priority=True),
+        Binding("ctrl+shift+plus", "select_workspace", "Workspace", priority=True),
+        Binding("ctrl+plus", "select_workspace", "Workspace", priority=True),
         Binding("ctrl+l", "clear_transcript", "Clear"),
         ("q", "app.quit", "Quit"),
         ("1", "navigate('soma')", "Soma"),
@@ -192,8 +225,9 @@ class PromptScreen(Screen):
         background: $surface;
         border-top: solid $primary;
     }
-    PromptScreen #select-operating-mode {
-        width: 20;
+    PromptScreen #prompt-mode-hint {
+        width: 16;
+        content-align: center middle;
         margin: 1 1 0 0;
     }
     PromptScreen #btn-select-workspace {
@@ -205,12 +239,12 @@ class PromptScreen(Screen):
     PromptScreen #prompt-textarea {
         height: 5;
         width: 1fr;
-        margin: 1 1 0 0;
-    }
-    PromptScreen #btn-prompt-send {
-        height: 5;
-        width: 12;
         margin: 1 0 0 0;
+    }
+    PromptScreen #task-progress-line {
+        height: 1;
+        color: $warning;
+        background: $surface;
     }
     PromptScreen #prompt-status {
         height: 1;
@@ -236,6 +270,10 @@ class PromptScreen(Screen):
         # workspace mount root (e.g. "myproject").  None = no workspace
         # selected; agents then have no file-write target for the task.
         self._workspace_project: str | None = None
+        # PR-V2 — operating mode is now internal state (the dropdown was
+        # replaced by a shift+tab cycle + a tiny hint).  AUTO default;
+        # role selection prefills it (on_select_changed).
+        self._operating_mode: str = "AUTO"
         # Task ids the screen has already cancelled (timeout path).
         # Cap at 256 entries so the set can't grow unboundedly under
         # a flood of timeouts; oldest entries fall off via FIFO eviction
@@ -277,15 +315,6 @@ class PromptScreen(Screen):
         # ``snapshot`` (below) feeds it on every snapshot tick.
         yield ClusterPanel(id="prompt-cluster-panel")
 
-        # PR-F — task-progress bar above the transcript.  Renders the
-        # latest TASK_PROGRESS for the active task as a single line
-        # (step ratio + label + confidence trend).  Always visible;
-        # shows a grey placeholder when no task is in flight.
-        yield Static(
-            "[dim]No active task.  Send a prompt below to begin.[/dim]",
-            id="task-progress-line",
-        )
-
         # PR-F — capability-invocation waterfall.  Promoted from the
         # transcript's line-by-line `→ skill:echo OK` entries to a
         # sortable DataTable.  Click a row to drill into the
@@ -303,6 +332,12 @@ class PromptScreen(Screen):
         with ScrollableContainer(id="prompt-transcript-container"):
             yield Static(id="prompt-transcript")
 
+        # PR-V2 — live activity line, floated at the lower end of the
+        # transcript (just above the input).  Shows the agent's current
+        # reasoning step while a task is in flight:
+        #   ⏳ processing [step/tokens] … <what the agent is doing>
+        yield Static("", id="task-progress-line")
+
         # ── Prompt input row (bottom) ───────────────────────────────
         # PR-V — the bottom row carries, left-to-right: the operating-
         # mode picker, a compact "+" workspace button, the textarea,
@@ -311,34 +346,29 @@ class PromptScreen(Screen):
         # the input.  The "+" opens WorkspaceSelectModal (PR-U2b); the
         # chosen path shows in #prompt-workspace-path below.
         with Horizontal(id="prompt-input-row"):
-            # PR-L (D-003) — operating-mode picker.  AUTO matches legacy
-            # behaviour; PLAN / ACCEPT_EDITS / ASK_PERMISSIONS adjust
-            # which invocations the human-oversight queue gates.  All
-            # four respect Cat-A constitutional rules unconditionally —
-            # see acc/operating_modes.py.
-            yield Select(
-                [
-                    ("AUTO", "AUTO"),
-                    ("PLAN", "PLAN"),
-                    ("ACCEPT_EDITS", "ACCEPT_EDITS"),
-                    ("ASK_PERMISSIONS", "ASK_PERMISSIONS"),
-                ],
-                id="select-operating-mode",
-                value="AUTO",
-                allow_blank=False,
+            # PR-V2 — operating mode is a tiny hint (no dropdown).
+            # shift+tab cycles AUTO → PLAN → ACCEPT_EDITS →
+            # ASK_PERMISSIONS.  All respect Cat-A unconditionally.
+            yield Static(
+                "[b]AUTO[/b]\n[dim]shift+tab[/dim]",
+                id="prompt-mode-hint",
             )
+            # "+" (or ctrl+shift+'+') opens the working-directory picker.
             ws_btn = Button("+", id="btn-select-workspace", variant="default")
-            ws_btn.tooltip = "Select working directory (enables file writes)"
+            ws_btn.tooltip = (
+                "Select working directory (ctrl+shift+'+') — "
+                "where the agent is trusted to write files"
+            )
             yield ws_btn
-            yield TextArea(id="prompt-textarea")
-            yield Button("Send", id="btn-prompt-send", variant="primary")
+            # Enter sends; shift+enter = newline.  No Send button.
+            yield _PromptInput(id="prompt-textarea")
 
         yield Static(
-            "[dim]Workspace: (none — Select Directory to enable file "
-            "writes)[/dim]",
+            "[dim]Workspace: (none — '+' to pick a host dir the agent may "
+            "write in)[/dim]",
             id="prompt-workspace-path",
         )
-        yield Static("[dim]Idle. Type a prompt and press Ctrl+S or Send.[/dim]",
+        yield Static("[dim]Idle. Type a prompt and press Enter.[/dim]",
                      id="prompt-status")
         yield Footer()
 
@@ -400,10 +430,36 @@ class PromptScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""
-        if bid == "btn-prompt-send":
-            self.action_send()
-        elif bid == "btn-select-workspace":
+        if bid == "btn-select-workspace":
             self._open_workspace_select()
+
+    def on__prompt_input_prompt_submitted(
+        self, event: "_PromptInput.PromptSubmitted",
+    ) -> None:
+        """PR-V2 — Enter in the prompt input sends (no Send button)."""
+        self.action_send()
+
+    def action_cycle_mode(self) -> None:
+        """PR-V2 — shift+tab cycles the operating mode + updates the hint."""
+        order = ["AUTO", "PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS"]
+        try:
+            i = order.index(self._operating_mode)
+        except ValueError:
+            i = 0
+        self._operating_mode = order[(i + 1) % len(order)]
+        self._set_mode_hint()
+
+    def action_select_workspace(self) -> None:
+        """PR-V2 — ctrl+shift+'+' opens the working-directory picker."""
+        self._open_workspace_select()
+
+    def _set_mode_hint(self) -> None:
+        try:
+            self.query_one("#prompt-mode-hint", Static).update(
+                f"[b]{self._operating_mode}[/b]\n[dim]shift+tab[/dim]"
+            )
+        except Exception:
+            pass
 
     def _open_workspace_select(self) -> None:
         """PR-X — open the directory picker.  The modal browses the
@@ -475,12 +531,7 @@ class PromptScreen(Screen):
         # missing defaults to AUTO; the agent's task_loop normalises
         # unknown values back to AUTO so a missing selector can't
         # accidentally weaken the gate.
-        try:
-            operating_mode = str(
-                self.query_one("#select-operating-mode", Select).value or "AUTO",
-            )
-        except Exception:
-            operating_mode = "AUTO"
+        operating_mode = self._operating_mode or "AUTO"
 
         observer = self._active_observer()
         if observer is None:
@@ -540,7 +591,8 @@ class PromptScreen(Screen):
             if rd is None:
                 return
             mode = normalise(getattr(rd, "default_operating_mode", "AUTO"))
-            self.query_one("#select-operating-mode", Select).value = mode
+            self._operating_mode = mode
+            self._set_mode_hint()
         except Exception:
             logger.debug(
                 "prompt: mode prefill failed for role=%r", role_name,
@@ -990,9 +1042,7 @@ class PromptScreen(Screen):
         except Exception:
             return
         if not entry:
-            line.update(
-                "[dim]No active task.  Send a prompt below to begin.[/dim]"
-            )
+            line.update("")   # blank when idle — the line only shows during activity
             return
         cur = entry.get("current_step", 0) or 0
         tot = entry.get("total_steps", 0) or 0
@@ -1016,11 +1066,14 @@ class PromptScreen(Screen):
             bar = "░" * bar_w
             step_str = f"{cur}/?" if cur else "?"
             pct = "—"
-        label_str = f" — {label}" if label else ""
+        # PR-V2 — "sign of activity" line: ⏳ processing [step · tokens] …
+        # <what the agent is currently doing>.
+        tok = entry.get("tokens") or entry.get("tokens_used") or 0
+        tok_str = f" · {tok} tok" if tok else ""
+        doing = label or "working"
         line.update(
-            f"[dim]task={tid}[/dim]  [blue]{bar}[/blue]  "
-            f"[bold]{step_str}[/bold]  {pct}  "
-            f"[dim]{trend_arrow} {conf:.0%}[/dim]{label_str}"
+            f"⏳ [bold]processing[/bold] [{step_str}{tok_str}]  "
+            f"[blue]{bar}[/blue] [dim]{pct} {trend_arrow}{conf:.0%}[/dim] … {doing}"
         )
 
     def _waterfall_add_row(self, entry: dict) -> None:
@@ -1146,8 +1199,8 @@ class PromptScreen(Screen):
         if not self.history:
             self.query_one("#prompt-transcript", Static).update(
                 "[dim]No prompts yet.\n"
-                "Type a prompt below and press [b]Ctrl+S[/b] (or click "
-                "[b]Send[/b]).\n"
+                "Type a prompt below and press [b]Enter[/b] "
+                "([b]Shift+Enter[/b] for a newline).\n"
                 "Replies + tool traces will land here.[/dim]"
             )
             return

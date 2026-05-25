@@ -119,21 +119,68 @@ async def test_select_directory_button_present():
 
 
 @pytest.mark.asyncio
-async def test_mode_selector_in_bottom_input_row():
-    """PR-V — the Mode picker moved from the top target row into the
-    bottom input row, left of the '+' workspace button."""
+async def test_mode_hint_and_shift_tab_cycles():
+    """PR-V2 — the Mode dropdown is gone; a tiny hint shows the mode and
+    shift+tab (action_cycle_mode) cycles AUTO→PLAN→ACCEPT_EDITS→ASK."""
     app = _PromptHarness()
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
-        from textual.containers import Horizontal
-        input_row = screen.query_one("#prompt-input-row", Horizontal)
-        mode = screen.query_one("#select-operating-mode", Select)
-        # The mode select is a descendant of the bottom input row.
-        assert mode in input_row.query(Select)
-        # And it is no longer in the top target row.
-        target_row = screen.query_one("#prompt-target-row", Horizontal)
-        assert mode not in target_row.query(Select)
+        # No dropdown; the tiny hint widget exists instead.
+        assert not screen.query("#select-operating-mode")
+        screen.query_one("#prompt-mode-hint", Static)
+        assert screen._operating_mode == "AUTO"
+        # Cycle.
+        screen.action_cycle_mode()
+        await pilot.pause()
+        assert screen._operating_mode == "PLAN"
+        for _ in range(3):
+            screen.action_cycle_mode()
+        assert screen._operating_mode == "AUTO"  # wrapped around
+
+
+@pytest.mark.asyncio
+async def test_enter_keypress_submits_real():
+    """PR-V2 — pressing Enter in the focused prompt input actually
+    submits (exercises the _PromptInput._on_key override end-to-end)."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        ta = screen.query_one("#prompt-textarea", TextArea)
+        ta.focus()
+        ta.text = "real enter probe"
+        await pilot.pause()
+        await pilot.press("enter")
+        for _ in range(6):
+            await pilot.pause()
+            if app.observer.published:
+                break
+        assert app.observer.published, "Enter did not submit"
+        assert app.observer.published[0][1]["content"] == "real enter probe"
+        # Enter must NOT have inserted a newline into the input.
+        assert "\n" not in ta.text
+
+
+@pytest.mark.asyncio
+async def test_no_send_button_enter_sends():
+    """PR-V2 — there is no Send button; the prompt input submits on Enter
+    (via _PromptInput.PromptSubmitted → action_send)."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert not screen.query("#btn-prompt-send")
+        from acc.tui.screens.prompt import _PromptInput
+        screen.query_one("#prompt-textarea", TextArea).text = "ping enter"
+        # Simulate the input's Enter submission.
+        screen.on__prompt_input_prompt_submitted(_PromptInput.PromptSubmitted())
+        for _ in range(4):
+            await pilot.pause()
+            if app.observer.published:
+                break
+        assert app.observer.published
+        assert app.observer.published[0][1]["content"] == "ping enter"
 
 
 @pytest.mark.asyncio
@@ -613,7 +660,7 @@ async def test_progress_render_populates_task_progress_line():
         await pilot.pause()
         assert captured, "progress line should have been updated"
         text = captured[-1]
-        assert "task=abcd1234" in text
+        assert "processing" in text   # PR-V2 activity line
         assert "5/8" in text
         assert "62%" in text   # 5/8 → 62%
         assert "78%" in text   # confidence
@@ -641,7 +688,9 @@ async def test_render_task_progress_line_none_resets_to_idle():
         screen._render_task_progress_line(None)
         await pilot.pause()
 
-        assert captured and "No active task" in captured[-1]
+        # PR-V2 — idle clears the activity line to blank (it only shows
+        # while a task is in flight).
+        assert captured and captured[-1] == ""
 
 
 @pytest.mark.asyncio
@@ -763,14 +812,14 @@ async def test_mode_prefills_from_role_default(monkeypatch):
         )
         await pilot.pause()
 
-        mode = str(screen.query_one("#select-operating-mode", Select).value)
-        assert mode == "ASK_PERMISSIONS"
+        # PR-V2 — prefill now sets the internal mode (no dropdown).
+        assert screen._operating_mode == "ASK_PERMISSIONS"
 
 
 @pytest.mark.asyncio
-async def test_mode_select_changed_does_not_recurse(monkeypatch):
-    """PR-P — the handler ignores the Mode Select's own Changed
-    events (no feedback loop)."""
+async def test_mode_prefill_only_reacts_to_target_role(monkeypatch):
+    """PR-P/V2 — the handler ignores Changed events that aren't the
+    target-role Select (no spurious role loads)."""
     app = _PromptHarness()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -785,21 +834,29 @@ async def test_mode_select_changed_does_not_recurse(monkeypatch):
             return orig(self)
         monkeypatch.setattr(rl.RoleLoader, "load", _counting_load)
 
-        # A Changed event from the MODE select must not trigger a role load.
+        # A Changed event from some other Select must not trigger a load.
         screen.on_select_changed(
             Select.Changed(
-                screen.query_one("#select-operating-mode", Select),
-                "PLAN",
+                screen.query_one("#select-target-role", Select),
+                # simulate a non-target select id by faking the event source
+                screen.query_one("#select-target-role", Select),
             )
-        )
+        ) if False else None  # guard: we test the id filter below
+        # Directly assert the id-filter: a fake event whose select id is
+        # not 'select-target-role' is ignored.
+        class _FakeSel:
+            id = "something-else"
+        class _FakeEvent:
+            select = _FakeSel()
+            value = "x"
+        screen.on_select_changed(_FakeEvent())  # type: ignore[arg-type]
         await pilot.pause()
         assert called["n"] == 0
 
 
 @pytest.mark.asyncio
 async def test_mode_prefill_tolerates_missing_role(monkeypatch):
-    """PR-P — a role that doesn't load leaves the Mode selector
-    untouched (no crash)."""
+    """PR-P/V2 — a role that doesn't load leaves the mode untouched."""
     import acc.role_loader as rl
     monkeypatch.setattr(rl.RoleLoader, "load", lambda self: None)
 
@@ -807,7 +864,7 @@ async def test_mode_prefill_tolerates_missing_role(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
-        before = str(screen.query_one("#select-operating-mode", Select).value)
+        before = screen._operating_mode
         screen.on_select_changed(
             Select.Changed(
                 screen.query_one("#select-target-role", Select),
@@ -815,5 +872,4 @@ async def test_mode_prefill_tolerates_missing_role(monkeypatch):
             )
         )
         await pilot.pause()
-        after = str(screen.query_one("#select-operating-mode", Select).value)
-        assert after == before
+        assert screen._operating_mode == before
