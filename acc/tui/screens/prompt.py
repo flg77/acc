@@ -470,19 +470,27 @@ class PromptScreen(Screen):
         ``/workspace`` root, so no per-task subpath is threaded."""
         from acc.tui.widgets.workspace_select_modal import (  # noqa: PLC0415
             WorkspaceSelectModal,
+            base_host_path,
         )
 
-        def _on_pick(host_path) -> None:
-            if not host_path:
+        # Host-mapped mode writes an apply request (agents restart onto the
+        # path); local mode returns a directly-usable path with no restart.
+        host_mapped = bool(base_host_path())
+
+        def _on_pick(chosen) -> None:
+            if not chosen:
                 return
-            # The selected dir IS the agents' /workspace after the
-            # host-side remount, so clear any per-task subpath.
+            # The selected dir IS the agents' /workspace, so clear any
+            # per-task subpath.
             self._workspace_project = None
+            hint = (
+                "[yellow](applying — agents restarting, ~a few seconds)[/yellow]"
+                if host_mapped
+                else ""
+            )
             try:
                 self.query_one("#prompt-workspace-path", Static).update(
-                    f"[green]Workspace:[/green] {host_path}  "
-                    f"[yellow](applying — agents restarting, ~a few "
-                    f"seconds)[/yellow]"
+                    f"[green]Workspace:[/green] {chosen}  {hint}".rstrip()
                 )
             except Exception:
                 pass

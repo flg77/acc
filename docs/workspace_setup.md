@@ -128,13 +128,24 @@ polling loop — no inotify/jq). Manage it with
 1. Open the TUI → **Prompt** screen.
 2. Click **`+`** (bottom-left of the input row; tooltip "Select working
    directory"). The Mode picker sits just left of it.
-3. In the modal:
-   * highlight an existing directory under the browse root, **or**
+3. In the modal (a small file-manager):
+   * the **location bar** at the top shows where you are — type any
+     path + Enter (or click **Go**) to jump there, and **↑ Up** (or
+     Alt+↑) climbs toward the filesystem root, so the full directory
+     structure is navigable;
+   * highlight an existing directory in the tree, **or**
    * type a new folder name in the *"new folder name"* box (path
-     separators and `..` are rejected).
-   * **Confirm** (Ctrl+S). This writes the apply request and closes.
+     separators and `..` are rejected) to create one.
+   * **Confirm** (Ctrl+S). In host-mapped mode this writes the apply
+     request and closes; the selection must stay **under the browse
+     root** (the only host-mounted subtree) or Confirm is refused.
 4. The chosen host path shows beside the input: `Workspace: <path>
    (applying — agents restarting, ~a few seconds)`.
+
+> **Local mode.** When the TUI runs directly on the workstation (no
+> `ACC_WORKSPACE_BASE`, i.e. no host/container split) the picker browses
+> the **real local filesystem**, creates the new folder directly, and
+> Confirm returns the chosen absolute path with no agent restart.
 5. The host watcher recreates the agents onto that directory. Once
    they're back (watch the Soma pane heartbeats), **Send** your prompt.
    Agents write to the `/workspace` root (= your selected directory),

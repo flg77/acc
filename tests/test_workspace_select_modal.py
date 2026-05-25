@@ -114,13 +114,98 @@ async def test_new_folder_name_with_separator_rejected(tmp_path, apply_dir):
 
 
 @pytest.mark.asyncio
-async def test_missing_base_blocks_confirm(tmp_path, apply_dir):
+async def test_local_mode_returns_selected_path_directly(tmp_path, apply_dir):
+    # base unset ⇒ local mode: confirm returns the local path verbatim
+    # and writes no apply request (no host/container split to bridge).
     browse = tmp_path / "host-home"
     browse.mkdir()
-    app = _ModalHarness(browse, "")  # base not configured
+    app = _ModalHarness(browse, "")  # base not configured → local mode
     async with app.run_test() as pilot:
         await pilot.pause()
         modal = app.screen
+        modal.action_confirm()
+        await pilot.pause()
+
+    assert app.result == str(browse.resolve())
+    assert read_apply_request(apply_dir) is None
+
+
+@pytest.mark.asyncio
+async def test_local_mode_creates_new_folder(tmp_path, apply_dir):
+    browse = tmp_path / "host-home"
+    browse.mkdir()
+    app = _ModalHarness(browse, "")  # local mode
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.query_one("#ws-newname", Input).value = "fresh"
+        modal.action_confirm()
+        await pilot.pause()
+
+    created = browse / "fresh"
+    assert created.is_dir()
+    assert app.result == str(created.resolve())
+    assert read_apply_request(apply_dir) is None
+
+
+@pytest.mark.asyncio
+async def test_navigate_reroots_to_typed_path(tmp_path, apply_dir):
+    browse = tmp_path / "host-home"
+    (browse / "deep" / "nested").mkdir(parents=True)
+    app = _ModalHarness(browse, "")  # local mode
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        target = browse / "deep" / "nested"
+        modal._navigate(target)
+        await pilot.pause()
+        assert modal._root == target.resolve()
+        assert modal._selected == target.resolve()
+        # The location bar reflects where we are.
+        assert modal.query_one("#ws-path", Input).value == str(target.resolve())
+
+
+@pytest.mark.asyncio
+async def test_go_up_climbs_to_parent(tmp_path, apply_dir):
+    browse = tmp_path / "host-home"
+    child = browse / "child"
+    child.mkdir(parents=True)
+    app = _ModalHarness(child, "")  # start in the child, local mode
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal.action_go_up()
+        await pilot.pause()
+        assert modal._root == browse.resolve()
+
+
+@pytest.mark.asyncio
+async def test_navigate_rejects_nonexistent_path(tmp_path, apply_dir):
+    browse = tmp_path / "host-home"
+    browse.mkdir()
+    app = _ModalHarness(browse, "")  # local mode
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal._navigate(tmp_path / "does-not-exist")
+        await pilot.pause()
+        # Root unchanged; the bad path did not take.
+        assert modal._root == browse.resolve()
+
+
+@pytest.mark.asyncio
+async def test_host_mode_selection_outside_browse_root_blocked(tmp_path, apply_dir):
+    # In host-mapped mode a selection outside the mounted browse root
+    # cannot be mapped to a host path → confirm is refused.
+    browse = tmp_path / "host-home"
+    browse.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    app = _ModalHarness(browse, "/home/flg")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        modal = app.screen
+        modal._selected = elsewhere
         modal.action_confirm()
         await pilot.pause()
         assert app.result == "UNSET"
