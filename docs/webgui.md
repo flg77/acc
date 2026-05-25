@@ -76,6 +76,16 @@ parameter (browsers cannot set headers on a WebSocket).
 | `ACC_WEBGUI_MTLS_HEADER` | `x-client-cert-subject` | mtls mode: header carrying the verified client identity |
 | `ACC_WEBGUI_MTLS_VERIFY_HEADER` | `x-client-cert-verify` | mtls mode: header that must equal `SUCCESS` |
 | `ACC_NKEY_ENABLED` / `ACC_NKEY_SEED_PATH` | — | NKey auth for the NATS connection (proposal 013) |
+| `ACC_REGULATORY_ROOT` | `<repo>/regulatory_layer` | governance root — Cat A/B/C layers + bundled framework catalogs (Compliance screen) |
+| `ACC_FRAMEWORKS_IMPORT_ROOT` | — | writable store for imported / runtime frameworks (Compliance screen) |
+| `ACC_COMPLIANCE_REPORTS_ROOT` | — | where gap-scan reports + rule proposals are written/read (shared with `acc-tui`) |
+| `ACC_MODELS_PATH` | `<repo>/models.yaml` | central model registry (Ecosystem screen "Model registry" card) |
+| `ACC_GOLDEN_PROMPTS_ROOT` | — | golden-prompt suite root (Diagnostics screen) |
+
+The governance / frameworks / proposals / reports paths are the **same
+ones `acc-tui` uses** — point both UIs at the same volumes (the
+production `podman-compose.yml` does this with named volumes) and a gap
+scan or rule proposal made in one surface is visible in the other.
 
 ## Deploying — per mode
 
@@ -158,10 +168,32 @@ form the front layer sends — the nginx sample sends the bare CN).
 
 ## The screens
 
-acc-webgui has all 8 `acc-tui` screens — Dashboard, Infuse, Prompt,
-Compliance, Ecosystem, Performance, Comms, Configuration, Help — plus
-the tracing views: the **task-step waterfall**, the **PLAN DAG**, and
-the **tamper-evident audit-chain timeline** (more in proposal §4.5).
+acc-webgui mirrors the `acc-tui` screens — Dashboard, Infuse, Prompt,
+Compliance, Ecosystem, Performance, Comms, Configuration, **Diagnostics**,
+Help — plus the tracing views: the **task-step waterfall**, the
+**PLAN DAG**, and the **tamper-evident audit-chain timeline** (more in
+proposal §4.5).
+
+The screens that gained TUI-parity surfaces in the latest cycle:
+
+- **Compliance** — beyond the live oversight queue and OWASP triggers,
+  it now renders the **Category A / B / C governance layers** (rule id +
+  summary; a lock icon marks immutable Cat-A rules), a **Frameworks**
+  card (the bundled + imported regulatory catalogs, each with a *Run gap
+  scan* button → coverage %, gaps, and generated proposals), and a
+  **Rule proposals** review surface where an operator approves / rejects
+  arbiter-proposed Category-C rules. Decisions are stamped
+  `webgui:<user>`.
+- **Ecosystem** — the roles table sits next to a **Model registry** card
+  populated from `models.yaml` (the central per-agent model catalog).
+- **Diagnostics** — lists the golden-prompt suite (name, target role,
+  operating mode, description) — the read side of the TUI's golden-prompt
+  diagnostics.
+- **Prompt** — composing is **Enter-to-send** (Shift+Enter inserts a
+  newline); the explicit Send button is gone, matching the TUI.
+
+Read endpoints require the **viewer** role; gap-scan and proposal
+decisions require **operator**.
 
 ## Building from source
 

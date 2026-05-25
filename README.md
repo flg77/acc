@@ -52,7 +52,12 @@ Highlights from the current `0.3.1-dev` cycle — see [`CHANGELOG.md`](CHANGELOG
 
 | Feature | What it is | Status |
 |---|---|---|
-| **acc-webgui** | An optional FastAPI + React web frontend — feature parity with the `acc-tui` terminal UI plus enhanced tracing views (task-step waterfall, PLAN DAG, tamper-evident audit-chain timeline). Reuses the TUI's data layer; capability-tiered auth (oauth-proxy / OIDC / token). Opt-in: a separate container + compose profile. | ✅ Landed (proposal acc-webgui) |
+| **Compliance governance & frameworks** | The full governance surface in both UIs: browse the **Category A/B/C rule layers**, import regulatory **frameworks** (NIST AI RMF, SOC 2, EU AI Act, …) and **run a gap scan** (coverage %, gaps), then review **arbiter-proposed Category-C rule proposals** learned from collective violations — approve/reject with the action stamped to your identity. Standalone-first; shared report/proposal store between `acc-tui` and `acc-webgui`. | ✅ Landed (PR-Z1/Z2/Z3) |
+| **Per-agent models (multimodel)** | A central `models.yaml` registry lets each agent role run on a different backend/model (e.g. a `reviewer` on a powerful model driving a critic loop). The TUI/WebGUI Ecosystem surfaces the registry; `AgentSpec.model` selects per role. | ✅ Landed (PR-MM1/2/3) |
+| **Self-reflective memory** | An out-of-band consolidation loop distils episodic memory into durable `memory_notes` an agent reads on the hot path — opt-in per role via `memory_reflection`. | ✅ Landed (PR-MEM1/2/3) |
+| **Prompt caching** | A stable cacheable role/RAG prefix plus an optional per-backend cache hint (Anthropic `cache_control`); best-effort cache metrics in the Performance pane. Opt-in via `ACC_LLM_ENABLE_PROMPT_CACHE`. | ✅ Landed (PR-CA1/2/3) |
+| **Golden-prompt diagnostics** | A YAML golden-prompt suite + CLI/TUI runner and a scheduled history runner; the WebGUI Diagnostics screen lists the suite. | ✅ Landed (PR-K/N/O) |
+| **acc-webgui** | An optional FastAPI + React web frontend — feature parity with the `acc-tui` terminal UI plus enhanced tracing views (task-step waterfall, PLAN DAG, tamper-evident audit-chain timeline). Mirrors the latest TUI surfaces (governance layers, frameworks + gap scan, rule proposals, model registry, golden-prompt diagnostics, Enter-to-send Prompt). Reuses the TUI's data layer; capability-tiered auth (oauth-proxy / OIDC / mTLS / htpasswd / token). Opt-in: a separate container + compose profile. | ✅ Landed (proposal acc-webgui) |
 | **Runtime-evidence Cat-A** | Provider-agnostic kernel-event governance — the operator detects whichever runtime-security tool the cluster runs (RHACS / Falco / Tetragon) plus NetObserv for network flows, a bridge normalises `execve`/`openat`/`connect` events onto NATS, and CognitiveCore folds them into Category-A. Observe-by-default. Opt-in via `governance.runtimeEvidence.enabled`. | ✅ Landed (proposal 015) |
 | **L7 / eBPF NetworkPolicy** | Capability-tiered network isolation for agent pods — Tier 1 standard `NetworkPolicy` (the portable L3/L4 must-have), Tier 2 FQDN egress (OVN `EgressFirewall` or Cilium), Tier 3 Cilium L7. The operator emits the highest tier the cluster's CNI can enforce; honest `CNIDoesNotEnforce` status on K3s/Flannel. Opt-in via `networkPolicy.enabled`. | ✅ Landed (proposal 014) |
 | **NATS NKeys** | Per-role NKey authentication with a server-enforced publish/subscribe permission matrix (six agent roles + `tui` + `leaf` identities); the `acc.{cid}.task` subject split into `.task.assign` / `.task.complete`. Opt-in via `security.nkey.enabled`. | ✅ Landed (proposal 013) |
@@ -251,9 +256,16 @@ export ACC_COLLECTIVE_ID=sol-01
 acc-tui
 ```
 
-The TUI has two screens (switch with `Tab`):
+The TUI panes (switch with the nav bar / `Tab`):
 - **Dashboard** — live agent cards (drift score sparkbar, reprogramming ladder, staleness), governance panel (Cat-A/B/C triggers), memory panel (ICL episodes, patterns), LLM metrics (p95 latency, token utilisation, blocked tasks)
 - **Infuse** — compose a role definition (purpose, persona, task types, seed context, Cat-B overrides), publish as a `ROLE_UPDATE` to NATS, monitor arbiter approval status and role history
+- **Prompt** — drive an agent directly (Enter-to-send, operating-mode aware: PLAN / ACCEPT_EDITS / ASK_PERMISSIONS / AUTO), optionally scoping a workspace directory
+- **Compliance** — the live oversight queue plus the Category A/B/C governance layers, regulatory frameworks + gap scan, and the arbiter rule-proposal review surface
+- **Ecosystem** — collective roles + the `models.yaml` model registry; infuse roles
+- **Performance** — LLM/token metrics including best-effort prompt-cache stats
+- **Comms** — cross-collective bridge / signalling activity
+- **Configuration** — the running `acc-config.yaml` view
+- **Diagnostics** — the golden-prompt suite + runner
 
 See [`docs/howto-tui.md`](docs/howto-tui.md) for the full guide including deployment as a container pod.
 
@@ -480,7 +492,14 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 | [`docs/howto-rhoai.md`](docs/howto-rhoai.md) | OpenShift operator install, CRD reference, GPU inference, KEDA/Gatekeeper/OTel |
 | [`docs/howto-role-infusion.md`](docs/howto-role-infusion.md) | Role definition schema, 4-tier load order, ROLE_UPDATE hot-reload, Ed25519 signing |
 | [`docs/howto-tui.md`](docs/howto-tui.md) | Terminal UI: dashboard screen, infuse screen, container deployment, keyboard shortcuts |
-| [`docs/webgui.md`](docs/webgui.md) | acc-webgui — the optional FastAPI + React web frontend: architecture, auth tiers, per-mode deployment, the tracing views |
+| [`docs/webgui.md`](docs/webgui.md) | acc-webgui — the optional FastAPI + React web frontend: architecture, auth tiers, per-mode deployment, the tracing views, the TUI-parity screens |
+| [`docs/compliance_governance.md`](docs/compliance_governance.md) | Category A/B/C governance inventory, regulatory frameworks + gap analysis, arbiter rule proposals + the learn-from-violations loop |
+| [`docs/multimodel_reviewer.md`](docs/multimodel_reviewer.md) | Per-agent models via `models.yaml`, the reviewer role on a powerful model, the critic loop |
+| [`docs/memory_reflection.md`](docs/memory_reflection.md) | Self-reflective memory: the out-of-band consolidation loop, `memory_notes`, the hot-path read |
+| [`docs/prompt_caching.md`](docs/prompt_caching.md) | Stable cacheable prefix, per-backend cache hints, Performance-pane cache metrics |
+| [`docs/golden_prompts_scheduling.md`](docs/golden_prompts_scheduling.md) | Golden-prompt suite schema, the CLI/TUI runner, the scheduled history runner + cron recipe |
+| [`docs/operator-agentset-guide.md`](docs/operator-agentset-guide.md) | Instantiating agentsets via the ACC operator: mapping `collective.yaml` → `AgentCollective` CRD, worked CRs, current CRD gaps |
+| [`docs/operator-standalone-parity.md`](docs/operator-standalone-parity.md) | Standalone-vs-operator feature drift, the no-conflict strategy, the tracked parity closers |
 | [`docs/spiffe.md`](docs/spiffe.md) | SPIFFE workload identity: prerequisites, config, the `ed25519 → spiffe` migration, v0.5.0 default-flip plan |
 | [`docs/spiffe-edge.md`](docs/spiffe-edge.md) | SPIFFE at the edge: nested / federated / ed25519 topologies, offline survival, the compatibility matrix |
 | [`docs/nats-nkeys.md`](docs/nats-nkeys.md) | NATS NKey authentication: per-role identities, the publish/subscribe permission matrix, per-deploy-mode setup |
