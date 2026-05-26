@@ -336,6 +336,12 @@ case "$COMMAND" in
         # screen's directory picker can recreate agents onto a chosen
         # working directory.  Idempotent.
         mkdir -p "$REPO_ROOT/.acc-apply"
+        # World-writable: the acc-tui container (uid 1001) writes the request
+        # while the host-side watcher (deploying user) writes status/log — two
+        # different uids sharing this tiny control-channel dir, so 0777 is the
+        # portable way both can read+write (rootless/rootful, with/without
+        # userns).  Holds only a JSON request + status + log, nothing sensitive.
+        chmod 0777 "$REPO_ROOT/.acc-apply" 2>/dev/null || true
         echo "✓ Apply dir ready: $REPO_ROOT/.acc-apply"
         "$0" watcher start || true
         ;;
@@ -464,6 +470,9 @@ case "$COMMAND" in
         PIDFILE="$APPLY_DIR/watcher.pid"
         SUBCMD="${1:-status}"
         mkdir -p "$APPLY_DIR"
+        # Shared cross-uid control channel (TUI uid 1001 writes the request,
+        # this host-side watcher writes status/log) — keep it world-writable.
+        chmod 0777 "$APPLY_DIR" 2>/dev/null || true
         _watcher_running() {
             [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
         }
