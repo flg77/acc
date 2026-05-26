@@ -48,10 +48,22 @@ models:
     base_url: "http://lighthouse:8022/v1"
     label: "Lighthouse vLLM Llama 3.2 3B FP8"
 
-  # ── OpenAI-compatible providers ──────────────────────────────────────
+  # ── OpenAI-compatible providers (KEYED gateways) ─────────────────────
+  # A gateway that requires an API key MUST use backend: openai_compat (it
+  # sends "Authorization: Bearer <key>"); backend: vllm sends NO auth header
+  # and is only for an unauthenticated self-hosted server.  api_key_env names
+  # the env var holding the key — set the value in .env (NOT here).
   - model_id: groq-llama33-70b
     backend: openai_compat
     model: "llama-3.3-70b-versatile"
     base_url: "https://api.groq.com/openai/v1"
     api_key_env: "GROQ_API_KEY"
     label: "Groq Llama 3.3 70B (fast, cheap)"
+  # LiteLLM gateway (RHDP MaaS) — keyed, so openai_compat + api_key_env.
+  # Put the key in .env:  LITELLM_API_KEY=sk-...
+  - model_id: rhdp-deepseek-r1-distill-qwen-14b
+    backend: openai_compat
+    model: "openai/deepseek-r1-distill-qwen-14b"
+    base_url: "https://litellm-prod.apps.maas.redhatworkshops.io/v1"
+    api_key_env: "LITELLM_API_KEY"
+    label: "RHDP LiteLLM DeepSeek-R1-Distill-Qwen 14B"

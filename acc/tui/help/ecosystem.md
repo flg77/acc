@@ -98,9 +98,17 @@ env var; set the actual key in the agent containers' environment
 (compose `.env` / container env):
 
 ```
-MY_ENDPOINT_KEY=sk-...            # for openai_compat / vllm
+LITELLM_API_KEY=sk-...            # for openai_compat (LiteLLM/OpenAI/Groq/…)
 ACC_ANTHROPIC_API_KEY=sk-ant-...  # for the anthropic backend
 ```
+
+> **Keyed gateway → `openai_compat`, NOT `vllm`.** A gateway needing a key
+> (LiteLLM, OpenAI, Groq, …) must use `backend: openai_compat` — it sends
+> `Authorization: Bearer <key>`.  `backend: vllm` sends no auth header (for an
+> unauthenticated self-hosted server only); pointing it at a keyed gateway
+> returns 401.  Example (LiteLLM): `backend: openai_compat`,
+> `base_url: https://litellm-prod…/v1`, `api_key_env: LITELLM_API_KEY`, with
+> `LITELLM_API_KEY=…` in `.env`.
 
 **Manual (no registry)** — set directly on an agent container:
 `ACC_LLM_BACKEND` + `ACC_LLM_MODEL` + `ACC_LLM_BASE_URL`

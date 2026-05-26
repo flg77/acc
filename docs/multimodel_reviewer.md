@@ -40,6 +40,32 @@ emits for the agent container:
 | `ollama` | `model`, `base_url` | `ACC_OLLAMA_MODEL`, `ACC_OLLAMA_BASE_URL` |
 | `vllm` / `openai_compat` / `llama_stack` | `model`, `base_url`, `api_key_env` | `ACC_LLM_MODEL`, `ACC_LLM_BASE_URL`, `ACC_LLM_API_KEY_ENV` |
 
+> **Keyed gateway? Use `openai_compat`, not `vllm`.** A gateway that requires
+> an API key (LiteLLM, OpenAI, Groq, OpenRouter, Together, …) MUST use
+> `backend: openai_compat` — that backend sends `Authorization: Bearer <key>`.
+> `backend: vllm` sends **no** auth header (it's for an unauthenticated
+> self-hosted vLLM only), so pointing it at a keyed gateway returns 401/403.
+
+### Worked example — a LiteLLM gateway (keyed)
+
+```yaml
+# models.yaml
+- model_id: rhdp-deepseek-r1-distill-qwen-14b
+  backend: openai_compat          # NOT vllm — the gateway needs a key
+  model: "openai/deepseek-r1-distill-qwen-14b"   # the id LiteLLM exposes
+  base_url: "https://litellm-prod.apps.maas.redhatworkshops.io/v1"
+  api_key_env: "LITELLM_API_KEY"  # names the env var, not the key
+```
+```bash
+# .env  (mounted into the agent containers; the key itself lives here)
+LITELLM_API_KEY=sk-...
+```
+Assign it to a role (`collective.yaml` `model: rhdp-deepseek-r1-distill-qwen-14b`
+or the TUI Agentset dropdown), Apply, and the agent boots with
+`ACC_LLM_BACKEND=openai_compat` + `ACC_LLM_BASE_URL` + `ACC_LLM_MODEL` +
+`ACC_LLM_API_KEY_ENV=LITELLM_API_KEY`; the backend reads `LITELLM_API_KEY` from
+its env on each call and sends it as the Bearer token.
+
 **The API key is never stored in `models.yaml`.** `api_key_env` holds the
 **name** of an environment variable; you set the actual secret in the agent
 containers' environment (compose `.env` / container env / Secret), e.g.:
