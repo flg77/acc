@@ -29,6 +29,39 @@ models:
 `models.yaml` is mounted read-only into `acc-tui`; override its location
 with `ACC_MODELS_PATH`.
 
+## Endpoints & API keys (every role, incl. coding_agent / auto_researcher)
+
+A registry entry's `backend` decides which env vars `acc.models.model_env`
+emits for the agent container:
+
+| backend | fields used | env the agent boots on |
+|---|---|---|
+| `anthropic` | `model` | `ACC_LLM_BACKEND=anthropic`, `ACC_ANTHROPIC_MODEL` |
+| `ollama` | `model`, `base_url` | `ACC_OLLAMA_MODEL`, `ACC_OLLAMA_BASE_URL` |
+| `vllm` / `openai_compat` / `llama_stack` | `model`, `base_url`, `api_key_env` | `ACC_LLM_MODEL`, `ACC_LLM_BASE_URL`, `ACC_LLM_API_KEY_ENV` |
+
+**The API key is never stored in `models.yaml`.** `api_key_env` holds the
+**name** of an environment variable; you set the actual secret in the agent
+containers' environment (compose `.env` / container env / Secret), e.g.:
+
+```bash
+MY_ENDPOINT_KEY=sk-...              # openai_compat / vllm (api_key_env: MY_ENDPOINT_KEY)
+ACC_ANTHROPIC_API_KEY=sk-ant-...    # the anthropic backend reads this directly
+```
+
+`base_url` must be reachable **from the agent containers** — use the host IP
+or service name, not `localhost` (which inside a container is the container
+itself).
+
+To put **every** role on one endpoint, set `model:` on each `AgentSpec` (below),
+or set the collective default via the agent containers' `ACC_LLM_*` env.
+
+**Manual (no registry)** — skip `models.yaml` and set the env directly on an
+agent container: `ACC_LLM_BACKEND` + `ACC_LLM_MODEL` + `ACC_LLM_BASE_URL`
+(+ `ACC_LLM_API_KEY_ENV`), or the backend-specific vars above.
+
+> In the TUI, press **`?`** on the Ecosystem screen for this same guide inline.
+
 ## Assigning a model to a sub-agent (1:1)
 
 Each `AgentSpec` in `collective.yaml` can pin a `model` (a `model_id`):

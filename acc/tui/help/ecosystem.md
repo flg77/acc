@@ -62,6 +62,53 @@ Per-agent live view of the LLM backend in use, model name, health
 status, and rolling p50 latency.  Source: HEARTBEAT `llm_backend`
 field.
 
+## Configuring a model endpoint (per role / all roles)
+
+ACC reads models from a central **`models.yaml`** registry (repo root,
+mounted read-only into the containers; override with `ACC_MODELS_PATH`).
+Add one entry per endpoint, then assign its `model_id` to any role.
+
+**1. Register the endpoint** in `models.yaml`:
+
+```yaml
+models:
+  - model_id: my-endpoint
+    backend: openai_compat     # openai_compat | vllm | ollama | anthropic | llama_stack
+    model: "the-model-the-server-exposes"
+    base_url: "http://host:8000/v1"   # must be reachable from the AGENT containers
+    api_key_env: "MY_ENDPOINT_KEY"    # NAME of the env var holding the key (never the key itself)
+    label: "My endpoint"
+```
+
+**2. Assign it** to `coding_agent`, `auto_researcher`, or any role —
+either from this screen (Agentset tab → highlight agent → **Model →**
+dropdown → **Set model on selected** → Save → Apply), or in
+`collective.yaml`:
+
+```yaml
+agents:
+  - role: coding_agent
+    model: my-endpoint
+  - role: auto_researcher
+    model: my-endpoint
+```
+
+**3. The API key never goes in `models.yaml`.** `api_key_env` names an
+env var; set the actual key in the agent containers' environment
+(compose `.env` / container env):
+
+```
+MY_ENDPOINT_KEY=sk-...            # for openai_compat / vllm
+ACC_ANTHROPIC_API_KEY=sk-ant-...  # for the anthropic backend
+```
+
+**Manual (no registry)** — set directly on an agent container:
+`ACC_LLM_BACKEND` + `ACC_LLM_MODEL` + `ACC_LLM_BASE_URL`
+(+ `ACC_LLM_API_KEY_ENV`), or the backend-specific `ACC_ANTHROPIC_MODEL`
+/ `ACC_OLLAMA_MODEL` + `ACC_OLLAMA_BASE_URL`.
+
+Full guide: `docs/multimodel_reviewer.md` and `docs/llm-backends.md`.
+
 ## Manifest layout convention (for uploads)
 
 | Kind  | Required files in source directory |
