@@ -121,15 +121,9 @@ async def test_ecosystem_role_detail_renders_coding_agent_seed():
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
-        # Proposal 003 PR-2 split the detail panel into two
-        # collapsibles (#role-md-content Markdown +
-        # #role-yaml-content Static).  The "purpose" + "persona"
-        # strings the assertions look for now land on the yaml
-        # surface.
-        captured = _capture_static_updates(
-            screen.query_one("#role-yaml-content", Static),
-        )
-
+        # PR-A retired the read-only #role-yaml-content Static in favour
+        # of the inline-editable #role-yaml-editor TextArea — that's the
+        # surface the "purpose" + "persona" strings now land on.
         role_table = screen.query_one("#role-table", DataTable)
         # Find the row key for coding_agent — they're added with key=role_name
         # but the API exposes opaque RowKey objects.  Build a synthetic
@@ -147,7 +141,7 @@ async def test_ecosystem_role_detail_renders_coding_agent_seed():
         )
         await pilot.pause()
 
-        rendered = "\n".join(captured)
+        rendered = screen.query_one("#role-yaml-editor", TextArea).text
         # The actual role.yaml carries this purpose phrase verbatim.
         assert "Generate, review, and test code artefacts" in rendered, rendered
         # And the persona is analytical (Tier A pins this).

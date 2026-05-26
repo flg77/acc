@@ -1472,34 +1472,38 @@ class EcosystemScreen(Screen):
     def _handle_schedule_infusion(self) -> None:
         """Schedule-infusion handler split out for clarity.
 
-        Commit-5 — operator-reported: clicking Schedule infusion
-        forwarded the auto-mount-committed role (e.g. account_executive)
-        even after the operator had scrolled to a different row and
-        previewed it.  Fix: prefer the DataTable's cursor row if it
-        differs from ``_selected_role``, and auto-commit that row
-        before forwarding so subsequent Save / Edit / ● paint is
-        consistent.  Pre-Commit-5 the operator had to press Enter to
-        commit, then click Schedule — easy to forget after Commit-4
-        split highlight from select.
+        ``_selected_role`` is authoritative: when a role has been
+        committed (Enter / row-select, or set directly) that role is
+        forwarded, regardless of where the DataTable's visual cursor
+        happens to sit.  This matters once roles/ grows a member that
+        sorts ahead of the operator's pick (e.g. ``account_executive``
+        now sorts before ``coding_agent`` and becomes the on-mount
+        cursor row) — pre-fix the handler preferred the cursor row and
+        silently forwarded the wrong role.
+
+        The cursor row is consulted only as a fallback when nothing is
+        committed yet, so a press before Enter still forwards the row
+        under the cursor rather than no-op'ing.
         """
         target = self._selected_role
-        try:
-            table = self.query_one("#role-table", DataTable)
-            cursor_row = table.cursor_row
-            rows = list(table.rows.keys())
-            if 0 <= cursor_row < len(rows):
-                cursor_role = self._extract_role_name(rows[cursor_row])
-                if cursor_role and cursor_role != self._selected_role:
-                    # Auto-commit the cursor row before forwarding.
-                    self._selected_role = cursor_role
-                    self._arm_infusion_button(cursor_role)
-                    target = cursor_role
-        except Exception:
-            logger.debug(
-                "ecosystem: cursor-row introspection failed; "
-                "falling back to _selected_role",
-                exc_info=True,
-            )
+        if not target:
+            try:
+                table = self.query_one("#role-table", DataTable)
+                cursor_row = table.cursor_row
+                rows = list(table.rows.keys())
+                if 0 <= cursor_row < len(rows):
+                    cursor_role = self._extract_role_name(rows[cursor_row])
+                    if cursor_role:
+                        # Auto-commit the cursor row before forwarding so
+                        # subsequent Save / Edit / ● paint stays consistent.
+                        self._selected_role = cursor_role
+                        self._arm_infusion_button(cursor_role)
+                        target = cursor_role
+            except Exception:
+                logger.debug(
+                    "ecosystem: cursor-row fallback failed",
+                    exc_info=True,
+                )
 
         if not target:
             self.notify(
