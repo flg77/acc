@@ -122,15 +122,15 @@ class WorkspaceSelectModal(ModalScreen[str | None]):
                 "climbs a level; highlight a directory in the tree; or type a "
                 "new folder name to create one.  Ctrl+S confirms.[/dim]"
                 if mode == "local"
-                else "[dim]Navigate within the host home mount; highlight a "
-                "directory or type a new folder name.  Confirm requests it — "
-                "the agents restart onto it (your TUI session + memory "
-                "survive).[/dim]",
+                else "[dim]Type any host path + Enter (or Go) to jump there; "
+                "Alt+↑ / Up climbs a level; highlight a directory or type a new "
+                "folder name.  Confirm requests it — the agents restart onto it "
+                "(your TUI session + memory survive).[/dim]",
                 id="ws-status",
             )
             with Horizontal(id="ws-locrow"):
                 yield Input(
-                    value=str(self._root),
+                    value=self._to_host(self._root),
                     placeholder="/path/to/directory",
                     id="ws-path",
                 )
@@ -180,22 +180,24 @@ class WorkspaceSelectModal(ModalScreen[str | None]):
         except Exception:
             pass
         self._sync_path_input(resolved)
-        self._set_status(f"here: {resolved}")
+        self._set_status(f"here: {self._to_host(resolved)}")
 
     def action_go_up(self) -> None:
         self._navigate(self._root.parent)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         # Only the location bar navigates; the new-folder field is inert.
+        # The bar holds a HOST path — translate to the container path.
         if (event.input.id or "") == "ws-path":
-            self._navigate(Path(event.value.strip() or str(self._root)))
+            typed = event.value.strip()
+            self._navigate(self._to_container(typed) if typed else self._root)
 
     def on_directory_tree_directory_selected(
         self, event: "DirectoryTree.DirectorySelected",
     ) -> None:
         self._selected = Path(event.path)
         self._sync_path_input(self._selected)
-        self._set_status(f"selected: {self._selected}")
+        self._set_status(f"selected: {self._to_host(self._selected)}")
 
     # ------------------------------------------------------------------
     # Buttons / confirm / cancel
@@ -212,7 +214,7 @@ class WorkspaceSelectModal(ModalScreen[str | None]):
                 value = self.query_one("#ws-path", Input).value.strip()
             except Exception:
                 value = ""
-            self._navigate(Path(value or str(self._root)))
+            self._navigate(self._to_container(value) if value else self._root)
         elif bid == "ws-up":
             self.action_go_up()
 
@@ -245,7 +247,7 @@ class WorkspaceSelectModal(ModalScreen[str | None]):
             rel = self._selected.resolve().relative_to(self._browse.resolve())
         except (ValueError, OSError):
             self._set_status(
-                "[red]selection is outside the host home mount — pick a "
+                "[red]selection is outside the mounted host tree — pick a "
                 "directory under it.[/red]"
             )
             return
@@ -286,9 +288,41 @@ class WorkspaceSelectModal(ModalScreen[str | None]):
 
     def _sync_path_input(self, path: Path) -> None:
         try:
-            self.query_one("#ws-path", Input).value = str(path)
+            self.query_one("#ws-path", Input).value = self._to_host(path)
         except Exception:
             pass
+
+    # ----- host ↔ container path translation --------------------------
+    #
+    # The TUI runs in a container that mounts a slice of the host fs at
+    # ``browse_root`` (with ``ACC_WORKSPACE_BASE`` = / when the whole host is
+    # mounted).  Internally everything works in CONTAINER paths (the tree,
+    # navigation, selection); the operator only ever sees / types HOST-true
+    # paths, so the location bar + status translate.  In local mode (no base)
+    # the two coincide.
+
+    def _to_host(self, container: Path) -> str:
+        """Container path → host-true path for display."""
+        if not self._base:
+            return str(container)
+        try:
+            rel = Path(container).resolve().relative_to(self._browse.resolve())
+        except (ValueError, OSError):
+            return str(container)
+        base = self._base.rstrip("/")
+        # Host paths are POSIX — use forward slashes regardless of the platform
+        # the TUI process runs on (the container is Linux; tests run on Windows).
+        rel_str = "" if rel == Path(".") else rel.as_posix()
+        return f"{base}/{rel_str}" if rel_str else (base or "/")
+
+    def _to_container(self, host: str) -> Path:
+        """Host-true path (as typed) → container path under the browse root."""
+        if not self._base:
+            return Path(host)
+        base = self._base.rstrip("/")
+        h = host.strip()
+        rel = h[len(base):].lstrip("/") if base and h.startswith(base) else h.lstrip("/")
+        return (self._browse / rel) if rel else self._browse
 
     def _set_status(self, markup: str) -> None:
         try:

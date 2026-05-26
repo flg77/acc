@@ -518,12 +518,15 @@ services:
       # Override with ACC_TUI_LOG_DIR; default falls back to ./acc-tui-logs
       # if /app/logs is not writable.
       ACC_TUI_LOG_DIR: /app/logs
-      # PR-X — recreate-on-select workspace.  ACC_WORKSPACE_BASE is the
-      # HOST path of the browse root (mounted read-only at /host-home);
-      # the picker translates a chosen /host-home/<rel> back to
-      # <base>/<rel> for the apply request.  ACC_APPLY_DIR is the
-      # bind-mounted dir the request file lands in for the host watcher.
-      ACC_WORKSPACE_BASE: ${ACC_WORKSPACE_BASE:-/root}
+      # PR-X/V4 — recreate-on-select workspace with FULL host-fs browsing.
+      # ACC_WORKSPACE_HOST_ROOT (default /) is mounted READ-ONLY at /host-fs so
+      # the picker can walk the whole host filesystem (Midnight-Commander
+      # style) and pick any directory; narrow it (e.g. /home) to restrict reach.
+      # ACC_WORKSPACE_BASE is the host path that mount corresponds to — the
+      # picker shows host-true paths and the apply request names the real host
+      # dir.  ACC_APPLY_DIR is the bind-mounted dir the request lands in.
+      ACC_WORKSPACE_BASE: ${ACC_WORKSPACE_HOST_ROOT:-/}
+      ACC_WORKSPACE_BROWSE_ROOT: /host-fs
       ACC_APPLY_DIR: /app/.acc-apply
       # PR-Y-2 — writable golden-prompt store (Diagnostics editor +
       # captured executed prompts).  Merged with the shipped suite +
@@ -561,12 +564,13 @@ services:
       # per-project working directory.  Same host path the agents mount,
       # so a directory trusted via the TUI is visible to every agent.
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
-      # PR-X -- recreate-on-select browse root.  The host base
-      # (ACC_WORKSPACE_BASE, default the deploying user's home) is
-      # mounted READ-ONLY so the picker can browse it without the
-      # container ever writing to your home; mkdir + trust + the agent
-      # remount all happen host-side via the apply-watcher.
-      - ${ACC_WORKSPACE_BASE:-/root}:/host-home:ro
+      # PR-X/V4 -- recreate-on-select browse root.  The host root
+      # (ACC_WORKSPACE_HOST_ROOT, default /) is mounted READ-ONLY at /host-fs so
+      # the picker can browse the whole host filesystem without the container
+      # ever writing to it; mkdir + trust + the agent remount all happen
+      # host-side via the apply-watcher.  Set ACC_WORKSPACE_HOST_ROOT=/home (or
+      # any subtree) to restrict what the TUI can see.
+      - ${ACC_WORKSPACE_HOST_ROOT:-/}:/host-fs:ro
       # PR-X -- apply-request channel.  The TUI writes the chosen host
       # path here; the host-side acc-apply-watcher reads it and recreates
       # the agents onto that directory.  rw so the TUI can write.

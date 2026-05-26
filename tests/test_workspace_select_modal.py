@@ -213,6 +213,35 @@ async def test_host_mode_selection_outside_browse_root_blocked(tmp_path, apply_d
     assert read_apply_request(apply_dir) is None
 
 
+def test_host_container_translation_root_base(tmp_path):
+    """PR-V4 — with the whole host fs mounted (base=/), the picker shows
+    host-true paths and resolves typed host paths into the mount."""
+    browse = tmp_path / "hostfs"
+    (browse / "home" / "flg").mkdir(parents=True)
+    m = WorkspaceSelectModal(browse=browse, base="/")
+    # container → host (what the location bar shows)
+    assert m._to_host(browse / "home" / "flg") == "/home/flg"
+    assert m._to_host(browse) == "/"
+    # host (as typed) → container (what the tree navigates)
+    assert m._to_container("/home/flg") == browse / "home" / "flg"
+    assert m._to_container("/") == browse
+
+
+def test_host_container_translation_subtree_base(tmp_path):
+    browse = tmp_path / "host-home"
+    (browse / "proj").mkdir(parents=True)
+    m = WorkspaceSelectModal(browse=browse, base="/home/flg")
+    assert m._to_host(browse / "proj") == "/home/flg/proj"
+    assert m._to_container("/home/flg/proj") == browse / "proj"
+
+
+def test_translation_identity_in_local_mode(tmp_path):
+    """No base ⇒ local mode ⇒ container path == host path (no translation)."""
+    m = WorkspaceSelectModal(browse=tmp_path, base="")
+    assert m._to_host(tmp_path / "x") == str(tmp_path / "x")
+    assert m._to_container("/abs/path") == Path("/abs/path")
+
+
 @pytest.mark.asyncio
 async def test_cancel_returns_none(tmp_path, apply_dir):
     browse = tmp_path / "host-home"

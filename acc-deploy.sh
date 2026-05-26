@@ -201,13 +201,15 @@ fi
 # ── Build base command ─────────────────────────────────────────────────────────
 BASE_CMD=(podman-compose -f "$COMPOSE_FILE")
 
-# PR-X — the trusted-workspace browse base.  Defaults to the deploying
-# user's home; the acc-tui Prompt picker browses this (mounted at
-# /host-home, read-only) and apply-workspace refuses any path outside
-# it.  Export so podman-compose can interpolate ${ACC_WORKSPACE_BASE}
-# in the acc-tui volume mount.  Narrow it (e.g. ~/acc-workspaces) to
-# reduce host exposure.
-export ACC_WORKSPACE_BASE="${ACC_WORKSPACE_BASE:-$HOME}"
+# PR-X/V4 — the trusted-workspace browse root.  Defaults to the host root (/)
+# so the acc-tui Prompt picker can walk the WHOLE host filesystem
+# (Midnight-Commander style), mounted READ-ONLY at /host-fs; the chosen dir is
+# what the agents are remounted onto.  Narrow it (e.g. ACC_WORKSPACE_HOST_ROOT=
+# "$HOME" or ~/acc-workspaces) to reduce host exposure.  Exported so
+# podman-compose can interpolate ${ACC_WORKSPACE_HOST_ROOT} in the acc-tui
+# mount; ACC_WORKSPACE_BASE tracks it (the apply-watcher boundary).
+export ACC_WORKSPACE_HOST_ROOT="${ACC_WORKSPACE_HOST_ROOT:-/}"
+export ACC_WORKSPACE_BASE="${ACC_WORKSPACE_HOST_ROOT}"
 
 # PR-S — opt-in userns overlay for the acc-tui Configuration .env
 # write-back fix.  `keep-id` breaks pod-mode hosts and an empty

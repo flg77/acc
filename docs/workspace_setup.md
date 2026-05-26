@@ -100,14 +100,22 @@ Relevant mounts in `container/production/podman-compose.yml`:
 * Agents: `${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z` —
   `apply-workspace` rewrites `ACC_WORKSPACE_HOST_DIR` in `./.env` to the
   selected path, so the *selected directory itself becomes* `/workspace`.
-* acc-tui: `${ACC_WORKSPACE_BASE:-/root}:/host-home:ro` — the browse
-  root, mounted **read-only** so the container never writes to your
-  home; `../../.acc-apply:/app/.acc-apply:rw` — the request channel.
+* acc-tui: `${ACC_WORKSPACE_HOST_ROOT:-/}:/host-fs:ro` — the browse
+  root, mounted **read-only** so the container never writes to the host;
+  `../../.acc-apply:/app/.acc-apply:rw` — the request channel.
 
-`ACC_WORKSPACE_BASE` (default the deploying user's `$HOME`) is the
-*only* tree the picker can browse and the *only* root `apply-workspace`
-will accept — any path outside it is refused. Narrow it (e.g.
-`ACC_WORKSPACE_BASE=~/acc-workspaces`) to reduce host exposure.
+`ACC_WORKSPACE_HOST_ROOT` (default `/`, the whole host filesystem) is the
+tree the picker can browse — walk it Midnight-Commander style (type a host
+path + Enter, **Up**/Alt+↑ to climb) and pick **any** directory. It is also
+the *only* root `apply-workspace` accepts — paths outside it are refused.
+**Narrow it to reduce host exposure**, e.g. `ACC_WORKSPACE_HOST_ROOT=$HOME`
+or `~/acc-workspaces`. The picker shows **host-true paths** (it translates
+the `/host-fs` mount back to real host paths); `ACC_WORKSPACE_BASE` tracks
+`ACC_WORKSPACE_HOST_ROOT` automatically.
+
+> Mounting `/` read-only into the TUI is broad by design (the operator
+> asked for full-fs reach). Set `ACC_WORKSPACE_HOST_ROOT` to a subtree if
+> you want a tighter blast radius. Changing it needs a TUI redeploy.
 
 ### One-time setup
 
