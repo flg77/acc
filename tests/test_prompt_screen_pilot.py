@@ -785,6 +785,76 @@ async def test_end_activity_clears_and_is_task_scoped():
         assert captured[-1] == ""
 
 
+def _capture_transcript(screen):
+    from textual.widgets import Static
+    t = screen.query_one("#prompt-transcript", Static)
+    cap: list[str] = []
+    real = t.update
+
+    def rec(content="", **kw):
+        cap.append(str(content))
+        return real(content, **kw)
+
+    t.update = rec  # type: ignore[assignment]
+    return cap
+
+
+_REASONING = (
+    "Prior learnings: none found\nOptions: A vs B\n"
+    "Evaluation: B is safer\nPlan: use a CSV library\nReview: check edge cases"
+)
+
+
+def test_reasoning_summary_prefers_plan():
+    from acc.tui.screens.prompt import PromptScreen
+    assert PromptScreen._reasoning_summary(_REASONING) == "use a CSV library"
+    assert PromptScreen._reasoning_summary("") == ""
+
+
+@pytest.mark.asyncio
+async def test_reasoning_collapsed_shows_summary_only():
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        cap = _capture_transcript(screen)
+        screen._append_history({
+            "role": "reasoning", "task_id": "abcd1234", "agent_id": "coding-1",
+            "text": _REASONING, "ts": time.time(),
+        })
+        await pilot.pause()
+        txt = cap[-1]
+        assert "🧠" in txt and "reasoning" in txt
+        assert "use a CSV library" in txt      # summary = Plan line
+        assert "▸" in txt                       # collapsed marker
+        assert "Options: A vs B" not in txt     # body hidden when collapsed
+
+
+@pytest.mark.asyncio
+async def test_reasoning_expand_then_hide():
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        cap = _capture_transcript(screen)
+        screen._append_history({
+            "role": "reasoning", "task_id": "abcd1234", "agent_id": "coding-1",
+            "text": _REASONING, "ts": time.time(),
+        })
+        await pilot.pause()
+
+        screen.action_toggle_reasoning()   # Ctrl+O → expand
+        await pilot.pause()
+        txt = cap[-1]
+        assert "▾" in txt
+        assert "Options: A vs B" in txt        # full body now shown
+
+        screen.action_toggle_reasoning_visible()   # Ctrl+R → hide stream
+        await pilot.pause()
+        txt = cap[-1]
+        assert "reasoning" not in txt           # entry suppressed entirely
+
+
 @pytest.mark.asyncio
 async def test_trace_entry_appends_invocation_waterfall_row():
     """A `trace` history entry adds a row to `#invocation-waterfall`

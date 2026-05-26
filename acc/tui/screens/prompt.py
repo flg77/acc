@@ -176,6 +176,10 @@ class PromptScreen(Screen):
         Binding("ctrl+shift+plus", "select_workspace", "Workspace", priority=True),
         Binding("ctrl+plus", "select_workspace", "Workspace", priority=True),
         Binding("ctrl+l", "clear_transcript", "Clear"),
+        # PR-V4 — reasoning stream: Ctrl+O expand/collapse the one-liners;
+        # Ctrl+R hide/show the reasoning stream entirely (default shown).
+        Binding("ctrl+o", "toggle_reasoning", "Reasoning ±", priority=True),
+        Binding("ctrl+r", "toggle_reasoning_visible", "Reasoning on/off"),
         ("q", "app.quit", "Quit"),
         ("1", "navigate('soma')", "Soma"),
         ("2", "navigate('nucleus')", "Nucleus"),
@@ -300,6 +304,11 @@ class PromptScreen(Screen):
         # TASK_PROGRESS between step boundaries.
         self._active_progress: dict[str, Any] | None = None
         self._spinner_i: int = 0
+        # PR-V4 — reasoning stream display state.  Collapsed (one-liner per
+        # block) by default; Ctrl+O expands/collapses, Ctrl+R hides/shows the
+        # whole stream (for operators who feel overwhelmed).  Shown by default.
+        self._reasoning_collapsed: bool = True
+        self._reasoning_hidden: bool = False
 
     # ------------------------------------------------------------------
     # Compose / mount / lifecycle
@@ -591,6 +600,37 @@ class PromptScreen(Screen):
         self.history = []
         self._render_transcript()
         self.query_one("#prompt-status", Static).update("[dim]Cleared.[/dim]")
+
+    def action_toggle_reasoning(self) -> None:
+        """PR-V4 — Ctrl+O expand/collapse the reasoning one-liners."""
+        self._reasoning_collapsed = not self._reasoning_collapsed
+        self._render_transcript()
+
+    def action_toggle_reasoning_visible(self) -> None:
+        """PR-V4 — Ctrl+R hide/show the whole reasoning stream."""
+        self._reasoning_hidden = not self._reasoning_hidden
+        self._render_transcript()
+
+    @staticmethod
+    def _reasoning_summary(text: str) -> str:
+        """One-line 'main objective' for a collapsed reasoning block.
+
+        Prefers the Plan section (the agent's committed approach); falls back
+        to the first non-heading line.  Trimmed to a single readable line.
+        """
+        lines = [ln.strip(" #*-") for ln in (text or "").splitlines()]
+        lines = [ln for ln in lines if ln]
+        plan = ""
+        for i, ln in enumerate(lines):
+            low = ln.lower()
+            if low.startswith("plan"):
+                # "Plan: do X" → "do X"; or the next line if the heading is bare
+                after = ln.split(":", 1)[1].strip() if ":" in ln else ""
+                plan = after or (lines[i + 1] if i + 1 < len(lines) else "")
+                break
+        gist = plan or (lines[0] if lines else "")
+        gist = " ".join(gist.split())
+        return (gist[:100] + "…") if len(gist) > 100 else gist
 
     def on_select_changed(self, event: "Select.Changed") -> None:
         """PR-P (L-2) — when the operator picks a different target
@@ -1358,16 +1398,24 @@ class PromptScreen(Screen):
                     lines.append(f"  {body_line}")
 
             elif role == "reasoning":
-                # PR-V3b — the agent's externalized deliberation, rendered dim
-                # above the answer so the "why" is visible without competing
-                # with the deliverable.
+                # PR-V3b/V4 — the agent's externalized deliberation. Hidden
+                # entirely when the operator toggled it off (Ctrl+R); otherwise
+                # a collapsible one-liner (Ctrl+O) showing the main objective,
+                # expanding to the full trace.
+                if self._reasoning_hidden:
+                    continue
                 aid = entry.get("agent_id", "")[:14]
+                body = entry.get("text", "") or ""
+                marker = "▸" if self._reasoning_collapsed else "▾"
+                summary = self._reasoning_summary(body)
                 lines.append(
-                    f"[dim]{ts}[/dim]  [bold magenta]🧠 {aid} reasoning[/bold magenta]  "
-                    f"[dim]task={tid}[/dim]"
+                    f"[dim]{ts}[/dim]  [bold magenta]{marker} 🧠 {aid} reasoning"
+                    f"[/bold magenta]  [dim italic]{summary}[/dim italic]  "
+                    f"[dim](Ctrl+O)[/dim]"
                 )
-                for body_line in entry.get("text", "").splitlines() or [""]:
-                    lines.append(f"  [dim italic]{body_line}[/dim italic]")
+                if not self._reasoning_collapsed:
+                    for body_line in body.splitlines() or [""]:
+                        lines.append(f"    [dim italic]{body_line}[/dim italic]")
 
             elif role == "agent":
                 aid = entry.get("agent_id", "")[:14]
