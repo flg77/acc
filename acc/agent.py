@@ -733,6 +733,27 @@ class Agent:
                 )
                 return
 
+            # PR-V4 — directed-by-ROLE filter.  TASK_ASSIGN rides one shared
+            # subject (acc.{cid}.task.assign), so without this every running
+            # agent processed a role-targeted prompt — e.g. an analyst answering
+            # a prompt the operator sent to coding_agent.  When no specific
+            # agent is named, only the addressed role (or a subrole of it, e.g.
+            # coding_agent → coding_agent_implementer) handles the task; others
+            # drop it.  Empty target_role preserves the legacy broadcast.
+            if not target_aid:
+                target_role = str(data.get("target_role", "") or "").strip()
+                my_role = self.config.agent.role
+                if (
+                    target_role
+                    and target_role != my_role
+                    and not my_role.startswith(target_role + "_")
+                ):
+                    logger.debug(
+                        "task_loop: drop TASK_ASSIGN target_role=%r != self role=%r",
+                        target_role, my_role,
+                    )
+                    return
+
             # Phase progress-emit — publish TASK_PROGRESS at every step
             # boundary so the prompt pane (PR #19) can render live
             # "agent thinking" lines.  Only build the callback when the
