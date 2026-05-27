@@ -145,6 +145,15 @@ class CognitiveResult:
     roles that don't opt in, or when the model emitted no block.  The clean
     deliverable is in ``output``; this is the "why"."""
 
+    route_to: str = ""
+    """Within-collective role this task should be re-dispatched to (PR-V6 /
+    2c).  Non-empty when an orchestrator role emits a ``[ROUTE:role:reason]``
+    marker; the agent loop publishes a directed TASK_ASSIGN to that role
+    (reusing the task_id) instead of answering.  Empty for ordinary tasks."""
+
+    route_reason: str = ""
+    """Short rationale the orchestrator gave for the ``route_to`` decision."""
+
 
 # ---------------------------------------------------------------------------
 # Bridge delegation marker (ACC-9)
@@ -164,6 +173,28 @@ def _parse_delegation(text: str) -> tuple[str, str]:
         or ``("", "")`` when the output should be handled locally.
     """
     match = _DELEGATE_RE.search(text)
+    if match:
+        return match.group(1).strip(), match.group(2).strip()
+    return "", ""
+
+
+# PR-V6 (2c) — within-collective ROUTE marker for the orchestrator role:
+#   [ROUTE:coding_agent:needs code generation]
+# The orchestrator deliberates over which role should handle a task and emits
+# this marker; the agent loop re-dispatches a directed TASK_ASSIGN to that role
+# (reusing the original task_id so the operator's reply correlation still
+# resolves on the routed agent's answer).  Distinct from [DELEGATE:...] which
+# is CROSS-collective (ACC-9 bridge).
+_ROUTE_RE = re.compile(r"\[ROUTE:([^:\]]+):([^\]]+)\]")
+
+
+def _parse_route(text: str) -> tuple[str, str]:
+    """Extract a within-collective routing marker.
+
+    Returns ``(target_role, reason)`` for a ``[ROUTE:role:reason]`` marker, or
+    ``("", "")`` when none is present.
+    """
+    match = _ROUTE_RE.search(text)
     if match:
         return match.group(1).strip(), match.group(2).strip()
     return "", ""
@@ -801,6 +832,16 @@ class CognitiveCore:
             delegate_to = ""
             delegation_reason = ""
 
+        # 7b — ROUTE PARSE (PR-V6 / 2c).  An orchestrator role can re-dispatch
+        # the task to another role in THIS collective.  Self-routes are dropped
+        # (loop guard); a route + a cross-collective delegate can't both win —
+        # delegation takes precedence (it already suppressed the completion).
+        route_to, route_reason = ("", "")
+        if not delegate_to:
+            route_to, route_reason = _parse_route(output_text)
+            if route_to and route_to == self._role_label:
+                route_to, route_reason = ("", "")
+
         return CognitiveResult(
             output=output_text,
             blocked=False,
@@ -810,6 +851,8 @@ class CognitiveCore:
             episode_id=episode_id,
             latency_ms=latency_ms,
             reasoning=reasoning_text,
+            route_to=route_to,
+            route_reason=route_reason,
         )
 
     # ------------------------------------------------------------------

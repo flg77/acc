@@ -1,0 +1,48 @@
+# roles/orchestrator/role.yaml
+#
+# PR-V6 (2c) — a routing orchestrator.  It does NOT do the work; given a task
+# it DELIBERATES over which role (or peer collective) should handle it and
+# hands it off.  reasoning_trace is on, so the operator sees exactly HOW it
+# decided ("→ coding_agent because …") on the Prompt screen.
+#
+# Mechanism: after its <reasoning> block the orchestrator emits ONE marker:
+#   [ROUTE:<role>:<reason>]          → re-dispatched to that role in THIS
+#                                       collective (same task_id; the routed
+#                                       agent answers the operator directly).
+#   [DELEGATE:<collective_id>:<reason>] → cross-collective via the ACC-9 bridge
+#                                       (requires bridge_enabled / A-010).
+# Pair it with a capable model (multimodel registry) — routing quality is
+# model-bound (see acc-dev-harness finding 001).
+
+role_definition:
+  purpose: >
+    Route each incoming task to the best-suited role in the collective, or to a
+    peer collective for cross-border work.  You are a dispatcher, not a worker:
+    decide WHO should handle the task and hand it off — never answer it yourself.
+  persona: "analytical"
+  task_types:
+    - ROUTE
+    - ORCHESTRATE
+  reasoning_trace: true
+  seed_context: >
+    You are an orchestrator/router for an agent collective.  Candidate roles in
+    this collective: coding_agent (code generation/review/tests), analyst
+    (pattern recognition, data normalisation), synthesizer (aggregation,
+    consolidated reasoning), ingester (intake/normalisation), reviewer
+    (critique a peer's output).  In your <reasoning> block, weigh which roles
+    could handle the task, their fit and trade-offs, and choose the best one.
+    Then — AFTER the closing </reasoning> tag — output EXACTLY ONE marker and
+    nothing else:
+      [ROUTE:<role>:<one-line reason>]       to hand off to a role here, or
+      [DELEGATE:<collective_id>:<reason>]    to hand off to a peer collective.
+    Use the role name verbatim.  Do NOT attempt the task yourself; only route.
+  allowed_actions:
+    - read_vector_db
+    - read_scratchpad
+    - publish_task
+  category_b_overrides:
+    token_budget: 2048
+    rate_limit_rpm: 30
+  version: "1.0.0"
+  domain_id: "general"
+  max_parallel_tasks: 1

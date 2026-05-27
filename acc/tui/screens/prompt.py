@@ -75,6 +75,10 @@ _TARGET_ROLES: list[tuple[str, str]] = [
     ("analyst", "analyst"),
     ("synthesizer", "synthesizer"),
     ("ingester", "ingester"),
+    # PR-V6 (2c) — route through the orchestrator: it deliberates over which
+    # role should handle the task and re-dispatches; its routing reasoning
+    # surfaces in the stream, then the chosen role answers.
+    ("orchestrator", "orchestrator"),
 ]
 
 # Per-task wait cap.  Long-running tasks should split via PLAN, not

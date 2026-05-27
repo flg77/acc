@@ -42,6 +42,7 @@ from acc.signals import (
     SIG_HEARTBEAT,
     SIG_REGISTER,
     SIG_ROLE_ASSIGN,
+    SIG_TASK_ASSIGN,
     SIG_TASK_COMPLETE,
     SIG_ALERT_ESCALATE,
     SIG_BRIDGE_DELEGATE,
@@ -879,6 +880,32 @@ class Agent:
                 )
                 # Do not publish TASK_COMPLETE here — the bridge result handler
                 # will publish it once the peer collective responds.
+                return
+
+            # Orchestrator routing within this collective (PR-V6 / 2c).  An
+            # orchestrator role re-dispatches the task to the role it chose by
+            # publishing a directed TASK_ASSIGN — reusing the SAME task_id so
+            # the operator's reply correlation resolves on the routed agent's
+            # answer.  We suppress this orchestrator's own TASK_COMPLETE (its
+            # routing deliberation already surfaced via TASK_PROGRESS, PR-V5).
+            # Single-hop: a task that was already routed is never routed again
+            # (loop guard), and process_task drops self-routes.
+            if result.route_to and not data.get("routed_by"):
+                routed = dict(data)
+                routed["signal_type"] = SIG_TASK_ASSIGN
+                routed["target_role"] = result.route_to
+                routed.pop("target_agent_id", None)  # broadcast to the role
+                routed["routed_by"] = self.agent_id
+                logger.info(
+                    "task_loop: orchestrator routing task '%s' → role '%s' — %s",
+                    data.get("task_id", ""), result.route_to, result.route_reason,
+                )
+                try:
+                    await self.backends.signaling.publish(
+                        subject_task_assign(collective_id), routed,
+                    )
+                except Exception:
+                    logger.exception("task_loop: route re-dispatch failed")
                 return
 
             # Publish TASK_COMPLETE
