@@ -345,9 +345,9 @@ def roles_to_compose(
         return {
             "services": services,
             "networks": {
-                "acc-net": {"external": True, "name": "production_acc-net"},
+                "acc-net": {"driver": "bridge"},  # match the base's bare bridge decl (not external+hardcoded-project-name) so -f base -f overlay merges into ONE shared project network
             },
-            "volumes": {"lancedb-data": {"external": True}},
+            "volumes": {"lancedb-data": None},  # null (not external) — matches the base's bare decl so podman-compose can merge -f base -f overlay, and shares the same project-prefixed volume
         }
 
     for agent in spec.agents:
@@ -403,8 +403,8 @@ def roles_to_compose(
             }
     return {
         "services": services,
-        "networks": {"acc-net": {"external": True, "name": "production_acc-net"}},
-        "volumes": {"lancedb-data": {"external": True}},
+        "networks": {"acc-net": {"driver": "bridge"}},  # match base's bare bridge decl (not external+hardcoded project name) so -f base -f overlay merges into ONE shared project network
+        "volumes": {"lancedb-data": None},  # null (not external) — matches the base's bare decl so podman-compose can merge -f base -f overlay, and shares the same project-prefixed volume
     }
 
 
