@@ -2,11 +2,32 @@
 
 from __future__ import annotations
 
+import importlib
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from acc.config import ACCConfig, BackendBundle, build_backends
+
+
+def _importable(modname: str) -> bool:
+    """True if *modname* imports cleanly (incl. its heavy native deps).
+
+    The Milvus / OTel backends pull ``pymilvus`` / ``opentelemetry``, which
+    aren't installable on every dev host (e.g. no wheels for the local
+    Python).  Tests that must ``patch`` symbols inside those modules can't
+    even import them there, so they skip gracefully — and still run fully in
+    CI / containers where the deps are present.
+    """
+    try:
+        importlib.import_module(modname)
+        return True
+    except Exception:
+        return False
+
+
+_HAVE_MILVUS = _importable("acc.backends.vector_milvus")
+_HAVE_OTEL = _importable("acc.backends.metrics_otel")
 
 
 def _make_config(**overrides) -> ACCConfig:
@@ -60,6 +81,7 @@ class TestBuildBackendsVector:
             bundle = build_backends(config)
         MockLDB.assert_called_once_with("/tmp/db")
 
+    @pytest.mark.skipif(not _HAVE_MILVUS, reason="pymilvus not installed (acc.backends.vector_milvus unimportable)")
     def test_selects_milvus(self):
         config = _make_config(**{
             "vector_db": {
@@ -144,6 +166,7 @@ class TestBuildBackendsMetrics:
         from acc.backends.metrics_log import LogMetricsBackend
         assert isinstance(bundle.metrics, LogMetricsBackend)
 
+    @pytest.mark.skipif(not _HAVE_OTEL, reason="opentelemetry not installed (acc.backends.metrics_otel unimportable)")
     def test_selects_otel(self):
         config = _make_config(**{"observability": {"backend": "otel", "otel_service_name": "test"}})
         mock_backend = MagicMock()

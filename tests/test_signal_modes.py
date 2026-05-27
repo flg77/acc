@@ -7,6 +7,7 @@ REQ-DOM-003: The four mode constants shall be non-empty strings.
 
 import pytest
 
+import acc.signals as _signals_mod
 from acc.signals import (
     SIGNAL_MODE_AUTOCRINE,
     SIGNAL_MODE_ENDOCRINE,
@@ -27,8 +28,10 @@ from acc.signals import (
     SIG_QUEUE_STATUS,
     SIG_REGISTER,
     SIG_ROLE_APPROVAL,
+    SIG_ROLE_ASSIGN,
     SIG_ROLE_UPDATE,
     SIG_TASK_ASSIGN,
+    SIG_TASK_CANCEL,
     SIG_TASK_COMPLETE,
     SIG_TASK_PROGRESS,
     subject_domain_differentiation,
@@ -36,26 +39,25 @@ from acc.signals import (
     redis_domain_rubric_key,
 )
 
-_ALL_SIGNALS = [
-    SIG_REGISTER,
-    SIG_HEARTBEAT,
-    SIG_TASK_ASSIGN,
-    SIG_TASK_COMPLETE,
-    SIG_ROLE_UPDATE,
-    SIG_ROLE_APPROVAL,
-    SIG_ALERT_ESCALATE,
-    SIG_BRIDGE_DELEGATE,
-    SIG_BRIDGE_RESULT,
-    SIG_TASK_PROGRESS,
-    SIG_QUEUE_STATUS,
-    SIG_BACKPRESSURE,
-    SIG_PLAN,
-    SIG_KNOWLEDGE_SHARE,
-    SIG_EVAL_OUTCOME,
-    SIG_CENTROID_UPDATE,
-    SIG_EPISODE_NOMINATE,
-    SIG_DOMAIN_DIFFERENTIATION,
-]
+# Every ``SIG_*`` string constant declared in ``acc.signals``, discovered by
+# introspection so a newly-added signal is picked up automatically — no
+# hand-maintained list (or magic count) to keep in sync.
+_SIG_CONSTANTS = frozenset(
+    value
+    for name, value in vars(_signals_mod).items()
+    if name.startswith("SIG_") and isinstance(value, str)
+)
+
+# Control-plane signals intentionally NOT receptor-classified in SIGNAL_MODES:
+# they fall through ``agent._receptor_allows``' ``SIGNAL_MODES.get(..., PARACRINE)``
+# default.  Listed explicitly so the completeness test still flags any *new*
+# signal that forgot a mode while documenting these deliberate omissions.
+_MODELESS_SIGNALS = frozenset({SIG_ROLE_ASSIGN, SIG_TASK_CANCEL})
+
+# Signals that MUST carry an explicit SIGNAL_MODES entry = all declared
+# constants minus the documented control-plane exemptions.  Sorted for stable
+# pytest parametrize ids.
+_ALL_SIGNALS = sorted(_SIG_CONSTANTS - _MODELESS_SIGNALS)
 
 _VALID_MODES = {
     SIGNAL_MODE_SYNAPTIC,
@@ -113,8 +115,24 @@ class TestSignalModesDict:
             f"SIGNAL_MODES[{sig!r}] = {mode!r} is not a valid mode"
         )
 
-    def test_signal_modes_has_exactly_18_entries(self):
-        assert len(SIGNAL_MODES) == 18
+    def test_every_signal_constant_is_classified_or_exempt(self):
+        """REQ-DOM-001: every declared ``SIG_*`` constant is either present
+        in SIGNAL_MODES or explicitly exempted (control-plane).  Replaces a
+        brittle hard-coded count — a new signal that forgot a mode fails here
+        automatically, with no number to bump."""
+        missing = _SIG_CONSTANTS - set(SIGNAL_MODES) - _MODELESS_SIGNALS
+        assert not missing, (
+            f"signal constants missing a SIGNAL_MODES entry: {sorted(missing)} "
+            f"(add a mode, or add to _MODELESS_SIGNALS if intentionally unclassified)"
+        )
+
+    def test_signal_modes_has_no_unknown_entries(self):
+        """Inverse guard: every SIGNAL_MODES key maps to a real ``SIG_*``
+        constant — catches a typo'd or orphaned entry."""
+        unknown = set(SIGNAL_MODES) - _SIG_CONSTANTS
+        assert not unknown, (
+            f"SIGNAL_MODES has entries with no SIG_* constant: {sorted(unknown)}"
+        )
 
     def test_synaptic_signals(self):
         synaptic = {k for k, v in SIGNAL_MODES.items() if v == SIGNAL_MODE_SYNAPTIC}

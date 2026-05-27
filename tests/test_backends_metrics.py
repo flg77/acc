@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 from io import StringIO
 from unittest.mock import MagicMock, patch
@@ -9,6 +10,25 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from acc.backends.metrics_log import LogMetricsBackend
+
+
+def _importable(modname: str) -> bool:
+    """True if *modname* imports cleanly (incl. its heavy native deps).
+
+    ``acc.backends.metrics_otel`` pulls ``opentelemetry``, which isn't
+    installable on every dev host (e.g. no wheels for the local Python).
+    The OTel tests below ``patch`` symbols inside that module, so they can't
+    even import it there — skip gracefully; they run fully in CI / containers
+    where the dep is present.
+    """
+    try:
+        importlib.import_module(modname)
+        return True
+    except Exception:
+        return False
+
+
+_HAVE_OTEL = _importable("acc.backends.metrics_otel")
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +88,7 @@ class TestLogMetricsBackend:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(not _HAVE_OTEL, reason="opentelemetry not installed (acc.backends.metrics_otel unimportable)")
 class TestOTelMetricsBackend:
     def _make_backend(self):
         """Instantiate OTelMetricsBackend with all OTel SDK calls mocked."""

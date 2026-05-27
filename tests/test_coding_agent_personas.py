@@ -93,7 +93,13 @@ def test_persona_estimator_strategy_and_cap(persona: str):
     strategy, max_par, default_skills = _EXPECTED[persona]
     assert rd.estimator.get("strategy") == strategy
     assert rd.max_parallel_tasks == max_par
-    assert rd.default_skills == default_skills
+    # ``workspace_access`` (D-007) makes the role validator auto-append the
+    # sandbox fs skills to every coding persona.  Compare against the
+    # role-specific defaults only, sourcing the injected set from the model
+    # instance so this never needs restating if that set changes.
+    workspace_skills = set(rd._WORKSPACE_SKILLS)
+    role_specific = [s for s in rd.default_skills if s not in workspace_skills]
+    assert role_specific == default_skills
 
 
 # ---------------------------------------------------------------------------

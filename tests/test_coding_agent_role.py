@@ -124,19 +124,27 @@ def test_coding_agent_default_mcps_are_subset_of_allowed(coding_role):
     )
 
 
-def test_coding_agent_risk_ceilings_default_to_medium(coding_role):
-    """Both risk ceilings should be MEDIUM out of the box.
+def test_coding_agent_risk_ceilings(coding_role):
+    """Risk ceilings stay MEDIUM in the YAML source; the *skill* ceiling is
+    deliberately lifted to HIGH at load time IFF ``workspace_access`` is on.
 
-    The ``coding_agent`` role has plenty of access surface (write_*
-    actions, sub-collective spawning) — keeping risk ceilings at
-    MEDIUM means CRITICAL skills/MCPs route through the human
-    oversight queue rather than running silently.
-
-    A future operator decision to raise to HIGH should be explicit
-    + reviewed; this test catches a base.yaml refactor that
-    accidentally widened the default.
+    The operator-authored ceilings in ``role.yaml`` must remain MEDIUM — that
+    guards against a base.yaml refactor silently widening the default.  The
+    ``workspace_access`` flag (D-007 / PR-U2) then makes the
+    ``_grant_workspace_skills`` validator raise the skill ceiling to HIGH so
+    the HIGH-risk ``fs_write`` skill is permitted (A-017).  We assert the
+    resolved ceiling *as a function of the flag* rather than pinning a literal,
+    so toggling ``workspace_access`` never silently breaks this test.
     """
-    assert coding_role.max_skill_risk_level == "MEDIUM"
+    raw = _raw_role_yaml("coding_agent")
+    # Source-of-truth ceilings: both authored as MEDIUM.
+    assert raw.get("max_skill_risk_level") == "MEDIUM"
+    assert raw.get("max_mcp_risk_level") == "MEDIUM"
+    # Resolved skill ceiling tracks the workspace_access flag; MCP is untouched.
+    if raw.get("workspace_access"):
+        assert coding_role.max_skill_risk_level == "HIGH"
+    else:
+        assert coding_role.max_skill_risk_level == "MEDIUM"
     assert coding_role.max_mcp_risk_level == "MEDIUM"
 
 

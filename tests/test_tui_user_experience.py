@@ -41,7 +41,7 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.widgets import Button, DataTable, Input, Markdown, Static
+from textual.widgets import Button, DataTable, Input, Markdown, Static, TextArea
 
 from acc.tui.messages import RolePreloadMessage
 from acc.tui.path_resolution import resolve_manifest_root
@@ -82,6 +82,30 @@ class _EcoApp(App):
 class _CfgApp(App):
     def on_mount(self) -> None:
         self.push_screen(ConfigurationScreen())
+
+
+async def _select_role(pilot, screen, role_name: str) -> None:
+    """Commit a selection of *role_name* the way pressing Enter on its row does.
+
+    Post-Commit-4 the Ecosystem screen splits cursor handling: highlighting a
+    row (``on_data_table_row_highlighted``) only *previews* it, while Enter
+    (``on_data_table_row_selected``) *commits* — pinning ``_selected_role`` and
+    arming the infusion / edit buttons.  We move the cursor to the role's row
+    (so the preview follows) and fire the row-selected event to pin it.
+    """
+    table = screen.query_one("#role-table", DataTable)
+    row_keys = list(table.rows.keys())
+    idx = next(
+        i for i, k in enumerate(row_keys)
+        if getattr(k, "value", str(k)) == role_name
+    )
+    table.move_cursor(row=idx)
+    screen.on_data_table_row_selected(
+        DataTable.RowSelected(
+            data_table=table, cursor_row=idx, row_key=row_keys[idx],
+        )
+    )
+    await pilot.pause()
 
 
 # ---------------------------------------------------------------------------
@@ -387,35 +411,24 @@ async def test_row_highlight_populates_role_md_widget():
 
 @pytest.mark.asyncio
 async def test_row_highlight_populates_role_yaml_widget():
-    """Companion to the role.md test — also pins the role.yaml
-    collapsible's Static gets populated."""
+    """Companion to the role.md test — pins that selecting a role
+    populates the inline role.yaml editor.
+
+    PR-A retired the read-only ``#role-yaml-content`` Static in favour of an
+    editable ``#role-yaml-editor`` TextArea; this asserts that surface gets
+    the selected role's YAML loaded into it.
+    """
     app = _EcoApp()
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
-        yaml_widget = screen.query_one("#role-yaml-content", Static)
+        # The screen auto-selects the first role on mount, so the editor is
+        # already populated; drive an explicit selection to be unambiguous.
+        await _select_role(pilot, screen, "coding_agent")
 
-        captured: list[str] = []
-        real = yaml_widget.update
-
-        def recording(content="", **kwargs):
-            captured.append(str(content))
-            return real(content, **kwargs)
-
-        yaml_widget.update = recording  # type: ignore[assignment]
-
-        table = screen.query_one("#role-table", DataTable)
-        first_key = list(table.rows.keys())[0]
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
-                data_table=table, cursor_row=0, row_key=first_key,
-            )
-        )
-        await pilot.pause()
-
-        rendered = "\n".join(captured)
-        assert "role.yaml" in rendered or "role_definition" in rendered, (
-            "yaml widget did not render the role's yaml"
+        editor = screen.query_one("#role-yaml-editor", TextArea)
+        assert "role_definition" in editor.text, (
+            f"yaml editor did not render the role's yaml: {editor.text[:200]!r}"
         )
 
 
@@ -425,18 +438,30 @@ async def test_row_highlight_populates_role_yaml_widget():
 
 
 @pytest.mark.asyncio
-async def test_schedule_infusion_disabled_at_mount():
+async def test_schedule_infusion_disabled_without_roles(tmp_path, monkeypatch):
     """**Operator review issue 3.**
 
-    Before any role is selected, the Schedule-infusion button MUST
-    be disabled — pressing it should produce no effect (and the
-    UI should make that obvious)."""
+    The Schedule-infusion button MUST stay disabled when there is nothing to
+    select.  (With roles present the screen now auto-selects the first row on
+    mount — post-PR-A regression fix — which intentionally arms the button;
+    see ``test_schedule_infusion_arms_on_row_highlight``.)  We point the
+    ecosystem at an empty roles dir so the auto-select path is skipped and the
+    compose-time disabled state is what the operator sees.
+    """
+    from acc.tui.screens import ecosystem as eco
+
+    empty_dir = tmp_path / "empty_roles"
+    empty_dir.mkdir()
+    monkeypatch.setattr(eco, "_roles_root", lambda: empty_dir)
+
     app = _EcoApp()
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
+        table = screen.query_one("#role-table", DataTable)
+        assert table.row_count == 0, "fixture failed: roles table not empty"
         btn = screen.query_one("#btn-schedule-infusion", Button)
-        assert btn.disabled is True, "infusion button armed without selection"
+        assert btn.disabled is True, "infusion button armed without any selectable role"
 
 
 @pytest.mark.asyncio
@@ -476,18 +501,8 @@ async def test_schedule_infusion_press_posts_role_preload_message():
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
-        table = screen.query_one("#role-table", DataTable)
         # Pick coding_agent specifically so the assertion is concrete.
-        coding_key = next(
-            k for k in table.rows.keys()
-            if getattr(k, "value", str(k)) == "coding_agent"
-        )
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
-                data_table=table, cursor_row=0, row_key=coding_key,
-            )
-        )
-        await pilot.pause()
+        await _select_role(pilot, screen, "coding_agent")
 
         screen.query_one("#btn-schedule-infusion", Button).press()
         await pilot.pause()
@@ -514,17 +529,7 @@ async def test_edit_role_yaml_button_invokes_spawn(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
-        table = screen.query_one("#role-table", DataTable)
-        coding_key = next(
-            k for k in table.rows.keys()
-            if getattr(k, "value", str(k)) == "coding_agent"
-        )
-        screen.on_data_table_row_highlighted(
-            DataTable.RowHighlighted(
-                data_table=table, cursor_row=0, row_key=coding_key,
-            )
-        )
-        await pilot.pause()
+        await _select_role(pilot, screen, "coding_agent")
         screen.query_one("#btn-edit-yaml", Button).press()
         await pilot.pause()
 

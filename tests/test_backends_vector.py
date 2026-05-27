@@ -6,6 +6,7 @@ Milvus tests mock the MilvusClient.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -13,7 +14,17 @@ import pyarrow as pa
 import pytest
 
 from acc.backends.vector_lancedb import LanceDBBackend, _STANDARD_TABLES, _SCHEMAS
-from acc.backends.vector_milvus import MilvusBackend
+
+# ``acc.backends.vector_milvus`` imports ``pymilvus`` at module load; that
+# isn't installable on every dev host (e.g. no wheel for the local Python).
+# Import it lazily inside the Milvus tests and gate them so the LanceDB tests
+# in this file still collect + run when pymilvus is absent.  The Milvus tests
+# run fully in CI / containers where the dep is present.
+try:
+    importlib.import_module("acc.backends.vector_milvus")
+    _HAVE_MILVUS = True
+except Exception:
+    _HAVE_MILVUS = False
 
 
 # ---------------------------------------------------------------------------
@@ -101,8 +112,11 @@ class TestLanceDBBackend:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(not _HAVE_MILVUS, reason="pymilvus not installed (acc.backends.vector_milvus unimportable)")
 class TestMilvusBackend:
     def _make_backend(self):
+        from acc.backends.vector_milvus import MilvusBackend
+
         with patch("acc.backends.vector_milvus.MilvusClient") as MockClient:
             mock_client = MagicMock()
             MockClient.return_value = mock_client
