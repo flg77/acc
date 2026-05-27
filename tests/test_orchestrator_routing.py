@@ -48,6 +48,14 @@ def test_parse_route_no_marker():
     assert _parse_route("just an answer, no marker") == ("", "")
 
 
+def test_orchestrator_is_a_valid_agent_role():
+    """The orchestrator must be an accepted ACCConfig.agent.role, or the agent
+    container crashes at config validation (regression guard for PR-V6)."""
+    from acc.config import AgentConfig
+    cfg = AgentConfig(role="orchestrator")
+    assert cfg.role == "orchestrator"
+
+
 # --- process_task ---------------------------------------------------------
 
 @pytest.mark.asyncio
