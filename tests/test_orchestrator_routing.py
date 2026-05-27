@@ -104,12 +104,39 @@ async def test_non_routing_role_ignores_route_marker():
     assert result.route_to == ""
 
 
-# --- agent re-dispatch wiring (source guard) ------------------------------
+# --- agent re-dispatch gate (behavioral) ----------------------------------
 
-def test_agent_route_redispatch_block_present():
-    """The agent loop must re-dispatch on route_to (same task_id, suppress
-    its own completion) — guard the wiring against a silent refactor."""
+def test_redispatch_when_orchestrator_routes_a_fresh_task():
+    """Happy path: a chosen target + a task_id + no prior routing → re-dispatch."""
+    from acc.agent import _should_route_redispatch
+    assert _should_route_redispatch("coding_agent", {"task_id": "t1"}) is True
+
+
+def test_no_redispatch_for_already_routed_task():
+    """Single-hop loop guard: a task carrying ``routed_by`` is never routed
+    again, even when route_to and task_id are present (PR-V6b runaway guard)."""
+    from acc.agent import _should_route_redispatch
+    assert _should_route_redispatch(
+        "coding_agent", {"task_id": "t1", "routed_by": "orchestrator-1"}
+    ) is False
+
+
+def test_no_redispatch_for_empty_task_id():
+    """Phantom routes with no task_id (seen in the live cascade) are dropped."""
+    from acc.agent import _should_route_redispatch
+    assert _should_route_redispatch("coding_agent", {}) is False
+    assert _should_route_redispatch("coding_agent", {"task_id": ""}) is False
+
+
+def test_no_redispatch_without_route_target():
+    from acc.agent import _should_route_redispatch
+    assert _should_route_redispatch("", {"task_id": "t1"}) is False
+
+
+def test_agent_route_redispatch_wiring_present():
+    """Guard the re-dispatch wiring (gate call + routed_by stamp) against a
+    silent refactor — complements the behavioral gate tests above."""
     src = (Path(__file__).resolve().parent.parent / "acc" / "agent.py").read_text(encoding="utf-8")
-    assert 'if result.route_to and data.get("task_id") and not data.get("routed_by"):' in src
+    assert "if _should_route_redispatch(result.route_to, data):" in src
     assert 'routed["target_role"] = result.route_to' in src
     assert 'routed["routed_by"] = self.agent_id' in src

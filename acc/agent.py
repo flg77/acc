@@ -145,6 +145,25 @@ def _resolve_task_workspace_dir(data: dict, mount: str | None = None) -> str | N
     return f"{root}/{ws_project}"
 
 
+def _should_route_redispatch(route_to: str, data: dict[str, Any]) -> bool:
+    """Single-hop loop guard for orchestrator within-collective routing (PR-V6b).
+
+    Re-dispatch a directed TASK_ASSIGN only when all three hold:
+
+    * ``route_to`` — the orchestrator actually chose a target role;
+    * ``data["task_id"]`` is non-empty — so the operator's reply correlation
+      resolves on the routed agent's answer (empty-task_id phantom routes,
+      seen in the runaway live test, are dropped);
+    * ``data["routed_by"]`` is unset — the task has not already been routed.
+
+    ``routed_by`` is stamped on the TASK_ASSIGN the orchestrator publishes, so
+    a once-routed task can never be routed again: a hard hop cap of one. With
+    route parsing already gated to ``can_route`` roles in the cognitive core,
+    this confines the whole mechanism to a single orchestrator → worker hop.
+    """
+    return bool(route_to and data.get("task_id") and not data.get("routed_by"))
+
+
 def _extract_eval_outcome(output: str) -> "Optional[dict]":
     """PR-MM3 — surface a reviewer's structured verdict from its LLM
     output so the arbiter's PlanExecutor critic loop
@@ -890,7 +909,7 @@ class Agent:
             # routing deliberation already surfaced via TASK_PROGRESS, PR-V5).
             # Single-hop: a task that was already routed is never routed again
             # (loop guard), and process_task drops self-routes.
-            if result.route_to and data.get("task_id") and not data.get("routed_by"):
+            if _should_route_redispatch(result.route_to, data):
                 routed = dict(data)
                 routed["signal_type"] = SIG_TASK_ASSIGN
                 routed["target_role"] = result.route_to
