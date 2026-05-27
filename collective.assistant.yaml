@@ -1,0 +1,24 @@
+# ACC collective preset — activate the Assistant on demand (concierge / maintenance).
+#
+# The ACC Assistant is a usability/maintenance convenience, NOT a runtime
+# dependency.  Edge/factory deployments run a minimal footprint WITHOUT it; this
+# preset spins the Assistant up alongside the always-on baseline when you want
+# onboarding help or to work on the system, then you swap it back out:
+#
+#   ./acc-deploy.sh apply --dry-run collective.assistant.yaml   # preview
+#   ./acc-deploy.sh apply collective.assistant.yaml             # activate
+#   # … use it on the Prompt screen (target role: assistant) or via Slack …
+#   ./acc-deploy.sh apply collective.yaml                       # deactivate (swap out)
+#
+# Guidance quality is model-bound — pair the Assistant with a capable model for
+# best results (any model is permitted).  model_id values reference models.yaml;
+# omit `model` to use the collective default.  See docs/howto-agentsets.md.
+
+collective_id: sol-01
+
+agents:
+  - role: assistant
+    replicas: 1                       # single-instance — one coherent guide
+    purpose: "Onboard the user and guide ACC usage + agentset composition."
+    model: claude-sonnet              # capable model — guidance quality matters
+    agent_id_prefix: assistant

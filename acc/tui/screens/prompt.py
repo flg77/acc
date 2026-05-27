@@ -79,6 +79,9 @@ _TARGET_ROLES: list[tuple[str, str]] = [
     # role should handle the task and re-dispatches; its routing reasoning
     # surfaces in the stream, then the chosen role answers.
     ("orchestrator", "orchestrator"),
+    # The ACC Assistant — a concierge/guide for onboarding + agentset help.
+    # Scenario-optional: present only when activated (collective.assistant.yaml).
+    ("assistant", "assistant"),
 ]
 
 # Per-task wait cap.  Long-running tasks should split via PLAN, not

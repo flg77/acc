@@ -1,0 +1,15 @@
+name: assistant_onboarding
+description: |
+  Onboarding smoke check for the ACC Assistant concierge role.  Verifies the
+  assistant answers a "how do I spawn an agentset?" question with concrete,
+  accurate guidance (it should mention collective.yaml / acc-deploy.sh apply),
+  not a refusal or a fabricated command.  Guards against the assistant role
+  regressing into silence or hallucinated features.
+prompt: |
+  I'm new to ACC. How do I spawn a team of agents to work on a problem?
+target_role: assistant
+timeout_s: 60.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: "(?i)collective\\.yaml|acc-deploy"
