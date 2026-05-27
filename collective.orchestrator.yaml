@@ -1,0 +1,39 @@
+# ACC collective preset — orchestrator-routed agentset (PR-V6 / 2c).
+#
+# An orchestrator role deliberates over which worker should handle each task
+# and re-dispatches it (a [ROUTE:role:reason] marker → directed TASK_ASSIGN on
+# the same task_id). The operator sends the task to `orchestrator`; the
+# orchestrator's routing reasoning surfaces in the Prompt stream (per-agent
+# reasoning fan-in, PR-V5), then the chosen worker answers directly.
+#
+# Routing quality is MODEL-BOUND (acc-dev-harness finding 001 — a 3B routes
+# unreliably).  Put the orchestrator on a CAPABLE model; workers can be cheap.
+# model_id values reference models.yaml (acc.models registry) — edit to match
+# the models + keys you have configured (keyed gateways need their api_key_env
+# value set in .env; see docs/multimodel_reviewer.md).
+#
+# Apply:
+#   ./acc-deploy.sh apply collective.orchestrator.yaml
+
+collective_id: sol-01
+
+agents:
+  # ── Router (single-instance, capable model) ──────────────────────────
+  - role: orchestrator
+    replicas: 1
+    purpose: "Route each task to the best-suited worker role; do not execute."
+    model: claude-sonnet            # capable model — routing quality matters
+    agent_id_prefix: router
+
+  # ── Workers the orchestrator can route to (cheaper models OK) ─────────
+  - role: coding_agent
+    replicas: 1
+    purpose: "Generate, review, and test code artefacts."
+    model: claude-haiku
+    agent_id_prefix: coder
+
+  - role: analyst
+    replicas: 1
+    purpose: "Pattern recognition + data normalisation."
+    model: claude-haiku
+    agent_id_prefix: analyst
