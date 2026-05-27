@@ -1,20 +1,23 @@
 # How to Use the ACC Terminal UI (TUI)
 
-The ACC TUI is a Textual terminal dashboard that provides live visibility into one or more running agent collectives and a form-based interface for composing and applying role definitions. It connects to NATS as a read-only observer — it has no direct access to Redis or LanceDB, making it safe to run alongside a production collective without disturbing agent state.
+The ACC TUI is a Textual terminal dashboard that provides live visibility into one or more running agent collectives plus form-based surfaces for composing roles, prompting agents, and applying agentsets. It is **primarily a read-only observer over NATS** — it never touches Redis or LanceDB directly. Its few *publish* surfaces (role infusion, task prompts, agentset apply, LLM-config edits) all go through the bus and the arbiter's governance, so it stays safe to run alongside a production collective.
 
-Six **biological screens** map to the six functional regions of the ACC cognitive cell:
+**Nine screens**, keys `1`–`9`. The first six map to functional regions of the ACC cognitive cell; the last three (Prompt, Configuration, Diagnostics) are operator tools:
 
 | Screen | Biological analogy | Key binding | What it shows |
 |--------|-------------------|-------------|---------------|
 | Soma (Dashboard) | Cell body — overall health | `1` | Agent cards, governance, memory, LLM metrics |
 | Nucleus (Infuse) | Nucleus — role DNA | `2` | Role infusion form, audit history |
 | Compliance | Cell membrane — constitutional | `3` | OWASP grades, Cat-A/B triggers, oversight queue |
-| Performance | Mitochondria — energy efficiency | `4` | Latency percentiles, token budget, queue depth |
-| Comms | Axon/dendrite — signal flow | `5` | Signal log, plan DAG, knowledge feed |
-| Ecosystem | Organism — domain landscape | `6` | Role registry, domain map, episode nominees |
+| Comms | Axon/dendrite — signal flow | `4` | Signal log, plan DAG, knowledge feed |
+| Performance | Mitochondria — energy efficiency | `5` | Latency percentiles, token budget, queue depth |
+| Ecosystem | Organism — domain landscape | `6` | Role registry + inline editor, **Agentset** tab |
+| Prompt | Sensory input — task intake | `7` | Send tasks; watch the **reasoning stream**, PLAN fan-out, orchestrator routing |
+| Configuration | Genome config — knobs | `8` | LLM endpoints (editable), Skills, MCPs |
+| Diagnostics | Self-test — assays | `9` | Golden-prompt suite runner (pass/fail, latency) |
 
 ```
-┌─ [1]Soma [2]Nucleus [3]Compliance [4]Performance [5]Comms [6]Ecosystem ─ sol-01 ─┐
+┌─ [1]Soma [2]Nucleus [3]Compliance [4]Comms [5]Performance [6]Ecosystem [7]Prompt [8]Config [9]Diag ─ sol-01 ─┐
 │ Collective: [sol-01] [sol-02]                                                       │
 ├── AGENTS ──────────────────────────────┬── GOVERNANCE ────────────────────────────┤
 │  ● ingester-a3f2  ACTIVE               │  Cat-A triggers      0                    │
@@ -73,7 +76,10 @@ The TUI connects to NATS, subscribes to `acc.{collective_id}.>` for each collect
 | `ACC_COLLECTIVE_IDS` | *(not set)* | Comma-separated collective IDs to observe simultaneously (e.g. `sol-01,sol-02`). When set, overrides `ACC_COLLECTIVE_ID`. |
 | `ACC_COLLECTIVE_ID` | `sol-01` | Single collective ID — used when `ACC_COLLECTIVE_IDS` is not set |
 | `ACC_TUI_WEB_PORT` | `0` (disabled) | HTTP port for the WebBridge server. Set to a non-zero value to enable (e.g. `8080`). |
-| `ACC_ROLES_ROOT` | `roles` | Path to the `roles/` directory used to populate the role selector on the Nucleus screen. Relative paths are resolved from the working directory. |
+| `ACC_ROLES_ROOT` | `roles` | Path to the `roles/` directory used to populate the role selector (Nucleus) and Role Library (Ecosystem). Relative paths are resolved from the working directory. |
+| `ACC_SKILLS_ROOT` | `skills` | Path to the skill manifests surfaced on Configuration → Skills. |
+| `ACC_MCPS_ROOT` | `mcps` | Path to the MCP-server manifests surfaced on Configuration → MCPs. |
+| `ACC_REPO_ROOT` | *(not set)* | Explicit repo root. When the per-dir vars above are unset, the resolver uses this (then walks up from the cwd looking for an `acc-deploy.sh` marker) so a pip-installed `acc-tui` finds `roles/`, `skills/`, `mcps/` without per-dir config. |
 
 ---
 
@@ -86,9 +92,13 @@ From **any** screen, the number keys provide instant navigation:
 | `1` | Soma — Dashboard |
 | `2` | Nucleus — Infuse |
 | `3` | Compliance |
-| `4` | Performance |
-| `5` | Comms — Communications |
+| `4` | Comms — Communications |
+| `5` | Performance |
 | `6` | Ecosystem |
+| `7` | Prompt |
+| `8` | Configuration |
+| `9` | Diagnostics |
+| `?` | Per-screen help overlay |
 | `q` | Quit |
 
 ---
@@ -108,8 +118,8 @@ If all attempts fail for **every** collective, the TUI displays a connection-err
 When `ACC_COLLECTIVE_IDS` contains more than one ID, a horizontal tab strip appears below the navigation bar. Click a tab or use the tab strip buttons to switch the active collective — all six screens immediately reflect the selected collective's data.
 
 ```
-┌─ [1]Soma [2]Nucleus [3]Compliance [4]Performance [5]Comms [6]Ecosystem ──────────┐
-│ Collective: [sol-01 ●] [sol-02] [sol-03]                                           │
+┌─ [1]Soma [2]Nucleus [3]Compliance [4]Comms [5]Performance [6]Ecosystem [7]Prompt … ─┐
+│ Collective: [sol-01 ●] [sol-02] [sol-03]                                              │
 ```
 
 - The active tab is highlighted with the accent colour (`collective-tab-active` CSS class).
@@ -354,29 +364,128 @@ The last 20 `KNOWLEDGE_SHARE` items received (`CollectiveSnapshot.knowledge_feed
 
 ### 6 — Ecosystem
 
-The Ecosystem screen maps the role landscape and domain topology of the collective.
+The Ecosystem screen has **two tabs** (switch with `Tab`): **Roles** (browse + edit role definitions on disk) and **Agentset** (the declarative `collective.yaml` editor + reconcile-Apply). Skills and MCPs moved to the Configuration screen (pane 8).
 
-#### Role Registry Table
+#### Roles tab — Role Library
 
-A `DataTable` listing all roles discovered in `ACC_ROLES_ROOT` with columns: Role, Domain ID, Domain Receptors, Task Types (count), Version. Populated at startup by scanning the `roles/` directory.
+A `DataTable` listing every role discovered in `ACC_ROLES_ROOT` (Role, Domain ID, Domain Receptors, Task Types, Version), populated by scanning `roles/`. On mount the screen **auto-selects the first role** so the detail panel and action buttons are live without a click.
 
-#### Domain Receptor Map
+- **Highlight vs. select** — moving the cursor (arrow keys / Space) *previews* a role in the detail panel; pressing **Enter** *commits* the selection (pins it, paints the `●` marker, arms the buttons).
+- **Detail panel** — renders the role's `role.md` narrative (Markdown) plus an **inline, editable `role.yaml`** (`#role-yaml-editor` TextArea). It opens read-only; click **✎ Edit role.yaml** to unlock, **Save role.yaml** to write back (atomic + validated), or **Open in $EDITOR** for a vim/emacs/VS Code workflow. A roles/ file-watcher refreshes the panel when an external editor saves.
+- **Schedule infusion → Nucleus** — preloads the selected role into the Nucleus screen so you can review and apply it.
+- A **role-sync badge** reflects ROLE_UPDATE/approval events seen for the selected role.
 
-A visual grid showing which roles can receive PARACRINE signals from each domain. Domains with active roles are highlighted; roles with empty `domain_receptors` (universal receptors) span all columns.
+#### Roles tab — Domain Receptor Map & Episode Nominees
 
-#### Episode Nominees Panel
+- **Domain Receptor Map** — a grid of which roles receive PARACRINE signals from each domain; roles with empty `domain_receptors` (universal) span all columns.
+- **Episode Nominees** — the last 20 `EPISODE_NOMINATE` signals (candidate ICL episodes awaiting Cat-C promotion): episode ID, agent, role, eval score, reason.
 
-The last 20 `EPISODE_NOMINATE` signals received (`CollectiveSnapshot.episode_nominees`). These are candidate ICL episodes awaiting arbiter review for Cat-C promotion. Shows: episode ID, nominating agent, role, eval score, and reason.
+#### Agentset tab — declarative `collective.yaml`
 
-#### Roadmap Sections
+The Agentset tab is the TUI front-end for the agentset workflow documented in [`docs/howto-agentsets.md`](howto-agentsets.md):
 
-Sections marked with the `roadmap-label` CSS class indicate capabilities on the development roadmap (Skills marketplace, MCP integration). These are visible in the current TUI but not yet interactive.
+- An **agentset table** lists the agents declared in `./collective.yaml` (role, replicas, cluster, model).
+- A **Model →** dropdown (sourced from `models.yaml`) sets the per-agent model on the highlighted row.
+- An inline **`collective.yaml` editor** (TextArea) — **Save** persists it; **Apply** publishes a reconcile so the arbiter diffs the spec against the live roster and emits signed `ROLE_ASSIGN` signals to promote dormant workers. (For the standalone Podman stack, `./acc-deploy.sh apply <file>` synthesizes the compose overlay — see the agentsets HOWTO.)
 
 #### Ecosystem Keyboard Shortcuts
 
 | Key | Action |
 |---|---|
-| `1`–`6` | Navigate to screen |
+| `Tab` | Switch between the Roles and Agentset tabs |
+| `Enter` | Commit the highlighted role selection |
+| `1`–`9` | Navigate to screen |
+| `q` | Quit |
+
+---
+
+### 7 — Prompt
+
+The Prompt screen sends a task to the collective and shows the agents' work — including, when a role has `reasoning_trace: true`, **how they reasoned** (not just the final answer).
+
+```
+┌── Prompt ──────────────────────────────────────────────────────────────────────┐
+│  Target role: [coding_agent ▼]   Target agent id: [ (optional)            ]      │
+│  ┌─ Cluster ──────────────────────────────────────────────────────────────────┐ │
+│  │ impl-1 ● running   step 3/7   ▸ reasoning: Option A vs B → chose A …        │ │
+│  └────────────────────────────────────────────────────────────────────────────┘ │
+│  Transcript                                                                       │
+│   ▸ orchestrator-1  reasoning: coding_agent vs analyst → coding_agent (code gen) │
+│   ▾ impl-1  reasoning                                                             │
+│       prior learnings → options A/B → evaluation → plan                           │
+│   impl-1: <final answer / code>                                                   │
+│  …running: calling LLM (1.2k tok in / 0.4k out)…                                  │
+│  [ Mode: AUTO ]  [+]  ┌ type a task, Ctrl+S to send ───────────────────────────┐ │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Sending a task
+
+1. Pick a **Target role** from the dropdown (required) — the task is dispatched to agents of that role. Optionally pin a specific **Target agent id**. Target the `orchestrator` role to have it *route* the task to the best-suited worker.
+2. Type the task in the input area and press **Ctrl+S** (or Shift+Enter / Ctrl+J inserts a newline).
+3. The TUI publishes a `TASK_ASSIGN` over NATS; progress and the answer stream back into the transcript.
+
+#### The reasoning stream
+
+With `reasoning_trace: true` roles (e.g. `coding_agent`, `orchestrator`), each participating agent's deliberation surfaces as a **collapsible one-liner** in the transcript — prior-learnings → options considered → evaluation → plan, and the orchestrator's routing rationale. Per-agent reasoning from a PLAN fan-out is de-duplicated by `(task_id, agent_id)`.
+
+- **Ctrl+O** — expand / collapse the reasoning one-liners.
+- **Ctrl+R** — hide / show the reasoning stream entirely (shown by default).
+
+A live **activity line** under the transcript shows the current step label and `tokens in/out so far` while a task is in flight.
+
+#### Operating mode & workspace
+
+- **Shift+Tab** cycles the operating mode (`PLAN` / `ACCEPT_EDITS` / `ASK_PERMISSIONS` / `AUTO`); it pre-fills from the role's `default_operating_mode`.
+- **`+`** (or **Ctrl+Shift+`+`**) opens a working-directory picker — for roles with `workspace_access`, the chosen host path is mounted so the agent can read/write files. The selected path is shown beneath the input.
+
+#### Prompt Keyboard Shortcuts
+
+| Key | Action |
+|---|---|
+| `Ctrl+S` | Send the task |
+| `Shift+Tab` | Cycle operating mode |
+| `Ctrl+O` | Expand / collapse reasoning one-liners |
+| `Ctrl+R` | Hide / show the reasoning stream |
+| `Ctrl+L` | Clear the transcript |
+| `Ctrl+Shift++` / `+` | Select working directory |
+| `1`–`9` | Navigate to screen |
+
+---
+
+### 8 — Configuration
+
+A `TabbedContent` surface (proposal 003 PR-4) that absorbs the LLM-endpoint, Skills, and MCP views that previously crowded the Ecosystem screen.
+
+- **LLM Endpoints** — the configured backend summary (Backend / Model / Base URL) plus a pointer to *which* `acc-config.yaml` / `ACC_*` env is active, an editable Save form for the hot-swappable LLM knobs (published as a `config.reload` so running agents hot-swap without a restart), and a live per-agent backend table from HEARTBEAT.
+- **Skills** — a `DataTable` of every skill manifest discovered under `ACC_SKILLS_ROOT` (id, risk level, domain).
+- **MCPs** — a `DataTable` of every MCP server manifest under `ACC_MCPS_ROOT`.
+
+Skills/MCPs are picked up live from their manifest directories, so dropping a new manifest in makes it appear without a restart.
+
+#### Configuration Keyboard Shortcuts
+
+| Key | Action |
+|---|---|
+| `1`–`9` | Navigate to screen |
+| `q` | Quit |
+
+---
+
+### 9 — Diagnostics
+
+The golden-prompt suite runner (PR-N / K-2). It drives the same `acc.golden_prompts` loader + assertion engine used in CI and the scheduled cron runner against the **live** stack via a real `TUIPromptChannel`, so a green run here means green in CI too.
+
+- A table lists the loaded golden prompts; each run records PASS/FAIL and latency, with a detail pane for the run output.
+- **`r`** runs the selected prompt; **`a`** runs the whole suite.
+
+#### Diagnostics Keyboard Shortcuts
+
+| Key | Action |
+|---|---|
+| `r` | Run selected golden prompt |
+| `a` | Run all golden prompts |
+| `1`–`9` | Navigate to screen |
 | `q` | Quit |
 
 ---
@@ -437,7 +546,7 @@ For a full browser-based dashboard, run the WebBridge alongside a static web app
 
 ## Architecture: Signal Flow to Screens
 
-All 11 ACC signal types are handled by `NATSObserver._handle_message()` and merged into a single `CollectiveSnapshot` per collective. All six screens observe the same snapshot — they are read-only views over a shared data model.
+Every ACC signal type (msgpack-encoded on the wire) is handled by `NATSObserver._handle_message()` and merged into a single `CollectiveSnapshot` per collective. The observer screens render the same snapshot — they are read-only views over a shared data model.
 
 ```
 NATS JetStream
