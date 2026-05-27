@@ -890,7 +890,7 @@ class Agent:
             # routing deliberation already surfaced via TASK_PROGRESS, PR-V5).
             # Single-hop: a task that was already routed is never routed again
             # (loop guard), and process_task drops self-routes.
-            if result.route_to and not data.get("routed_by"):
+            if result.route_to and data.get("task_id") and not data.get("routed_by"):
                 routed = dict(data)
                 routed["signal_type"] = SIG_TASK_ASSIGN
                 routed["target_role"] = result.route_to

@@ -24,6 +24,9 @@ role_definition:
     - ROUTE
     - ORCHESTRATE
   reasoning_trace: true
+  # PR-V6b — only a can_route role's [ROUTE:role:reason] markers are honoured;
+  # this is what makes the orchestrator a router (ordinary roles can't route).
+  can_route: true
   seed_context: >
     You are an orchestrator/router for an agent collective.  Candidate roles in
     this collective: coding_agent (code generation/review/tests), analyst

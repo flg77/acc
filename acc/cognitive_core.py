@@ -832,12 +832,16 @@ class CognitiveCore:
             delegate_to = ""
             delegation_reason = ""
 
-        # 7b — ROUTE PARSE (PR-V6 / 2c).  An orchestrator role can re-dispatch
-        # the task to another role in THIS collective.  Self-routes are dropped
-        # (loop guard); a route + a cross-collective delegate can't both win —
-        # delegation takes precedence (it already suppressed the completion).
+        # 7b — ROUTE PARSE (PR-V6 / 2c).  Only a role explicitly allowed to
+        # route (``can_route``, e.g. the orchestrator) re-dispatches to another
+        # role in THIS collective.  CRITICAL loop guard (PR-V6b): _parse_route
+        # used to run for EVERY role, so a verbose worker whose output happened
+        # to contain a "[ROUTE:…]"-like marker re-dispatched too — a runaway
+        # cascade observed live.  Gating on can_route (like delegation gates on
+        # bridge_enabled) confines routing to the orchestrator.  Self-routes are
+        # also dropped, and delegation (cross-collective) takes precedence.
         route_to, route_reason = ("", "")
-        if not delegate_to:
+        if not delegate_to and getattr(role, "can_route", False):
             route_to, route_reason = _parse_route(output_text)
             if route_to and route_to == self._role_label:
                 route_to, route_reason = ("", "")

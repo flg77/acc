@@ -33,7 +33,9 @@ def _core(content: str, role_label: str = "orchestrator") -> CognitiveCore:
 
 
 def _role(**kw) -> RoleDefinitionConfig:
-    base = {"purpose": "Route tasks.", "persona": "analytical", "memory_retrieval": False}
+    # can_route on by default for these orchestrator tests; override per-test.
+    base = {"purpose": "Route tasks.", "persona": "analytical",
+            "memory_retrieval": False, "can_route": True}
     base.update(kw)
     return RoleDefinitionConfig.model_validate(base)
 
@@ -89,12 +91,25 @@ async def test_no_route_for_ordinary_output():
     assert result.route_to == ""
 
 
+@pytest.mark.asyncio
+async def test_non_routing_role_ignores_route_marker():
+    """PR-V6b loop guard: a role WITHOUT can_route must NOT re-dispatch, even if
+    its (verbose) output contains a stray [ROUTE:…] marker."""
+    completion = "<reasoning>x</reasoning>\nSure! [ROUTE:analyst:do it]"
+    core = _core(completion, role_label="coding_agent")
+    result = await core.process_task(
+        {"content": "x", "task_id": "t1"},
+        role=_role(reasoning_trace=True, can_route=False),
+    )
+    assert result.route_to == ""
+
+
 # --- agent re-dispatch wiring (source guard) ------------------------------
 
 def test_agent_route_redispatch_block_present():
     """The agent loop must re-dispatch on route_to (same task_id, suppress
     its own completion) — guard the wiring against a silent refactor."""
     src = (Path(__file__).resolve().parent.parent / "acc" / "agent.py").read_text(encoding="utf-8")
-    assert 'if result.route_to and not data.get("routed_by"):' in src
+    assert 'if result.route_to and data.get("task_id") and not data.get("routed_by"):' in src
     assert 'routed["target_role"] = result.route_to' in src
     assert 'routed["routed_by"] = self.agent_id' in src

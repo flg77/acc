@@ -68,6 +68,14 @@ class RoleDefinitionConfig(BaseModel):
     # cadence is the ``reflection_interval_s`` Cat-B setpoint.
     memory_reflection: bool = False
 
+    # PR-V6b — routing authority.  When True, this role's ``[ROUTE:role:reason]``
+    # markers are honoured: the agent re-dispatches the task to the named role
+    # (the orchestrator pattern).  Default False so ordinary roles can NEVER
+    # trigger a re-dispatch — a verbose model emitting a stray ROUTE marker
+    # would otherwise cause a runaway routing loop (observed live).  Only the
+    # orchestrator role sets this True.
+    can_route: bool = False
+
     # PR-V3b — externalize reasoning.  When True, the CognitiveCore appends a
     # reasoning-externalization block to the system prompt asking the model to
     # think out loud inside a ``<reasoning>…</reasoning>`` block (prior
