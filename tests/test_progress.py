@@ -59,6 +59,7 @@ class TestProgressContextSerialisation:
             "confidence", "confidence_trend", "llm_calls_so_far",
             "tokens_in_so_far", "tokens_out_so_far", "token_budget_remaining",
             "over_budget", "over_token_budget",
+            "reasoning",  # PR-V5 (2b) — per-agent reasoning on the fan-in
         }
         assert set(d.keys()) == expected
 

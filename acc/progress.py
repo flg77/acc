@@ -96,6 +96,12 @@ class ProgressContext:
     token_budget_remaining: int
     over_budget: bool
     over_token_budget: bool
+    # PR-V5 (2b) — optional externalized reasoning for THIS step, carried on
+    # the per-agent TASK_PROGRESS fan-in so the operator sees every
+    # participating agent's deliberation (not just the final reply's).  Empty
+    # for steps/roles that don't externalize reasoning.  Defaulted so every
+    # existing constructor call (initial/advance/from_dict) stays valid.
+    reasoning: str = ""
 
     # ------------------------------------------------------------------
     # Computed helpers
@@ -138,6 +144,7 @@ class ProgressContext:
             "token_budget_remaining": self.token_budget_remaining,
             "over_budget": self.over_budget,
             "over_token_budget": self.over_token_budget,
+            "reasoning": self.reasoning,
         }
 
     @classmethod
@@ -158,6 +165,7 @@ class ProgressContext:
             token_budget_remaining=int(d.get("token_budget_remaining", 0)),
             over_budget=bool(d.get("over_budget", False)),
             over_token_budget=bool(d.get("over_token_budget", False)),
+            reasoning=str(d.get("reasoning", "")),
         )
 
     # ------------------------------------------------------------------

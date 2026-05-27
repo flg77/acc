@@ -856,6 +856,45 @@ async def test_reasoning_expand_then_hide():
 
 
 @pytest.mark.asyncio
+async def test_progress_reasoning_surfaces_every_agent():
+    """PR-V5 (2b) — reasoning on each agent's TASK_PROGRESS fan-in becomes a
+    per-agent reasoning entry, so a multi-agent task shows the whole collective."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        for aid, plan in (("analyst-1", "Plan: normalise"), ("coding_agent-2", "Plan: write code")):
+            screen._append_progress_entry({
+                "task_id": "t1", "agent_id": aid,
+                "progress": {"current_step": 4, "total_steps_estimated": 6,
+                             "step_label": "Post", "reasoning": f"Options: A vs B\n{plan}"},
+            })
+        await pilot.pause()
+        r = [e for e in screen.history if e.get("role") == "reasoning"]
+        assert {e["agent_id"] for e in r} == {"analyst-1", "coding_agent-2"}
+
+
+@pytest.mark.asyncio
+async def test_progress_reasoning_deduped_against_final_reply():
+    """PR-V5 (2b) — the primary agent's reasoning arrives on both its
+    TASK_PROGRESS fan-in and the final reply; it must render only once."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._append_progress_entry({
+            "task_id": "t1", "agent_id": "analyst-1",
+            "progress": {"current_step": 4, "reasoning": "Plan: A"},
+        })
+        # Final-reply path for the SAME agent (what _dispatch_and_await does).
+        screen._append_reasoning("t1", "analyst-1", "Plan: A")
+        await pilot.pause()
+        r = [e for e in screen.history
+             if e.get("role") == "reasoning" and e["agent_id"] == "analyst-1"]
+        assert len(r) == 1
+
+
+@pytest.mark.asyncio
 async def test_trace_entry_appends_invocation_waterfall_row():
     """A `trace` history entry adds a row to `#invocation-waterfall`
     and stashes the full record on `_waterfall_records`."""

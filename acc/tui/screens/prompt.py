@@ -309,6 +309,10 @@ class PromptScreen(Screen):
         # whole stream (for operators who feel overwhelmed).  Shown by default.
         self._reasoning_collapsed: bool = True
         self._reasoning_hidden: bool = False
+        # PR-V5 (2b) — (task_id, agent_id) pairs whose reasoning we've already
+        # shown, so the primary agent isn't rendered twice (its reasoning
+        # arrives BOTH on its TASK_PROGRESS fan-in AND the final TASK_COMPLETE).
+        self._reasoning_seen: set[tuple[str, str]] = set()
 
     # ------------------------------------------------------------------
     # Compose / mount / lifecycle
@@ -598,6 +602,7 @@ class PromptScreen(Screen):
 
     def action_clear_transcript(self) -> None:
         self.history = []
+        self._reasoning_seen.clear()
         self._render_transcript()
         self.query_one("#prompt-status", Static).update("[dim]Cleared.[/dim]")
 
@@ -610,6 +615,26 @@ class PromptScreen(Screen):
         """PR-V4 — Ctrl+R hide/show the whole reasoning stream."""
         self._reasoning_hidden = not self._reasoning_hidden
         self._render_transcript()
+
+    def _append_reasoning(self, task_id: str, agent_id: str, text: str) -> None:
+        """Append a collapsible reasoning entry for one agent, deduped.
+
+        PR-V5 (2b) — both the per-agent TASK_PROGRESS fan-in and the final
+        TASK_COMPLETE reply carry the primary agent's reasoning; show it once.
+        Other agents on a multi-agent task only arrive via the fan-in, so each
+        still gets its own line.
+        """
+        key = (task_id or "", agent_id or "")
+        if key in self._reasoning_seen:
+            return
+        self._reasoning_seen.add(key)
+        self._append_history({
+            "role": "reasoning",
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "text": text,
+            "ts": time.time(),
+        })
 
     @staticmethod
     def _reasoning_summary(text: str) -> str:
@@ -1007,13 +1032,9 @@ class PromptScreen(Screen):
         # prior learnings, options considered, evaluation, plan, review.
         reasoning = getattr(reply, "reasoning", "") or ""
         if reasoning.strip():
-            self._append_history({
-                "role": "reasoning",
-                "task_id": task_id,
-                "agent_id": reply.agent_id,
-                "text": reasoning,
-                "ts": time.time(),
-            })
+            # PR-V5 (2b) — deduped: if this agent's reasoning already arrived on
+            # its TASK_PROGRESS fan-in, don't render it again.
+            self._append_reasoning(task_id, reply.agent_id, reasoning)
 
         # Append one trace line per invocation BEFORE the agent's reply
         # so the transcript reads chronologically: operator → traces →
@@ -1346,10 +1367,12 @@ class PromptScreen(Screen):
         tokens_out = int(
             progress.get("tokens_out_so_far", payload.get("tokens_out_so_far", 0)) or 0
         )
+        task_id = payload.get("task_id", "")
+        agent_id = payload.get("agent_id", "")
         self._append_history({
             "role": "progress",
-            "task_id": payload.get("task_id", ""),
-            "agent_id": payload.get("agent_id", ""),
+            "task_id": task_id,
+            "agent_id": agent_id,
             "current_step": current_step,
             "total_steps": total_steps,
             "step_label": step_label,
@@ -1358,6 +1381,15 @@ class PromptScreen(Screen):
             "tokens": tokens_in + tokens_out,
             "ts": time.time(),
         })
+        # PR-V5 (2b) — per-agent reasoning from the fan-in.  Every participating
+        # agent (cluster member / PLAN step / critic) emits its own
+        # TASK_PROGRESS, so this surfaces the WHOLE collective's deliberation,
+        # not just the one reply receive() resolves on.  Deduped by
+        # (task_id, agent_id) so the primary agent — whose reasoning also
+        # arrives on the final TASK_COMPLETE — isn't shown twice.
+        reasoning = str(progress.get("reasoning", payload.get("reasoning", "")) or "")
+        if reasoning.strip():
+            self._append_reasoning(task_id, agent_id, reasoning)
 
     def _render_transcript(self) -> None:
         """Re-render the transcript Static from ``self.history``.

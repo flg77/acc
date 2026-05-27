@@ -424,7 +424,8 @@ class CognitiveCore:
                   confidence: float = 0.5,
                   llm_calls: int = 0,
                   tokens_in: int = 0,
-                  tokens_out: int = 0) -> None:
+                  tokens_out: int = 0,
+                  reasoning: str = "") -> None:
             """Emit one progress step.  No-op when callback is None.
 
             Computes ``confidence_trend`` by comparing *confidence* to
@@ -469,6 +470,7 @@ class CognitiveCore:
                     token_budget_remaining=0,
                     over_budget=False,
                     over_token_budget=False,
+                    reasoning=reasoning,
                 )
                 progress_callback(ctx)
             except Exception:
@@ -692,6 +694,11 @@ class CognitiveCore:
             llm_calls=1,
             tokens_in=int(response.get("usage", {}).get("prompt_tokens", 0) or 0),
             tokens_out=int(response.get("usage", {}).get("completion_tokens", 0) or 0),
+            # PR-V5 (2b) — carry this agent's externalized reasoning on its
+            # TASK_PROGRESS so the Prompt screen can surface EVERY participating
+            # agent's deliberation (cluster / PLAN / critic), not just the one
+            # reply receive() resolves on.  Empty unless the role opted in.
+            reasoning=reasoning_text,
         )
 
         # 5 — PERSIST episode (async embed).  Confidence carries over
