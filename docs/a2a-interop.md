@@ -8,12 +8,12 @@ RHOAI agent mesh. Phased to land safely without rushing the prerequisites.
 
 | Phase | What it lands | Status |
 |---|---|---|
-| **1 — Agent Card generator** *(this)* | `acc.a2a.build_agent_card()`: pure Python function turning a `RoleDefinitionConfig` + collective/agent context into a valid A2A Agent Card v1 dict. No I/O. | **Landed** |
-| 1b — `/.well-known/agent-card.json` HTTP endpoint | Serve the card dict over HTTPS from the agent process; operator creates per-role K8s Service. | Planned |
-| 2 — JSON-RPC inbound | JSON-RPC 2.0 endpoint translating to NATS `TASK_ASSIGN` (target_role), waits for `TASK_COMPLETE`, returns the result. Governance (Cat-A/B + oversight) enforced. | Planned |
-| 3 — Outbound A2A client | Map ACC-9 `[DELEGATE:cid:reason]` to an A2A call on a peer discovered via AgentCard CRD. | Planned |
-| 4 — Hub-as-gateway | NATS-bridge ⇄ A2A translation at the rhoai hub, so edge/standalone reach the mesh without speaking A2A. See [Edge ⇄ Hub ⇄ A2A topology](../../Notes/...AgenticCellCorpus/ACC%20RHOAI/Edge-Hub-A2A%20topology.md) in the vault. | Planned |
-| 5 — Identity convergence | SPIRE x5c card signing + Keycloak token exchange; populate the card's `authentication.schemes`. | Planned |
+| **1 — Agent Card generator** | `acc.a2a.build_agent_card()`: pure Python function turning a `RoleDefinitionConfig` + collective/agent context into a valid A2A Agent Card v1 dict. No I/O. | **Landed** |
+| **1b — `/.well-known/agent-card.json` HTTP endpoint** | `acc.a2a.server.build_app` serves the card. Opt-in via `ACC_A2A_PORT`. Operator-side per-role K8s Service is a small follow-up (the in-pod endpoint is fully functional). | **Landed** |
+| **2 — JSON-RPC inbound** | `POST /` accepts `message/send`; the handler calls `CognitiveCore.process_task` so Cat-A/B governance + oversight enforce identically. Blocked → JSON-RPC `GOVERNANCE_BLOCKED` (`-32001`), not a silent bypass. | **Landed** |
+| **3 — Outbound A2A client** | `acc.a2a.client.call_peer` + the `select_transport` resolver. `try_a2a_delegation` composes them as the hub-gateway helper. | **Landed** |
+| **4 — Hub-as-gateway** | `acc.agent._delegate_task` tries A2A first when `deploy_mode=rhoai` + a peer URL is configured (`AgentConfig.peer_a2a_urls`); falls back to the NATS bridge on transport failure; surfaces peer governance denials as blocked (no NATS fallback). | **Landed** |
+| **5 — SPIRE JWT-SVID signing** | `acc.a2a.signing.{sign_card,verify_signed_card}` — wrap the card with a JWT-SVID, verify on the peer side against the SPIRE issuer key + trust domain (+ optional audience). Server opt-in via `ACC_A2A_JWT_SVID_PATH` + `ACC_A2A_TRUST_DOMAIN`. | **Landed** |
 
 ## What Phase 1 gives you
 
@@ -57,14 +57,24 @@ an `acc` vendor extension carrying ACC-specific metadata:
   `governance.maxSkillRiskLevel` / `maxMcpRiskLevel`, `defaultOperatingMode`,
   and the OpenSpec change id.
 
-## Honest caveats (Phase 1 only)
+## Honest caveats (after all phases)
 
-- The generator is *pure data mapping* — no HTTP server exists yet, so the
-  card cannot be fetched from a running collective. Phase 1b adds that.
-- `authentication.schemes` is intentionally empty — *do not* enable Kagenti
-  auto-discovery in production until Phase 5 lands the SPIRE x5c signing.
-- A2A is still **alpha**; the pinned `A2A_CARD_SCHEMA_VERSION` is the single
-  point of truth — bump it (and re-validate against the spec) when A2A moves.
+- A2A is still **alpha**; `A2A_CARD_SCHEMA_VERSION` is the single point of
+  truth — bump it (and re-validate against the spec) when A2A moves.
+- The agent's HTTP endpoint is **plain HTTP** at the L4 layer. Production
+  protection comes from (a) the Istio Ambient mesh's mTLS where present,
+  and (b) Phase-5 JWT-SVID signing of the card payload itself. TLS at the
+  HTTP layer (SPIRE-issued certs on the agent's listener) is a future add.
+- The operator-side **per-role K8s Service** that exposes the in-pod port to
+  cluster mesh peers is a small follow-up (the in-pod server is fully
+  functional; only externally-reachable discovery needs the Service).
+- Real **AgentCard CRD discovery** (peer URLs from Kagenti's CRD index
+  rather than `peer_a2a_urls` config) is a separate change building on the
+  Phase-1 operator label (see `docs/kagenti-discovery.md`).
+- Peer-side **card verification** (using `verify_signed_card` to check a
+  fetched card before talking to that peer) is a small client-side wiring
+  step the outbound `call_peer` doesn't yet perform — currently it trusts
+  the peer URL it was given. Recommended next addition.
 
 ## Cross-links
 

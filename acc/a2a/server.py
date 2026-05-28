@@ -74,14 +74,46 @@ def build_app(
         base_url=base_url,
     )
 
+    # Phase 5 — SPIRE JWT-SVID card signing.  When ACC_A2A_JWT_SVID_PATH +
+    # ACC_A2A_TRUST_DOMAIN are set, the card is returned as a signed envelope
+    # {"card": ..., "svid": <JWT>} and the spire-jwt-svid scheme is advertised
+    # in authentication.schemes so a peer knows how to verify.  The JWT-SVID
+    # is read FRESH on every GET — spiffe-helper rotates it; we never cache.
+    jwt_svid_path = os.environ.get("ACC_A2A_JWT_SVID_PATH", "").strip()
+    trust_domain = os.environ.get("ACC_A2A_TRUST_DOMAIN", "").strip()
+    if jwt_svid_path and trust_domain:
+        from .signing import spire_x5c_scheme  # noqa: PLC0415
+        card.setdefault("authentication", {}).setdefault("schemes", []).append(
+            spire_x5c_scheme(trust_domain),
+        )
+        app_signing = {"jwt_svid_path": jwt_svid_path, "trust_domain": trust_domain}
+    else:
+        app_signing = None
+
     app = web.Application()
     app["card"] = card
     app["core"] = core
     app["role"] = role
     app["role_label"] = role_label
+    app["signing"] = app_signing
 
     async def handle_card(request):
-        return web.json_response(request.app["card"])
+        # Sign on-demand so the SVID is always the latest spiffe-helper write
+        # (SVIDs rotate; serving a stale one would fail a peer's verify).
+        signing_cfg = request.app.get("signing")
+        if signing_cfg is None:
+            return web.json_response(request.app["card"])
+        from .signing import read_jwt_svid_file, sign_card  # noqa: PLC0415
+        try:
+            svid = read_jwt_svid_file(signing_cfg["jwt_svid_path"])
+        except OSError as exc:
+            logger.warning(
+                "a2a: signing enabled but JWT-SVID unreadable (%s); serving unsigned",
+                exc,
+            )
+            return web.json_response(request.app["card"])
+        signed = sign_card(request.app["card"], svid)
+        return web.json_response(signed)
 
     async def handle_jsonrpc(request):
         try:
