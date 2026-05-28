@@ -1007,6 +1007,72 @@ class Agent:
     # Bridge delegation (ACC-9)
     # ------------------------------------------------------------------
 
+    async def _maybe_delegate_via_a2a(
+        self,
+        task_payload: dict,
+        task_id: str,
+        target_cid: str,
+    ) -> Optional[dict]:
+        """Hub-as-gateway delegation (OpenSpec 20260527-a2a-agent-interop,
+        Phase 4).  Returns a bridge-result-shaped dict to short-circuit the
+        NATS bridge, or ``None`` to let the caller fall through to NATS
+        (mode mismatch, no peer URL, or A2A transport failure).
+
+        Skips entirely when the ``a2a`` extra (aiohttp) isn't installed.
+        """
+        try:
+            from acc.a2a.client import try_a2a_delegation  # noqa: PLC0415
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("a2a: client import failed (extra not installed?): %s", exc)
+            return None
+        peer_urls = dict(getattr(self.config.agent, "peer_a2a_urls", {}) or {})
+        if not peer_urls:
+            return None
+        content = task_payload.get("content", "") if isinstance(task_payload, dict) else ""
+        return await try_a2a_delegation(
+            target_cid=target_cid,
+            content=content,
+            task_id=task_id,
+            deploy_mode=getattr(self.config, "deploy_mode", "standalone"),
+            peer_urls=peer_urls,
+        )
+
+    async def _forward_bridge_result(
+        self,
+        task_id: str,
+        target_cid: str,
+        result_data: dict,
+    ) -> None:
+        """Forward a peer's delegation result as a local TASK_COMPLETE.
+
+        Shared between the NATS-bridge path (result_data from
+        :meth:`_subscribe_bridge_results`) and the A2A path (result_data from
+        :meth:`_maybe_delegate_via_a2a`) so both transports converge on the
+        same observable signal shape — operators see the same bus message
+        either way.
+        """
+        collective_id = self.config.agent.collective_id
+        complete_payload = json.dumps({
+            "signal_type": SIG_TASK_COMPLETE,
+            "agent_id": self.agent_id,
+            "collective_id": collective_id,
+            "ts": time.time(),
+            "task_id": task_id,
+            "delegated_to": target_cid,
+            "episode_id": result_data.get("episode_id", ""),
+            "blocked": result_data.get("blocked", False),
+            "block_reason": result_data.get("block_reason", ""),
+            "latency_ms": result_data.get("latency_ms", 0.0),
+            "output": (result_data.get("output", "") or "")[:_task_output_max_chars()],
+        }).encode()
+        await self.backends.signaling.publish(
+            subject_task_complete(collective_id), complete_payload,
+        )
+        logger.info(
+            "bridge: result forwarded (task_id=%s from=%s blocked=%s)",
+            task_id, target_cid, result_data.get("blocked", False),
+        )
+
     async def _delegate_task(
         self,
         task_payload: dict,
@@ -1030,6 +1096,17 @@ class Agent:
             target_cid:   Collective ID of the peer collective to delegate to.
         """
         collective_id = self.config.agent.collective_id
+
+        # Phase 4 (OpenSpec 20260527-a2a-agent-interop) — hub-as-gateway:
+        # try A2A first when deploy_mode=rhoai + a peer URL is configured,
+        # else fall through to the NATS bridge.  The helper returns a
+        # bridge-result-shaped dict on success or peer-governance-denial,
+        # and ``None`` on transport failure (fall back to NATS).
+        a2a_result = await self._maybe_delegate_via_a2a(task_payload, task_id, target_cid)
+        if a2a_result is not None:
+            await self._forward_bridge_result(task_id, target_cid, a2a_result)
+            return
+
         loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
         self._pending_delegations[task_id] = future
@@ -1103,28 +1180,8 @@ class Agent:
             self._pending_delegations.pop(task_id, None)
 
         # Forward the peer's result as a TASK_COMPLETE on our local bus
-        complete_payload = json.dumps({
-            "signal_type": SIG_TASK_COMPLETE,
-            "agent_id": self.agent_id,
-            "collective_id": collective_id,
-            "ts": time.time(),
-            "task_id": task_id,
-            "delegated_to": target_cid,
-            "episode_id": result_data.get("episode_id", ""),
-            "blocked": result_data.get("blocked", False),
-            "block_reason": result_data.get("block_reason", ""),
-            "latency_ms": result_data.get("latency_ms", 0.0),
-            "output": (result_data.get("output", "") or "")[:_task_output_max_chars()],
-        }).encode()
-        await self.backends.signaling.publish(
-            subject_task_complete(collective_id), complete_payload
-        )
-        logger.info(
-            "bridge: result forwarded (task_id=%s from=%s blocked=%s)",
-            task_id,
-            target_cid,
-            result_data.get("blocked", False),
-        )
+        # (shared helper — same shape as the A2A path emits).
+        await self._forward_bridge_result(task_id, target_cid, result_data)
 
     async def _subscribe_bridge_results(self) -> None:
         """Subscribe to bridge result subjects for all peer collectives.

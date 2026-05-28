@@ -207,3 +207,105 @@ async def test_call_peer_raises_on_connection_refused():
     with pytest.raises(A2AClientError) as exc_info:
         await call_peer("http://127.0.0.1:1/", content="x", timeout=1.0)
     assert not exc_info.value.is_governance_blocked
+
+
+# -----------------------------------------------------------------------
+# Phase 4 — try_a2a_delegation (hub-as-gateway composition)
+# -----------------------------------------------------------------------
+
+
+def test_try_a2a_delegation_is_importable_without_aiohttp():
+    """The helper itself must be importable without aiohttp — only the actual
+    HTTP call (call_peer, lazy aiohttp import) needs the extra.  This keeps
+    the agent's _maybe_delegate_via_a2a importable in standalone deployments."""
+    from acc.a2a.client import try_a2a_delegation  # noqa: F401
+
+
+async def test_try_a2a_delegation_returns_none_when_transport_is_nats():
+    """Edge / standalone / no-peer-URL → resolver says NATS → helper returns
+    None so the caller falls through to the NATS bridge."""
+    from acc.a2a.client import try_a2a_delegation
+    # No peer URL configured for the target.
+    result = await try_a2a_delegation(
+        target_cid="sol-02", content="x", task_id="t-1",
+        deploy_mode="rhoai", peer_urls={},
+    )
+    assert result is None
+
+    # Edge mode forces NATS regardless of peer URL.
+    result = await try_a2a_delegation(
+        target_cid="sol-02", content="x", task_id="t-1",
+        deploy_mode="edge", peer_urls={"sol-02": "http://peer/"},
+    )
+    assert result is None
+
+
+@aiohttp_required
+async def test_try_a2a_delegation_success_returns_bridge_result_shape():
+    """A2A succeeds → return a dict shaped like a NATS bridge result so the
+    caller can forward it through the same _forward_bridge_result path."""
+    from acc.a2a.client import try_a2a_delegation
+
+    async def handler(request):
+        import aiohttp.web as web
+        body = await request.json()
+        return web.json_response(success(body["id"], {
+            "taskId": body["params"]["taskId"], "output": "delegated answer",
+        }))
+
+    app = await _stub_peer(handler)
+    async with TestClient(TestServer(app)) as client:
+        url = str(client.make_url("/"))
+        result = await try_a2a_delegation(
+            target_cid="sol-02", content="please help", task_id="t-7",
+            deploy_mode="rhoai", peer_urls={"sol-02": url},
+        )
+    assert result is not None
+    assert result["output"] == "delegated answer"
+    assert result["blocked"] is False
+    assert result["block_reason"] == ""
+    assert result["episode_id"] == ""
+    assert result["latency_ms"] >= 0.0
+
+
+@aiohttp_required
+async def test_try_a2a_delegation_falls_back_to_nats_on_transport_failure():
+    """Unreachable / 5xx peer → return None so the caller falls back to NATS.
+    This is the "reachability fallback" in the bridge-deprecation analysis."""
+    from acc.a2a.client import try_a2a_delegation
+    result = await try_a2a_delegation(
+        target_cid="sol-02", content="x", task_id="t-1",
+        deploy_mode="rhoai",
+        peer_urls={"sol-02": "http://127.0.0.1:1/"},  # nothing listening
+        timeout=1.0,
+    )
+    assert result is None
+
+
+@aiohttp_required
+async def test_try_a2a_delegation_governance_denial_does_not_fall_back():
+    """Peer governance denial → return a blocked result (NOT None).  The
+    caller must NOT retry via NATS — a denial is a denial."""
+    from acc.a2a.client import try_a2a_delegation
+
+    async def handler(request):
+        import aiohttp.web as web
+        body = await request.json()
+        return web.json_response(
+            error(body["id"], GOVERNANCE_BLOCKED, "Blocked by ACC governance",
+                  data={"blockReason": "Cat-A: write_workspace denied"}),
+            status=403,
+        )
+
+    app = await _stub_peer(handler)
+    async with TestClient(TestServer(app)) as client:
+        url = str(client.make_url("/"))
+        result = await try_a2a_delegation(
+            target_cid="sol-02", content="write a file", task_id="t-1",
+            deploy_mode="rhoai", peer_urls={"sol-02": url},
+        )
+    assert result is not None
+    assert result["blocked"] is True
+    assert "a2a_peer_denied" in result["block_reason"]
+    assert "write_workspace" in result["block_reason"]
+    assert result["output"] == ""

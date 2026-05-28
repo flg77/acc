@@ -311,12 +311,43 @@ class AgentConfig(BaseModel):
         ),
     )
 
+    # A2A interop (OpenSpec 20260527-a2a-agent-interop, Phase 4): per-peer
+    # A2A endpoint URLs.  When set + deploy_mode=rhoai, [DELEGATE:cid:reason]
+    # routes via the A2A adapter (HTTPS/JSON-RPC) instead of the NATS bridge;
+    # see acc.a2a.client.select_transport.  edge/standalone keep the NATS
+    # bridge regardless — see vault note "A2A scope — ACC-9 bridge
+    # deprecation path".  Empty (default) preserves legacy behaviour.
+    peer_a2a_urls: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Mapping of peer collective_id → A2A JSON-RPC endpoint URL. "
+            "Set via ACC_PEER_A2A_URLS as 'cid1=url1,cid2=url2'."
+        ),
+    )
+
     @field_validator("peer_collectives", mode="before")
     @classmethod
     def _parse_comma_separated(cls, v: object) -> list[str]:
         """Accept a comma-separated string (from env var) or a list."""
         if isinstance(v, str):
             return [cid.strip() for cid in v.split(",") if cid.strip()]
+        return v  # type: ignore[return-value]
+
+    @field_validator("peer_a2a_urls", mode="before")
+    @classmethod
+    def _parse_peer_a2a_urls(cls, v: object) -> dict[str, str]:
+        """Accept 'cid1=url1,cid2=url2' from env, or a dict."""
+        if isinstance(v, str):
+            out: dict[str, str] = {}
+            for pair in v.split(","):
+                pair = pair.strip()
+                if not pair or "=" not in pair:
+                    continue
+                cid, url = pair.split("=", 1)
+                cid, url = cid.strip(), url.strip()
+                if cid and url:
+                    out[cid] = url
+            return out
         return v  # type: ignore[return-value]
 
 

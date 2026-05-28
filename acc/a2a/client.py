@@ -179,3 +179,96 @@ def select_transport(
     if peer_urls and peer_urls.get(target_cid):
         return "a2a"
     return "nats"
+
+
+# --------------------------------------------------------------------------
+# Hub-as-gateway helper (Phase 4)
+# --------------------------------------------------------------------------
+
+
+async def try_a2a_delegation(
+    *,
+    target_cid: str,
+    content: str,
+    task_id: str,
+    deploy_mode: str,
+    peer_urls: dict[str, str] | None,
+    timeout: float = 30.0,
+    prefer_a2a: bool = True,
+) -> dict[str, Any] | None:
+    """Try to delegate ``content`` to ``target_cid`` via A2A; return a
+    bridge-result-shaped dict or ``None`` if the caller should fall back to
+    the NATS bridge.
+
+    Composition of :func:`select_transport` + :func:`call_peer` that
+    encapsulates the **hub-as-gateway** behaviour:
+
+    - Transport not A2A (mode-aware resolver said NATS, or no peer URL):
+      return ``None`` immediately — caller uses the NATS bridge.
+    - A2A call succeeds: return ``{output, blocked: False, block_reason: "",
+      episode_id: "", latency_ms}`` — caller skips the NATS path and forwards
+      this dict as the bridge result.
+    - Peer denied via governance (``A2AClientError.is_governance_blocked``):
+      return ``{output: "", blocked: True, block_reason: <peer reason>}``.
+      **Do not** fall back to NATS — a denial is a denial.
+    - Any other A2A transport failure (HTTP error, timeout, connection
+      refused): return ``None``.  Caller falls back to NATS bridge
+      (reachability fallback — the bridge is also the resilience path).
+
+    Keeping this as a pure-ish helper (no agent state, no signaling) makes
+    the policy easy to unit-test; the agent's ``_delegate_task`` becomes a
+    single ``if`` against the return value.
+    """
+    import time  # noqa: PLC0415
+
+    transport = select_transport(
+        deploy_mode=deploy_mode, target_cid=target_cid,
+        peer_urls=peer_urls, prefer_a2a=prefer_a2a,
+    )
+    if transport != "a2a":
+        return None
+
+    peer_url = (peer_urls or {}).get(target_cid, "")
+    assert peer_url, "select_transport returned 'a2a' but peer URL is empty"
+
+    t0 = time.monotonic()
+    try:
+        result = await call_peer(peer_url, content, task_id=task_id, timeout=timeout)
+    except A2AClientError as exc:
+        elapsed_ms = (time.monotonic() - t0) * 1000.0
+        if exc.is_governance_blocked:
+            block_reason = "peer governance denial"
+            if isinstance(exc.data, dict):
+                block_reason = exc.data.get("blockReason") or block_reason
+            logger.info(
+                "a2a: delegation denied by peer governance "
+                "(target=%s task_id=%s reason=%r)",
+                target_cid, task_id, block_reason,
+            )
+            return {
+                "output": "",
+                "blocked": True,
+                "block_reason": f"a2a_peer_denied: {block_reason}",
+                "episode_id": "",
+                "latency_ms": elapsed_ms,
+            }
+        # Transport failure → tell the caller to fall back to NATS.
+        logger.warning(
+            "a2a: delegation transport failure (target=%s task_id=%s err=%s); "
+            "caller will fall back to NATS bridge",
+            target_cid, task_id, exc,
+        )
+        return None
+
+    elapsed_ms = (time.monotonic() - t0) * 1000.0
+    logger.info(
+        "a2a: delegation succeeded (target=%s task_id=%s latency_ms=%.1f)",
+        target_cid, task_id, elapsed_ms,
+    )
+    return {
+        "output": result.get("output", "") or "",
+        "blocked": False,
+        "block_reason": "",
+        "episode_id": "",
+        "latency_ms": elapsed_ms,
+    }
