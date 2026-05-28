@@ -2036,6 +2036,56 @@ class Agent:
                 break
             await self._run_reflection_once()
 
+    async def _maybe_start_a2a_server(self):
+        """Start the A2A inbound HTTP/JSON-RPC server (OpenSpec
+        20260527-a2a-agent-interop, Phases 1b/2) when ``ACC_A2A_PORT`` is set.
+
+        Opt-in, default off — no existing deployment is affected.  Skips when
+        the agent has no active role / no CognitiveCore (dormant workers) or
+        when the optional ``acc[a2a]`` extra (aiohttp) isn't installed.
+
+        Returns the aiohttp AppRunner (caller awaits ``.cleanup()`` at
+        shutdown) or ``None`` when A2A is disabled / unavailable.
+        """
+        try:
+            from acc.a2a.server import env_base_url, env_host, env_port  # noqa: PLC0415
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("a2a: import failed (extra not installed?): %s", exc)
+            return None
+        port = env_port()
+        if port is None:
+            return None
+        role_label = str(self.config.agent.role or "").strip()
+        if not role_label or role_label == "dormant":
+            logger.info(
+                "a2a: ACC_A2A_PORT set but agent has no active role (%r); skipping",
+                role_label,
+            )
+            return None
+        if self._cognitive_core is None or self._active_role is None:
+            logger.info("a2a: ACC_A2A_PORT set but no CognitiveCore / active role; skipping")
+            return None
+        try:
+            from acc.a2a.server import build_app, start_server  # noqa: PLC0415
+        except ImportError as exc:
+            logger.warning(
+                "a2a: ACC_A2A_PORT set but the 'a2a' extra isn't installed (%s); skipping",
+                exc,
+            )
+            return None
+        host = env_host()
+        base_url = env_base_url(host, port)
+        app = build_app(
+            core=self._cognitive_core,
+            role=self._active_role,
+            role_label=role_label,
+            collective_id=self.config.agent.collective_id,
+            agent_id=self.agent_id,
+            base_url=base_url,
+        )
+        runner = await start_server(app, host, port)
+        return runner
+
     async def run(self) -> None:
         """Start the full agent lifecycle with all concurrent loops."""
         logging.basicConfig(
@@ -2043,6 +2093,7 @@ class Agent:
             format="%(asctime)s %(levelname)s %(name)s %(message)s",
         )
         await self.backends.signaling.connect()
+        a2a_runner = await self._maybe_start_a2a_server()
         try:
             await self._register()
             # Run heartbeat, task, role-update, bridge-result, centroid,
@@ -2079,6 +2130,11 @@ class Agent:
         finally:
             self.state = STATE_DRAINING
             logger.info("DRAINING: agent_id=%s", self.agent_id)
+            if a2a_runner is not None:
+                try:
+                    await a2a_runner.cleanup()
+                except Exception:  # noqa: BLE001
+                    logger.exception("a2a: runner cleanup failed")
             await self.backends.signaling.close()
 
     def request_stop(self) -> None:

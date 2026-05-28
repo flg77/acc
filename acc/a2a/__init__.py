@@ -24,4 +24,8 @@ the openspec note linked at the top.
 
 from .card import build_agent_card
 
+# Phases 1b/2: the inbound HTTP + JSON-RPC server.  Lazy-imported via the
+# ``a2a`` extra so installing acc without the extra never pulls aiohttp.
+# Users import these directly: ``from acc.a2a.server import build_app, start_server``.
+
 __all__ = ["build_agent_card"]
