@@ -1,9 +1,15 @@
 """A2A inbound HTTP server — Phases 1b + 2 of OpenSpec 20260527-a2a-agent-interop.
 
+OpenSpec: ``openspec/changes/20260527-a2a-agent-interop/``.
+Docs: ``docs/a2a-interop.md``.
+
 Embeds a small ``aiohttp`` server alongside the ACC agent's NATS subscriber to:
 
 - **Phase 1b** — serve the agent's :func:`acc.a2a.build_agent_card` document at
-  ``GET /.well-known/agent-card.json``.
+  ``GET /.well-known/agent-card.json``.  Phase 5 layers
+  :func:`acc.a2a.signing.sign_card` here so the response carries a SPIRE
+  JWT-SVID envelope when ``ACC_A2A_JWT_SVID_PATH`` + ``ACC_A2A_TRUST_DOMAIN``
+  are set.
 - **Phase 2** — accept **JSON-RPC 2.0** ``message/send`` calls at ``POST /``
   and translate each into a direct :meth:`CognitiveCore.process_task` invocation.
 

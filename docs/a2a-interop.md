@@ -1,8 +1,14 @@
 # A2A agent interop — phased build
 
-Implements OpenSpec `20260527-a2a-agent-interop` — the A2A (Agent-to-Agent
-protocol) boundary gateway that makes ACC agents first-class on the Kagenti /
-RHOAI agent mesh. Phased to land safely without rushing the prerequisites.
+Implements OpenSpec
+[`20260527-a2a-agent-interop`](../openspec/changes/20260527-a2a-agent-interop/proposal.md)
+([tasks](../openspec/changes/20260527-a2a-agent-interop/tasks.md))
+— the A2A (Agent-to-Agent protocol) boundary gateway that makes ACC agents
+first-class on the Kagenti / RHOAI agent mesh. Paired with
+[`20260527-agentcard-discovery`](../openspec/changes/20260527-agentcard-discovery/proposal.md)
+(the operator-side label that makes the card endpoint findable by Kagenti);
+see [`docs/kagenti-discovery.md`](kagenti-discovery.md). Phased to land safely
+without rushing the prerequisites.
 
 ## Phase status
 

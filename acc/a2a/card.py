@@ -1,14 +1,19 @@
 """A2A Agent Card generator.
 
-Phase 1 of OpenSpec ``20260527-a2a-agent-interop``: a **pure function** that
-turns a :class:`RoleDefinitionConfig` + collective/agent context into the JSON
-document Kagenti / A2A peers consume from ``/.well-known/agent-card.json``.
+OpenSpec: ``openspec/changes/20260527-a2a-agent-interop/`` (Phase 1).
+Docs: ``docs/a2a-interop.md``.  Sibling change: ``20260527-agentcard-discovery``
+(the operator-side label that makes the served card findable by Kagenti).
 
-No I/O, no HTTP, no NATS — this module is a *data mapping*.  Future phases
-(:mod:`acc.a2a` next file: ``server.py``) will serve the dict over HTTP and
-wire JSON-RPC translation.  Keeping the mapping standalone makes it trivial
-to unit-test (no env, no deps beyond ``acc.config``) and lets the card
-schema evolve in one place when A2A bumps versions.
+A **pure function** that turns a :class:`RoleDefinitionConfig` + collective/agent
+context into the JSON document Kagenti / A2A peers consume from
+``/.well-known/agent-card.json``.
+
+No I/O, no HTTP, no NATS — this module is a *data mapping*.  :mod:`acc.a2a.server`
+serves the dict over HTTP (Phase 1b) and accepts JSON-RPC ``message/send`` against
+it (Phase 2).  :mod:`acc.a2a.signing` wraps it with a SPIRE JWT-SVID when signing
+is configured (Phase 5).  Keeping the mapping standalone makes it trivial to
+unit-test (no env, no deps beyond ``acc.config``) and lets the card schema evolve
+in one place when A2A bumps versions — see :data:`A2A_CARD_SCHEMA_VERSION`.
 
 Schema reference
 ----------------

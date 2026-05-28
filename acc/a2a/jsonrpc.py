@@ -1,8 +1,25 @@
 """Minimal JSON-RPC 2.0 helpers for the A2A inbound endpoint.
 
+OpenSpec: ``openspec/changes/20260527-a2a-agent-interop/`` (Phase 2).
+Docs: ``docs/a2a-interop.md``.
+
 We don't pull a third-party JSON-RPC library: A2A's surface area is small
-enough to handle with a few helpers, and avoiding the dep keeps the ``a2a``
+enough to handle with a few helpers, and avoiding the dep keeps the ``acc[a2a]``
 extra light (just ``aiohttp`` for the HTTP layer).
+
+Two helpers + the standard error-code table:
+
+- :func:`parse_request` validates a JSON-RPC 2.0 request body and returns
+  ``(error_message, method, params, id)``.  ``error_message is not None``
+  ⇒ the body is invalid (caller emits ``error(req_id, INVALID_REQUEST, …)``).
+- :func:`success`, :func:`error` produce the well-formed JSON-RPC responses
+  the A2A server writes back to the wire.
+
+The custom code ``GOVERNANCE_BLOCKED = -32001`` (within the JSON-RPC
+implementation-defined server-error range) lets an A2A caller distinguish
+"denied by ACC governance" from a generic "internal error" — see
+:func:`acc.a2a.client.A2AClientError.is_governance_blocked`, which keys off
+this code to skip the NATS reachability fallback (a denial is a denial).
 """
 
 from __future__ import annotations

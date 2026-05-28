@@ -1,5 +1,9 @@
-"""A2A Agent Card signing + verification — Phase 5 of OpenSpec
-``20260527-a2a-agent-interop``.
+"""A2A Agent Card signing + verification.
+
+OpenSpec: ``openspec/changes/20260527-a2a-agent-interop/`` (Phase 5).
+Docs: ``docs/a2a-interop.md``.  Sibling change:
+``20260527-agentcard-discovery`` (the operator-side discovery label whose
+``targetRef`` identity binding is attested by the signing here).
 
 ACC reuses the **JWT-SVID** issued by SPIRE (proposal 011 / PR-4 already wires
 SPIRE workload-API attestation into the agent pod via the ``spiffe-helper``

@@ -1,7 +1,11 @@
 # Kagenti AgentCard auto-discovery — Phase 1 (operator labeling)
 
-Implements [Phase 1 of OpenSpec `20260527-agentcard-discovery`](https://github.com/flg77/acc-spearhead)
-(retained in the operator's notes vault). When enabled, the operator stamps the label
+Implements Phase 1 of OpenSpec
+[`20260527-agentcard-discovery`](../openspec/changes/20260527-agentcard-discovery/proposal.md)
+([tasks](../openspec/changes/20260527-agentcard-discovery/tasks.md)).
+Paired with [`20260527-a2a-agent-interop`](../openspec/changes/20260527-a2a-agent-interop/proposal.md)
+(the A2A card endpoint + JWT-SVID signing that make discovery functional).
+See also [`docs/a2a-interop.md`](a2a-interop.md). When enabled, the operator stamps the label
 `kagenti.io/type: agent` on each agent Deployment and pod so **Kagenti's own operator
 auto-creates an AgentCard CR** for the workload — ACC deliberately does **not** define
 its own AgentCard CRD.

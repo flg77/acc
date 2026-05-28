@@ -1,8 +1,21 @@
 """A2A outbound client + cross-collective transport resolver.
 
-Phase 3 of OpenSpec ``20260527-a2a-agent-interop``: the *outbound* side of
-A2A.  Two small async helpers, unit-tested in isolation; the hub-as-gateway
-wiring that calls them lives in Phase 4 (``transport.py`` glue).
+OpenSpec: ``openspec/changes/20260527-a2a-agent-interop/`` (Phases 3 + 4).
+Docs: ``docs/a2a-interop.md``.
+
+The *outbound* side of A2A.  Three helpers — two pure decision/utility
+functions and one async network call:
+
+- :func:`select_transport` — pure decision matrix from the bridge-deprecation
+  policy (``rhoai`` + reachable peer → ``"a2a"``; else → ``"nats"``).
+- :func:`call_peer` — async JSON-RPC ``message/send`` over HTTPS; raises
+  :class:`A2AClientError` on any failure with ``.is_governance_blocked`` so
+  the caller knows whether a NATS fallback would be valid.
+- :func:`try_a2a_delegation` (Phase 4) — composition of the above into the
+  hub-as-gateway helper :meth:`acc.agent.Agent._maybe_delegate_via_a2a` calls
+  inside ``_delegate_task``.  Returns a bridge-result-shaped dict on success
+  or governance denial, ``None`` on transport failure (caller falls back to
+  NATS bridge — the resilience path edge/standalone rely on).
 
 - :func:`call_peer` — issue a JSON-RPC 2.0 ``message/send`` to a peer's A2A
   endpoint and return the result, or raise :class:`A2AClientError` on any
