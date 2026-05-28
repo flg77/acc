@@ -153,4 +153,14 @@ const (
 	LabelAgentRole    = "acc.redhat.io/agent-role"
 	LabelCorpusName   = "acc.redhat.io/corpus-name"
 	LabelManagedByVal = "acc-operator"
+
+	// LabelKagentiType is the discovery label Kagenti's operator watches on
+	// workloads (OpenSpec 20260527-agentcard-discovery, Phase 1).  Applied to
+	// an agent Deployment's ObjectMeta + pod-template labels (NOT its
+	// selector — selector labels are immutable) when
+	// AgentCollectiveSpec.Kagenti.Enabled is true.  See docs/kagenti-discovery.md.
+	LabelKagentiType = "kagenti.io/type"
+	// LabelKagentiTypeAgent is the value Kagenti uses for the agent workload
+	// type (the auto-discovery match).
+	LabelKagentiTypeAgent = "agent"
 )

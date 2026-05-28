@@ -60,6 +60,32 @@ type AgentCollectiveSpec struct {
 	// the legacy Ed25519 trust model.
 	// +optional
 	Spiffe *SpiffeSpec `json:"spiffe,omitempty"`
+
+	// Kagenti opts the collective in to Kagenti's AgentCard auto-discovery
+	// (OpenSpec 20260527-agentcard-discovery, Phase 1).  When Enabled is
+	// true, the operator stamps the label `kagenti.io/type: agent` on each
+	// agent Deployment + pod so Kagenti's kagenti-operator auto-creates an
+	// AgentCard CR.  Omitted / disabled is the default — existing
+	// collectives are unaffected.
+	// +optional
+	Kagenti *KagentiSpec `json:"kagenti,omitempty"`
+}
+
+// KagentiSpec opts a collective in to Kagenti's AgentCard auto-discovery
+// (OpenSpec 20260527-agentcard-discovery, Phase 1).
+//
+// **Phase 1 is label-only.**  Discovery becomes functional once the A2A
+// adapter serves /.well-known/agent-card.json (OpenSpec
+// 20260527-a2a-agent-interop) and identity convergence (SPIRE x5c +
+// Keycloak) binds the AgentCard's targetRef.  Until those land, leave
+// this disabled — Kagenti will find the workload but fail to fetch a
+// valid AgentCard.  See docs/kagenti-discovery.md.
+type KagentiSpec struct {
+	// Enabled is the master switch.  When false (default) the operator
+	// stamps no Kagenti label.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // SpiffeSpec mirrors the SPIFFE-relevant subset of acc/config.py's

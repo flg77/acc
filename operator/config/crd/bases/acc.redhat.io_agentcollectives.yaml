@@ -524,6 +524,22 @@ spec:
                 maximum: 300
                 minimum: 5
                 type: integer
+              kagenti:
+                description: |-
+                  Kagenti opts the collective in to Kagenti's AgentCard auto-discovery
+                  (OpenSpec 20260527-agentcard-discovery, Phase 1).  When Enabled is
+                  true, the operator stamps the label `kagenti.io/type: agent` on each
+                  agent Deployment + pod so Kagenti's kagenti-operator auto-creates an
+                  AgentCard CR.  Omitted / disabled is the default — existing
+                  collectives are unaffected.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled is the master switch.  When false (default) the operator
+                      stamps no Kagenti label.
+                    type: boolean
+                type: object
               llm:
                 description: LLM configures the language model backend for this collective.
                 properties:

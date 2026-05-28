@@ -38,6 +38,17 @@ func AgentLabels(corpusName, collectiveID string, role accv1alpha1.AgentRole, ve
 	return labels
 }
 
+// KagentiAgentLabel returns the discovery label Kagenti's operator watches on
+// workloads (`kagenti.io/type: agent`).  Applied to an agent Deployment's
+// ObjectMeta + pod-template labels (NOT its selector — selector labels are
+// immutable) when AgentCollectiveSpec.Kagenti.Enabled is true.  See
+// OpenSpec 20260527-agentcard-discovery (Phase 1) and docs/kagenti-discovery.md.
+func KagentiAgentLabel() map[string]string {
+	return map[string]string{
+		accv1alpha1.LabelKagentiType: accv1alpha1.LabelKagentiTypeAgent,
+	}
+}
+
 // MergeLabels merges one or more label maps, with later maps winning on
 // duplicate keys. The first argument is not mutated.
 func MergeLabels(base map[string]string, overrides ...map[string]string) map[string]string {

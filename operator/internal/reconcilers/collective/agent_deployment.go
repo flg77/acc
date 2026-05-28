@@ -135,6 +135,13 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 ) (ready, desired int32, progressing bool, err error) {
 	role := roleSpec.Role
 	labels := util.AgentLabels(corpus.Name, collective.Spec.CollectiveID, role, corpus.Spec.Version)
+	// objectLabels apply to ObjectMeta + pod-template labels (NOT the
+	// selector — selector labels are immutable).  When Kagenti AgentCard
+	// auto-discovery is opted in (OpenSpec 20260527-agentcard-discovery,
+	// Phase 1) AgentObjectLabels merges in `kagenti.io/type: agent`.
+	// Default off → objectLabels == labels and existing collectives are
+	// unchanged.  See kagenti.go.
+	objectLabels := AgentObjectLabels(collective, labels)
 	deployName := fmt.Sprintf("%s-%s", collective.Name, string(role))
 
 	// Resolve Anthropic API key env var if needed.
@@ -157,13 +164,16 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deployName,
 			Namespace: ns,
-			Labels:    labels,
+			Labels:    objectLabels,
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To(roleSpec.Replicas),
+			// Selector labels are immutable — keep the canonical agent set
+			// only; objectLabels (which may include kagenti.io/type=agent)
+			// ride on the metadata + pod template instead.
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{Labels: objectLabels},
 				Spec: corev1.PodSpec{
 					// OCP restricted SCC — run as non-root UID 1001.
 					SecurityContext: &corev1.PodSecurityContext{
