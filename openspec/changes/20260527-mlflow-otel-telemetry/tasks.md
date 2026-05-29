@@ -16,17 +16,35 @@
 - [x] Tests: 12 semconv mapping cases; 3 protocol-selection cases; 1 mapped-
       emission case (otel-gated, skip-when-otel-absent).
 
-## Phase 2 — Pipeline span tree (proposed)
+## Phase 2 — Pipeline span tree (LANDED v0.3.18)
 
-- [ ] In `acc/cognitive_core.py`, wrap the task pipeline in a root span
-      (`task.process`) and child spans (`gate.pre`, `memory.retrieve`,
-      `prompt.build`, `llm.invoke`, `gate.post`, `persist`).
-- [ ] Thread the active span via `trace.get_current_span()` so the LLM
-      backend can decorate `llm.invoke` with token/model attributes.
-- [ ] Cardinality control: respect `ACC_TELEMETRY_SAMPLING` (env, 0.0–1.0)
-      for non-root spans; reuse the reasoning-on-bus truncation.
-- [ ] Tests: span tree shape against an in-memory exporter; sampling
-      threshold; truncation bounds.
+- [x] New helper `acc/backends/pipeline_tracing.py` — `task_span(...)`,
+      `stage_span(...)`, `emit_stage(...)`, `set_span_attributes(...)`.
+      No-op when `opentelemetry` isn't installed (lazy import + guard).
+      Attribute dicts go through the GenAI semconv mapping from Phase 1.
+- [x] Wrap `CognitiveCore.process_task` with a root span
+      `acc.task.process` carrying task / role / collective / agent /
+      operating_mode / model + GenAI operation = `chat`.  Delegates to
+      a renamed `_process_task_body` for the existing pipeline logic
+      (early returns inside the with-block still close the span
+      correctly).
+- [x] Emit child stage markers via `emit_stage(...)` at the six
+      pipeline step boundaries: `acc.pipeline.gate_pre`,
+      `acc.pipeline.memory_retrieve`, `acc.pipeline.prompt_build`,
+      `acc.pipeline.llm_invoke`, `acc.pipeline.gate_post`,
+      `acc.pipeline.persist`, `acc.pipeline.drift`.  Parenting is
+      automatic via OTel's contextvar-backed current span.
+- [x] Late-bind final attributes (`drift_score`, `cat_b_deviation_
+      score`, `blocked`, `block_reason`, `latency_ms`) on the root
+      span after the body returns so MLflow Trace UI sees the
+      complete record.
+- [x] Tests: `tests/test_pipeline_tracing.py` covers no-op fallback
+      (no otel installed), semconv mapping on attributes, child-span
+      emission, defensive swallowing of misbehaving exporters.
+- [ ] (deferred to 2b) `ACC_TELEMETRY_SAMPLING` env for non-root span
+      sampling — current emission is already tiny (one-shot markers,
+      no payload) so sampling is a Phase 3 concern when the
+      reasoning + tool-call payloads land.
 
 ## Phase 3 — Collector + runbook (proposed)
 

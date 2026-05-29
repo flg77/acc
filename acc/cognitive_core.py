@@ -21,6 +21,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from acc.backends.pipeline_tracing import (
+    emit_stage,
+    set_span_attributes,
+    task_span,
+)
 from acc.config import ComplianceConfig, RoleDefinitionConfig
 from acc.governance_capabilities import CapabilityDecision, CapabilityGuard
 from acc.progress import ProgressContext
@@ -414,6 +419,61 @@ class CognitiveCore:
         *,
         progress_callback: Optional[Any] = None,
     ) -> CognitiveResult:
+        """Public entry point — wraps the pipeline body in an OTel root span.
+
+        OpenSpec ``20260527-mlflow-otel-telemetry`` Phase 2.  Opens an
+        ``acc.task.process`` root span carrying the task / role /
+        collective / agent identity and the GenAI semconv model field,
+        then delegates to :meth:`_process_task_body`.  Stage markers
+        emitted inside the body via :func:`emit_stage` are parented
+        under the root automatically (OTel's contextvar-backed
+        current-span).  Final token counts, drift score, and the
+        block-reason (if any) are attached to the root span after
+        the body returns so MLflow's Trace UI sees a complete record.
+
+        No-op overhead when ``opentelemetry`` is not installed — the
+        helpers in :mod:`acc.backends.pipeline_tracing` short-circuit
+        to plain ``yield`` and the body runs unchanged.
+        """
+        if role is None:
+            role = RoleDefinitionConfig()
+        root_attrs = {
+            "task_id": task_payload.get("task_id", "") or "",
+            "role": self._role_label,
+            "collective_id": self._collective_id,
+            "agent_id": self._agent_id,
+            "operating_mode": task_payload.get("operating_mode", "") or "",
+            "model": getattr(role, "llm_model", "") or "",
+            "operation_name": "chat",
+        }
+        with task_span("acc.task.process", root_attrs) as root_span:
+            result = await self._process_task_body(
+                task_payload, role, progress_callback=progress_callback,
+            )
+            try:
+                set_span_attributes(root_span, {
+                    "drift_score": float(result.stress.drift_score),
+                    "cat_b_deviation_score": float(
+                        result.stress.cat_b_deviation_score,
+                    ),
+                    "blocked": bool(result.blocked),
+                    "block_reason": result.block_reason or "",
+                    "latency_ms": float(result.latency_ms or 0),
+                })
+            except Exception:  # pragma: no cover — defensive
+                logger.debug(
+                    "cognitive_core: root span finalisation failed",
+                    exc_info=True,
+                )
+            return result
+
+    async def _process_task_body(
+        self,
+        task_payload: dict,
+        role: Optional[RoleDefinitionConfig] = None,
+        *,
+        progress_callback: Optional[Any] = None,
+    ) -> CognitiveResult:
         """Run the full reasoning pipeline for one task.
 
         This method is **async** — all LLM calls (``complete``, ``embed``) are
@@ -510,6 +570,7 @@ class CognitiveCore:
                 )
 
         # 1 — PRE-GATE
+        emit_stage("acc.pipeline.gate_pre")
         _emit(1, "Pre-reasoning gate (Cat-B setpoints)")
         blocked, block_reason = self._pre_reasoning_gate(role)
         if blocked:
@@ -550,6 +611,10 @@ class CognitiveCore:
         memory_notes: list[str] = []
         if getattr(role, "memory_retrieval", True):
             memory_notes = self._read_memory_notes()
+        emit_stage("acc.pipeline.memory_retrieve", {
+            "episodes_count": len(retrieved_episodes),
+            "notes_count": len(memory_notes),
+        })
         if retrieved_episodes or memory_notes:
             bits = []
             if retrieved_episodes:
@@ -559,6 +624,7 @@ class CognitiveCore:
             _emit(2, f"Checking prior learnings ({', '.join(bits)})")
         else:
             _emit(2, "Building system prompt")
+        emit_stage("acc.pipeline.prompt_build")
         # PR-CA1 — the system prompt is the STABLE per-role prefix (no
         # RAG), so every backend's prefix cache hits.  The variable RAG
         # block rides the LLM user message instead.
@@ -653,6 +719,10 @@ class CognitiveCore:
         # Confidence bumps slightly as we leave the gates and start
         # actual reasoning — captures "we got past the guards".
         _emit(3, "Calling LLM", confidence=0.55)
+        emit_stage("acc.pipeline.llm_invoke", {
+            "model": getattr(role, "llm_model", "") or "",
+            "operation_name": "chat",
+        })
         response, latency_ms, token_count = await self._call_llm(
             system_prompt, llm_user_content,
         )
@@ -719,6 +789,15 @@ class CognitiveCore:
         post_gate_confidence = max(
             0.40, min(0.85, 0.85 - 0.225 * deviation_score),
         )
+        emit_stage("acc.pipeline.gate_post", {
+            "cat_b_deviation_score": float(deviation_score),
+            "input_tokens": int(
+                response.get("usage", {}).get("prompt_tokens", 0) or 0,
+            ),
+            "output_tokens": int(
+                response.get("usage", {}).get("completion_tokens", 0) or 0,
+            ),
+        })
         _emit(
             4, "Post-reasoning governance",
             confidence=post_gate_confidence,
@@ -735,6 +814,7 @@ class CognitiveCore:
         # 5 — PERSIST episode (async embed).  Confidence carries over
         # from the post-gate signal — persistence is mechanical, no
         # new evidence to update the operator's confidence read.
+        emit_stage("acc.pipeline.persist")
         _emit(5, "Persisting episode + embedding output",
               confidence=post_gate_confidence)
         episode_id = ""
@@ -803,6 +883,9 @@ class CognitiveCore:
         )
         self._stress.drift_score = drift
         drift_confidence = max(0.40, min(0.95, 1.0 - drift))
+        emit_stage("acc.pipeline.drift", {
+            "drift_score": float(drift),
+        })
         _emit(6, "Drift scoring", confidence=drift_confidence)
 
         # Update compliance health score
