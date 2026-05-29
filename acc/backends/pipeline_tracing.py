@@ -44,6 +44,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
+import random
 from typing import Any, Iterator
 
 from acc.backends.genai_semconv import build_genai_attributes
@@ -62,6 +64,58 @@ except Exception:  # pragma: no cover — exercised on hosts without otel
 # Tracer name used for every cognitive-pipeline span.  Stable so
 # downstream filters / dashboards can pin on it.
 TRACER_NAME = "acc.cognitive_core"
+
+
+# Maximum length of a reasoning / eval text attribute on a span event.
+# Phase 4 adds the agent's <reasoning> block as a span event; an
+# unbounded reasoning trace can blow up the trace payload (and MLflow's
+# row size), so we clip generously but firmly.  Override with
+# ``ACC_REASONING_EVENT_MAX_CHARS`` if needed.
+_DEFAULT_REASONING_MAX_CHARS = 8192
+
+
+def _reasoning_max_chars() -> int:
+    try:
+        return int(os.environ.get(
+            "ACC_REASONING_EVENT_MAX_CHARS",
+            str(_DEFAULT_REASONING_MAX_CHARS),
+        ))
+    except (TypeError, ValueError):
+        return _DEFAULT_REASONING_MAX_CHARS
+
+
+def _sampling_rate() -> float:
+    """Read ``ACC_TELEMETRY_SAMPLING`` (0.0 keeps everything,
+    1.0 drops everything; values outside [0,1] are clamped).
+
+    Default 0.0 — every stage marker is emitted.  Operators bump
+    this once reasoning / tool-call payloads make root-span volume
+    matter at scale.
+    """
+    raw = os.environ.get("ACC_TELEMETRY_SAMPLING", "0.0")
+    try:
+        rate = float(raw)
+    except (TypeError, ValueError):
+        return 0.0
+    if rate < 0.0:
+        return 0.0
+    if rate > 1.0:
+        return 1.0
+    return rate
+
+
+def _should_skip_marker() -> bool:
+    """True when the configured sampling rate says to drop this marker.
+
+    Sampling applies *only* to stage markers (``emit_stage``) — the
+    root ``task_span`` and the explicit tool-call child spans are
+    always emitted so MLflow's Trace UI never shows orphaned task
+    spans without their LLM/tool children.
+    """
+    rate = _sampling_rate()
+    if rate <= 0.0:
+        return False
+    return random.random() < rate
 
 
 def _get_tracer() -> Any | None:
@@ -150,10 +204,17 @@ def emit_stage(
     (early returns, async branches) intact.  When called inside a
     :func:`task_span` context the marker is parented under the root
     span automatically (OTel maintains the current-span context).
+
+    Subject to ``ACC_TELEMETRY_SAMPLING`` (Phase 4): a rate of 0.3
+    drops ~30% of stage markers — the root span and the tool-call
+    children are always emitted so the trace tree is never orphaned.
+
     No-op when the SDK isn't installed.
     """
     tracer = _get_tracer()
     if tracer is None:
+        return
+    if _should_skip_marker():
         return
     mapped = build_genai_attributes(attributes or {})
     try:
@@ -166,6 +227,88 @@ def emit_stage(
     except Exception:  # pragma: no cover — defensive
         logger.debug("pipeline_tracing: emit_stage failed for %s", name,
                      exc_info=True)
+
+
+@contextlib.contextmanager
+def tool_span(
+    tool_name: str,
+    *,
+    server_id: str = "",
+    skill_id: str = "",
+    attributes: dict[str, Any] | None = None,
+) -> Iterator[Any]:
+    """Open a child span for a tool / skill invocation.
+
+    Phase 4 mapping for MCP tool calls and ACC Skill invocations onto
+    the OTel GenAI ``gen_ai.tool.*`` semconv keys::
+
+        gen_ai.tool.name        = tool_name
+        gen_ai.tool.type        = "mcp" | "skill"
+        acc.mcp.server_id       = server_id   (when given)
+        acc.skill.id            = skill_id    (when given)
+
+    The span name is ``acc.tool.invoke``; the tool name itself lives
+    on the attribute (MLflow's Trace UI surfaces it in the right
+    panel without name-cardinality blowing up the span index).
+
+    Always emitted regardless of ``ACC_TELEMETRY_SAMPLING`` — tool
+    calls are the high-value evidence in a trace and dropping them
+    creates phantom LLM spans with no follow-through.
+    """
+    tracer = _get_tracer()
+    if tracer is None:
+        yield None
+        return
+    base: dict[str, Any] = {
+        "gen_ai.tool.name": tool_name,
+        "gen_ai.tool.type": "mcp" if server_id else "skill",
+    }
+    if server_id:
+        base["acc.mcp.server_id"] = server_id
+    if skill_id:
+        base["acc.skill.id"] = skill_id
+    if attributes:
+        base.update(attributes)
+    mapped = build_genai_attributes(base)
+    with tracer.start_as_current_span("acc.tool.invoke") as span:
+        for key, value in mapped.items():
+            try:
+                span.set_attribute(key, value)
+            except Exception:
+                pass
+        yield span
+
+
+def add_event(
+    span: Any,
+    name: str,
+    attributes: dict[str, Any] | None = None,
+) -> None:
+    """Attach a named event to an open span (no-op on ``None``).
+
+    Phase 4 carries reasoning-trace text and EVAL_OUTCOME verdicts on
+    the root task span as events so MLflow's Trace UI surfaces them
+    in the events panel without cluttering the attribute list.
+    Long ``reasoning`` text is clipped at
+    ``ACC_REASONING_EVENT_MAX_CHARS`` (default 8192) so a runaway
+    chain-of-thought can't blow up the trace payload.
+    """
+    if span is None or not name:
+        return
+    attrs = dict(attributes or {})
+    reasoning = attrs.get("reasoning")
+    if isinstance(reasoning, str):
+        max_chars = _reasoning_max_chars()
+        if len(reasoning) > max_chars:
+            attrs["reasoning"] = reasoning[:max_chars] + "…[truncated]"
+            attrs["acc.reasoning_truncated"] = True
+    mapped = build_genai_attributes(attrs)
+    try:
+        span.add_event(name, attributes=mapped)
+    except Exception:  # pragma: no cover — defensive
+        logger.debug(
+            "pipeline_tracing: add_event %s failed", name, exc_info=True,
+        )
 
 
 def set_span_attributes(span: Any, attributes: dict[str, Any]) -> None:
@@ -190,5 +333,7 @@ __all__ = [
     "task_span",
     "stage_span",
     "emit_stage",
+    "tool_span",
+    "add_event",
     "set_span_attributes",
 ]

@@ -112,6 +112,115 @@ def test_set_span_attributes_routes_through_semconv():
     assert "acc.role" in keys_set
 
 
+# ---------------------------------------------------------------------------
+# Phase 4 — events, tool spans, sampling
+# ---------------------------------------------------------------------------
+
+
+def test_add_event_no_op_on_none_span():
+    """Robust against a no-op tracer returning None."""
+    pipeline_tracing.add_event(None, "acc.reasoning", {"reasoning": "x"})
+
+
+def test_add_event_truncates_long_reasoning(monkeypatch):
+    """Reasoning strings beyond ACC_REASONING_EVENT_MAX_CHARS get
+    clipped + flagged via acc.reasoning_truncated so MLflow's row
+    size stays bounded."""
+    monkeypatch.setenv("ACC_REASONING_EVENT_MAX_CHARS", "20")
+    span = MagicMock()
+    pipeline_tracing.add_event(span, "acc.reasoning", {
+        "reasoning": "abcdefghij" * 10,  # 100 chars > 20
+    })
+    # add_event was called once with the truncated payload.
+    assert span.add_event.called
+    _, kwargs = span.add_event.call_args
+    attrs = kwargs.get("attributes") or {}
+    assert attrs["reasoning"].endswith("…[truncated]")
+    assert attrs["reasoning"].startswith("abcdefghijabcdefghij")  # first 20
+    assert attrs.get("acc.reasoning_truncated") is True
+
+
+def test_add_event_short_reasoning_passes_through(monkeypatch):
+    monkeypatch.setenv("ACC_REASONING_EVENT_MAX_CHARS", "1000")
+    span = MagicMock()
+    pipeline_tracing.add_event(span, "acc.reasoning", {"reasoning": "short"})
+    _, kwargs = span.add_event.call_args
+    attrs = kwargs.get("attributes") or {}
+    assert attrs["reasoning"] == "short"
+    assert "acc.reasoning_truncated" not in attrs
+
+
+def test_sampling_rate_clamps_to_unit_interval(monkeypatch):
+    monkeypatch.setenv("ACC_TELEMETRY_SAMPLING", "-1.0")
+    assert pipeline_tracing._sampling_rate() == 0.0
+    monkeypatch.setenv("ACC_TELEMETRY_SAMPLING", "5.0")
+    assert pipeline_tracing._sampling_rate() == 1.0
+    monkeypatch.setenv("ACC_TELEMETRY_SAMPLING", "not-a-number")
+    assert pipeline_tracing._sampling_rate() == 0.0
+
+
+def test_sampling_full_drop_skips_emit_stage(monkeypatch):
+    """Sampling = 1.0 drops every stage marker."""
+    monkeypatch.setenv("ACC_TELEMETRY_SAMPLING", "1.0")
+    monkeypatch.setattr(pipeline_tracing, "_HAVE_OTEL", True)
+    tracer = MagicMock()
+    with patch.object(pipeline_tracing, "_get_tracer", return_value=tracer):
+        pipeline_tracing.emit_stage("acc.pipeline.gate_pre")
+    tracer.start_as_current_span.assert_not_called()
+
+
+def test_sampling_zero_emits_every_marker(monkeypatch):
+    """Default sampling = 0.0 emits every stage marker."""
+    monkeypatch.delenv("ACC_TELEMETRY_SAMPLING", raising=False)
+    monkeypatch.setattr(pipeline_tracing, "_HAVE_OTEL", True)
+    tracer = MagicMock()
+    with patch.object(pipeline_tracing, "_get_tracer", return_value=tracer):
+        pipeline_tracing.emit_stage("acc.pipeline.gate_pre")
+    tracer.start_as_current_span.assert_called_once()
+
+
+def test_tool_span_no_op_without_otel(monkeypatch):
+    monkeypatch.setattr(pipeline_tracing, "_HAVE_OTEL", False)
+    monkeypatch.setattr(pipeline_tracing, "_otel_trace", None)
+    with pipeline_tracing.tool_span("read_file", skill_id="fs.read") as span:
+        assert span is None
+
+
+def test_tool_span_sets_gen_ai_tool_attributes_for_mcp():
+    """MCP tool calls land under gen_ai.tool.name + gen_ai.tool.type=mcp."""
+    if not _HAVE_OTEL:
+        pytest.skip("opentelemetry not installed")
+    tracer = MagicMock()
+    span = MagicMock()
+    tracer.start_as_current_span.return_value.__enter__.return_value = span
+    tracer.start_as_current_span.return_value.__exit__.return_value = False
+    with patch.object(pipeline_tracing, "_get_tracer", return_value=tracer):
+        with pipeline_tracing.tool_span("read_file", server_id="fs-server"):
+            pass
+    tracer.start_as_current_span.assert_called_once_with("acc.tool.invoke")
+    keys_set = {call.args[0] for call in span.set_attribute.call_args_list}
+    assert "gen_ai.tool.name" in keys_set
+    assert "gen_ai.tool.type" in keys_set
+    assert "acc.mcp.server_id" in keys_set
+    # Skill id NOT set for MCP path.
+    assert "acc.skill.id" not in keys_set
+
+
+def test_tool_span_sets_acc_skill_id_for_skill_path():
+    if not _HAVE_OTEL:
+        pytest.skip("opentelemetry not installed")
+    tracer = MagicMock()
+    span = MagicMock()
+    tracer.start_as_current_span.return_value.__enter__.return_value = span
+    tracer.start_as_current_span.return_value.__exit__.return_value = False
+    with patch.object(pipeline_tracing, "_get_tracer", return_value=tracer):
+        with pipeline_tracing.tool_span("fs.read", skill_id="fs.read"):
+            pass
+    keys_set = {call.args[0] for call in span.set_attribute.call_args_list}
+    assert "acc.skill.id" in keys_set
+    assert "acc.mcp.server_id" not in keys_set
+
+
 def test_emit_stage_swallows_span_set_attribute_errors(monkeypatch):
     """A misbehaving exporter mustn't propagate exceptions into the
     cognitive pipeline."""

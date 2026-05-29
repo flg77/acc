@@ -22,9 +22,11 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from acc.backends.pipeline_tracing import (
+    add_event,
     emit_stage,
     set_span_attributes,
     task_span,
+    tool_span,
 )
 from acc.config import ComplianceConfig, RoleDefinitionConfig
 from acc.governance_capabilities import CapabilityDecision, CapabilityGuard
@@ -460,6 +462,36 @@ class CognitiveCore:
                     "block_reason": result.block_reason or "",
                     "latency_ms": float(result.latency_ms or 0),
                 })
+                # Phase 4 — reasoning trace as a span event so MLflow's
+                # Trace UI surfaces the agent's deliberation in the
+                # events panel.  Truncated by add_event() against
+                # ACC_REASONING_EVENT_MAX_CHARS so a runaway chain-of-
+                # thought can't blow up the trace payload.
+                if getattr(result, "reasoning", "") or "":
+                    add_event(root_span, "acc.reasoning", {
+                        "reasoning": result.reasoning,
+                    })
+                # Phase 4 — EVAL_OUTCOME verdict on the root span when
+                # the LLM emitted one.  Best-effort parse from the
+                # result.output — the agent task loop runs the same
+                # extractor (acc.agent._extract_eval_outcome) so the
+                # span carries the same verdict the TASK_COMPLETE
+                # envelope publishes downstream.
+                if getattr(result, "output", "") or "":
+                    try:
+                        from acc.agent import _extract_eval_outcome  # noqa: PLC0415
+                        _eo = _extract_eval_outcome(result.output)
+                        if _eo:
+                            add_event(root_span, "acc.eval_outcome", {
+                                "verdict": str(_eo.get("verdict", "")) or "",
+                                "score": float(_eo.get("score", 0.0) or 0.0),
+                                "rationale": str(_eo.get("rationale", "")) or "",
+                            })
+                    except Exception:
+                        logger.debug(
+                            "cognitive_core: eval_outcome event extract failed",
+                            exc_info=True,
+                        )
             except Exception:  # pragma: no cover — defensive
                 logger.debug(
                     "cognitive_core: root span finalisation failed",
@@ -1012,7 +1044,11 @@ class CognitiveCore:
             # loop, which has the queue handle.  We emit an info log so
             # the absence of follow-up enqueue is visible.
 
-        return await self._skill_registry.invoke(skill_id, args)
+        # Phase 4 — gen_ai.tool.* child span around the actual
+        # invocation.  Parented under acc.task.process when this method
+        # is called from inside the pipeline (the normal case).
+        with tool_span(skill_id, skill_id=skill_id):
+            return await self._skill_registry.invoke(skill_id, args)
 
     async def invoke_mcp_tool(
         self,
@@ -1073,7 +1109,9 @@ class CognitiveCore:
             )
 
         client = await self._mcp_registry.client(server_id)
-        return await client.call_tool(tool_name, arguments or {})
+        # Phase 4 — gen_ai.tool.* child span around the MCP call.
+        with tool_span(tool_name, server_id=server_id):
+            return await client.call_tool(tool_name, arguments or {})
 
     # ------------------------------------------------------------------
     # ACC-12 Compliance helpers

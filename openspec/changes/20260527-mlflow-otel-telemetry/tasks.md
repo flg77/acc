@@ -75,10 +75,32 @@
       operators stick to gRPC (default) or override the env via a
       pod-template extension.
 
-## Phase 4 — Eval + reasoning + tool spans (proposed)
+## Phase 4 — Eval + reasoning + tool spans (LANDED v0.3.20)
 
-- [ ] Map `EVAL_OUTCOME` to span events on the parent task span.
-- [ ] Reasoning-trace → span event (with budget-aware truncation).
-- [ ] MCP tool-calls → child spans under `llm.invoke` using `gen_ai.tool.*`
-      attributes.
-- [ ] Tests + runbook update.
+- [x] `pipeline_tracing.add_event(span, name, attrs)` attaches a named
+      event to the root span; truncates `reasoning` text at
+      `ACC_REASONING_EVENT_MAX_CHARS` (default 8192) and flags via
+      `acc.reasoning_truncated` so the trace payload stays bounded.
+- [x] Reasoning trace surfaced as `acc.reasoning` event on the root
+      task span (when the role opted into reasoning externalisation).
+- [x] `EVAL_OUTCOME` verdict surfaced as `acc.eval_outcome` event
+      with `verdict` / `score` / `rationale` attributes — extracted
+      via the same `acc.agent._extract_eval_outcome` helper the agent
+      task loop uses for TASK_COMPLETE, so the span carries the same
+      verdict downstream consumers see on NATS.
+- [x] `pipeline_tracing.tool_span(name, *, server_id, skill_id)`
+      child span — `acc.tool.invoke` span name, GenAI semconv
+      `gen_ai.tool.name` + `gen_ai.tool.type` (`mcp` | `skill`),
+      ACC-namespaced `acc.mcp.server_id` / `acc.skill.id` for the
+      respective paths.  Always emitted (never sampled out — tool
+      calls are the high-value trace evidence).
+- [x] `CognitiveCore.invoke_skill` + `invoke_mcp_tool` wrapped in
+      `tool_span` so each invocation lands as a child span under the
+      root `acc.task.process`.
+- [x] `ACC_TELEMETRY_SAMPLING` env (0.0 keep all, 1.0 drop all,
+      clamped); applies to stage markers only — root span + tool
+      spans are always emitted so the trace tree is never orphaned.
+- [x] Tests (`tests/test_pipeline_tracing.py` extended to 21 cases):
+      add_event no-op-on-None; truncation; short-pass-through;
+      sampling clamp + drop + zero; tool_span no-op without otel;
+      gen_ai.tool.* attribute mapping for MCP vs skill paths.

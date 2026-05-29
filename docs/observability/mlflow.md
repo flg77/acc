@@ -123,13 +123,28 @@ operator-rendered Collector unchanged).
 
 ## Cardinality + sampling
 
-The Phase 2 stage markers (`acc.pipeline.*`) are tiny — empty
-payloads, a handful of attributes each.  No sampling is needed at
-typical agent volumes (≤ 100 RPS per collective).
+Phase 2 stage markers are tiny.  Phase 4 added two more high-value
+surfaces:
 
-Phase 4 will add reasoning-trace and tool-call payloads onto span
-events; that's when `ACC_TELEMETRY_SAMPLING` (env, 0.0–1.0) lands and
-becomes meaningful.
+- **`acc.reasoning` span event** on the root span, carrying the
+  agent's externalised reasoning block (when the role opted in).
+  Clipped at `ACC_REASONING_EVENT_MAX_CHARS` (default 8192) and
+  flagged via `acc.reasoning_truncated` so a runaway chain-of-thought
+  can't blow up the trace payload.
+- **`acc.eval_outcome` span event** with `verdict` / `score` /
+  `rationale` attributes — populated when the LLM emits a structured
+  `eval_outcome` (the same one the TASK_COMPLETE envelope carries).
+- **`acc.tool.invoke` child spans** under the root for every Skill
+  invocation and every MCP tool call.  Attributes follow the OTel
+  GenAI semconv: `gen_ai.tool.name`, `gen_ai.tool.type` (`mcp` |
+  `skill`), plus ACC namespaced `acc.mcp.server_id` /
+  `acc.skill.id` for the respective paths.
+
+`ACC_TELEMETRY_SAMPLING` (env, 0.0–1.0) gates **stage markers only** —
+`acc.pipeline.*` children may be dropped at high agent volume.  The
+root `acc.task.process` span and the `acc.tool.invoke` children are
+always emitted so the trace tree never has orphans.  Default 0.0
+keeps everything.
 
 ## Related
 
