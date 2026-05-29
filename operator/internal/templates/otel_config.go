@@ -54,6 +54,14 @@ exporters:
     tls:
       insecure: {{ .TLSInsecure }}
   {{- end }}
+  {{ if .MLflowEndpoint -}}
+  # OpenSpec 20260527-mlflow-otel-telemetry Phase 3 — optional MLflow
+  # fan-out.  Exports traces via OTLP/HTTP to MLflow's /v1/traces.
+  otlphttp/mlflow:
+    endpoint: {{ .MLflowEndpoint }}
+    tls:
+      insecure: {{ .TLSInsecure }}
+  {{- end }}
   prometheus:
     endpoint: "0.0.0.0:8888"
   logging:
@@ -64,7 +72,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch, resource]
-      exporters: [{{ if .RemoteEndpoint }}otlp, {{ end }}logging]
+      exporters: [{{ if .RemoteEndpoint }}otlp, {{ end }}{{ if .MLflowEndpoint }}otlphttp/mlflow, {{ end }}logging]
     metrics:
       receivers: [otlp, prometheus]
       processors: [memory_limiter, batch, resource]
@@ -74,6 +82,7 @@ service:
 type otelConfigData struct {
 	CorpusName      string
 	RemoteEndpoint  string
+	MLflowEndpoint  string
 	TLSInsecure     bool
 }
 
@@ -82,6 +91,7 @@ func RenderOTelConfig(corpus *accv1alpha1.AgentCorpus) (string, error) {
 	data := otelConfigData{CorpusName: corpus.Name}
 	if otel := corpus.Spec.Observability.OTelCollector; otel != nil {
 		data.RemoteEndpoint = otel.Endpoint
+		data.MLflowEndpoint = otel.MLflowEndpoint
 		data.TLSInsecure = otel.TLSInsecure
 	}
 

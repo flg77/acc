@@ -1,0 +1,92 @@
+# OpenTelemetry Collector — sample fan-out config (MLflow + Phoenix)
+#
+# OpenSpec 20260527-mlflow-otel-telemetry Phase 3.  Drop-in standalone
+# Collector config that:
+#
+#   * receives OTLP from ACC agents on :4317 (gRPC) and :4318 (HTTP);
+#   * fans out traces to **MLflow** (`/v1/traces` HTTP) for the GenAI
+#     trace UI and to **Phoenix** (OTLP gRPC) for the Kagenti runtime
+#     view, plus a local file exporter for debugging;
+#   * exposes a Prometheus scrape endpoint on :8889 for metrics.
+#
+# Run with:
+#     podman run --rm -it \
+#       -v $(pwd)/deploy/observability/otel-collector.yaml:/etc/otelcol/config.yaml:Z \
+#       -p 4317:4317 -p 4318:4318 -p 8889:8889 \
+#       docker.io/otel/opentelemetry-collector-contrib:0.108.0
+#
+# Point ACC agents at it with:
+#     export OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+#     export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+#
+# ACC agents can also be pointed straight at MLflow without a
+# Collector — see docs/observability/mlflow.md for that path.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: "${env:ACC_ENV}"
+        action: upsert
+
+exporters:
+  # --- MLflow Trace UI (GenAI semantic conventions) ------------------
+  # MLflow 3.6+ accepts OTLP/HTTP on /v1/traces; the trace shape
+  # produced by the cognitive-pipeline span tree (acc.task.process +
+  # child stage spans, gen_ai.* attributes) lands directly in the
+  # Trace UI without further transformation.
+  otlphttp/mlflow:
+    endpoint: "${env:MLFLOW_OTEL_ENDPOINT}"
+    # MLflow OSS expects no auth header; for managed MLflow add a
+    # bearer token here.
+    # headers:
+    #   Authorization: Bearer ${env:MLFLOW_TOKEN}
+    tls:
+      insecure: ${env:MLFLOW_TLS_INSECURE}
+
+  # --- Phoenix (Kagenti runtime / eval) ------------------------------
+  otlp/phoenix:
+    endpoint: "${env:PHOENIX_OTEL_ENDPOINT}"
+    tls:
+      insecure: ${env:PHOENIX_TLS_INSECURE}
+
+  # --- Local debug ----------------------------------------------------
+  # Comment out in production — useful while wiring up MLflow/Phoenix
+  # to see the spans actually arrive.
+  debug:
+    verbosity: detailed
+
+  # --- Prometheus scrape ---------------------------------------------
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    const_labels:
+      source: acc-otel-collector
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/mlflow, otlp/phoenix, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, debug]
+  telemetry:
+    logs:
+      level: info

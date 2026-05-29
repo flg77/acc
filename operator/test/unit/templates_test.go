@@ -393,4 +393,38 @@ func TestRenderOTelConfig(t *testing.T) {
 	if !strings.Contains(conf, "otlp:") {
 		t.Error("expected otlp exporter")
 	}
+	// No MLflowEndpoint set → no fan-out section emitted.
+	if strings.Contains(conf, "otlphttp/mlflow") {
+		t.Error("MLflowEndpoint unset — fan-out section must not appear")
+	}
+}
+
+// OpenSpec 20260527-mlflow-otel-telemetry Phase 3 — when MLflowEndpoint
+// is set, the rendered Collector config gains an otlphttp/mlflow
+// exporter on the traces pipeline alongside the primary otlp exporter.
+func TestRenderOTelConfig_MLflowFanOut(t *testing.T) {
+	corpus := makeTestCorpus()
+	corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{
+		Backend: accv1alpha1.MetricsBackendOTel,
+		OTelCollector: &accv1alpha1.OTelCollectorSpec{
+			Endpoint:       "https://otel:4317",
+			MLflowEndpoint: "https://mlflow.example.com",
+			TLSInsecure:    false,
+		},
+	}
+
+	conf, err := templates.RenderOTelConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderOTelConfig error: %v", err)
+	}
+	if !strings.Contains(conf, "otlphttp/mlflow:") {
+		t.Errorf("expected otlphttp/mlflow exporter when MLflowEndpoint set\n\n%s", conf)
+	}
+	if !strings.Contains(conf, "endpoint: https://mlflow.example.com") {
+		t.Error("expected MLflow endpoint string in rendered config")
+	}
+	// Both exporters appear on the traces pipeline.
+	if !strings.Contains(conf, "exporters: [otlp, otlphttp/mlflow, logging]") {
+		t.Errorf("expected traces pipeline to include both otlp + otlphttp/mlflow\n\n%s", conf)
+	}
 }

@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | Change ID | `20260527-mlflow-otel-telemetry` |
-| Target version | `v0.4.0` (proposed) — Phase 1 in `v0.3.17`, Phase 2 in `v0.3.18` |
-| Status | Phases 1 + 2 LANDED; Phases 3–4 proposed |
+| Target version | `v0.4.0` (proposed) — Phase 1 in `v0.3.17`, Phase 2 in `v0.3.18`, Phase 3 in `v0.3.19` |
+| Status | Phases 1 + 2 + 3 LANDED; Phase 4 proposed |
 | Depends on | OTel observability backend (`acc/backends/metrics_otel.py`), PR-R (token usage), reasoning-trace |
 | Notes mirror | `Notes/Development/AgenticCellCorpus/ACC Openspec/20260527-mlflow-otel-telemetry — OpenSpec (proposed).md` |
 

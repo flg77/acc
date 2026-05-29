@@ -46,14 +46,34 @@
       no payload) so sampling is a Phase 3 concern when the
       reasoning + tool-call payloads land.
 
-## Phase 3 — Collector + runbook (proposed)
+## Phase 3 — Collector + runbook (LANDED v0.3.19)
 
-- [ ] Sample OTel Collector config (`gitops/observability/otel-collector.
-      yaml`) fanning out OTLP → MLflow `/v1/traces` + Phoenix.
-- [ ] `docs/observability/mlflow.md` — "ship ACC telemetry to MLflow"
-      runbook: env vars, Collector deploy, MLflow Trace UI walkthrough.
-- [ ] Operator: `OTEL_EXPORTER_OTLP_PROTOCOL` / `OTEL_EXPORTER_OTLP_ENDPOINT`
-      surfaced on `AgentCollectiveSpec.Observability`.
+- [x] Sample standalone OTel Collector config
+      `deploy/observability/otel-collector.yaml` fanning out OTLP →
+      MLflow `/v1/traces` + Phoenix gRPC + Prometheus scrape + debug
+      sink, with env-driven endpoints (`MLFLOW_OTEL_ENDPOINT`,
+      `PHOENIX_OTEL_ENDPOINT`, …).
+- [x] `docs/observability/mlflow.md` — "ship ACC telemetry to MLflow"
+      runbook covering Path A (direct ACC → MLflow) and Path B
+      (recommended ACC → Collector → MLflow + Phoenix), the expected
+      trace shape, attribute key list, verification steps, and a
+      troubleshooting section.
+- [x] Operator: `OTelCollectorSpec` extended with
+      - `Protocol` (`grpc` / `http/protobuf`, default `grpc`) matching
+        the upstream `OTEL_EXPORTER_OTLP_PROTOCOL` env var,
+      - `MLflowEndpoint` for optional in-Collector fan-out to MLflow.
+- [x] Operator template `otel_config.go` renders an `otlphttp/mlflow`
+      exporter on the traces pipeline when `MLflowEndpoint` is set;
+      omits the section cleanly when unset (no syntactic noise).
+- [x] Unit test `TestRenderOTelConfig_MLflowFanOut` asserts the
+      fan-out shape; existing `TestRenderOTelConfig` extended to
+      assert the section is absent when `MLflowEndpoint` is unset.
+- [ ] (deferred to 3b) Operator injection of
+      `OTEL_EXPORTER_OTLP_PROTOCOL` as a pod env var on agent
+      Deployments — needed once operators want to route agents
+      directly at MLflow (Path A) without a Collector.  Until then
+      operators stick to gRPC (default) or override the env via a
+      pod-template extension.
 
 ## Phase 4 — Eval + reasoning + tool spans (proposed)
 

@@ -540,6 +540,16 @@ type OTelCollectorSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Endpoint string `json:"endpoint"`
 
+	// Protocol selects the OTLP transport agents use to reach Endpoint.
+	// Matches the upstream OTel spec env var OTEL_EXPORTER_OTLP_PROTOCOL.
+	// Default "grpc" preserves pre-Phase-3 behaviour (port :4317);
+	// "http/protobuf" targets HTTP collectors / MLflow /v1/traces on
+	// :4318 — see docs/observability/mlflow.md.
+	// +kubebuilder:validation:Enum=grpc;http/protobuf
+	// +kubebuilder:default=grpc
+	// +optional
+	Protocol string `json:"protocol,omitempty"`
+
 	// ServiceName is the OTel service.name resource attribute.
 	// +kubebuilder:default="acc-agent"
 	// +optional
@@ -550,6 +560,14 @@ type OTelCollectorSpec struct {
 	// +kubebuilder:default=false
 	// +optional
 	TLSInsecure bool `json:"tlsInsecure,omitempty"`
+
+	// MLflowEndpoint is an optional additional OTLP/HTTP endpoint to
+	// fan traces out to alongside the primary Endpoint.  When set, the
+	// operator-rendered Collector config gains an extra otlphttp/mlflow
+	// exporter on the traces pipeline.  Leave empty to skip the fan-out
+	// (operators who run a standalone Collector configure MLflow there).
+	// +optional
+	MLflowEndpoint string `json:"mlflowEndpoint,omitempty"`
 }
 
 // UpgradePolicySpec controls how the operator handles version upgrades.
