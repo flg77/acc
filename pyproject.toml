@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-cell-corpus"
-version = "0.3.16"
+version = "0.3.17"
 description = "Biologically-inspired distributed AI agent governance framework"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -84,6 +84,15 @@ a2a = [
     # subscriber; Phase 3 adds an outbound A2A client.  All gated by
     # ACC_A2A_PORT — default off → no aiohttp import at runtime.
     "aiohttp>=3.9,<4.0",
+]
+mlflow = [
+    # OpenSpec 20260527-mlflow-otel-telemetry Phase 1 — OTLP/HTTP
+    # exporter for shipping traces to MLflow's /v1/traces endpoint
+    # (or to an OTel Collector that fans out to MLflow + Phoenix).
+    # The gRPC exporter is the default and remains in `dependencies`;
+    # only operators who set OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+    # need this extra.
+    "opentelemetry-exporter-otlp-proto-http>=1.25,<2.0",
 ]
 webgui = [
     # acc-webgui — the optional FastAPI + React web frontend.  The

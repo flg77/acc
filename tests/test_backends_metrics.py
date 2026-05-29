@@ -143,3 +143,97 @@ class TestOTelMetricsBackend:
         # create_gauge should only be called once
         assert mocks["meter"].create_gauge.call_count == 1
         assert mock_gauge.set.call_count == 2
+
+    def test_emit_span_applies_genai_semconv_mapping(self):
+        """OpenSpec 20260527-mlflow-otel-telemetry Phase 1: span
+        attributes are translated to gen_ai.* / acc.* keys before
+        being set on the span."""
+        backend, mocks = self._make_backend()
+        mock_span = MagicMock()
+        mocks["tracer"].start_as_current_span.return_value.__enter__ = MagicMock(return_value=mock_span)
+        mocks["tracer"].start_as_current_span.return_value.__exit__ = MagicMock(return_value=False)
+
+        backend.emit_span(
+            "llm.invoke",
+            {"model": "claude-sonnet-4.5", "role": "coding_agent",
+             "input_tokens": 100},
+        )
+        # Collect every key passed to span.set_attribute.
+        keys_set = {
+            call.args[0] for call in mock_span.set_attribute.call_args_list
+        }
+        assert "gen_ai.request.model" in keys_set
+        assert "gen_ai.usage.input_tokens" in keys_set
+        assert "acc.role" in keys_set
+        # The original ad-hoc keys must not leak through.
+        assert "model" not in keys_set
+        assert "role" not in keys_set
+
+
+# ---------------------------------------------------------------------------
+# OTLP exporter protocol selection — Phase 1 of MLflow OTel proposal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _HAVE_OTEL, reason="opentelemetry not installed")
+class TestOTLPProtocolSelection:
+    def test_default_protocol_uses_grpc_exporters(self, monkeypatch):
+        """Unset OTEL_EXPORTER_OTLP_PROTOCOL → gRPC exporters
+        (preserves pre-Phase-1 behaviour)."""
+        monkeypatch.delenv("OTEL_EXPORTER_OTLP_PROTOCOL", raising=False)
+        from acc.backends import metrics_otel
+        span, metric = metrics_otel._resolve_exporters(
+            "http://collector:4317",
+        )
+        # The gRPC exporter classes are the ones imported at module
+        # top-level — identity comparison is enough.
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+            OTLPMetricExporter as GRPCMetricExporter,
+        )
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+            OTLPSpanExporter as GRPCSpanExporter,
+        )
+        assert isinstance(span, GRPCSpanExporter)
+        assert isinstance(metric, GRPCMetricExporter)
+
+    def test_http_protocol_uses_http_exporters_when_available(
+        self, monkeypatch,
+    ):
+        """OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf → HTTP exporters.
+
+        Skips if the HTTP exporter package isn't installed (it's an
+        opt-in extra).
+        """
+        try:
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: PLC0415
+                OTLPSpanExporter as HTTPSpanExporter,
+            )
+        except ImportError:
+            pytest.skip("opentelemetry-exporter-otlp-proto-http not installed")
+        monkeypatch.setenv(
+            "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf",
+        )
+        from acc.backends import metrics_otel
+        span, metric = metrics_otel._resolve_exporters(
+            "http://mlflow:4318/v1/traces",
+        )
+        assert isinstance(span, HTTPSpanExporter)
+
+    def test_unknown_protocol_falls_back_to_grpc_with_warning(
+        self, monkeypatch, caplog,
+    ):
+        """A typo in the env var must not silently disable telemetry —
+        warn + fall back to gRPC."""
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_PROTOCOL", "carrier-pigeon")
+        from acc.backends import metrics_otel
+        with caplog.at_level("WARNING", logger="acc.backends.metrics_otel"):
+            span, metric = metrics_otel._resolve_exporters(
+                "http://collector:4317",
+            )
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+            OTLPSpanExporter as GRPCSpanExporter,
+        )
+        assert isinstance(span, GRPCSpanExporter)
+        assert any(
+            "carrier-pigeon" in rec.message for rec in caplog.records
+        )
