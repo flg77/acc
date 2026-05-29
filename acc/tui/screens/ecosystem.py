@@ -406,26 +406,16 @@ class EcosystemScreen(Screen):
             logger.exception("ecosystem: action_infuse failed")
 
     def action_preview_cursor_role(self) -> None:
-        """Commit-4 — Space-bar preview.
+        """Space-bar — commit the row under the cursor as the active selection.
 
-        Operator-requested two-step selection workflow:
-
-        * **Space** — load role.md + role.yaml for the row under the
-          DataTable's cursor into the right pane.  Does NOT touch
-          ``_selected_role``, does NOT arm the Schedule-infusion /
-          Save / Edit buttons, does NOT paint the ● marker.  Cheap
-          preview.
-        * **Enter** — commit the cursor's row as the active selection
-          (``on_data_table_row_selected`` handler).  Arms buttons +
-          paints ● + pins ``_selected_role``.
-
-        This decouples "scrolling around to read several roles" from
-        "I'm about to act on this one".  Pre-Commit-4 the only way to
-        load detail was clicking a row (which fired BOTH highlight and
-        select) — after a filter input change focus stayed on the
-        filter, arrow-keys moved the filter cursor not the table
-        cursor, and the panel stayed pinned to the on-mount auto-
-        selection.
+        Direct-select model (Commit-5+).  Pre-Commit-5 this was a
+        preview that did NOT touch ``_selected_role``, paired with an
+        Enter "commit" step.  That duality misled operators (cursor on
+        one row, committed selection on another, `i` infused the
+        wrong role).  Space now does the same thing cursor movement
+        does: commit the row, arm the buttons, paint the ● marker.
+        Useful when focus is on the filter input and the operator
+        wants to commit without first refocusing the table.
         """
         try:
             table = self.query_one("#role-table", DataTable)
@@ -445,32 +435,12 @@ class EcosystemScreen(Screen):
         role_name = self._extract_role_name(row_key)
         if not role_name:
             return
-        # Render detail panel.  Do NOT set _selected_role — the
-        # operator hasn't committed yet.
         try:
-            self._show_role_detail(role_name)
+            self._commit_selection(role_name)
         except Exception:
             logger.exception(
-                "ecosystem: preview render failed for role=%r", role_name,
+                "ecosystem: Space commit failed for role=%r", role_name,
             )
-            return
-        # Surface the preview state in the infusion-hint label so the
-        # operator can see "previewing X, committed to Y" at a glance.
-        try:
-            hint = self.query_one("#infusion-hint", Static)
-            if self._selected_role:
-                hint.update(
-                    f"[dim]Previewing: [b]{role_name}[/b] · "
-                    f"Selected: [b]{self._selected_role}[/b] "
-                    f"(press Enter to commit preview)[/dim]",
-                )
-            else:
-                hint.update(
-                    f"[dim]Previewing: [b]{role_name}[/b] "
-                    f"(press Enter to commit)[/dim]",
-                )
-        except Exception:
-            pass
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
 
@@ -977,19 +947,46 @@ class EcosystemScreen(Screen):
             from textual.coordinate import Coordinate  # noqa: PLC0415
         except Exception:
             Coordinate = None  # type: ignore[assignment]
+        any_failed = False
         for row_idx, row_key in enumerate(list(table.rows.keys())):
             key_value = getattr(row_key, "value", None) or str(row_key)
             marker = "●" if key_value == role_name else ""
+            updated = False
             if Coordinate is not None:
                 try:
-                    table.update_cell_at(Coordinate(row_idx, 0), marker)
-                    continue
+                    # update_width=True forces Textual to recompute the
+                    # column and repaint the cell — without it some
+                    # versions cache the rendered string and the ●
+                    # never appears even though the underlying cell
+                    # value changed.
+                    table.update_cell_at(
+                        Coordinate(row_idx, 0), marker, update_width=True,
+                    )
+                    updated = True
                 except Exception:
-                    pass
-            # Last-ditch fallback — no-op rather than raise.  The
-            # blue cursor band still communicates selection.
-            logger.debug(
-                "ecosystem: update_cell_at failed for row=%d", row_idx,
+                    # Fall back to the row-key API (pre-Coordinate API).
+                    try:
+                        table.update_cell(row_key, "", marker, update_width=True)
+                        updated = True
+                    except Exception:
+                        pass
+            if not updated:
+                any_failed = True
+                logger.debug(
+                    "ecosystem: update_cell_at failed for row=%d", row_idx,
+                )
+        # Belt-and-braces: ask the DataTable to repaint.  update_cell_at
+        # *should* be enough, but a top-level refresh costs nothing and
+        # guarantees the ● is visible after cursor movement.
+        try:
+            table.refresh()
+        except Exception:
+            pass
+        if any_failed:
+            logger.warning(
+                "ecosystem: selection marker repaint had failures for "
+                "role=%r — blue cursor band still indicates selection",
+                role_name,
             )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

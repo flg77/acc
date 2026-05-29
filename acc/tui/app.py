@@ -504,19 +504,42 @@ class ACCTUIApp(App):
                 infuse = self.get_screen("infuse")
             except KeyError:
                 logger.warning("app: nucleus/infuse screen not registered")
+                try:
+                    self.notify(
+                        "Infusion failed: Nucleus screen not registered",
+                        severity="error", timeout=6.0,
+                    )
+                except Exception:
+                    pass
                 return
 
         if isinstance(infuse, InfuseScreen):
             try:
                 infuse.preload_from_role(message.role_name)
-            except Exception:
-                logger.exception("app: preload_from_role failed for %r", message.role_name)
+            except Exception as exc:
+                logger.exception(
+                    "app: preload_from_role failed for %r", message.role_name,
+                )
+                try:
+                    self.notify(
+                        f"Infusion preload failed for {message.role_name}: {exc}",
+                        severity="error", timeout=8.0,
+                    )
+                except Exception:
+                    pass
                 return
 
         try:
             self.switch_screen("nucleus")
-        except Exception:
+        except Exception as exc:
             logger.exception("app: switch_screen('nucleus') failed")
+            try:
+                self.notify(
+                    f"Could not switch to Nucleus: {exc}",
+                    severity="error", timeout=8.0,
+                )
+            except Exception:
+                pass
 
     async def on__oversight_action(self, message: _OversightAction) -> None:
         """Publish OVERSIGHT_DECISION to NATS (REQ-TUI-026 / ACC-12).

@@ -1722,20 +1722,19 @@ async def test_shortcut_agenda_present_and_updates_on_tab_switch(
 
 
 @pytest.mark.asyncio
-async def test_space_previews_without_committing(isolated_manifests):
-    """Commit-4 — Space loads role detail but does NOT pin selection
-    nor arm the Schedule-infusion button to the previewed role."""
-    from textual.widgets import TextArea
+async def test_space_commits_cursor_row(isolated_manifests):
+    """Commit-5 — Space commits the cursor's row (direct-select model).
+
+    Pre-Commit-5 Space was a preview that did NOT touch
+    ``_selected_role``.  That duality misled operators (cursor on one
+    row, committed selection on another, `i` infused the wrong role).
+    Space now does what cursor movement does — commit the row.
+    """
     app = _Harness()
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
 
-        # On mount the first role is auto-committed.  Snapshot it.
-        original_selected = screen._selected_role
-        assert original_selected != ""
-
-        # Move the cursor to a different row, then preview via Space.
         role_table = screen.query_one("#role-table", DataTable)
         rows = list(role_table.rows.keys())
         if len(rows) < 2:
@@ -1743,22 +1742,16 @@ async def test_space_previews_without_committing(isolated_manifests):
         role_table.move_cursor(row=1)
         await pilot.pause()
 
-        # Trigger preview.
         screen.action_preview_cursor_role()
         await pilot.pause()
 
-        # _selected_role unchanged — preview did NOT commit.
-        assert screen._selected_role == original_selected, (
-            "Space-preview must not change _selected_role"
+        target_role = screen._extract_role_name(rows[1])
+        assert screen._selected_role == target_role, (
+            "Space must commit the cursor row in the direct-select model"
         )
-
-        # But the editor should now show the previewed row's content.
-        previewed_role = screen._extract_role_name(rows[1])
-        editor = screen.query_one("#role-yaml-editor", TextArea)
-        assert previewed_role in editor.text or editor.text == "" or \
-            f"roles/{previewed_role}" in editor.text, (
-            f"editor should preview row 1 ({previewed_role}); got "
-            f"{editor.text[:120]!r}"
+        assert (
+            screen.query_one("#btn-schedule-infusion", Button).disabled
+            is False
         )
 
 

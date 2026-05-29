@@ -592,6 +592,37 @@ class PromptScreen(Screen):
             )
             return
 
+        # Liveness pre-flight — without an ACTIVE agent for the target
+        # role the TASK_ASSIGN sits unconsumed until the 180 s
+        # TASK_CANCEL timeout fires.  Operators reported this as a
+        # silent "prompt did not reach vLLM" regression: the connection
+        # tested fine but no worker of role X was registered (workspace
+        # re-apply was still restarting agents, or the collective.yaml
+        # simply did not include that role).  We surface the gap up-
+        # front so the operator can pick a different role or wait for
+        # the restart to settle.
+        snap = self.snapshot
+        if snap is not None:
+            try:
+                live_for_role = [
+                    a for a in (snap.agents or {}).values()
+                    if a.role == target_role and a.state == "ACTIVE"
+                ]
+            except Exception:
+                live_for_role = []
+            if not live_for_role:
+                self.notify(
+                    f"No ACTIVE agent for role {target_role!r} in this "
+                    f"collective — task will time out at 180 s. "
+                    f"Check Configuration → LIVE BACKENDS, or wait for "
+                    f"a pending apply to finish.",
+                    severity="warning",
+                    timeout=10.0,
+                )
+                # Don't block — operator may know an agent is about to
+                # come up.  The warning makes the situation visible
+                # instead of the previous silent 180 s wait.
+
         cid = self._active_collective_id()
         worker = asyncio.create_task(
             self._dispatch_and_await(
