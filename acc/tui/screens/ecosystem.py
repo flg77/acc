@@ -827,8 +827,7 @@ class EcosystemScreen(Screen):
         else:
             agenda.update(
                 "[b]Roles tab[/b] · "
-                "[yellow]↑/↓[/yellow] navigate · "
-                "[yellow]Enter[/yellow] select · "
+                "[yellow]↑/↓[/yellow] navigate (selection auto-commits) · "
                 "[yellow]e[/yellow] edit role.yaml · "
                 "[yellow]s[/yellow] save · "
                 "[yellow]i[/yellow] schedule infusion · "
@@ -836,75 +835,75 @@ class EcosystemScreen(Screen):
                 "[yellow]Tab[/yellow] switch to Agentset",
             )
 
-    def on_data_table_row_highlighted(
-        self, event: DataTable.RowHighlighted
-    ) -> None:
-        """Cursor moved over a role row — preview the detail panel.
+    def _commit_selection(self, role_name: str) -> None:
+        """Pin *role_name* as the active selection — the single source of truth
+        for what `i` infusion, edit-yaml, save-yaml etc. act on.
 
-        Commit-4 — separated into preview vs commit semantics per
-        operator request:
+        Direct-select model: this is called from BOTH the row-highlighted and
+        the (now redundant) row-selected handlers.  Cursor movement IS the
+        selection — there is no preview-vs-commit duality.
 
-        * Cursor movement (this handler) — load role.md + role.yaml
-          into the right pane.  Does NOT arm buttons, does NOT pin
-          ``_selected_role``, does NOT paint ●.  Equivalent to
-          pressing Space.
-        * Enter (``on_data_table_row_selected``) — commit: arm +
-          pin + ●.
-
-        Pre-Commit-4 highlight did both, which made it impossible to
-        scroll through several roles without ratcheting the active
-        selection through every cursor stop along the way.
+        See ``docs/howto-tui.md`` (Ecosystem section) for the operator-facing
+        contract.  History: pre-Commit-4 = direct select.  Commit-4 split into
+        preview-vs-commit to avoid "ratcheting" the selection through every
+        cursor stop, but the duality misled operators (cursor on coding_agent,
+        committed selection still account_executive, `i` infuses the wrong
+        role).  This revert restores the original direct-select intent.
         """
-        if event.data_table.id != "role-table":
-            return
-        role_name = self._extract_role_name(event.row_key)
-        if not role_name:
-            return
-        # Preview only — does not touch _selected_role.
-        try:
-            self._show_role_detail(role_name)
-        except Exception:
-            logger.exception(
-                "ecosystem: preview render failed for role=%r", role_name,
-            )
-        # Update the hint to show "previewing X, committed: Y".
-        try:
-            hint = self.query_one("#infusion-hint", Static)
-            if self._selected_role and self._selected_role != role_name:
-                hint.update(
-                    f"[dim]Previewing: [b]{role_name}[/b] · "
-                    f"Selected: [b]{self._selected_role}[/b] "
-                    f"(press Enter to commit preview)[/dim]",
-                )
-            elif self._selected_role == role_name:
-                hint.update(
-                    f"[dim]Selected: [b]{role_name}[/b][/dim]",
-                )
-            else:
-                hint.update(
-                    f"[dim]Previewing: [b]{role_name}[/b] "
-                    f"(press Enter to commit)[/dim]",
-                )
-        except Exception:
-            pass
-
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Enter pressed on a role row — pin the selection.
-
-        Same effect as :meth:`on_data_table_row_highlighted` today, but
-        kept distinct so a future enhancement (e.g. "double-click to
-        infuse immediately") has a hook.
-        """
-        if event.data_table.id != "role-table":
-            return
-        role_name = self._extract_role_name(event.row_key)
-        if not role_name:
-            return
         self._selected_role = role_name
         self._arm_infusion_button(role_name)
         self._show_role_detail(role_name)
         # Proposal 003 PR-3 — advisory lock on the selected role's files.
-        self._acquire_selection_lock(role_name)
+        try:
+            self._acquire_selection_lock(role_name)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "ecosystem: selection-lock acquire failed for role=%r", role_name,
+            )
+
+    def on_data_table_row_highlighted(
+        self, event: DataTable.RowHighlighted
+    ) -> None:
+        """Cursor moved over a role row — that IS the selection.
+
+        Direct-select: arrow-key navigation commits each row as the active
+        selection on arrival, so pressing ``i`` / clicking *Schedule infusion*
+        always operates on the row the operator is *looking at*.  No
+        "press Enter to commit preview" intermediate state.
+        """
+        if event.data_table.id != "role-table":
+            return
+        role_name = self._extract_role_name(event.row_key)
+        if not role_name:
+            return
+        try:
+            self._commit_selection(role_name)
+        except Exception:
+            logger.exception(
+                "ecosystem: commit selection failed for role=%r", role_name,
+            )
+        # Single-state hint — what's selected, nothing else.
+        try:
+            hint = self.query_one("#infusion-hint", Static)
+            hint.update(f"[dim]Selected: [b]{role_name}[/b][/dim]")
+        except Exception:
+            pass
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Enter on a role row — redundant in the direct-select model.
+
+        Highlight has already committed the row (cursor movement IS the
+        selection).  We keep the handler as a thin no-op-ish wrapper that
+        re-affirms the commit so explicit Enter remains a valid action and
+        existing test harnesses that synthesise ``RowSelected`` events still
+        exercise the same commit path.
+        """
+        if event.data_table.id != "role-table":
+            return
+        role_name = self._extract_role_name(event.row_key)
+        if not role_name:
+            return
+        self._commit_selection(role_name)
 
     @staticmethod
     def _extract_role_name(row_key) -> str:

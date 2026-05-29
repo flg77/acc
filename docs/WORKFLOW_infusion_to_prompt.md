@@ -28,14 +28,14 @@ ROLE LIBRARY                                                  ROLE DETAIL
 | Component | Behaviour |
 |-----------|-----------|
 | `EcosystemScreen.on_mount` | Force-renders detail for the first role and arms buttons (post-Commit-1; no click required). |
-| `RowHighlighted` (cursor key) | **Preview**: loads `role.md` + `role.yaml` into the right pane without touching `_selected_role` (post-Commit-4). |
+| `RowHighlighted` (cursor key) | **Selects** the row: pins `_selected_role`, arms `Schedule infusion`, paints the `●` selection marker, refreshes the role-sync badge, acquires the role's advisory file-lock, and loads `role.md` + `role.yaml` into the right pane. Direct-select model — see `_commit_selection()`. |
 | Space key | Same as `RowHighlighted` — for filter-input-focused state where arrows move the filter caret instead of the table cursor. |
-| Enter / mouse click | **Commit**: pins `_selected_role`, arms `Schedule infusion`, paints the `●` selection marker in column 0, acquires the role's advisory file-lock. |
-| Filter Input.Submitted | Refocuses the table on the top-filtered row and auto-previews it. |
+| Enter / mouse click | **Redundant** in the direct-select model — cursor movement already selected. Kept as a thin no-op-ish handler that re-affirms the commit. |
+| Filter Input.Submitted | Refocuses the table on the top-filtered row (which then auto-commits via the cursor-move). |
 | `e` / `s` keys | Toggle role.yaml read-only/edit; save (atomic write through `acc.tui.role_writeback`). |
 
 **Operator chord summary** (also rendered above the Footer):
-`↑/↓ navigate · Space preview · Enter commit · e edit role.yaml · s save · i schedule infusion · / filter · Tab switch to Agentset`
+`↑/↓ navigate (selection auto-commits) · e edit role.yaml · s save · i schedule infusion · / filter · Tab switch to Agentset`
 
 **Failure modes:**
 
@@ -59,9 +59,10 @@ switches the screen.
 (Select, Inputs, TextAreas) — Persona, Version, Task types, Allowed
 actions, Domain ID, Domain receptors, Seed context, Cat-B overrides.
 
-Post-Commit-5: when the operator scrolls in Ecosystem but doesn't
-press Enter, the cursor-row is auto-committed at Schedule-time so the
-role that's *visually* selected always gets forwarded.
+Direct-select model (post-lighthouse-bugfix): the cursor row is the
+selection — scrolling in Ecosystem commits each row as you reach it, so
+the role that's *visually* selected is exactly what `i` / *Schedule
+infusion* forwards to Nucleus. No Enter step.
 
 ---
 

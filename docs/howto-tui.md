@@ -370,7 +370,7 @@ The Ecosystem screen has **two tabs** (switch with `Tab`): **Roles** (browse + e
 
 A `DataTable` listing every role discovered in `ACC_ROLES_ROOT` (Role, Domain ID, Domain Receptors, Task Types, Version), populated by scanning `roles/`. On mount the screen **auto-selects the first role** so the detail panel and action buttons are live without a click.
 
-- **Highlight vs. select** — moving the cursor (arrow keys / Space) *previews* a role in the detail panel; pressing **Enter** *commits* the selection (pins it, paints the `●` marker, arms the buttons).
+- **Cursor IS the selection** — moving the cursor (arrow keys) commits the role immediately: it's pinned as the active selection, the `●` marker repaints to that row, the detail panel updates, and the action buttons (Schedule infusion, Edit role.yaml, …) act on that row. No "press Enter to commit" — what you're looking at is what `i`/the buttons operate on. (Pressing Enter is harmless; it re-affirms the commit.)
 - **Detail panel** — renders the role's `role.md` narrative (Markdown) plus an **inline, editable `role.yaml`** (`#role-yaml-editor` TextArea). It opens read-only; click **✎ Edit role.yaml** to unlock, **Save role.yaml** to write back (atomic + validated), or **Open in $EDITOR** for a vim/emacs/VS Code workflow. A roles/ file-watcher refreshes the panel when an external editor saves.
 - **Schedule infusion → Nucleus** — preloads the selected role into the Nucleus screen so you can review and apply it.
 - A **role-sync badge** reflects ROLE_UPDATE/approval events seen for the selected role.

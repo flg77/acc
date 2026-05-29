@@ -465,6 +465,61 @@ async def test_schedule_infusion_disabled_without_roles(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cursor_movement_commits_selection_no_enter_needed():
+    """**Direct-select regression test (lighthouse infusion bug).**
+
+    Observed live: an operator scrolls in the Role Library to ``coding_agent``
+    (which previews on the right pane) and presses ``i``; Nucleus opens with
+    ``account_executive`` (the auto-selected first row) — *not* the role
+    under the cursor.  Root cause was the preview-vs-commit duality (highlight
+    previewed, Enter committed); the operator never saw the "press Enter to
+    commit" hint and assumed the cursor row was the active selection.
+
+    Direct-select fix: cursor movement IS the selection.  Scroll the cursor
+    via real arrow-key events (the way a real operator does) and confirm:
+      1. ``_selected_role`` is whatever's under the cursor, no Enter needed.
+      2. The infusion button posts a ``RolePreloadMessage`` for the cursor
+         row — *not* the default.
+    """
+    app = _EcoApp()
+    async with app.run_test() as pilot:
+        await pilot.pause(); await pilot.pause()    # flush mount auto-select
+        screen = app.screen
+        table = screen.query_one("#role-table", DataTable)
+        row_keys = list(table.rows.keys())
+        target_idx = next(
+            i for i, k in enumerate(row_keys)
+            if getattr(k, "value", str(k)) == "coding_agent"
+        )
+        # Real cursor + a RowHighlighted that the handler must commit.  In a
+        # live terminal Textual's DataTable cursor handler posts this message
+        # for free on every arrow-key move; the run_test harness does not
+        # propagate it from cursor moves, so we drive the cursor + feed the
+        # event ourselves — which is what the production path receives.
+        table.move_cursor(row=target_idx)
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=table, cursor_row=target_idx, row_key=row_keys[target_idx],
+            )
+        )
+        await pilot.pause()
+
+        # Selection committed by highlight alone — no Enter needed.
+        assert screen._selected_role == "coding_agent", (
+            "highlight failed to commit; preview/commit duality has regressed"
+        )
+        btn = screen.query_one("#btn-schedule-infusion", Button)
+        assert btn.disabled is False
+
+        # End-to-end: pressing the button infuses the cursor row, not the
+        # auto-selected default — the bug from the lighthouse screenshots.
+        btn.press()
+        await pilot.pause()
+        assert app.preloads, "no RolePreloadMessage posted"
+        assert app.preloads[-1].role_name == "coding_agent"
+
+
+@pytest.mark.asyncio
 async def test_schedule_infusion_arms_on_row_highlight():
     """**Operator review issue 3.**
 
