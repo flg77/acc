@@ -387,6 +387,20 @@ def subject_policy_update(collective_id: str, role: str) -> str:
     return f"acc.{collective_id}.policy.{role}"
 
 
+def subject_sub_collective_lifecycle(hub_cid: str) -> str:
+    """Return the NATS subject for sub-collective resume/hibernate signals.
+
+    Proposal `20260530-assistant-agent-of-agents` Phase 3.  The Assistant
+    publishes here when his cognitive loop concludes "this prompt needs
+    sol-code; bring it up if it's hibernated".  The host-side lifecycle
+    handler (a follow-up to AoA-P3) subscribes, dispatches to
+    `acc-deploy.sh resume <sub_cid>` / `hibernate <sub_cid>`, and
+    persists the resulting state.  Payload shape lives in
+    :func:`acc.sub_collective.encode_lifecycle_payload`.
+    """
+    return f"acc.{hub_cid}.sub_collective.lifecycle"
+
+
 def subject_assistant_proposal(collective_id: str) -> str:
     """Return the NATS subject for ASSISTANT_PROPOSAL pending events.
 

@@ -43,6 +43,10 @@ _SAMPLE_ARGS = {
     # subject_policy_update(cid, role) carries the role identity in
     # the subject so consumers can subscribe per-role.
     "role": "assistant",
+    # Proposal 20260530-assistant-agent-of-agents Phase 3 —
+    # subject_sub_collective_lifecycle(hub_cid) carries the hub cid
+    # so consumers can scope to one hub's managed sub-collectives.
+    "hub_cid": "hub-sol",
 }
 
 

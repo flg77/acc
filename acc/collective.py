@@ -90,6 +90,50 @@ class AgentSpec(BaseModel):
         return v
 
 
+class SubCollectiveSpec(BaseModel):
+    """One managed sub-collective.
+
+    Proposal `20260530-assistant-agent-of-agents` Phase 3 — the hub's
+    Assistant routes domain-specific prompts into sub-collectives that
+    spin up on demand and hibernate when idle.  Each sub-collective is
+    a first-class collective in its own right (own NATS subjects, own
+    Redis namespace, own LanceDB partition) — this spec is the **hub-
+    side declaration** that the Assistant consults to decide where to
+    route.
+
+    Fields:
+
+    * **role_templates** — names of role.yaml entries to spin up when
+      the sub-collective resumes from hibernation.  The actual
+      ``collective.yaml`` for the sub-collective lives elsewhere
+      (typically a `collective.<domain>.yaml` preset under
+      `container/production/`).
+    * **domain** — the :attr:`RoleDefinitionConfig.domain_id` family the
+      sub-collective owns.  The Assistant's routing decision is
+      domain-driven: a prompt that maps to ``software_engineering``
+      delegates to whichever sub-collective declares
+      ``domain: software_engineering``.
+    * **idle_hibernate_minutes** — how long after the last activity
+      before the host-side lifecycle handler hibernates the
+      sub-collective (stops containers, retains named volumes).
+    * **model** — optional override for the sub-collective's default
+      LLM model.  When unset, sub-collective agents inherit from
+      their own ``collective.yaml.llm``.
+    * **description** — operator-facing help text; surfaces on the
+      Diagnostics screen + the Assistant's seed-context block.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    role_templates: list[str] = Field(default_factory=list)
+    domain: str = ""
+    # Range 1 minute → 1 week.  Operator-tunable; default 30 min
+    # aligns with the original proposal's hibernation cadence.
+    idle_hibernate_minutes: int = Field(default=30, ge=1, le=10080)
+    model: Optional[str] = None
+    description: str = ""
+
+
 class CollectiveSpec(BaseModel):
     """Declarative agentset for a single collective.
 
@@ -124,6 +168,16 @@ class CollectiveSpec(BaseModel):
     # RoleDefinition).  Standalone today reads roles/ from disk, so
     # this is informational — kept for parity with the K8s shape.
     role_definition: Optional[dict[str, Any]] = None
+
+    # Proposal 20260530-assistant-agent-of-agents Phase 3 —
+    # hub + on-demand sub-collectives.  The hub's collective.yaml
+    # declares which sub-collective cids it manages + the domain
+    # mapping the Assistant uses to route prompts.  Empty (default)
+    # means "single-collective deployment" — exactly the v0.3.x
+    # behaviour, untouched.
+    managed_sub_collectives: dict[str, SubCollectiveSpec] = Field(
+        default_factory=dict,
+    )
 
     @field_validator("collective_id")
     @classmethod
