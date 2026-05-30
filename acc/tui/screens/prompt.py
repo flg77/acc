@@ -922,10 +922,16 @@ class PromptScreen(Screen):
             )
             return
         cid = self._active_collective_id()
+        from acc.operator_identity import resolve_operator_id  # noqa: PLC0415
         from acc.signals import subject_assistant_control  # noqa: PLC0415
+        # Proposal 20260530-assistant-agent-of-agents Phase 5 —
+        # operator_id resolved via the seam (override → env-pin →
+        # source rule → "default").  Single-operator deployments
+        # see "default" unchanged; multi-user lands when the TUI
+        # auth proposal wires `override` from the session principal.
         payload = {
             "action": action,
-            "operator_id": "default",  # Phase 5 will route the real id
+            "operator_id": resolve_operator_id(),
             "ts": time.time(),
         }
 
