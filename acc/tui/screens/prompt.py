@@ -511,9 +511,18 @@ class PromptScreen(Screen):
         self._open_workspace_select()
 
     def _set_mode_hint(self) -> None:
+        # Proposal 20260530-assistant-agent-of-agents Phase 6 — when
+        # the operating mode is AUTO, the SIP-P2 bandit is frozen
+        # (rail 6: no learning while no human is in the loop).  The
+        # hint surfaces this so operators promoting to AUTO see they
+        # get a stable behaviour snapshot, not a moving target.
+        suffix = ""
+        if self._operating_mode == "AUTO":
+            suffix = "\n[dim yellow]💤 policy frozen[/dim yellow]"
         try:
             self.query_one("#prompt-mode-hint", Static).update(
-                f"[b]{self._operating_mode}[/b]\n[dim]shift+tab[/dim]"
+                f"[b]{self._operating_mode}[/b]\n"
+                f"[dim]shift+tab[/dim]{suffix}"
             )
         except Exception:
             pass

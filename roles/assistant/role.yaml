@@ -108,7 +108,26 @@ role_definition:
   category_b_overrides:
     token_budget: 2048
     rate_limit_rpm: 30
-  version: "2.0.0"
+  version: "2.1.0"
+  # Proposal 20260530-assistant-agent-of-agents Phase 6 — opt the
+  # Assistant into SIP-P2's bandit learning.  Start conservative:
+  # only `route_confidence_threshold` is un-pinned (the most
+  # operator-visible effect; the others wait for SIP-P3 / operator
+  # tuning).  Other roles inherit the default policy_enabled=False
+  # so AoA-P6 only changes the Assistant's behaviour.
+  policy_enabled: true
+  policy_pinned:
+    - spawn_threshold
+    - delegate_domain_match
+    - memory_top_k
+    - reasoning_depth_target
+  # 100-task cadence is SIP-P2's default; matches the rail-3
+  # rate-limit against Cat-C proposal cycles.
+  policy_update_every_n_tasks: 100
+  # Drift constraint matches SIP-P2's default; the Assistant should
+  # stay close to its concierge centroid since its job is operator
+  # framing, not exploration.
+  policy_drift_cap: 0.8
   domain_id: "general"
   # A guide, not an ICL producer — don't nominate episodes or spawn cells.
   can_nominate_episodes: false

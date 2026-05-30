@@ -627,17 +627,45 @@ class Agent:
             return
         if not is_enabled():
             return
+        # Proposal 20260530-assistant-agent-of-agents Phase 6 — thread
+        # the role-supplied policy config into the harness so SIP-P2's
+        # bandit honours per-role pin / cadence / drift cap.  The
+        # `policy_enabled=False` default preserves SIP-P1 observation-
+        # only behaviour: rewards still log, but the harness pins
+        # every knob so nothing moves.  Roles that opt in (set
+        # `policy_enabled=True` in role.yaml) get bandit updates on
+        # the knobs they DON'T list in `policy_pinned`.
+        role_def = self._active_role
+        if role_def is not None and getattr(role_def, "policy_enabled", False):
+            pinned = frozenset(getattr(role_def, "policy_pinned", []) or [])
+            update_every = int(
+                getattr(role_def, "policy_update_every_n_tasks", 100) or 100
+            )
+            drift_cap = float(
+                getattr(role_def, "policy_drift_cap", 0.8) or 0.8
+            )
+        else:
+            # Not opted in → pin everything so the harness observes
+            # without ever calling _update_theta.
+            pinned = None  # RewardHarness defaults to "pin all"
+            update_every = 100
+            drift_cap = 0.8
         try:
             self._reward_harness = RewardHarness(
                 self.backends.signaling,
                 self.config.agent.collective_id,
                 role=self.config.agent.role,
+                pinned=pinned,
+                update_every=update_every,
+                drift_cap=drift_cap,
             )
             await self._reward_harness.subscribe_all()
             logger.info(
                 "policy_layer: reward harness online (role=%s, "
-                "ACC_POLICY_LAYER_ENABLED=1)",
+                "policy_enabled=%s, update_every=%d, drift_cap=%.2f)",
                 self.config.agent.role,
+                getattr(role_def, "policy_enabled", False) if role_def else False,
+                update_every, drift_cap,
             )
         except Exception:
             logger.exception(
@@ -1337,6 +1365,34 @@ class Agent:
             await self.backends.signaling.publish(
                 subject_task_complete(collective_id), complete_payload
             )
+
+            # Proposal 20260530-assistant-agent-of-agents Phase 6 —
+            # feed the reward harness one task observation so SIP-P2's
+            # bandit can fire on its windowed cadence.  Frozen-in-AUTO
+            # is enforced inside observe_task itself (rail 6): when the
+            # operating mode is AUTO the call is a no-op and θ doesn't
+            # move.  Best-effort: failures log + carry on so the main
+            # task-complete flow isn't gated by a learner hiccup.
+            if self._reward_harness is not None:
+                try:
+                    op_mode = str(
+                        data.get("operating_mode") or getattr(
+                            self._active_role,
+                            "default_operating_mode",
+                            "AUTO",
+                        )
+                    )
+                    drift = float(
+                        getattr(result.stress, "drift_score", 0.0) or 0.0
+                    )
+                    await self._reward_harness.observe_task(
+                        operating_mode=op_mode,
+                        drift=drift,
+                    )
+                except Exception:
+                    logger.debug(
+                        "policy_layer: observe_task failed", exc_info=True,
+                    )
 
             # If task was blocked, publish ALERT_ESCALATE
             if result.blocked:

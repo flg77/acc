@@ -131,6 +131,44 @@ class RoleDefinitionConfig(BaseModel):
     The arbiter does NOT enforce parent existence — a subrole can
     be infused without its parent being currently loaded."""
 
+    # Proposal 20260530-acc-self-improvement-policy-gradient — per-role
+    # learning surface.  Proposal 20260530-assistant-agent-of-agents
+    # Phase 6 wires these from role.yaml into the agent's
+    # RewardHarness so SIP-P2's bandit can move the right knobs at
+    # the right cadence for each role.
+    #
+    # `policy_pinned`: list of θ-vector knob names the bandit must NOT
+    # move.  Default empty == all-pinned for backward compatibility,
+    # which is what SIP-P2's RewardHarness already does when ``pinned``
+    # is None — so a role that doesn't declare this field behaves
+    # exactly as today.  Operators opt-in to learning per-knob by
+    # listing the knobs they want frozen here (the inverse of what
+    # you might expect — pinned = frozen).
+    policy_pinned: list[str] = Field(default_factory=list)
+    """θ-vector knobs the bandit must not touch for this role.  Empty
+    list with ``policy_enabled=False`` (default) preserves today's
+    behaviour: no learning.  Set ``policy_enabled=True`` and list the
+    knobs you want frozen here.  See
+    :data:`acc.policy_layer.DEFAULT_POLICY_VECTOR` for the full set."""
+
+    policy_enabled: bool = False
+    """When True, the agent's RewardHarness ships the role-supplied
+    pin/cadence/cap to SIP-P2's bandit.  Default False — a role that
+    doesn't opt-in keeps the SIP-P1 observation-only behaviour
+    (rewards logged, no θ updates)."""
+
+    policy_update_every_n_tasks: int = 100
+    """Bandit cadence (rail 3 — rate-limit vs Cat-C proposals).
+    Smaller = faster learning, more variance; larger = slower, more
+    stable.  Honoured by SIP-P2's RewardHarness when
+    ``policy_enabled=True``.  Clamped to >=1 inside the harness."""
+
+    policy_drift_cap: float = 0.8
+    """Drift constraint (SIP-P2 rail 2).  The agent stays under this
+    cap; rewards only kick in for drift *above* the cap (negative
+    penalty for exceeding).  Below the cap, drift contributes zero
+    to the reward — exploration is free."""
+
     # ACC-11: Grandmother cell domain identity
     domain_id: str = ""
     """Knowledge domain this role inhabits.
