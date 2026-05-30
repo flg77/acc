@@ -167,7 +167,7 @@ def _acc_extension(
 ) -> dict[str, Any]:
     """ACC-specific metadata, kept under the vendor key so the A2A standard
     fields stay vendor-neutral and future A2A spec bumps don't touch them."""
-    return {
+    extension = {
         "role": role_label,
         "collectiveId": collective_id,
         "agentId": agent_id,
@@ -186,4 +186,51 @@ def _acc_extension(
         # Echo the OpenSpec change id so a peer reading the card can correlate
         # to the feature definition; useful while A2A integration is alpha.
         "openSpec": "20260527-a2a-agent-interop",
+    }
+    # Proposal 20260530-assistant-agent-of-agents Phase 4 — the
+    # Assistant publishes a gatekeeper-specific extension so A2A peers
+    # see the propose-then-approve contract (mode-gated, Cat-A/B/C-
+    # bound) without having to inspect the role.yaml.  The block is
+    # only added for ``role_label == "assistant"`` so non-gatekeeper
+    # cards stay clean.
+    if role_label == "assistant":
+        extension["gatekeeper"] = _assistant_gatekeeper_extension(role)
+    return extension
+
+
+def _assistant_gatekeeper_extension(role: RoleDefinitionConfig) -> dict[str, Any]:
+    """A2A vendor-extension block describing the Assistant's gatekeeper
+    surface — proposal kinds it emits, dormancy mode, sub-collective
+    routing surface.
+
+    Proposal 20260530-assistant-agent-of-agents Phase 4.  This is the
+    seam A2A peers (and the future MCP / Kagenti directory) read to
+    decide:
+    - Is this peer a gatekeeper? (capability discovery)
+    - Which proposal kinds does it queue vs auto-execute? (autonomy
+      ceiling)
+    - Can it delegate cross-collective via A2A? (composition contract)
+    """
+    # Import inside the function so acc.a2a.card stays importable on
+    # hosts without the assistant_proposal module wired (test
+    # isolation, future A2A-only deployments).
+    try:
+        from acc.assistant_proposal import (  # noqa: PLC0415
+            PROPOSAL_ROLE_UPDATE,
+            PROPOSAL_ROUTE,
+            PROPOSAL_SPAWN,
+        )
+        proposal_kinds = [PROPOSAL_ROUTE, PROPOSAL_SPAWN, PROPOSAL_ROLE_UPDATE]
+    except Exception:
+        proposal_kinds = []
+    return {
+        "isGatekeeper": True,
+        "proposalKinds": proposal_kinds,
+        "dormancyAware": True,
+        # Sub-collective routing surface (AoA Phase 3a).  The card
+        # documents the *capability*; the live registry is read from
+        # the collective.yaml managed_sub_collectives block at boot.
+        "canRouteSubCollectives": getattr(role, "can_spawn_sub_collective", False),
+        "policyEnabled": getattr(role, "policy_enabled", False),
+        "openSpec": "20260530-assistant-agent-of-agents",
     }
