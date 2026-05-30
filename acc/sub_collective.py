@@ -311,6 +311,45 @@ def decode_lifecycle_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def write_lifecycle_request(
+    apply_dir: Any,
+    *,
+    action: str,
+    sub_cid: str,
+    reason: str = "",
+    operator_id: str = "default",
+    ts: Optional[float] = None,
+) -> Any:
+    """Atomically write a lifecycle request file the host-side watcher
+    polls.
+
+    Phase 3b consumer:
+    ``scripts/acc-lifecycle-watcher.sh`` polls
+    ``<apply_dir>/sub_collective.request`` for change.  The bus-side
+    publisher (Assistant's cognitive loop on cold delegation; idle
+    scanner on stale_cids) writes through this helper.  Writing to a
+    `.tmp` then `os.replace` guarantees the watcher never reads a
+    half-written file.
+
+    Returns the request-file Path.
+    """
+    import json  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    payload = encode_lifecycle_payload(
+        action=action, sub_cid=sub_cid, reason=reason,
+        operator_id=operator_id, ts=ts,
+    )
+    target_dir = Path(apply_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    req = target_dir / "sub_collective.request"
+    tmp = req.with_name(".sub_collective.request.tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(tmp, req)
+    return req
+
+
 __all__ = [
     "LIFECYCLE_RESUME",
     "LIFECYCLE_HIBERNATE",
@@ -320,4 +359,5 @@ __all__ = [
     "build_seed_context_block",
     "encode_lifecycle_payload",
     "decode_lifecycle_payload",
+    "write_lifecycle_request",
 ]

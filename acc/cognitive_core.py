@@ -407,6 +407,12 @@ class CognitiveCore:
         self._role_label = role_label
         self._peer_collectives: list[str] = peer_collectives or []
         self._bridge_enabled: bool = bridge_enabled
+        # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+        # populated by the agent constructor after registry init
+        # from CollectiveSpec.managed_sub_collectives.  None on
+        # single-collective deployments (and on every non-Assistant
+        # role) so build_system_prompt's block is skipped.
+        self._sub_collectives = None
 
         # In-process stress state
         self._stress = StressIndicators()
@@ -1398,6 +1404,28 @@ class CognitiveCore:
         parts = [purpose, f"\nPersona: {persona_instruction}"]
         if seed:
             parts.append(f"\n{seed}")
+
+        # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+        # inject the sub-collective routing surface into the
+        # Assistant's prompt so the LLM sees what's available to
+        # delegate to.  Gated on a populated registry attribute so
+        # non-Assistant roles (and single-collective hubs) are
+        # untouched.  The block is constant per registry shape, so
+        # it stays in the cacheable prefix.
+        sub_collectives = getattr(self, "_sub_collectives", None)
+        if sub_collectives is not None:
+            try:
+                from acc.sub_collective import build_seed_context_block  # noqa: PLC0415
+                sc_block = build_seed_context_block(sub_collectives)
+                if sc_block:
+                    parts.append("\n" + sc_block)
+            except Exception:
+                # Non-fatal — a registry error must not break the
+                # main prompt path.
+                logger.debug(
+                    "cognitive_core: sub-collective block render failed",
+                    exc_info=True,
+                )
 
         # PR-V3b — reasoning externalization.  Opt-in per role; keeps the
         # system prompt a stable cacheable prefix (the block is constant per

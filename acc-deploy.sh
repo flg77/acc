@@ -470,6 +470,105 @@ case "$COMMAND" in
             --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || true
         ;;
 
+    resume)
+        # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+        # bring a hibernated sub-collective back online.
+        #
+        # Each sub-collective ships its own collective.<cid>.yaml
+        # (or compose preset) under container/production/.  Resume
+        # is a thin wrapper over `podman-compose up -d` against
+        # the sub-collective's compose file; named volumes
+        # (LanceDB / Redis) survive the previous hibernate so the
+        # sub-collective's memory is intact.
+        SUB_CID="${1:?usage: resume <sub-collective-cid>}"
+        SUB_COMPOSE="$REPO_ROOT/container/production/collective.${SUB_CID}.yml"
+        if [[ ! -f "$SUB_COMPOSE" ]]; then
+            echo "ERROR: sub-collective compose missing: $SUB_COMPOSE" >&2
+            echo "       Sub-collectives are declared in collective.yaml's" >&2
+            echo "       managed_sub_collectives block and ship as their own" >&2
+            echo "       compose preset.  See acc/sub_collective.py." >&2
+            exit 1
+        fi
+        echo "▶ Resuming sub-collective: $SUB_CID"
+        echo "  compose: $SUB_COMPOSE"
+        podman-compose -f "$SUB_COMPOSE" up -d
+        echo "✓ $SUB_CID is up."
+        podman ps --filter "name=acc-${SUB_CID}-" \
+            --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || true
+        ;;
+
+    hibernate)
+        # Proposal 20260530-assistant-agent-of-agents Phase 3b — stop
+        # the sub-collective's containers but KEEP the named volumes so
+        # the next `resume` boots into the same memory state.
+        SUB_CID="${1:?usage: hibernate <sub-collective-cid>}"
+        SUB_COMPOSE="$REPO_ROOT/container/production/collective.${SUB_CID}.yml"
+        if [[ ! -f "$SUB_COMPOSE" ]]; then
+            # No compose file → nothing to stop.  Idempotent: log + exit 0.
+            echo "✓ sub-collective $SUB_CID has no compose file — already hibernated."
+            exit 0
+        fi
+        echo "▶ Hibernating sub-collective: $SUB_CID"
+        echo "  compose: $SUB_COMPOSE"
+        # `down` removes containers + networks but leaves named volumes.
+        # `--remove-orphans` is omitted so a stale container clean-up
+        # never deletes someone else's pod.
+        podman-compose -f "$SUB_COMPOSE" down
+        echo "✓ $SUB_CID hibernated (named volumes preserved)."
+        ;;
+
+    lifecycle-watcher)
+        # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+        # manage the host-side sub-collective lifecycle watcher.
+        # Same pattern as `watcher` (PR-X) but for the bus →
+        # resume/hibernate bridge.
+        WATCHER_SCRIPT="$REPO_ROOT/scripts/acc-lifecycle-watcher.sh"
+        APPLY_DIR="${ACC_APPLY_DIR:-$REPO_ROOT/.acc-apply}"
+        PIDFILE="$APPLY_DIR/lifecycle-watcher.pid"
+        SUBCMD="${1:-status}"
+        mkdir -p "$APPLY_DIR"
+        chmod 0777 "$APPLY_DIR" 2>/dev/null || true
+        _lifecycle_running() {
+            [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
+        }
+        case "$SUBCMD" in
+            start)
+                if _lifecycle_running; then
+                    echo "✓ lifecycle-watcher already running (PID $(cat "$PIDFILE"))."
+                    exit 0
+                fi
+                if [[ -f "$PIDFILE" ]]; then
+                    rm -f "$PIDFILE"
+                fi
+                chmod +x "$WATCHER_SCRIPT" 2>/dev/null || true
+                nohup "$WATCHER_SCRIPT" >/dev/null 2>&1 &
+                echo $! > "$PIDFILE"
+                echo "✓ lifecycle-watcher started (PID $(cat "$PIDFILE"))."
+                echo "  Log: $APPLY_DIR/lifecycle-watcher.log"
+                ;;
+            stop)
+                if _lifecycle_running; then
+                    kill "$(cat "$PIDFILE")" 2>/dev/null || true
+                    rm -f "$PIDFILE"
+                    echo "✓ lifecycle-watcher stopped."
+                else
+                    echo "lifecycle-watcher not running."
+                fi
+                ;;
+            status)
+                if _lifecycle_running; then
+                    echo "lifecycle-watcher: running (PID $(cat "$PIDFILE"))"
+                else
+                    echo "lifecycle-watcher: not running"
+                fi
+                ;;
+            *)
+                echo "usage: ./acc-deploy.sh lifecycle-watcher {start|stop|status}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
     watcher)
         # PR-X — manage the host-side workspace apply-watcher.
         #   ./acc-deploy.sh watcher start|stop|status
@@ -598,6 +697,10 @@ case "$COMMAND" in
         # .acc-apply bind mount.
         if [[ "$STACK" == "production" && "$DETACH" == "true" ]]; then
             "$0" watcher start || true
+            # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+            # sub-collective lifecycle watcher.  Idempotent same way
+            # the apply-watcher is.
+            "$0" lifecycle-watcher start || true
         fi
         echo ""
         echo "✓ Stack started. Services:"
