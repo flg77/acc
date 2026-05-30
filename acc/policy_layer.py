@@ -34,7 +34,7 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger("acc.policy_layer")
 
@@ -92,6 +92,55 @@ _REWARD_SIGN: dict[str, float] = {
 }
 
 
+# SIP-P2 — composite-reward weights.  Tuned so positive eval/approval
+# move θ but a single Cat-C denial spike dominates (rail 3 — policy
+# backs off *before* the compliance officer needs to propose a rule).
+_COMPOSITE_WEIGHTS: dict[str, float] = {
+    REWARD_EVAL_OUTCOME: 1.0,
+    REWARD_OPERATOR_APPROVAL: 1.5,
+    REWARD_TASK_CANCEL: 1.0,
+    REWARD_CAT_C_DENIAL: 2.0,
+}
+
+
+# SIP-P2 — per-knob bounds.  θ updates clamp to these so a runaway
+# composite signal can't drive a threshold below 0 or above 1.
+# memory_top_k and reasoning_depth_target sit on integers, so their
+# ranges are wider.  Values pinned to mirror operator-tunable expectations.
+_DEFAULT_THETA_BOUNDS: dict[str, tuple[float, float]] = {
+    "route_confidence_threshold": (0.0, 1.0),
+    "spawn_threshold": (0.0, 1.0),
+    "delegate_domain_match": (0.0, 1.0),
+    "memory_top_k": (1.0, 20.0),
+    "reasoning_depth_target": (1.0, 12.0),
+}
+
+
+# SIP-P2 — per-knob hill-climbing step size.  Scaled to each knob's
+# range so the update cadence feels comparable across knobs.
+_DEFAULT_THETA_STEP: dict[str, float] = {
+    "route_confidence_threshold": 0.02,
+    "spawn_threshold": 0.02,
+    "delegate_domain_match": 0.02,
+    "memory_top_k": 0.5,
+    "reasoning_depth_target": 0.5,
+}
+
+
+# SIP-P2 — rail 2 (drift-as-constraint).  Drift contributes to the
+# composite reward ONLY above this cap; below the cap it is zero so
+# the agent isn't punished for legitimate exploration toward the
+# role centroid.  Operators can override per-deployment via the env.
+_DEFAULT_DRIFT_CAP = 0.8
+
+
+# SIP-P2 — task-window for policy updates.  Rail 3 (rate limit vs
+# Cat-C): one update per N completed tasks is intentionally slow so
+# the compliance officer's Cat-C rule proposals get time to land
+# before policy drifts in a direction the rules then forbid.
+_DEFAULT_UPDATE_EVERY = 100
+
+
 def is_enabled() -> bool:
     """True iff the policy layer is opt-in-enabled for this process.
 
@@ -126,14 +175,18 @@ class RewardHarness:
         *,
         role: str = "",
         ewma_alpha: float = _DEFAULT_EWMA_ALPHA,
+        update_every: int = _DEFAULT_UPDATE_EVERY,
+        pinned: Optional[frozenset[str]] = None,
+        bounds: Optional[dict[str, tuple[float, float]]] = None,
+        drift_cap: float = _DEFAULT_DRIFT_CAP,
     ) -> None:
         self._signaling = signaling
         self._cid = collective_id
         self._role = role
         self._subscribed = False
         # Per-role policy vector — defaults to DEFAULT_POLICY_VECTOR.
-        # Phase 1 keeps this read-only (no updates).  Operator can pin
-        # values via the role.yaml ``policy_pinned`` field (SIP-P2).
+        # Phase 1 ships read-only.  SIP-P2 (this revision) drives this
+        # vector via the hill-climbing update below.
         self.theta: dict[str, float] = dict(DEFAULT_POLICY_VECTOR)
         # SIP-P1 — per-reward-kind EWMA aggregator.  Initialised lazily
         # on the first observation per kind so a "no signal yet" caller
@@ -142,6 +195,38 @@ class RewardHarness:
         self._ewma_alpha = max(0.0, min(1.0, float(ewma_alpha)))
         self._ewma: dict[str, float] = {}
         self._reward_counts: dict[str, int] = {}
+        # SIP-P2 — bandit configuration.
+        # Cadence (rail 3 — rate-limit vs Cat-C); clamp to >=1 so a bad
+        # config can't trigger an update on every task.
+        self._update_every = max(1, int(update_every))
+        # Pinned θ knobs — never moved by the bandit.
+        # Operators set this via role.yaml ``policy_pinned``; defaults
+        # to all knobs pinned during bootstrap (operator opts in).
+        if pinned is None:
+            self._pinned: frozenset[str] = frozenset(DEFAULT_POLICY_VECTOR.keys())
+        else:
+            self._pinned = frozenset(pinned)
+        # Per-knob bounds for clamping after a step.
+        self._bounds = dict(_DEFAULT_THETA_BOUNDS)
+        if bounds:
+            self._bounds.update(bounds)
+        # Drift constraint (rail 2).
+        self._drift_cap = max(0.0, min(1.0, float(drift_cap)))
+        # Hill-climbing momentum per knob (±1 direction).  Initialised
+        # to +1 so the first step probes the upper half of the range.
+        self._momentum: dict[str, int] = {k: 1 for k in DEFAULT_POLICY_VECTOR}
+        # Last composite reward seen — used to decide whether to keep
+        # or flip the per-knob direction.  None on cold start.
+        self._last_composite: Optional[float] = None
+        # Task counter (rail 3 cadence).
+        self._tasks_in_window = 0
+        # Update history — ring of (ts, old_theta, new_theta,
+        # composite_reward).  Bounded so a long-running agent doesn't
+        # grow this unboundedly.
+        self._update_history: list[dict[str, Any]] = []
+        # Most-recent task drift score — fed in via observe_task() so
+        # the composite reward can apply the constraint penalty.
+        self._last_task_drift: float = 0.0
 
     @property
     def subscribed(self) -> bool:
@@ -273,9 +358,8 @@ class RewardHarness:
 
         Used by the (future) Diagnostics Policy tab in the TUI + tests.
         Returns a dict carrying θ, per-kind EWMA values, observation
-        counts, and the harness's collective / role identity.  SIP-P2
-        will use the same shape on the bus as the ``POLICY_UPDATE``
-        event payload.
+        counts, the harness's collective / role identity, and the
+        SIP-P2 bandit fields (window state + history).
         """
         return {
             "collective_id": self._cid,
@@ -284,7 +368,176 @@ class RewardHarness:
             "ewma": dict(self._ewma),
             "counts": dict(self._reward_counts),
             "alpha": self._ewma_alpha,
+            # SIP-P2 fields.
+            "pinned": sorted(self._pinned),
+            "drift_cap": self._drift_cap,
+            "update_every": self._update_every,
+            "tasks_in_window": self._tasks_in_window,
+            "last_composite": self._last_composite,
+            "update_history": list(self._update_history),
         }
+
+    # ------------------------------------------------------------------
+    # SIP-P2 — composite reward + windowed bandit update
+    # ------------------------------------------------------------------
+
+    def composite_reward(self, drift: Optional[float] = None) -> float:
+        """Return the weighted scalar that drives the bandit step.
+
+        Rail 2 (drift-as-constraint): drift contributes only when it
+        exceeds ``drift_cap``; below the cap the term is zero so the
+        agent isn't punished for legitimate centroid exploration.
+
+        ``drift`` defaults to the last value observed via
+        :meth:`observe_task`.  Negative-signed rewards
+        (cat_c_denial, task_cancel, drift_overage) subtract; positive
+        ones (eval_outcome, operator_approval) add.  Missing EWMAs
+        treated as 0 — first-observation anchoring (SIP-P1) means a
+        kind seen at least once already has a non-zero value.
+        """
+        d = float(drift) if drift is not None else self._last_task_drift
+        # Eval + approval lift the composite; cancel + cat-c subtract.
+        r = 0.0
+        r += _COMPOSITE_WEIGHTS[REWARD_EVAL_OUTCOME] * float(
+            self._ewma.get(REWARD_EVAL_OUTCOME, 0.0)
+        )
+        r += _COMPOSITE_WEIGHTS[REWARD_OPERATOR_APPROVAL] * float(
+            self._ewma.get(REWARD_OPERATOR_APPROVAL, 0.0)
+        )
+        r -= _COMPOSITE_WEIGHTS[REWARD_TASK_CANCEL] * abs(float(
+            self._ewma.get(REWARD_TASK_CANCEL, 0.0)
+        ))
+        r -= _COMPOSITE_WEIGHTS[REWARD_CAT_C_DENIAL] * abs(float(
+            self._ewma.get(REWARD_CAT_C_DENIAL, 0.0)
+        ))
+        # Drift-as-constraint (rail 2).  Penalty is the overage
+        # magnitude scaled by the cat-c weight (drift overages are
+        # treated as a serious signal — they often precede Cat-C trips).
+        overage = max(0.0, d - self._drift_cap)
+        if overage > 0:
+            r -= _COMPOSITE_WEIGHTS[REWARD_CAT_C_DENIAL] * overage
+        return r
+
+    async def observe_task(
+        self,
+        operating_mode: str,
+        drift: Optional[float] = None,
+    ) -> bool:
+        """Record one completed task and run a bandit update if due.
+
+        Rail 6 (frozen-in-AUTO): when ``operating_mode == "AUTO"``,
+        this is a no-op — the policy does NOT update while no human
+        is in the loop.  Operators promoting to AUTO get a stable
+        behaviour snapshot; SIP-P3+ can revisit if telemetry justifies.
+
+        Rail 3 (rate limit vs Cat-C): the in-window task counter
+        increments per call; ``_maybe_update_theta`` fires every
+        ``update_every`` tasks.  Cat-C proposals (PR-Z3) operate on a
+        much faster cadence, so by the time the policy moves, the
+        rule landscape has settled.
+
+        Returns True iff a θ update fired on this call (useful for
+        tests + the TUI's "next update in N tasks" surface).
+        """
+        from acc.operating_modes import MODE_AUTO, normalise  # noqa: PLC0415
+        if normalise(operating_mode or "") == MODE_AUTO:
+            return False
+        if drift is not None:
+            self._last_task_drift = float(drift)
+        self._tasks_in_window += 1
+        if self._tasks_in_window < self._update_every:
+            return False
+        try:
+            await self._update_theta()
+        finally:
+            self._tasks_in_window = 0
+        return True
+
+    async def _update_theta(self) -> None:
+        """One hill-climbing step + audit event.
+
+        Per unpinned knob: if the composite reward improved since the
+        last update, take a step in the current direction; otherwise
+        flip the direction and step.  Clamp to bounds.  Publish on
+        ``subject_policy_update``.
+        """
+        old_theta = dict(self.theta)
+        composite = self.composite_reward()
+        moved: dict[str, float] = {}
+        if self._last_composite is None:
+            # Cold start — just anchor; no movement yet.
+            self._last_composite = composite
+        else:
+            improved = composite >= self._last_composite
+            for knob in DEFAULT_POLICY_VECTOR:
+                if knob in self._pinned:
+                    continue
+                if not improved:
+                    self._momentum[knob] *= -1
+                step = _DEFAULT_THETA_STEP.get(knob, 0.01)
+                proposed = self.theta[knob] + (step * self._momentum[knob])
+                lo, hi = self._bounds.get(knob, (0.0, 1.0))
+                clamped = max(lo, min(hi, proposed))
+                if clamped != self.theta[knob]:
+                    moved[knob] = clamped - self.theta[knob]
+                self.theta[knob] = clamped
+            self._last_composite = composite
+
+        # Audit + bus event — always emitted (even when no knob moved)
+        # so the operator sees that an update window completed.
+        event = {
+            "ts": time.time(),
+            "old": old_theta,
+            "new": dict(self.theta),
+            "moved": moved,
+            "composite_reward": composite,
+            "tasks_in_window": self._update_every,
+        }
+        self._update_history.append(event)
+        # Bound the in-memory history so a long-running harness
+        # doesn't grow unboundedly.  Last 64 updates is enough for
+        # the TUI's recent-history view; older entries hit the bus
+        # audit + (future) MLflow span event from the OTel proposal.
+        if len(self._update_history) > 64:
+            del self._update_history[: len(self._update_history) - 64]
+        try:
+            from acc.signals import subject_policy_update  # noqa: PLC0415
+            payload = {
+                "collective_id": self._cid,
+                "role": self._role,
+                "theta": dict(self.theta),
+                "update": event,
+            }
+            await self._signaling.publish(
+                subject_policy_update(self._cid, self._role), payload,
+            )
+        except Exception:
+            logger.exception(
+                "policy_layer: POLICY_UPDATE publish failed for role=%s",
+                self._role,
+            )
+
+    def reset_theta(self) -> None:
+        """Revert θ to ``DEFAULT_POLICY_VECTOR`` (operator escape hatch).
+
+        Clears the momentum vector + last-composite anchor so the next
+        update window starts from a clean state.  Update history is
+        retained so the audit trail shows the reset.
+        """
+        self.theta = dict(DEFAULT_POLICY_VECTOR)
+        self._momentum = {k: 1 for k in DEFAULT_POLICY_VECTOR}
+        self._last_composite = None
+        self._tasks_in_window = 0
+        # Audit trail: a reset entry.
+        self._update_history.append({
+            "ts": time.time(),
+            "old": "(prior θ)",
+            "new": dict(self.theta),
+            "moved": {},
+            "composite_reward": 0.0,
+            "tasks_in_window": 0,
+            "reason": "operator_reset",
+        })
 
 
 def _payload_bytes(msg: object) -> bytes:

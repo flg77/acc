@@ -39,6 +39,10 @@ _SAMPLE_ARGS = {
     "tag": "code_patterns",
     "task_id": "task-xyz789",
     "oversight_id": "ov-7c91a",
+    # Proposal 20260530-acc-self-improvement-policy-gradient Phase 2 —
+    # subject_policy_update(cid, role) carries the role identity in
+    # the subject so consumers can subscribe per-role.
+    "role": "assistant",
 }
 
 

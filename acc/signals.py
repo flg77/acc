@@ -368,6 +368,25 @@ def subject_alert(collective_id: str) -> str:
     return f"acc.{collective_id}.alert"
 
 
+def subject_policy_update(collective_id: str, role: str) -> str:
+    """Return the NATS subject for POLICY_UPDATE events.
+
+    Proposal `20260530-acc-self-improvement-policy-gradient` Phase 2.
+    Per-role channel — one subject per role keeps audit + filtering
+    cheap.  Payload (from ``RewardHarness.snapshot()``):
+        {"collective_id": str, "role": str, "theta": {...},
+         "ewma": {...}, "counts": {...}, "alpha": float,
+         "update": {"old": {...}, "new": {...},
+                    "composite_reward": float,
+                    "tasks_in_window": int, "ts": float}}
+
+    SIP-P3+ may extend the payload (e.g. multi-agent credit-share
+    breakdown); consumers should drop unknown fields per the wire-
+    forward-compat pattern used elsewhere.
+    """
+    return f"acc.{collective_id}.policy.{role}"
+
+
 def subject_assistant_proposal(collective_id: str) -> str:
     """Return the NATS subject for ASSISTANT_PROPOSAL pending events.
 
