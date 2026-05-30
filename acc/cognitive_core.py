@@ -176,6 +176,26 @@ class CognitiveResult:
     route_reason: str = ""
     """Short rationale the orchestrator gave for the ``route_to`` decision."""
 
+    # Proposal 20260530-assistant-agent-of-agents Phase 2 (sub-phase 2b)
+    # — Assistant proposal intents.  Cognitive core PARSES + CLASSIFIES
+    # by mode (decide_dispatch); agent.py owns the I/O (queue submit,
+    # bus publish, Redis cache).  All three lists default to empty so
+    # non-Assistant roles + Phase-1 Assistants behave identically.
+    assistant_proposals_queued: list = field(default_factory=list)
+    """Proposals routed to ``DISPATCH_QUEUE``: agent.py calls
+    oversight_queue.submit + caches the proposal under the returned
+    oversight_id + publishes on ``subject_assistant_proposal``."""
+
+    assistant_proposals_executed: list = field(default_factory=list)
+    """Proposals routed to ``DISPATCH_EXECUTE`` (AUTO + ACCEPT_EDITS-for-
+    ROUTE): agent.py calls ``dispatch_approved_proposal`` immediately.
+    Cat-A/B/C still gates the underlying mutation."""
+
+    assistant_proposals_plan: list = field(default_factory=list)
+    """Plan-only summary lines for ``DISPATCH_PLAN`` (PLAN mode).
+    Prepended to the reasoning trace so the operator sees what the
+    Assistant *would* have proposed without any mutation landing."""
+
 
 # ---------------------------------------------------------------------------
 # Bridge delegation marker (ACC-9)
@@ -1042,6 +1062,76 @@ class CognitiveCore:
             if route_to and route_to == self._role_label:
                 route_to, route_reason = ("", "")
 
+        # 8 — ASSISTANT PROPOSAL PARSE (proposal
+        # 20260530-assistant-agent-of-agents Phase 2b).  Only the
+        # Assistant role emits ``[PROPOSE_*:…]`` markers; we gate the
+        # entire block on role_label == "assistant" so non-Assistant
+        # outputs that happen to contain a literal "[PROPOSE_…" don't
+        # accidentally enqueue mutations.  The cognitive core just
+        # parses + classifies by operating mode; agent.py owns the
+        # I/O (queue submit, bus publish, Redis cache).
+        proposals_queued: list = []
+        proposals_executed: list = []
+        proposals_plan: list[str] = []
+        if (
+            self._role_label == "assistant"
+            and output_text
+            and not delegate_to
+        ):
+            try:
+                from acc.assistant_proposal import (  # noqa: PLC0415
+                    DISPATCH_EXECUTE,
+                    DISPATCH_PLAN,
+                    DISPATCH_QUEUE,
+                    decide_dispatch,
+                    parse_proposal_markers,
+                )
+                from acc.operating_modes import normalise as _norm_mode  # noqa: PLC0415
+
+                parsed = parse_proposal_markers(output_text)
+                if parsed:
+                    mode = _norm_mode(
+                        task_payload.get("operating_mode", "AUTO"),
+                    )
+                    for p in parsed:
+                        # Fill context the parser couldn't know about.
+                        p.collective_id = self._collective_id
+                        p.agent_id = self._agent_id
+                        p.task_id = str(
+                            task_payload.get("task_id", "") or ""
+                        )
+                        p.operator_id = str(
+                            task_payload.get("operator_id", "default")
+                            or "default"
+                        )
+                        action = decide_dispatch(mode, p.kind)
+                        if action == DISPATCH_PLAN:
+                            proposals_plan.append(
+                                f"[PROPOSAL/{p.kind}] {p.summary}"
+                                + (f" — {p.rationale}" if p.rationale else "")
+                            )
+                        elif action == DISPATCH_EXECUTE:
+                            proposals_executed.append(p)
+                        elif action == DISPATCH_QUEUE:
+                            proposals_queued.append(p)
+            except Exception:
+                # Best-effort: a parse / classify failure logs and
+                # falls through.  The Assistant's main answer still
+                # flows to the operator; missing proposal dispatch is
+                # observable on the bus (or its absence).
+                logger.exception(
+                    "cognitive_core: assistant proposal parse/classify failed"
+                )
+        # When in PLAN mode the would-be proposals get prepended to the
+        # reasoning trace so the operator sees what the gatekeeper
+        # *would* have done without any mutation landing.
+        if proposals_plan and reasoning_text is not None:
+            plan_block = "\n".join(proposals_plan)
+            if reasoning_text:
+                reasoning_text = plan_block + "\n\n" + reasoning_text
+            else:
+                reasoning_text = plan_block
+
         return CognitiveResult(
             output=output_text,
             blocked=False,
@@ -1053,6 +1143,9 @@ class CognitiveCore:
             reasoning=reasoning_text,
             route_to=route_to,
             route_reason=route_reason,
+            assistant_proposals_queued=proposals_queued,
+            assistant_proposals_executed=proposals_executed,
+            assistant_proposals_plan=proposals_plan,
         )
 
     # ------------------------------------------------------------------

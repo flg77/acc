@@ -644,6 +644,204 @@ class Agent:
                 "policy_layer: failed to start reward harness"
             )
 
+    async def _handle_assistant_proposals(
+        self,
+        result,
+        task_payload: dict,
+        collective_id: str,
+    ) -> None:
+        """Dispatch + queue the Assistant's proposals from one task.
+
+        Proposal `20260530-assistant-agent-of-agents` Phase 2b.
+        Cognitive core has classified by mode; here we:
+
+        - EXECUTE list → publish the underlying mutation via
+          ``dispatch_approved_proposal``.
+        - QUEUE list → submit each proposal to the oversight queue,
+          cache the full proposal payload in Redis under the returned
+          oversight_id (so the approval handler can find it), and
+          publish on ``subject_assistant_proposal`` so the Compliance
+          screen consumer can render the pending row.
+        - PLAN list — nothing to do here; cognitive_core already
+          prepended the summaries to ``result.reasoning``.
+
+        Failures per-proposal log + continue.  Lists are empty for
+        non-Assistant roles + Phase-1-style outputs, so the cost is
+        a single isinstance branch on the hot path.
+        """
+        executed = getattr(result, "assistant_proposals_executed", None) or []
+        queued = getattr(result, "assistant_proposals_queued", None) or []
+        if not executed and not queued:
+            return
+        # Lazy import: keeps the module fully importable on hosts
+        # where ``acc.assistant_proposal`` hasn't been brought in yet.
+        try:
+            from acc.assistant_proposal import (  # noqa: PLC0415
+                dispatch_approved_proposal,
+                publish_proposal_pending,
+            )
+        except Exception:
+            logger.exception(
+                "assistant_proposal: import failed — skipping dispatch",
+            )
+            return
+
+        # ---- EXECUTE branch (AUTO + ACCEPT_EDITS-for-ROUTE) ----
+        for p in executed:
+            try:
+                ok = await dispatch_approved_proposal(
+                    self.backends.signaling, p,
+                )
+                logger.info(
+                    "assistant_proposal: auto-executed kind=%s id=%s ok=%s",
+                    p.kind, p.proposal_id, ok,
+                )
+            except Exception:
+                logger.exception(
+                    "assistant_proposal: execute dispatch failed for %s",
+                    getattr(p, "proposal_id", "?"),
+                )
+
+        # ---- QUEUE branch (ASK_PERMISSIONS + ACCEPT_EDITS-for-structural) ----
+        if queued:
+            queue = self._oversight_queue
+            redis = getattr(self.backends, "working_memory", None)
+            for p in queued:
+                try:
+                    oversight_id = ""
+                    if queue is not None:
+                        oversight_id = await queue.submit(
+                            task_id=p.proposal_id,
+                            risk_level=p.risk_level or "MEDIUM",
+                            summary=p.summary,
+                            role_id="assistant",
+                        )
+                    # Cache the proposal under the oversight_id so the
+                    # approval handler can dispatch the right mutation
+                    # when the operator approves.  Best-effort: no Redis
+                    # → in-memory only (handler fails closed).
+                    if redis is not None and oversight_id:
+                        try:
+                            key = (
+                                f"acc:{collective_id}:"
+                                f"assistant_proposal:{oversight_id}"
+                            )
+                            ttl = getattr(queue, "_timeout_s", 300) or 300
+                            await redis.setex(
+                                key, int(ttl),
+                                json.dumps(p.to_payload(), default=str),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "assistant_proposal: redis cache failed for %s",
+                                oversight_id,
+                            )
+                    # Announce on the bus so the Compliance screen
+                    # snapshot consumer picks up the pending row.
+                    await publish_proposal_pending(
+                        self.backends.signaling, p,
+                    )
+                    logger.info(
+                        "assistant_proposal: queued kind=%s id=%s "
+                        "oversight_id=%s",
+                        p.kind, p.proposal_id, oversight_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "assistant_proposal: queue submit failed for %s",
+                        getattr(p, "proposal_id", "?"),
+                    )
+
+    async def _maybe_dispatch_assistant_proposal(
+        self,
+        collective_id: str,
+        oversight_id: str,
+    ) -> None:
+        """When ``oversight_id`` matches a cached Assistant proposal,
+        publish the underlying mutation.
+
+        Proposal `20260530-assistant-agent-of-agents` Phase 2b.  Looks
+        the proposal up at ``acc:{cid}:assistant_proposal:{oversight_id}``
+        in Redis; no-op when the key is absent (the oversight item came
+        from a regular capability invocation, not a proposal).  After
+        a successful dispatch the cache entry is deleted so a replayed
+        decision can't double-apply.
+        """
+        redis = getattr(self.backends, "working_memory", None)
+        if redis is None or not oversight_id:
+            return
+        key = f"acc:{collective_id}:assistant_proposal:{oversight_id}"
+        try:
+            raw = await redis.get(key)
+        except Exception:
+            logger.exception(
+                "assistant_proposal: redis lookup failed for %s",
+                oversight_id,
+            )
+            return
+        if not raw:
+            return  # not a proposal-backed oversight item
+        try:
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode("utf-8", errors="replace")
+            payload = json.loads(raw)
+            from acc.assistant_proposal import (  # noqa: PLC0415
+                AssistantProposal,
+                dispatch_approved_proposal,
+            )
+            proposal = AssistantProposal.from_payload(payload)
+        except Exception:
+            logger.exception(
+                "assistant_proposal: cached payload malformed for %s",
+                oversight_id,
+            )
+            return
+        try:
+            ok = await dispatch_approved_proposal(
+                self.backends.signaling, proposal,
+            )
+            logger.info(
+                "assistant_proposal: approved + dispatched kind=%s "
+                "oversight_id=%s ok=%s",
+                proposal.kind, oversight_id, ok,
+            )
+        except Exception:
+            logger.exception(
+                "assistant_proposal: dispatch on approve failed for %s",
+                oversight_id,
+            )
+            return
+        # Drop the cache so a replayed decision can't re-dispatch.
+        try:
+            await redis.delete(key)
+        except Exception:
+            logger.debug(
+                "assistant_proposal: cache delete failed for %s",
+                oversight_id, exc_info=True,
+            )
+
+    async def _discard_assistant_proposal_cache(
+        self,
+        collective_id: str,
+        oversight_id: str,
+    ) -> None:
+        """Delete a cached Assistant proposal — called on REJECT so a
+        future replayed decision can't dispatch a stale mutation.
+
+        Best-effort; absent Redis or absent key is a silent no-op.
+        """
+        redis = getattr(self.backends, "working_memory", None)
+        if redis is None or not oversight_id:
+            return
+        key = f"acc:{collective_id}:assistant_proposal:{oversight_id}"
+        try:
+            await redis.delete(key)
+        except Exception:
+            logger.debug(
+                "assistant_proposal: cache delete failed for %s",
+                oversight_id, exc_info=True,
+            )
+
     async def _restore_dormancy_state(self) -> None:
         """Read the Assistant's persisted dormancy flag from Redis and
         restore it onto the cognitive core's StressIndicators.
@@ -983,6 +1181,15 @@ class Agent:
                 role=self._active_role,
                 progress_callback=progress_callback,
             )
+
+            # Proposal 20260530-assistant-agent-of-agents Phase 2b —
+            # Assistant proposal I/O.  Cognitive core parsed +
+            # classified proposals by mode (PLAN/QUEUE/EXECUTE); we
+            # do the bus + queue work here.  No-op for non-Assistant
+            # roles (the lists are empty).  Failure on any one
+            # proposal logs + continues; the main TASK_COMPLETE flow
+            # never stalls on a dispatch hiccup.
+            await self._handle_assistant_proposals(result, data, collective_id)
 
             # Phase 4.4 — Capability dispatch.  Parse [SKILL:...] /
             # [MCP:...] markers from result.output and run each through
@@ -2078,8 +2285,21 @@ class Agent:
             try:
                 if decision == "APPROVE":
                     await queue.approve(oversight_id, approver)
+                    # Proposal 20260530-assistant-agent-of-agents
+                    # Phase 2b — if this oversight item originated as
+                    # an Assistant proposal, load the cached payload
+                    # and dispatch the underlying mutation.
+                    await self._maybe_dispatch_assistant_proposal(
+                        collective_id, oversight_id,
+                    )
                 elif decision == "REJECT":
                     await queue.reject(oversight_id, approver, reason)
+                    # Reject path — drop the cached proposal so it
+                    # can't be re-dispatched on a future request with
+                    # a stale oversight_id.
+                    await self._discard_assistant_proposal_cache(
+                        collective_id, oversight_id,
+                    )
                 else:
                     logger.warning("oversight: unknown decision %r", decision)
                     return
