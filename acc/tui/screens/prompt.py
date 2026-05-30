@@ -597,31 +597,45 @@ class PromptScreen(Screen):
         # TASK_CANCEL timeout fires.  Operators reported this as a
         # silent "prompt did not reach vLLM" regression: the connection
         # tested fine but no worker of role X was registered (workspace
-        # re-apply was still restarting agents, or the collective.yaml
-        # simply did not include that role).  We surface the gap up-
-        # front so the operator can pick a different role or wait for
-        # the restart to settle.
+        # re-apply was still restarting agents, or — more commonly —
+        # collective.yaml's worker_pool simply did not include that role
+        # so no dormant container exists for the arbiter to dispatch to).
+        #
+        # v0.3.23: the warning was non-blocking and didn't enumerate
+        # what IS live, so operators sent anyway and watched the spinner
+        # run out.  Now we BLOCK the send and show the live-role list
+        # so the next click can target a role that actually exists.
         snap = self.snapshot
         if snap is not None:
+            agents = (snap.agents or {})
             try:
                 live_for_role = [
-                    a for a in (snap.agents or {}).values()
+                    a for a in agents.values()
                     if a.role == target_role and a.state == "ACTIVE"
                 ]
+                live_roles = sorted({
+                    a.role for a in agents.values()
+                    if a.state == "ACTIVE" and a.role
+                })
             except Exception:
                 live_for_role = []
+                live_roles = []
             if not live_for_role:
+                live_list = ", ".join(live_roles) if live_roles else "(none)"
                 self.notify(
-                    f"No ACTIVE agent for role {target_role!r} in this "
-                    f"collective — task will time out at 180 s. "
-                    f"Check Configuration → LIVE BACKENDS, or wait for "
-                    f"a pending apply to finish.",
-                    severity="warning",
-                    timeout=10.0,
+                    f"No ACTIVE '{target_role}' agent in this collective. "
+                    f"Live roles: {live_list}. "
+                    f"Either pick one of those, or add '{target_role}' to "
+                    f"collective.yaml's worker_pool and re-apply. "
+                    f"Send refused — would time out at 180 s.",
+                    severity="error",
+                    timeout=14.0,
                 )
-                # Don't block — operator may know an agent is about to
-                # come up.  The warning makes the situation visible
-                # instead of the previous silent 180 s wait.
+                # BLOCK — empirically the warning-only path led operators
+                # to wait out the 180 s timeout.  An operator who really
+                # knows an agent is seconds away from registering can
+                # re-press Send the moment the heartbeat lands.
+                return
 
         cid = self._active_collective_id()
         worker = asyncio.create_task(

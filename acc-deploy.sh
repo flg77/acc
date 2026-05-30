@@ -490,6 +490,15 @@ case "$COMMAND" in
                     echo "✓ apply-watcher already running (PID $(cat "$PIDFILE"))."
                     exit 0
                 fi
+                # v0.3.23 — clean up a stale PID file from a previous
+                # crash or host reboot.  Without this the next
+                # invocation reuses the dead PID's file but the
+                # `_watcher_running` check above passes the wrong way
+                # next time (PID exists in file, process is gone) —
+                # not a hard failure, but a confusing log line.
+                if [[ -f "$PIDFILE" ]]; then
+                    rm -f "$PIDFILE"
+                fi
                 chmod +x "$WATCHER_SCRIPT" 2>/dev/null || true
                 nohup "$WATCHER_SCRIPT" >/dev/null 2>&1 &
                 echo $! > "$PIDFILE"
@@ -578,6 +587,17 @@ case "$COMMAND" in
             "${BASE_CMD[@]}" up -d "$@"
         else
             "${BASE_CMD[@]}" up "$@"
+        fi
+        # v0.3.23 — ensure the workspace apply-watcher is running.
+        # Previously `setup` started it, but a host reboot or an
+        # operator-killed watcher process left the TUI's directory
+        # picker silently broken.  `watcher start` is idempotent
+        # (PID file + kill -0 check), so re-running it from every
+        # `up` self-heals without churning a healthy watcher.  The
+        # production stack only — the dev profile doesn't have the
+        # .acc-apply bind mount.
+        if [[ "$STACK" == "production" && "$DETACH" == "true" ]]; then
+            "$0" watcher start || true
         fi
         echo ""
         echo "✓ Stack started. Services:"
