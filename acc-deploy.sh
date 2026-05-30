@@ -420,8 +420,16 @@ case "$COMMAND" in
         BASE="${ACC_WORKSPACE_BASE:-$HOME}"
         BASE_REAL="$(realpath -m "$BASE")"
         PATH_REAL="$(realpath -m "$HOST_PATH")"
+        # Strip a trailing slash from BASE_REAL before forming the glob:
+        # when BASE_REAL is exactly "/" the naive pattern "$BASE_REAL"/*
+        # expands to "//*" and refuses every absolute path because they
+        # start with a single slash, not two.  After stripping, "/" → ""
+        # and the pattern is "/*" — matches any absolute path under the
+        # whole-host root.  For BASE_REAL=/home/flg the stripped value
+        # is unchanged so the boundary is still enforced.
+        BASE_GLOB="${BASE_REAL%/}"
         case "$PATH_REAL/" in
-            "$BASE_REAL"/*) : ;;
+            "$BASE_GLOB"/*) : ;;
             *)
                 echo "REFUSED: $PATH_REAL is not within $BASE_REAL" >&2
                 echo "         (set ACC_WORKSPACE_BASE to widen the allowed root)" >&2
