@@ -96,6 +96,15 @@ role_definition:
   allowed_actions:
     - read_vector_db
     - read_scratchpad
+    # Proposal 20260530-assistant-agent-of-agents Phase 2 — the
+    # Assistant proposes mutations; the Compliance queue gates them.
+    # Mode-gated by acc/assistant_proposal.decide_dispatch:
+    # ASK_PERMISSIONS (default) queues everything; ACCEPT_EDITS
+    # auto-executes ROUTE only; AUTO auto-executes all kinds within
+    # Cat-A/B/C envelopes; PLAN emits reasoning trace only.
+    - propose_spawn
+    - propose_role_update
+    - propose_route
   category_b_overrides:
     token_budget: 2048
     rate_limit_rpm: 30
@@ -103,8 +112,14 @@ role_definition:
   domain_id: "general"
   # A guide, not an ICL producer — don't nominate episodes or spawn cells.
   can_nominate_episodes: false
+  # Phase 3 (sub-collectives) flips can_spawn_sub_collective; Phase 2
+  # only spawns dormant workers in the hub via the proposal queue.
   can_spawn_sub_collective: false
-  can_route: false
+  # Phase 2 — Assistant can emit [PROPOSE_ROUTE:…] markers; the
+  # CognitiveCore's existing _parse_route path consumes them when
+  # the cognitive-core integration lands in Phase 2b.  Phase 2a
+  # only requires the flag so role-validation accepts ROUTE markers.
+  can_route: true
   workspace_access: false
   max_parallel_tasks: 1
   plan_participant: false

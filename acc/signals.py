@@ -368,6 +368,22 @@ def subject_alert(collective_id: str) -> str:
     return f"acc.{collective_id}.alert"
 
 
+def subject_assistant_proposal(collective_id: str) -> str:
+    """Return the NATS subject for ASSISTANT_PROPOSAL pending events.
+
+    Proposal `20260530-assistant-agent-of-agents` Phase 2.  The
+    Assistant publishes here when his cognitive loop emits a
+    ``[PROPOSE_*]`` marker and mode-gating routes it to the queue
+    (or — under AUTO — when he auto-executes).  Payload is the
+    serialised :class:`acc.assistant_proposal.AssistantProposal`.
+
+    The Compliance screen consumes this stream to render queue rows;
+    the policy-layer reward harness reads the matching
+    ``OVERSIGHT_DECISION`` once the operator acts.
+    """
+    return f"acc.{collective_id}.assistant.proposal"
+
+
 def subject_assistant_control(collective_id: str) -> str:
     """Return the NATS subject for Assistant sleep/wake control signals.
 

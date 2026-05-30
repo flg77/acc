@@ -56,16 +56,28 @@ def test_assistant_shows_reasoning_and_uses_memory(assistant_role):
     assert assistant_role.memory_retrieval is True, "assistant should read prior episodes"
 
 
-# --- v1 holds NO capability surface (governance-native concierge) -----------
+# --- v2 holds NO direct-execute capability surface but CAN route ----------
+# Proposal 20260530-assistant-agent-of-agents Phase 2 — the gatekeeper can
+# now emit [PROPOSE_ROUTE:…] markers (gated by the Compliance queue in
+# ASK_PERMISSIONS / auto-executed in ACCEPT_EDITS+AUTO under Cat-A/B/C).
+# Skills, MCPs, and workspace access remain off — the gatekeeper proposes,
+# the worker pool executes.
 
-def test_assistant_has_no_capability_surface(assistant_role):
-    """v1 is a guide, not a worker — no skills/MCPs/workspace/routing."""
+def test_assistant_has_no_direct_execute_surface(assistant_role):
+    """v2 still holds no direct-execute primitives (skills/MCPs/workspace);
+    it owns the proposal-and-approve surface instead."""
     assert list(assistant_role.allowed_skills or []) == []
     assert list(assistant_role.default_skills or []) == []
     assert list(assistant_role.allowed_mcps or []) == []
     assert list(assistant_role.default_mcps or []) == []
     assert getattr(assistant_role, "workspace_access", False) is False
-    assert getattr(assistant_role, "can_route", False) is False
+
+
+def test_assistant_can_route_per_phase_2(assistant_role):
+    """Phase 2 flips can_route: True so the gatekeeper can re-dispatch
+    prompts to specialists via [PROPOSE_ROUTE:…] markers (consumed by
+    cognitive_core._parse_route in Phase 2b)."""
+    assert getattr(assistant_role, "can_route", False) is True
 
 
 def test_assistant_cannot_spawn_sub_collectives():
