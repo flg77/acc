@@ -7,6 +7,16 @@ __pycache__/
 cover.out
 .env.local
 .env.*.local
+
+# acc-webgui htpasswd credentials — bcrypt password hashes for the
+# `htpasswd` auth mode.  Bound into the container at /app/acc-webgui.htpasswd
+# (see container/production/podman-compose.yml).  NEVER commit real
+# credentials; only the .example template is allowed through the
+# negation below.  See docs/howto-webgui-htpasswd.md for the setup
+# runbook.
+acc-webgui.htpasswd
+*.htpasswd
+!acc-webgui.htpasswd.example
 # Operator-edited deploy/.env may include API keys; cover the
 # .bak the env/use.sh helper writes when overwriting it.
 deploy/.env
