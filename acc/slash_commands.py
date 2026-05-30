@@ -69,6 +69,9 @@ KIND_SKILLS = "skills"
 KIND_OVERSIGHT_PENDING = "oversight_pending"
 KIND_OVERSIGHT_APPROVE = "oversight_approve"
 KIND_OVERSIGHT_REJECT = "oversight_reject"
+# Proposal 20260530-assistant-agent-of-agents Phase 1 — Assistant
+# sleep/wake from the Prompt screen.  Args carry ``"action": "sleep"|"wake"``.
+KIND_ASSISTANT_CONTROL = "assistant_control"
 KIND_UNKNOWN = "unknown"
 KIND_INVALID = "invalid"
 KIND_NOT_SLASH = "not_slash"
@@ -157,6 +160,12 @@ def parse(text: str) -> SlashIntent:
     if verb == "skills":
         return SlashIntent(kind=KIND_SKILLS)
 
+    # Proposal 20260530-assistant-agent-of-agents Phase 1.
+    if verb in ("sleep", "wake"):
+        return SlashIntent(
+            kind=KIND_ASSISTANT_CONTROL, args={"action": verb},
+        )
+
     if verb == "oversight":
         if not rest:
             return SlashIntent(
@@ -210,5 +219,7 @@ HELP_TEXT = (
     "  /skills                              — list skills for current target\n"
     "  /oversight pending                   — list pending oversight items\n"
     "  /oversight approve <id>              — approve an oversight item\n"
-    "  /oversight reject <id> <reason>      — reject with a reason"
+    "  /oversight reject <id> <reason>      — reject with a reason\n"
+    "  /sleep                               — Assistant → dormant-watcher mode\n"
+    "  /wake                                — wake the Assistant (also Ctrl+Z toggle)"
 )

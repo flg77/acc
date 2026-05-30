@@ -81,7 +81,11 @@ async def test_send_publishes_task_assign_with_form_values():
         screen = app.screen
         assert isinstance(screen, PromptScreen)
 
-        # Fill the form
+        # Fill the form.  Default target is the Assistant gatekeeper
+        # (proposal 20260530-assistant-agent-of-agents Phase 1); set
+        # the dropdown to coding_agent for this flow.
+        from textual.widgets import Select  # noqa: PLC0415
+        screen.query_one("#select-target-role", Select).value = "coding_agent"
         screen.query_one("#prompt-textarea", TextArea).text = (
             "Generate a unit test for FizzBuzz"
         )

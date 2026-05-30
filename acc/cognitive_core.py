@@ -111,6 +111,21 @@ class StressIndicators:
     prompt_input_tokens: int = 0
     """Cumulative LLM input tokens (for the cache-hit ratio denominator)."""
 
+    # Proposal 20260530-assistant-agent-of-agents Phase 1 — Knative-style
+    # dormant-watcher.  When ``dormant`` is True the agent stays running,
+    # keeps heartbeating, keeps subscribed to TASK_ASSIGN — but only
+    # processes tasks matching the activator decision tree (target_role
+    # == "assistant" / empty / cat_a_escalation).  The heartbeat carries
+    # this flag so the TUI can render a 💤 badge.  Default False so every
+    # non-Assistant role behaves exactly as before.
+    dormant: bool = False
+    """True iff the agent is in dormant-watcher mode (Assistant role only)."""
+
+    dormant_at_ts: float = 0.0
+    """Epoch seconds when the agent went dormant.  Wake uses this to
+    compute the catch-up diff window (memory notes + compliance verdicts
+    since dormant_at_ts).  0.0 means the agent has never been dormant."""
+
 
 @dataclass
 class CognitiveResult:
@@ -165,6 +180,72 @@ class CognitiveResult:
 # ---------------------------------------------------------------------------
 # Bridge delegation marker (ACC-9)
 # ---------------------------------------------------------------------------
+
+# Proposal 20260530-assistant-agent-of-agents Phase 1 — Knative-style
+# dormant-watcher activator decision tree.  Used by the agent task loop
+# (acc/agent.py) just before dispatching into ``process_task``.
+def is_wake_trigger(task_payload: dict, target_role: str) -> bool:
+    """True when a TASK_ASSIGN should wake a dormant Assistant.
+
+    The four triggers from the proposal:
+
+    * ``target_role == "assistant"`` — operator picked the gatekeeper by
+      name.
+    * ``target_role`` is empty/None — no specific specialist named; the
+      Assistant is the fallback router.
+    * ``task_payload["priority"] == "cat_a_escalation"`` — Cat-A
+      HIGH_CONSEQUENCE escalation; the Assistant authors the
+      operator-facing framing even if the operator hadn't targeted him.
+    * Otherwise → stay dormant (operator targeted a specialist directly;
+      stay out of their way).
+
+    Pure function so the agent loop + tests can call it without
+    instantiating the cognitive core.
+    """
+    if (target_role or "").strip().lower() == "assistant":
+        return True
+    if not (target_role or "").strip():
+        return True
+    priority = str(task_payload.get("priority", "") or "").strip().lower()
+    if priority == "cat_a_escalation":
+        return True
+    return False
+
+
+def build_catchup_trace(
+    dormant_at_ts: float,
+    now_ts: float,
+    memory_notes_count: int = 0,
+    oversight_verdicts_count: int = 0,
+) -> str:
+    """Build the catch-up reasoning trace shown on wake.
+
+    Phase 1 keeps this simple — a single line summarising the dormancy
+    duration and what reference material the Assistant has on hand to
+    catch up.  Follow-up proposals tighten the diff window: actual
+    memory-note timestamping (PR-MEM extension) and per-verdict
+    operator-action histogram from the Compliance queue.
+
+    Returns an empty string when ``dormant_at_ts == 0`` (never been
+    dormant) so the caller can unconditionally prepend the value
+    without conditional branching.
+    """
+    if dormant_at_ts <= 0:
+        return ""
+    duration_s = max(0.0, now_ts - dormant_at_ts)
+    if duration_s >= 3600:
+        duration_str = f"{duration_s / 3600:.1f} h"
+    elif duration_s >= 60:
+        duration_str = f"{duration_s / 60:.1f} min"
+    else:
+        duration_str = f"{duration_s:.0f} s"
+    bits = [f"Catching up — dormant for {duration_str}"]
+    if memory_notes_count:
+        bits.append(f"{memory_notes_count} memory note(s) on hand")
+    if oversight_verdicts_count:
+        bits.append(f"{oversight_verdicts_count} compliance verdict(s) since")
+    return "; ".join(bits) + "."
+
 
 # LLM signals cross-collective delegation by embedding a marker in its output:
 #   [DELEGATE:sol-02:task requires larger model]

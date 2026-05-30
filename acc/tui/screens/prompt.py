@@ -70,7 +70,18 @@ logger = logging.getLogger("acc.tui.screens.prompt")
 # Default target-role options.  Operator can pin a specific role from
 # the dropdown; future PR could populate this dynamically from the
 # loaded role registry.
+#
+# Proposal 20260530-assistant-agent-of-agents Phase 1 — the Assistant
+# is now FIRST + default.  He's the gatekeeper that owns the operator's
+# intent; specialist roles are still selectable but the default flow
+# routes through him.  Operators who want direct-target driving simply
+# pick the specialist from the dropdown or put the Assistant to sleep
+# via Ctrl+Z (Knative-style dormant-watcher).
 _TARGET_ROLES: list[tuple[str, str]] = [
+    # The ACC Assistant — agent-of-agents gatekeeper (proposal
+    # 20260530-assistant-agent-of-agents).  Default target on first
+    # open of the Prompt screen.
+    ("assistant", "assistant"),
     ("coding_agent", "coding_agent"),
     ("analyst", "analyst"),
     ("synthesizer", "synthesizer"),
@@ -79,9 +90,6 @@ _TARGET_ROLES: list[tuple[str, str]] = [
     # role should handle the task and re-dispatches; its routing reasoning
     # surfaces in the stream, then the chosen role answers.
     ("orchestrator", "orchestrator"),
-    # The ACC Assistant — a concierge/guide for onboarding + agentset help.
-    # Scenario-optional: present only when activated (collective.assistant.yaml).
-    ("assistant", "assistant"),
 ]
 
 # Per-task wait cap.  Long-running tasks should split via PLAN, not
@@ -187,6 +195,11 @@ class PromptScreen(Screen):
         # Ctrl+R hide/show the reasoning stream entirely (default shown).
         Binding("ctrl+o", "toggle_reasoning", "Reasoning ±", priority=True),
         Binding("ctrl+r", "toggle_reasoning_visible", "Reasoning on/off"),
+        # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+        # Ctrl+Z toggles the Assistant's dormant-watcher mode.  The
+        # action publishes on subject_assistant_control and the
+        # banner re-renders from the heartbeat-carried `dormant` flag.
+        Binding("ctrl+z", "toggle_assistant_dormant", "💤 Assistant", priority=True),
         ("q", "app.quit", "Quit"),
         ("1", "navigate('soma')", "Soma"),
         ("2", "navigate('nucleus')", "Nucleus"),
@@ -334,7 +347,9 @@ class PromptScreen(Screen):
             yield Select(
                 _TARGET_ROLES,
                 id="select-target-role",
-                value="coding_agent",
+                # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+                # default target is the Assistant (gatekeeper).
+                value="assistant",
                 allow_blank=False,
             )
             yield Label("Agent id (optional):")
@@ -821,6 +836,19 @@ class PromptScreen(Screen):
             )
             return
 
+        # Proposal 20260530-assistant-agent-of-agents Phase 1.
+        if intent.kind == _sc.KIND_ASSISTANT_CONTROL:
+            action = str(intent.args.get("action", "") or "").lower()
+            if action not in ("sleep", "wake"):
+                _system(f"unknown assistant action: {action}", blocked=True)
+                return
+            self._publish_assistant_control(action)
+            _system(
+                f"Assistant → {action} (heartbeat keeps flowing; "
+                f"OODA loop intact)",
+            )
+            return
+
         _system(f"unhandled intent: {intent.kind}", blocked=True)
 
     def _publish_cancel(
@@ -868,6 +896,69 @@ class PromptScreen(Screen):
         worker = asyncio.create_task(_do_publish())
         self._workers.add(worker)
         worker.add_done_callback(self._workers.discard)
+
+    def _publish_assistant_control(self, action: str) -> None:
+        """Publish a sleep / wake control signal on the Assistant's
+        control subject.  Fire-and-forget — operators see the flag
+        flip via the next heartbeat tick (banner updates from
+        ``snapshot.agents[assistant].dormant``).
+
+        Proposal 20260530-assistant-agent-of-agents Phase 1.
+        """
+        observer = self._active_observer()
+        if observer is None:
+            self.notify(
+                "No NATS connection — cannot send /sleep|/wake",
+                severity="error",
+            )
+            return
+        cid = self._active_collective_id()
+        from acc.signals import subject_assistant_control  # noqa: PLC0415
+        payload = {
+            "action": action,
+            "operator_id": "default",  # Phase 5 will route the real id
+            "ts": time.time(),
+        }
+
+        async def _do_publish() -> None:
+            try:
+                await observer.publish(
+                    subject_assistant_control(cid), payload,
+                )
+            except Exception:
+                logger.exception("prompt: assistant_control publish failed")
+
+        worker = asyncio.create_task(_do_publish())
+        self._workers.add(worker)
+        worker.add_done_callback(self._workers.discard)
+
+    def action_toggle_assistant_dormant(self) -> None:
+        """Ctrl+Z — toggle the Assistant's dormant-watcher mode.
+
+        Reads the current snapshot to decide which action to send
+        (sleep when currently awake, wake when currently dormant).
+        When the snapshot is unavailable, defaults to /sleep — Ctrl+Z
+        most often means "leave me alone for now".
+
+        Proposal 20260530-assistant-agent-of-agents Phase 1.
+        """
+        snap = self.snapshot
+        currently_dormant = False
+        if snap is not None:
+            try:
+                for a in (snap.agents or {}).values():
+                    if a.role == "assistant" and getattr(a, "dormant", False):
+                        currently_dormant = True
+                        break
+            except Exception:
+                pass
+        action = "wake" if currently_dormant else "sleep"
+        self._publish_assistant_control(action)
+        self.notify(
+            f"Assistant → {action} (heartbeat keeps flowing)",
+            severity="information",
+            timeout=4.0,
+        )
 
     def _mark_cancelled(self, task_id: str) -> None:
         """Record a task_id as cancelled-on-timeout.

@@ -368,6 +368,23 @@ def subject_alert(collective_id: str) -> str:
     return f"acc.{collective_id}.alert"
 
 
+def subject_assistant_control(collective_id: str) -> str:
+    """Return the NATS subject for Assistant sleep/wake control signals.
+
+    Proposal `20260530-assistant-agent-of-agents` Phase 1.  Payload:
+        {"action": "sleep" | "wake",
+         "operator_id": "<id>",
+         "ts": <epoch_seconds>}
+
+    The Assistant agent subscribes here; the handler toggles
+    ``StressIndicators.dormant`` and persists to Redis at
+    ``acc:{cid}:{agent_id}:dormant`` so the flag survives container
+    restart.  TUI publishes from the Prompt screen's ``/sleep`` ·
+    ``/wake`` slash commands and the ``Ctrl+Z`` chord.
+    """
+    return f"acc.{collective_id}.assistant.control"
+
+
 def subject_kernel(collective_id: str) -> str:
     """Return the NATS subject for KERNEL_EVENT signals (proposal 015).
 

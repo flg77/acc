@@ -218,30 +218,39 @@ class _PromptHarness(App):
 
 
 @pytest.mark.asyncio
-async def test_prompt_pane_target_role_defaults_to_coding_agent():
-    """The Select widget's value at mount must be ``coding_agent``.
+async def test_prompt_pane_target_role_defaults_to_assistant():
+    """Proposal 20260530-assistant-agent-of-agents Phase 1 — the
+    default target is now the Assistant gatekeeper, not coding_agent.
 
-    coding_agent is the demonstrator role in the corpus + the default
-    target the operator sees on screen 7.  A future "improve UX" PR
-    that switches the default to ``ingester`` would be a regression.
+    coding_agent remains selectable from the dropdown for direct-target
+    use; the default-flip is what makes the gatekeeper the operator's
+    first stop.  The legacy ``test_prompt_pane_target_role_defaults_to_
+    coding_agent`` assertion is replaced by this one + the new pin in
+    ``tests/test_prompt_default_assistant.py``.
     """
     app = _PromptHarness()
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
         select = screen.query_one("#select-target-role", Select)
-        assert str(select.value) == "coding_agent"
+        assert str(select.value) == "assistant"
 
 
 @pytest.mark.asyncio
 async def test_prompt_send_routes_task_assign_to_coding_agent():
-    """A Send with the default Select value publishes a TASK_ASSIGN
-    whose ``target_role`` is ``coding_agent``."""
+    """Setting the dropdown to ``coding_agent`` and pressing Send
+    publishes a TASK_ASSIGN whose ``target_role`` is ``coding_agent``.
+
+    Previously this test relied on the default; AoA Phase 1 flipped
+    the default to the Assistant, so the dropdown is set explicitly
+    here to keep the coding_agent flow under test.
+    """
     app = _PromptHarness()
     async with app.run_test() as pilot:
         await pilot.pause()
         screen = app.screen
 
+        screen.query_one("#select-target-role", Select).value = "coding_agent"
         screen.query_one("#prompt-textarea", TextArea).text = (
             "Generate a unit test for FizzBuzz"
         )
@@ -273,6 +282,9 @@ async def test_prompt_send_with_target_agent_id_pins_to_specific_coding_agent():
         await pilot.pause()
         screen = app.screen
 
+        # Default target post-AoA-Phase-1 is the Assistant gatekeeper;
+        # set the dropdown to coding_agent for this directed-pin flow.
+        screen.query_one("#select-target-role", Select).value = "coding_agent"
         screen.query_one("#prompt-textarea", TextArea).text = "ping"
         screen.query_one("#input-target-agent-id", Input).value = (
             "coding_agent-deadbeef"

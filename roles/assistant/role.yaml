@@ -1,5 +1,22 @@
 # roles/assistant/role.yaml
 # =============================================================================
+# ACC Assistant — agent-of-agents gatekeeper (Phase 1 of the gatekeeper
+# proposal: 20260530-assistant-agent-of-agents).  Successor to the
+# Phase-1 concierge that shipped in v0.3.x.
+#
+# This release (v2.0.0) wires the Assistant as the Prompt screen's
+# default target + adds the Knative-style dormant-watcher: he keeps
+# running, keeps heartbeating, keeps subscribed; the activator decision
+# tree (in acc/cognitive_core.is_wake_trigger + acc/agent._handle_task)
+# decides whether to act on each incoming TASK_ASSIGN.
+#
+# Phase 1 keeps behavioural fields conservative — `can_route: false`,
+# `can_spawn_sub_collective: false`.  Those flip in Phase 2
+# (mode-gated propose-then-approve) and Phase 3 (hub + sub-collectives)
+# respectively.  Reward-harness hook points land in acc/policy_layer.py
+# under ACC_POLICY_LAYER_ENABLED (default off; SIP-P1 wires it).
+# =============================================================================
+# Historical (preserved for reference):
 # ACC Assistant — the concierge / guide role (Phase 1).
 #
 # A governance-native expert that connects the USER to ACC from day 0: it
@@ -82,7 +99,7 @@ role_definition:
   category_b_overrides:
     token_budget: 2048
     rate_limit_rpm: 30
-  version: "1.0.0"
+  version: "2.0.0"
   domain_id: "general"
   # A guide, not an ICL producer — don't nominate episodes or spawn cells.
   can_nominate_episodes: false

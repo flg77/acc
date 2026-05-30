@@ -594,6 +594,56 @@ class Agent:
         )
 
     # ------------------------------------------------------------------
+    # Dormancy state (proposal 20260530-assistant-agent-of-agents Phase 1)
+    # ------------------------------------------------------------------
+
+    async def _restore_dormancy_state(self) -> None:
+        """Read the Assistant's persisted dormancy flag from Redis and
+        restore it onto the cognitive core's StressIndicators.
+
+        Best-effort:
+        - No-op for any role other than ``assistant``.
+        - No-op when Redis isn't configured.
+        - No-op when the key is absent (default → not dormant).
+        - Any error is logged at debug and the flag stays False.
+
+        Key shape: ``acc:{cid}:{agent_id}:dormant`` carrying
+        ``{"dormant": true, "dormant_at_ts": <epoch>}``.
+        """
+        if self.config.agent.role != "assistant":
+            return
+        if self._cognitive_core is None:
+            return
+        redis = getattr(self.backends, "working_memory", None)
+        if redis is None:
+            return
+        try:
+            key = (
+                f"acc:{self.config.agent.collective_id}:"
+                f"{self.agent_id}:dormant"
+            )
+            raw = await redis.get(key)
+            if not raw:
+                return
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode("utf-8", errors="replace")
+            payload = json.loads(raw)
+            self._cognitive_core.stress.dormant = bool(payload.get("dormant"))
+            self._cognitive_core.stress.dormant_at_ts = float(
+                payload.get("dormant_at_ts", 0.0) or 0.0
+            )
+            if self._cognitive_core.stress.dormant:
+                logger.info(
+                    "assistant: restored dormant=True from Redis "
+                    "(dormant_at_ts=%.0f)",
+                    self._cognitive_core.stress.dormant_at_ts,
+                )
+        except Exception:
+            logger.debug(
+                "assistant: dormancy-state restore failed", exc_info=True,
+            )
+
+    # ------------------------------------------------------------------
     # Heartbeat loop (Phase 4d — includes StressIndicators)
     # ------------------------------------------------------------------
 
@@ -676,6 +726,13 @@ class Agent:
                 # ACC-12: enterprise compliance health
                 "compliance_health_score": stress.compliance_health_score,
                 "owasp_violation_count": stress.owasp_violation_count,
+                # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+                # Knative-style dormant-watcher invariant: heartbeat
+                # carries the dormancy flag + when it started.  TUI
+                # renders a 💤 badge; OODA observability stays intact
+                # because the heartbeat ITSELF keeps flowing.
+                "dormant": bool(getattr(stress, "dormant", False)),
+                "dormant_at_ts": float(getattr(stress, "dormant_at_ts", 0.0)),
                 "oversight_pending_count": stress.oversight_pending_count,
                 # Arbiter-only: full pending-item list for TUI rendering.
                 # Other roles publish [] (cheap, omitted on the wire).
@@ -826,6 +883,53 @@ class Agent:
                         )
 
                 progress_callback = _publish_progress
+
+            # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+            # Knative-style dormant-watcher activator decision.  Only
+            # the Assistant role observes this guard; every other role
+            # keeps the legacy behaviour.  When the Assistant is dormant
+            # and the incoming task doesn't match a wake trigger, drop
+            # it silently — the operator is targeting a specialist
+            # directly and we stay out of their way.  When it IS a wake
+            # trigger, flip the flag, prepend a catch-up trace to the
+            # outbound reasoning, then proceed with normal processing.
+            if self.config.agent.role == "assistant":
+                from acc.cognitive_core import (  # noqa: PLC0415
+                    is_wake_trigger,
+                    build_catchup_trace,
+                )
+                core_stress = self._cognitive_core.stress  # type: ignore[union-attr]
+                wake_now = is_wake_trigger(
+                    data, str(data.get("target_role", "") or ""),
+                )
+                if core_stress.dormant and not wake_now:
+                    logger.debug(
+                        "assistant: dormant + no wake trigger — skipping "
+                        "task_id=%s target_role=%r",
+                        data.get("task_id", ""), data.get("target_role"),
+                    )
+                    return
+                if core_stress.dormant and wake_now:
+                    catchup = build_catchup_trace(
+                        dormant_at_ts=core_stress.dormant_at_ts,
+                        now_ts=time.time(),
+                        memory_notes_count=len(
+                            self._cognitive_core._read_memory_notes()  # type: ignore[union-attr]
+                        ),
+                    )
+                    logger.info(
+                        "assistant: waking on trigger — %s", catchup or "(no catch-up)",
+                    )
+                    core_stress.dormant = False
+                    core_stress.dormant_at_ts = 0.0
+                    # Stash the catch-up line so the cognitive core can
+                    # prepend it to the next reasoning trace.  Re-uses
+                    # the existing reasoning surface (PR-V3) so no new
+                    # plumbing is needed downstream.
+                    try:
+                        data.setdefault("_catchup_trace", catchup)
+                    except Exception:
+                        pass
 
             result = await self._cognitive_core.process_task(  # type: ignore[union-attr]
                 task_payload=data,
@@ -994,9 +1098,68 @@ class Agent:
                     subject_alert(collective_id), alert_payload
                 )
 
+        # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+        # Assistant subscribes to its sleep/wake control subject so the
+        # TUI's /sleep · /wake slash commands can flip the dormant flag.
+        # The handler toggles StressIndicators.dormant and (best-effort)
+        # persists to Redis so the flag survives a container restart.
+        async def _handle_assistant_control(msg: object) -> None:
+            if self.config.agent.role != "assistant":
+                return  # defensive — should never receive otherwise
+            if self._cognitive_core is None:
+                return
+            try:
+                payload = json.loads(_payload_bytes(msg))
+            except Exception:
+                logger.warning("assistant_control: invalid JSON payload")
+                return
+            action = str(payload.get("action", "") or "").strip().lower()
+            stress = self._cognitive_core.stress
+            now = time.time()
+            if action == "sleep":
+                stress.dormant = True
+                stress.dormant_at_ts = now
+                logger.info("assistant: entered dormant-watcher mode")
+            elif action == "wake":
+                stress.dormant = False
+                stress.dormant_at_ts = 0.0
+                logger.info("assistant: woke on /wake control signal")
+            else:
+                logger.warning(
+                    "assistant_control: unknown action %r — expected sleep/wake",
+                    action,
+                )
+                return
+            # Best-effort Redis persistence so the flag survives a restart.
+            redis = getattr(self.backends, "working_memory", None)
+            if redis is None:
+                return
+            try:
+                key = f"acc:{collective_id}:{self.agent_id}:dormant"
+                if action == "sleep":
+                    await redis.set(key, json.dumps({
+                        "dormant": True, "dormant_at_ts": now,
+                    }))
+                else:
+                    await redis.delete(key)
+            except Exception:
+                logger.debug(
+                    "assistant_control: redis persistence failed",
+                    exc_info=True,
+                )
+
         try:
             await self.backends.signaling.subscribe(
                 subject_task_assign(collective_id), _handle_task
+            )
+            # Only Assistant roles need the control channel — but
+            # subscribing universally and short-circuiting in the
+            # handler costs nothing and keeps the dispatch table
+            # uniform across roles.
+            from acc.signals import subject_assistant_control  # noqa: PLC0415
+            await self.backends.signaling.subscribe(
+                subject_assistant_control(collective_id),
+                _handle_assistant_control,
             )
             # Block until stop is requested
             await self._stop_event.wait()
@@ -2153,6 +2316,12 @@ class Agent:
         a2a_runner = await self._maybe_start_a2a_server()
         try:
             await self._register()
+            # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+            # restore the Assistant's dormancy flag from Redis so a
+            # container restart doesn't silently wake him.  Best-
+            # effort: no-op when Redis isn't configured or when this
+            # agent isn't the Assistant.
+            await self._restore_dormancy_state()
             # Run heartbeat, task, role-update, bridge-result, centroid,
             # (arbiter only) oversight-decision and plan-orchestration
             # loops concurrently.  Non-arbiter agents' plan / oversight
