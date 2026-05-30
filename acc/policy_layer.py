@@ -68,6 +68,30 @@ REWARD_CAT_C_DENIAL = "cat_c_denial"
 REWARD_DRIFT_OVERAGE = "drift_overage"
 
 
+# SIP-P1 — per-reward-kind EWMA smoothing factor.  Reward values
+# arrive sparsely (one per eval / queue verdict / Cat-A trip), so a
+# moderately high α (recent reward weighted ~30%) gives a responsive
+# but stable running estimate.  SIP-P2 will revisit when the bandit
+# update lands; for now the EWMA exists to *observe* the running
+# reward profile, not to drive any policy update.
+_DEFAULT_EWMA_ALPHA = 0.30
+
+
+# Per-reward-kind sign convention.  Phase 1's logged rewards become
+# numeric via this mapping when the payload doesn't carry an explicit
+# score: positive signals (approval, eval outcome) → +1.0; negative
+# signals (Cat-C denial, task cancel) → -1.0.  Eval outcomes whose
+# payload contains a ``score`` field use that value directly (rail-1
+# credit-share will read this in SIP-P2).
+_REWARD_SIGN: dict[str, float] = {
+    REWARD_EVAL_OUTCOME: +1.0,
+    REWARD_OPERATOR_APPROVAL: +1.0,
+    REWARD_TASK_CANCEL: -1.0,
+    REWARD_CAT_C_DENIAL: -1.0,
+    REWARD_DRIFT_OVERAGE: -1.0,
+}
+
+
 def is_enabled() -> bool:
     """True iff the policy layer is opt-in-enabled for this process.
 
@@ -95,7 +119,14 @@ class RewardHarness:
     :meth:`subscribe_all` is a no-op and no bus traffic flows.
     """
 
-    def __init__(self, signaling, collective_id: str, *, role: str = "") -> None:
+    def __init__(
+        self,
+        signaling,
+        collective_id: str,
+        *,
+        role: str = "",
+        ewma_alpha: float = _DEFAULT_EWMA_ALPHA,
+    ) -> None:
         self._signaling = signaling
         self._cid = collective_id
         self._role = role
@@ -104,6 +135,13 @@ class RewardHarness:
         # Phase 1 keeps this read-only (no updates).  Operator can pin
         # values via the role.yaml ``policy_pinned`` field (SIP-P2).
         self.theta: dict[str, float] = dict(DEFAULT_POLICY_VECTOR)
+        # SIP-P1 — per-reward-kind EWMA aggregator.  Initialised lazily
+        # on the first observation per kind so a "no signal yet" caller
+        # gets None rather than a misleading 0.0.  Update rule:
+        #     ewma = α * x + (1 - α) * ewma_prev
+        self._ewma_alpha = max(0.0, min(1.0, float(ewma_alpha)))
+        self._ewma: dict[str, float] = {}
+        self._reward_counts: dict[str, int] = {}
 
     @property
     def subscribed(self) -> bool:
@@ -160,24 +198,93 @@ class RewardHarness:
             )
 
     def _record(self, kind: str, msg: object) -> None:
-        """Log one reward observation.  Phase 1 is log-only — no
-        aggregation, no policy update.  SIP-P1 will replace the body
-        with the EWMA aggregator + windowed update trigger."""
+        """Log one reward observation + update the per-kind EWMA.
+
+        AoA-P1 shipped this as log-only.  SIP-P1 (this revision) adds
+        the EWMA aggregator on top — still NO policy update.  SIP-P2
+        will read the aggregator and run the bandit update under the
+        six rails (frozen-in-AUTO, drift-as-constraint, rate-limit
+        vs Cat-C, etc.).
+
+        Numeric reward score:
+        - ``eval_outcome`` payloads with a ``score`` field use that
+          value directly so SIP-P2 can do credit-share (rail 1).
+        - Otherwise the per-kind sign convention in ``_REWARD_SIGN``
+          applies (+1 / -1).
+        - Unknown kinds default to 0.0 (silently observable, doesn't
+          move the EWMA).
+        """
         try:
             payload = json.loads(_payload_bytes(msg))
         except Exception:
             payload = {}
+        score = self._extract_score(kind, payload)
+        # EWMA update — first observation initialises with the value
+        # itself (no prior to weight against) so we don't anchor on 0.
+        prev = self._ewma.get(kind)
+        if prev is None:
+            self._ewma[kind] = score
+        else:
+            self._ewma[kind] = (
+                self._ewma_alpha * score
+                + (1.0 - self._ewma_alpha) * prev
+            )
+        self._reward_counts[kind] = self._reward_counts.get(kind, 0) + 1
         record = {
             "ts": time.time(),
             "kind": kind,
             "role": self._role,
             "cid": self._cid,
+            "score": score,
+            "ewma": self._ewma[kind],
+            "count": self._reward_counts[kind],
             "payload": payload,
         }
         try:
             logger.info("reward %s", json.dumps(record, default=str))
         except Exception:
             logger.exception("policy_layer: failed to log reward record")
+
+    @staticmethod
+    def _extract_score(kind: str, payload: dict) -> float:
+        """Numeric score for one reward observation.
+
+        Eval-outcome payloads carry an explicit ``score`` field (often
+        in [0, 1]); we use it verbatim so SIP-P2's credit-share has a
+        reliable scalar.  Other reward kinds fall back to the
+        per-kind sign in ``_REWARD_SIGN``.
+        """
+        if kind == REWARD_EVAL_OUTCOME and isinstance(payload, dict):
+            score = payload.get("score")
+            if isinstance(score, (int, float)):
+                return float(score)
+        return float(_REWARD_SIGN.get(kind, 0.0))
+
+    def ewma(self, kind: str) -> float | None:
+        """Current per-kind EWMA, or ``None`` when no observation yet."""
+        return self._ewma.get(kind)
+
+    def reward_count(self, kind: str) -> int:
+        """Number of observations recorded for ``kind``."""
+        return self._reward_counts.get(kind, 0)
+
+    def snapshot(self) -> dict[str, Any]:
+        """Render the harness's current state.
+
+        Used by the (future) Diagnostics Policy tab in the TUI + tests.
+        Returns a dict carrying θ, per-kind EWMA values, observation
+        counts, and the harness's collective / role identity.  SIP-P2
+        will use the same shape on the bus as the ``POLICY_UPDATE``
+        event payload.
+        """
+        return {
+            "collective_id": self._cid,
+            "role": self._role,
+            "theta": dict(self.theta),
+            "ewma": dict(self._ewma),
+            "counts": dict(self._reward_counts),
+            "alpha": self._ewma_alpha,
+        }
 
 
 def _payload_bytes(msg: object) -> bytes:

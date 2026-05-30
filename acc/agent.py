@@ -399,6 +399,15 @@ class Agent:
         # Cumulative stress (shared across loops)
         self._stress = StressIndicators()
 
+        # Proposal 20260530-acc-self-improvement-policy-gradient
+        # Phase 1 — opt-in reward harness, populated by
+        # _maybe_start_reward_harness() during agent start when
+        # ACC_POLICY_LAYER_ENABLED is set.  Kept as an attribute so
+        # the cognitive core / Diagnostics screen / tests can read
+        # `agent._reward_harness.snapshot()` without a None-check.
+        # None when the harness is disabled or hasn't been started.
+        self._reward_harness = None
+
         # ACC-12: Human oversight queue.  Only the arbiter actually owns the
         # queue (it is the cell's mitotic checkpoint), but every role carries
         # the attribute so the heartbeat loop can read pending_count uniformly
@@ -596,6 +605,44 @@ class Agent:
     # ------------------------------------------------------------------
     # Dormancy state (proposal 20260530-assistant-agent-of-agents Phase 1)
     # ------------------------------------------------------------------
+
+    async def _maybe_start_reward_harness(self) -> None:
+        """Construct + subscribe the policy-layer reward harness when
+        ``ACC_POLICY_LAYER_ENABLED`` is set.
+
+        Proposal 20260530-acc-self-improvement-policy-gradient
+        Phase 1.  Phase 1 is observation-only — the harness logs
+        rewards and maintains per-kind EWMA values but does NOT
+        update any policy θ.  SIP-P2 will read the EWMAs and run
+        bandit updates under the six rails.
+
+        Best-effort: import + subscribe failures are logged but
+        don't abort the agent boot.  Heartbeats keep flowing
+        regardless (the OODA invariant from AoA-P1 still holds).
+        """
+        try:
+            from acc.policy_layer import RewardHarness, is_enabled  # noqa: PLC0415
+        except Exception:
+            logger.debug("policy_layer: import failed", exc_info=True)
+            return
+        if not is_enabled():
+            return
+        try:
+            self._reward_harness = RewardHarness(
+                self.backends.signaling,
+                self.config.agent.collective_id,
+                role=self.config.agent.role,
+            )
+            await self._reward_harness.subscribe_all()
+            logger.info(
+                "policy_layer: reward harness online (role=%s, "
+                "ACC_POLICY_LAYER_ENABLED=1)",
+                self.config.agent.role,
+            )
+        except Exception:
+            logger.exception(
+                "policy_layer: failed to start reward harness"
+            )
 
     async def _restore_dormancy_state(self) -> None:
         """Read the Assistant's persisted dormancy flag from Redis and
@@ -2322,6 +2369,13 @@ class Agent:
             # effort: no-op when Redis isn't configured or when this
             # agent isn't the Assistant.
             await self._restore_dormancy_state()
+            # Proposal 20260530-acc-self-improvement-policy-gradient
+            # Phase 1 — wire the reward harness.  Opt-in via
+            # ACC_POLICY_LAYER_ENABLED; the harness subscribes to
+            # EVAL_OUTCOME / oversight_decision / alert and
+            # accumulates an EWMA per reward kind.  No policy
+            # updates land in SIP-P1 — this is observation only.
+            await self._maybe_start_reward_harness()
             # Run heartbeat, task, role-update, bridge-result, centroid,
             # (arbiter only) oversight-decision and plan-orchestration
             # loops concurrently.  Non-arbiter agents' plan / oversight
