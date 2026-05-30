@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 logger = logging.getLogger("acc.policy_layer")
@@ -141,6 +143,53 @@ _DEFAULT_DRIFT_CAP = 0.8
 _DEFAULT_UPDATE_EVERY = 100
 
 
+# SIP-P3 — contextual policy seam.  Phase 2 (LANDED) lands SIP-P2's
+# windowed EWMA bandit; Phase 3 (THIS revision) adds the data path
+# for context-conditional step bias without changing the SIP-P2
+# behaviour by default.  Operators flip `contextual=True` per role
+# when they want the per-task context (mode, drift, recent reward)
+# to bias the hill-climbing direction.  The actual step-bias arithmetic
+# stays simple: tanh of a linear combination, bounded to (-1, 1).
+
+
+@dataclass
+class ContextFeatures:
+    """Per-task context fed into the contextual policy head.
+
+    Phase 3 ships three observable features:
+
+    * ``operating_mode`` — string; encoded as one-hot per known mode.
+    * ``drift`` — the per-task drift score from the cognitive core.
+    * ``last_eval_reward`` — most-recent EVAL_OUTCOME score (0..1).
+
+    SIP-P3 Phase-2 (future) can grow this struct with operator_id
+    fingerprint, time-of-day, prior-task-success rate, etc.  The
+    schema is stable so weight vectors don't need to re-init when
+    we add fields — :meth:`as_vector` returns only the known keys.
+    """
+
+    operating_mode: str = "AUTO"
+    drift: float = 0.0
+    last_eval_reward: float = 0.0
+
+    def as_vector(self) -> dict[str, float]:
+        """Render the features as a flat ``{feature_name: value}`` dict.
+
+        One-hot the operating-mode column so the linear head can
+        learn per-mode biases without operating-mode strings landing
+        anywhere arithmetic touches them.
+        """
+        mode = (self.operating_mode or "AUTO").strip().upper()
+        return {
+            "is_auto": 1.0 if mode == "AUTO" else 0.0,
+            "is_ask": 1.0 if mode == "ASK_PERMISSIONS" else 0.0,
+            "is_accept": 1.0 if mode == "ACCEPT_EDITS" else 0.0,
+            "is_plan": 1.0 if mode == "PLAN" else 0.0,
+            "drift": float(self.drift),
+            "last_eval": float(self.last_eval_reward),
+        }
+
+
 def is_enabled() -> bool:
     """True iff the policy layer is opt-in-enabled for this process.
 
@@ -179,6 +228,8 @@ class RewardHarness:
         pinned: Optional[frozenset[str]] = None,
         bounds: Optional[dict[str, tuple[float, float]]] = None,
         drift_cap: float = _DEFAULT_DRIFT_CAP,
+        contextual: bool = False,
+        contextual_lr: float = 0.01,
     ) -> None:
         self._signaling = signaling
         self._cid = collective_id
@@ -227,6 +278,21 @@ class RewardHarness:
         # Most-recent task drift score — fed in via observe_task() so
         # the composite reward can apply the constraint penalty.
         self._last_task_drift: float = 0.0
+
+        # SIP-P3 — contextual policy seam.  Default OFF preserves
+        # SIP-P2 behaviour exactly (hill-climb on composite reward,
+        # no context).  When True, observe_task accepts a
+        # ContextFeatures snapshot and the per-task contextual_bias()
+        # surfaces a tanh-bounded scalar the (future) step computation
+        # can multiply through.  Phase-3 ships the data path; the
+        # step-side wiring lands when SNR analysis on Phase-2 traces
+        # justifies it.
+        self._contextual = bool(contextual)
+        self._contextual_lr = max(0.0, min(1.0, float(contextual_lr)))
+        self._context: Optional[ContextFeatures] = None
+        # Per-knob × per-feature weights, lazily initialised on first
+        # contextual update.  Shape: {knob_name: {feature_name: w}}.
+        self._context_weights: dict[str, dict[str, float]] = {}
 
     @property
     def subscribed(self) -> bool:
@@ -359,9 +425,11 @@ class RewardHarness:
         Used by the (future) Diagnostics Policy tab in the TUI + tests.
         Returns a dict carrying θ, per-kind EWMA values, observation
         counts, the harness's collective / role identity, and the
-        SIP-P2 bandit fields (window state + history).
+        SIP-P2 bandit fields (window state + history).  When
+        contextual mode is enabled (SIP-P3), the latest features +
+        the per-knob weight vectors are surfaced too.
         """
-        return {
+        snap = {
             "collective_id": self._cid,
             "role": self._role,
             "theta": dict(self.theta),
@@ -375,7 +443,75 @@ class RewardHarness:
             "tasks_in_window": self._tasks_in_window,
             "last_composite": self._last_composite,
             "update_history": list(self._update_history),
+            # SIP-P3 fields.
+            "contextual": self._contextual,
         }
+        if self._contextual:
+            snap["context"] = (
+                self._context.as_vector() if self._context else None
+            )
+            snap["context_weights"] = {
+                k: dict(v) for k, v in self._context_weights.items()
+            }
+            snap["contextual_lr"] = self._contextual_lr
+        return snap
+
+    # ------------------------------------------------------------------
+    # SIP-P3 — contextual policy seam
+    # ------------------------------------------------------------------
+
+    def set_context(self, features: ContextFeatures) -> None:
+        """Stash a per-task context snapshot.
+
+        Called by the agent's task loop just before / after
+        ``observe_task``.  No-op when contextual mode is off so callers
+        don't have to branch — keeps the integration point clean.
+        """
+        if not self._contextual:
+            return
+        self._context = features
+
+    def contextual_bias(self, knob: str) -> float:
+        """Return the per-knob context bias as ``tanh(W · features)``.
+
+        Bounded in (-1, 1) so a step multiplied by ``1 + bias`` stays
+        in [0, 2] × the SIP-P2 step magnitude — the contextual head
+        can amplify or dampen but can't flip direction.  Phase 4 may
+        promote to a sign-flipping form when the SNR justifies it.
+
+        Returns 0.0 when contextual mode is off / no context has been
+        set / the knob has no learned weights yet.
+        """
+        if not self._contextual or self._context is None:
+            return 0.0
+        weights = self._context_weights.get(knob)
+        if not weights:
+            return 0.0
+        features = self._context.as_vector()
+        dot = 0.0
+        for fname, fvalue in features.items():
+            dot += weights.get(fname, 0.0) * fvalue
+        return math.tanh(dot)
+
+    def update_context_weights(self, knob: str, reward: float) -> None:
+        """Bandit-style weight update: ``w += lr * reward * feature``.
+
+        Phase-3 surface — the cognitive core / agent doesn't call this
+        yet; SIP-P3 Phase-2 (when SNR justifies) wires it into
+        ``_update_theta``.  Lands now so the helper + the data
+        path are unit-testable in isolation.
+
+        No-op when contextual is off or no context is set.
+        """
+        if not self._contextual or self._context is None:
+            return
+        features = self._context.as_vector()
+        bucket = self._context_weights.setdefault(knob, {})
+        for fname, fvalue in features.items():
+            bucket[fname] = (
+                bucket.get(fname, 0.0)
+                + self._contextual_lr * float(reward) * fvalue
+            )
 
     # ------------------------------------------------------------------
     # SIP-P2 — composite reward + windowed bandit update
@@ -555,5 +691,6 @@ __all__ = [
     "REWARD_CAT_C_DENIAL",
     "REWARD_DRIFT_OVERAGE",
     "RewardHarness",
+    "ContextFeatures",
     "is_enabled",
 ]

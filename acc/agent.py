@@ -644,12 +644,16 @@ class Agent:
             drift_cap = float(
                 getattr(role_def, "policy_drift_cap", 0.8) or 0.8
             )
+            # SIP-P3 — contextual seam.  Default False keeps SIP-P2
+            # behaviour; flip to True per role.yaml when ready.
+            contextual = bool(getattr(role_def, "policy_contextual", False))
         else:
             # Not opted in → pin everything so the harness observes
             # without ever calling _update_theta.
             pinned = None  # RewardHarness defaults to "pin all"
             update_every = 100
             drift_cap = 0.8
+            contextual = False
         try:
             self._reward_harness = RewardHarness(
                 self.backends.signaling,
@@ -658,6 +662,7 @@ class Agent:
                 pinned=pinned,
                 update_every=update_every,
                 drift_cap=drift_cap,
+                contextual=contextual,
             )
             await self._reward_harness.subscribe_all()
             logger.info(

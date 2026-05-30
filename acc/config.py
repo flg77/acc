@@ -169,6 +169,14 @@ class RoleDefinitionConfig(BaseModel):
     penalty for exceeding).  Below the cap, drift contributes zero
     to the reward — exploration is free."""
 
+    policy_contextual: bool = False
+    """SIP-P3 opt-in for the contextual policy seam.  Default False
+    preserves SIP-P2 EWMA-only behaviour.  When True, the agent feeds
+    per-task ContextFeatures (operating mode, drift, last eval
+    reward) into RewardHarness so the per-knob contextual bias can
+    learn against them.  Phase-3 lands the data path; the step-side
+    wiring promotes to active when SNR analysis justifies."""
+
     # ACC-11: Grandmother cell domain identity
     domain_id: str = ""
     """Knowledge domain this role inhabits.
