@@ -513,6 +513,27 @@ class ACCTUIApp(App):
                     pass
                 return
 
+        # Switch FIRST so the InfuseScreen's `compose` runs and its
+        # widget tree (`#input-version`, …) actually exists before
+        # `preload_from_role` queries it.  Pre-fix the order was
+        # preload → switch, which crashed on the very first 'i' press
+        # of a session because the screen hadn't been mounted yet
+        # (NoMatches on '#input-version').  `preload_from_role` is
+        # also mount-safe now (defers via `_pending_preload` + replays
+        # in `on_mount`) — both belt and braces.
+        try:
+            self.switch_screen("nucleus")
+        except Exception as exc:
+            logger.exception("app: switch_screen('nucleus') failed")
+            try:
+                self.notify(
+                    f"Could not switch to Nucleus: {exc}",
+                    severity="error", timeout=8.0,
+                )
+            except Exception:
+                pass
+            return
+
         if isinstance(infuse, InfuseScreen):
             try:
                 infuse.preload_from_role(message.role_name)
@@ -527,19 +548,6 @@ class ACCTUIApp(App):
                     )
                 except Exception:
                     pass
-                return
-
-        try:
-            self.switch_screen("nucleus")
-        except Exception as exc:
-            logger.exception("app: switch_screen('nucleus') failed")
-            try:
-                self.notify(
-                    f"Could not switch to Nucleus: {exc}",
-                    severity="error", timeout=8.0,
-                )
-            except Exception:
-                pass
 
     async def on__oversight_action(self, message: _OversightAction) -> None:
         """Publish OVERSIGHT_DECISION to NATS (REQ-TUI-026 / ACC-12).

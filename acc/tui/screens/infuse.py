@@ -108,6 +108,11 @@ class InfuseScreen(Screen):
     def __init__(self, **kwargs) -> None:  # type: ignore[override]
         super().__init__(**kwargs)
         self._dynamic_task_types: list[str] = []
+        # Set by preload_from_role when InfuseScreen hasn't been mounted
+        # yet (first 'i' press in a session — compose hasn't run, so
+        # `query_one("#input-version")` raises NoMatches).  on_mount
+        # replays the preload once the widget tree is real.
+        self._pending_preload: str = ""
         # PR-D — spawn-on-Apply state.  `_apply_started_ts` filters
         # the heartbeat watcher so it only marks "agent registered"
         # for HEARTBEATs that arrive AFTER the operator hit Apply
@@ -216,6 +221,17 @@ class InfuseScreen(Screen):
         self._refresh_status()
         self._set_history_visible(False)
         self._load_dynamic_roles()
+        # Replay any preload_from_role() call that arrived before compose
+        # had created the widget tree (first 'i' press of the session).
+        if self._pending_preload:
+            pending, self._pending_preload = self._pending_preload, ""
+            try:
+                self.preload_from_role(pending)
+            except Exception:
+                logger.exception(
+                    "infuse: replayed preload_from_role failed for %r",
+                    pending,
+                )
 
     def _load_dynamic_roles(self) -> None:
         """Scan roles/ and populate the Select widget (REQ-TUI-020)."""
@@ -262,7 +278,20 @@ class InfuseScreen(Screen):
         Falls back gracefully if the role does not exist or is malformed:
         the form keeps its current values and the status bar reports the
         problem.
+
+        Mount-safety: when InfuseScreen has not been pushed onto the stage
+        yet (first 'i' press in a session), its `compose` hasn't run so
+        none of the `#input-*` widgets exist, and `query_one` raises
+        ``NoMatches``.  We stash the role name in ``_pending_preload`` and
+        let ``on_mount`` (or the next compose pass) replay this method
+        once the widget tree is real.
         """
+        try:
+            self.query_one("#input-version", Input)
+        except Exception:
+            # Widget tree not mounted yet — defer until on_mount fires.
+            self._pending_preload = role_name
+            return
         root = _roles_root()
         loader = RoleLoader(root, role_name)
         role_def = loader.load()
