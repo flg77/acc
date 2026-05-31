@@ -17,7 +17,17 @@ class VLLMBackend:
     Targets a KServe InferenceService running vLLM on RHOAI.
     """
 
-    def __init__(self, inference_url: str, model: str) -> None:
+    # Local embedder — see `embed()`.  Defaults to ``all-MiniLM-L6-v2``
+    # (384-dim) to match ``llm_openai_compat`` byte-for-byte.
+    _DEFAULT_EMBED_MODEL = "all-MiniLM-L6-v2"
+
+    def __init__(
+        self,
+        inference_url: str,
+        model: str,
+        *,
+        embedding_model_path: str | None = None,
+    ) -> None:
         base = inference_url.rstrip("/")
         # Operators routinely paste a `/v1`-suffixed URL into the
         # config (it's how vLLM serves the OpenAI-compat API, and
@@ -28,6 +38,10 @@ class VLLMBackend:
             base = base[:-3]
         self._base_url = base
         self._model = model
+        self._embedding_model_path = (
+            embedding_model_path or self._DEFAULT_EMBED_MODEL
+        )
+        self._embedder = None  # lazy — see embed()
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code < 200 or response.status_code >= 300:
@@ -88,13 +102,28 @@ class VLLMBackend:
         return result
 
     async def embed(self, text: str) -> list[float]:
-        """POST to ``/v1/embeddings`` (OpenAI-compatible format)."""
-        body = {"model": self._model, "input": text}
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self._base_url}/v1/embeddings",
-                json=body,
-                timeout=60.0,
-            )
-        self._raise_for_status(response)
-        return response.json()["data"][0]["embedding"]
+        """Return a dense embedding via the local sentence-transformers model.
+
+        Embedding is always performed locally — mirrors
+        :class:`acc.backends.llm_openai_compat.OpenAICompatBackend.embed`
+        byte-for-byte.  Reasons (same as the sibling backend):
+
+        * **Consistent dimensionality (384) across providers** — critical
+          for centroid drift scoring.  vLLM deployments routinely host a
+          chat-only model with no embeddings endpoint; if we called
+          ``/v1/embeddings`` against such a server it would return an
+          error JSON without a ``data`` key and crash with
+          ``KeyError: 'data'`` — silently breaking PR-MEM2 reflection
+          + PR-I retrieval + the dreamer's centroid recompute (see
+          followup #44).
+        * No extra API costs / rate-limit pressure on the inference
+          provider.
+        * Works for vLLM servers that haven't loaded an embeddings model.
+
+        Lazy-loads the embedder on first call to avoid pulling
+        ``sentence_transformers`` at module import time.
+        """
+        if self._embedder is None:
+            from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+            self._embedder = SentenceTransformer(self._embedding_model_path)
+        return self._embedder.encode(text).tolist()

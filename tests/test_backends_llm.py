@@ -284,16 +284,45 @@ class TestVLLMBackend:
         assert exc_info.value.retryable is True
 
     @pytest.mark.asyncio
-    async def test_embed_uses_openai_embeddings_endpoint(self):
+    async def test_embed_uses_local_sentence_transformers(self):
+        """v0.3.37 — vLLM `embed()` no longer POSTs to `/v1/embeddings`.
+
+        vLLM deployments routinely host a chat-only model with no
+        embeddings endpoint; calling `/v1/embeddings` against such a
+        server returned an error JSON without a `data` key and
+        crashed with `KeyError: 'data'`, silently breaking PR-MEM2
+        reflection + PR-I retrieval + the dreamer's centroid recompute.
+        Now embeds locally via sentence-transformers, mirroring the
+        sibling OpenAICompat backend byte-for-byte.
+        """
         backend = self._backend()
-        body = {"data": [{"embedding": [0.1] * 384}]}
-        resp = _mock_httpx_response(200, body)
+        # Inject a stand-in embedder; assert vLLM never opens an httpx
+        # client (no `/v1/embeddings` request issued).
+        mock_embedder = MagicMock()
+        mock_embedder.encode.return_value = MagicMock(tolist=lambda: [0.1] * 384)
+        backend._embedder = mock_embedder
 
         with patch("httpx.AsyncClient") as MockClient:
-            MockClient.return_value.__aenter__ = AsyncMock(return_value=MagicMock(post=AsyncMock(return_value=resp)))
-            MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
-            result = await backend.embed("test")
+            result = await backend.embed("test text")
+            assert MockClient.call_count == 0, (
+                "embed() must not open an httpx client — it embeds locally"
+            )
+
         assert len(result) == 384
+        mock_embedder.encode.assert_called_once_with("test text")
+
+    def test_embed_default_model_matches_openai_compat(self):
+        """Embedding-model default must equal the sibling backend's so
+        centroid drift scoring (ACC-6a/11) and dreamer M5 work
+        cross-provider."""
+        from acc.backends.llm_openai_compat import OpenAICompatBackend
+        # Probe the default the openai_compat sibling carries.
+        compat_default = OpenAICompatBackend.__init__.__defaults__
+        # vLLM exposes its default explicitly as a class attribute.
+        assert VLLMBackend._DEFAULT_EMBED_MODEL == "all-MiniLM-L6-v2"
+        # The sibling backend ships the same default in its init
+        # signature; both must agree.
+        assert "all-MiniLM-L6-v2" in str(compat_default)
 
 
 # ---------------------------------------------------------------------------
