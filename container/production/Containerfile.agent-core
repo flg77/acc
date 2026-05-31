@@ -89,6 +89,14 @@ SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-
 # Copied last so source changes do not invalidate the dep or model layers.
 # Install the package itself without re-installing already-present deps.
 COPY acc/ /app/acc/
+# Regulatory_layer carries operator-tunable policy artifacts the agent reads
+# at runtime — OWASP LLM01 injection patterns (v0.3.36), Cat-A/B/C governance
+# rules, framework catalogs.  Image-baked + read-only; operators that need
+# overrides can mount on top via compose (the acc-tui service already does).
+# Without this COPY, ``acc.guardrails.prompt_injection`` falls back to its
+# built-in defaults at every agent boot and emits a misleading WARNING line.
+# Followup #46.
+COPY regulatory_layer/ /app/regulatory_layer/
 RUN pip install --no-cache-dir --no-deps .
 
 # ── Layer 5: Entrypoint, data dirs, passwd entry, permissions ─────────────────
