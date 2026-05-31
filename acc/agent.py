@@ -2568,13 +2568,30 @@ class Agent:
         Disabled (returns immediately) unless ``ACC_REFLECTION_INTERVAL_S``
         > 0 and a CognitiveCore is present.  Sleeps on the stop-event so
         shutdown is prompt; never blocks the task loop.
+
+        v0.3.40 (followup #51) — added boot-time INFO log lines so the
+        on/off state is operator-visible.  Pre-v0.3.40 the loop was
+        silent when disabled, hiding the fact that ``memory_notes``
+        was empty by configuration rather than by failure.
         """
         try:
             interval = float(os.environ.get("ACC_REFLECTION_INTERVAL_S", "0") or "0")
         except ValueError:
             interval = 0.0
-        if interval <= 0 or self._cognitive_core is None:
+        if interval <= 0:
+            logger.info(
+                "memory_reflection: disabled (ACC_REFLECTION_INTERVAL_S=%s)",
+                interval,
+            )
             return
+        if self._cognitive_core is None:
+            return
+        logger.info(
+            "memory_reflection: enabled interval=%.0fs role=%s agent_id=%s",
+            interval,
+            self.config.agent.role,
+            self.agent_id,
+        )
         while not self._stop_event.is_set():
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=interval)

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -39,6 +41,7 @@ def _stub(*, memory_reflection=True, core=True, episodes=None, redis=None, vecto
     cog = None
     if core:
         cog = SimpleNamespace(recent_episodes=lambda: (episodes or []))
+    stop = asyncio.Event()
     return SimpleNamespace(
         _cognitive_core=cog,
         _active_role=SimpleNamespace(memory_reflection=memory_reflection),
@@ -46,6 +49,7 @@ def _stub(*, memory_reflection=True, core=True, episodes=None, redis=None, vecto
         config=SimpleNamespace(agent=SimpleNamespace(role="ingester", collective_id="sol-01")),
         backends=SimpleNamespace(llm=llm, vector=(vector or MagicMock())),
         _redis=(redis if redis is not None else _FakeRedis()),
+        _stop_event=stop,
     )
 
 
@@ -128,3 +132,56 @@ def test_role_memory_reflection_defaults_false():
          "memory_reflection": True},
     )
     assert rd2.memory_reflection is True
+
+
+# ---------------------------------------------------------------------------
+# v0.3.40 — followup #51:  _reflection_loop env-gating + INFO log
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reflection_loop_skipped_when_env_unset(monkeypatch, caplog):
+    """When ACC_REFLECTION_INTERVAL_S is unset (or 0), the loop returns
+    immediately AND logs an INFO line so operators can see the
+    consolidation chain is off by configuration.
+    """
+    monkeypatch.delenv("ACC_REFLECTION_INTERVAL_S", raising=False)
+    stub = _stub()
+    with caplog.at_level(logging.INFO, logger="acc.agent"):
+        await Agent._reflection_loop(stub)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("memory_reflection: disabled" in m for m in msgs), msgs
+
+
+@pytest.mark.asyncio
+async def test_reflection_loop_skipped_when_env_zero(monkeypatch, caplog):
+    monkeypatch.setenv("ACC_REFLECTION_INTERVAL_S", "0")
+    stub = _stub()
+    with caplog.at_level(logging.INFO, logger="acc.agent"):
+        await Agent._reflection_loop(stub)
+    assert any("memory_reflection: disabled" in r.getMessage()
+               for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_reflection_loop_enabled_logs_interval(monkeypatch, caplog):
+    """When env is set > 0, an INFO log line announces the cadence
+    (and the role + agent_id) before the wait loop starts."""
+    monkeypatch.setenv("ACC_REFLECTION_INTERVAL_S", "0.05")
+    stub = _stub()
+    stub._stop_event.set()  # break the loop on first wait
+    with caplog.at_level(logging.INFO, logger="acc.agent"):
+        await Agent._reflection_loop(stub)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("memory_reflection: enabled" in m for m in msgs), msgs
+    assert any("interval=0s" in m for m in msgs), msgs  # %.0fs rounds
+
+
+@pytest.mark.asyncio
+async def test_reflection_loop_skipped_when_no_cognitive_core(monkeypatch):
+    """No log line, no error — silent skip preserves the original contract
+    for dormant workers that haven't infused a role yet."""
+    monkeypatch.setenv("ACC_REFLECTION_INTERVAL_S", "60")
+    stub = _stub(core=False)
+    # Should not raise + should not hang
+    await asyncio.wait_for(Agent._reflection_loop(stub), timeout=2.0)

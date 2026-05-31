@@ -147,6 +147,12 @@ services:
       ACC_LANCEDB_PATH: /app/data/lancedb/ingester
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # v0.3.40 — PR-MEM2 reflection loop default cadence (10 min).
+      # Without this set, _reflection_loop returns immediately and
+      # memory_notes stays empty forever (silent since PR-MEM2 shipped
+      # in v0.3.1; only became visible after v0.3.37 unblocked the
+      # episode-persist producer side).  Set to 0 to disable per service.
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
@@ -175,6 +181,12 @@ services:
       ACC_LANCEDB_PATH: /app/data/lancedb/analyst
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # v0.3.40 — PR-MEM2 reflection loop default cadence (10 min).
+      # Without this set, _reflection_loop returns immediately and
+      # memory_notes stays empty forever (silent since PR-MEM2 shipped
+      # in v0.3.1; only became visible after v0.3.37 unblocked the
+      # episode-persist producer side).  Set to 0 to disable per service.
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
@@ -203,6 +215,12 @@ services:
       ACC_LANCEDB_PATH: /app/data/lancedb/arbiter
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # v0.3.40 — PR-MEM2 reflection loop default cadence (10 min).
+      # Without this set, _reflection_loop returns immediately and
+      # memory_notes stays empty forever (silent since PR-MEM2 shipped
+      # in v0.3.1; only became visible after v0.3.37 unblocked the
+      # episode-persist producer side).  Set to 0 to disable per service.
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
@@ -236,6 +254,12 @@ services:
       ACC_LANCEDB_PATH: /app/data/lancedb/assistant-1
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # v0.3.40 — PR-MEM2 reflection loop default cadence (10 min).
+      # Without this set, _reflection_loop returns immediately and
+      # memory_notes stays empty forever (silent since PR-MEM2 shipped
+      # in v0.3.1; only became visible after v0.3.37 unblocked the
+      # episode-persist producer side).  Set to 0 to disable per service.
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
@@ -269,6 +293,12 @@ services:
       ACC_LANCEDB_PATH: /app/data/lancedb/coding-1
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # v0.3.40 — PR-MEM2 reflection loop default cadence (10 min).
+      # Without this set, _reflection_loop returns immediately and
+      # memory_notes stays empty forever (silent since PR-MEM2 shipped
+      # in v0.3.1; only became visible after v0.3.37 unblocked the
+      # episode-persist producer side).  Set to 0 to disable per service.
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
@@ -301,6 +331,12 @@ services:
       ACC_LANCEDB_PATH: /app/data/lancedb/compliance-1
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # v0.3.40 — PR-MEM2 reflection loop default cadence (10 min).
+      # Without this set, _reflection_loop returns immediately and
+      # memory_notes stays empty forever (silent since PR-MEM2 shipped
+      # in v0.3.1; only became visible after v0.3.37 unblocked the
+      # episode-persist producer side).  Set to 0 to disable per service.
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
@@ -342,6 +378,12 @@ services:
       ACC_LANCEDB_PATH: /app/data/lancedb/coding-1
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # v0.3.40 — PR-MEM2 reflection loop default cadence (10 min).
+      # Without this set, _reflection_loop returns immediately and
+      # memory_notes stays empty forever (silent since PR-MEM2 shipped
+      # in v0.3.1; only became visible after v0.3.37 unblocked the
+      # episode-persist producer side).  Set to 0 to disable per service.
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
@@ -373,6 +415,12 @@ services:
       ACC_LANCEDB_PATH: /app/data/lancedb/coding-2
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # v0.3.40 — PR-MEM2 reflection loop default cadence (10 min).
+      # Without this set, _reflection_loop returns immediately and
+      # memory_notes stays empty forever (silent since PR-MEM2 shipped
+      # in v0.3.1; only became visible after v0.3.37 unblocked the
+      # episode-persist producer side).  Set to 0 to disable per service.
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
@@ -404,6 +452,12 @@ services:
       ACC_LANCEDB_PATH: /app/data/lancedb/coding-3
       ACC_REDIS_URL: redis://acc-redis:6379
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # v0.3.40 — PR-MEM2 reflection loop default cadence (10 min).
+      # Without this set, _reflection_loop returns immediately and
+      # memory_notes stays empty forever (silent since PR-MEM2 shipped
+      # in v0.3.1; only became visible after v0.3.37 unblocked the
+      # episode-persist producer side).  Set to 0 to disable per service.
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
