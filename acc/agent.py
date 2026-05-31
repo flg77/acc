@@ -606,6 +606,37 @@ class Agent:
     # Dormancy state (proposal 20260530-assistant-agent-of-agents Phase 1)
     # ------------------------------------------------------------------
 
+    def _maybe_build_capability_index(self) -> None:
+        """Build the CapabilityIndex when this agent's role is
+        ``orchestrator``.
+
+        Proposal `20260531-orchestrator-repurpose-skills-mcp-specialist`
+        Phase 1.  Synchronous — the filesystem scan takes a few ms even
+        for the full 52-role / 5-MCP catalog and we want the index
+        ready before the task-loop subscription accepts queries.  Best-
+        effort: import or scan failures are logged but never abort the
+        agent boot (heartbeats keep flowing per the AoA-P1 invariant).
+        """
+        if self.config.agent.role != "orchestrator":
+            return
+        try:
+            from acc.capability_index import CapabilityIndex  # noqa: PLC0415
+        except Exception as exc:  # pragma: no cover
+            logger.warning("capability_index: import failed: %s", exc)
+            return
+        try:
+            skill_registry = getattr(self.backends, "skill_registry", None)
+            self._capability_index = CapabilityIndex(
+                self.config.agent.collective_id,
+                skill_registry=skill_registry,
+            )
+            logger.info(
+                "capability_index: built at boot revision=%d",
+                self._capability_index.revision,
+            )
+        except Exception as exc:
+            logger.warning("capability_index: build failed: %s", exc)
+
     async def _maybe_start_reward_harness(self) -> None:
         """Construct + subscribe the policy-layer reward harness when
         ``ACC_POLICY_LAYER_ENABLED`` is set.
@@ -1463,6 +1494,43 @@ class Agent:
                     exc_info=True,
                 )
 
+        # Proposal 20260531-orchestrator-repurpose-skills-mcp-specialist
+        # Phase 1 — orchestrator answers capability queries on a NATS
+        # request/reply subject.  Catalog is in-process; queries are
+        # deterministic; no LLM call.  Phase 2 adds recommendation
+        # markers; Phase 4 deprecates the old [ROUTE:...] surface.
+        async def _handle_capability_query(msg: object) -> None:
+            if self.config.agent.role != "orchestrator":
+                return  # defensive — should never receive otherwise
+            index = getattr(self, "_capability_index", None)
+            if index is None:
+                return  # boot path didn't wire it (dormant worker)
+            from acc.capability_index import CapabilityQuery  # noqa: PLC0415
+            try:
+                payload = msgpack.unpackb(_payload_bytes(msg), raw=False)
+            except Exception:
+                logger.warning("capability_query: invalid msgpack payload")
+                return
+            try:
+                q = CapabilityQuery.model_validate(payload)
+            except Exception as exc:
+                logger.warning("capability_query: %s", exc)
+                return
+            reply = index.query(q)
+            reply_to = getattr(msg, "reply", None) or getattr(msg, "reply_to", "")
+            if not reply_to:
+                logger.debug(
+                    "capability_query: no reply_inbox on request — discarding"
+                )
+                return
+            try:
+                await self.backends.signaling.publish(
+                    reply_to,
+                    msgpack.packb(reply.model_dump()),
+                )
+            except Exception as exc:
+                logger.warning("capability_query: reply publish failed: %s", exc)
+
         try:
             await self.backends.signaling.subscribe(
                 subject_task_assign(collective_id), _handle_task
@@ -1471,10 +1539,17 @@ class Agent:
             # subscribing universally and short-circuiting in the
             # handler costs nothing and keeps the dispatch table
             # uniform across roles.
-            from acc.signals import subject_assistant_control  # noqa: PLC0415
+            from acc.signals import (  # noqa: PLC0415
+                subject_assistant_control,
+                subject_capability_query,
+            )
             await self.backends.signaling.subscribe(
                 subject_assistant_control(collective_id),
                 _handle_assistant_control,
+            )
+            await self.backends.signaling.subscribe(
+                subject_capability_query(collective_id),
+                _handle_capability_query,
             )
             # Block until stop is requested
             await self._stop_event.wait()
@@ -2674,6 +2749,12 @@ class Agent:
             # accumulates an EWMA per reward kind.  No policy
             # updates land in SIP-P1 — this is observation only.
             await self._maybe_start_reward_harness()
+            # Proposal 20260531-orchestrator-repurpose-skills-mcp-specialist
+            # Phase 1 — orchestrator-role agents build a CapabilityIndex
+            # of roles + MCPs + skills, then serve queries on the
+            # capability.query NATS subject (wired in _task_loop).  Cheap
+            # for non-orchestrator roles (early-return on role check).
+            self._maybe_build_capability_index()
             # Run heartbeat, task, role-update, bridge-result, centroid,
             # (arbiter only) oversight-decision and plan-orchestration
             # loops concurrently.  Non-arbiter agents' plan / oversight

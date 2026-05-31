@@ -417,6 +417,50 @@ def subject_assistant_proposal(collective_id: str) -> str:
     return f"acc.{collective_id}.assistant.proposal"
 
 
+def subject_capability_query(collective_id: str) -> str:
+    """Return the NATS subject for capability-catalog queries.
+
+    Proposal `20260531-orchestrator-repurpose-skills-mcp-specialist`
+    Phase 1.  Request/reply: the caller publishes a ``CapabilityQuery``
+    msgpack payload here and includes a NATS ``reply_inbox`` (handled
+    by the NATS client at the request-handler layer); the orchestrator
+    agent's subscription replies with a ``CapabilityReply``.
+
+    Request payload (`acc.capability_index.CapabilityQuery`)::
+
+        {"kind": "skill" | "mcp" | "role",
+         "name": "<exact-match>" | null,
+         "domain": "<substring>" | null,
+         "task_type": "<task-type>" | null,
+         "limit": 25}
+
+    Reply payload (`acc.capability_index.CapabilityReply`)::
+
+        {"matches": [{"kind", "name", "summary", "metadata"}, ...],
+         "total": <int>,
+         "ts": <epoch_seconds>,
+         "catalog_revision": <int>}
+
+    Phase 1 ships the catalog + this subject only.  Recommendation
+    markers (`[RECOMMEND_SKILL]` / `[RECOMMEND_MCP]`) and the
+    ``capability.recommend`` informational mirror subject ship in
+    Phase 2.
+    """
+    return f"acc.{collective_id}.capability.query"
+
+
+def subject_capability_recommend(collective_id: str) -> str:
+    """Return the NATS subject for orchestrator recommendations.
+
+    Proposal `20260531-orchestrator-repurpose-skills-mcp-specialist`
+    Phase 2 (declared in Phase 1 so callers can subscribe early; the
+    orchestrator emits nothing on this subject until Phase 2 ships
+    the gap analyser).  Informational mirror of the AoA-P2b proposal
+    queue — primary recommendation flow goes through the queue.
+    """
+    return f"acc.{collective_id}.capability.recommend"
+
+
 def subject_assistant_control(collective_id: str) -> str:
     """Return the NATS subject for Assistant sleep/wake control signals.
 

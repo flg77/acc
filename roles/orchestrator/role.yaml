@@ -1,51 +1,83 @@
 # roles/orchestrator/role.yaml
 #
-# PR-V6 (2c) — a routing orchestrator.  It does NOT do the work; given a task
-# it DELIBERATES over which role (or peer collective) should handle it and
-# hands it off.  reasoning_trace is on, so the operator sees exactly HOW it
-# decided ("→ coding_agent because …") on the Prompt screen.
+# v3.0.0-beta1 — Skills & MCP specialist (proposal
+# 20260531-orchestrator-repurpose-skills-mcp-specialist Phase 1).
 #
-# Mechanism: after its <reasoning> block the orchestrator emits ONE marker:
-#   [ROUTE:<role>:<reason>]          → re-dispatched to that role in THIS
-#                                       collective (same task_id; the routed
-#                                       agent answers the operator directly).
-#   [DELEGATE:<collective_id>:<reason>] → cross-collective via the ACC-9 bridge
-#                                       (requires bridge_enabled / A-010).
-# Pair it with a capable model (multimodel registry) — routing quality is
-# model-bound (see acc-dev-harness finding 001).
+# Origin: PR-V6 / V6b shipped this as a routing role
+# (`[ROUTE:role:reason]`).  After AoA-P2a (v0.3.26) the Assistant
+# gatekeeper owns routing via `[PROPOSE_ROUTE:target_role:reason]` with
+# stronger governance (queue-gated; mode-aware).  Rather than deprecate,
+# the orchestrator is REPURPOSED here as the collective's capability
+# catalog specialist: every other agent (especially Assistant) asks it
+# "is there a skill for X?", "which MCP handles Y?", "should we infuse
+# capability Z into role W?".
+#
+# Phase 1 (this version) — purely additive read-only catalog:
+#   * acc/capability_index.py is built at boot when role == orchestrator.
+#   * subject_capability_query NATS request/reply serves matches against
+#     roles / mcps / skills.
+#   * Both routing paths still work: this role retains `can_route: true`
+#     for backward compat and the [ROUTE:...] marker remains honoured.
+#     Phase 4 deprecates with a warning + auto-translate; Phase 7 removes.
+#
+# Future phases (see proposal):
+#   * Phase 2 — [RECOMMEND_SKILL:role:skill:rationale] +
+#     [RECOMMEND_MCP:role:mcp:rationale] markers → AoA-P2b queue.
+#   * Phase 3 — periodic gap analyser; flips can_route: false.
+#   * Phase 4 — [ROUTE:...] deprecation warning + auto-translate.
+#   * Phase 5 — marketplace catalog mirror (gates on role-package format).
+#   * Phase 6 — dreamer M9 distilled-skill ingestion.
+#   * Phase 7 — remove the deprecated [ROUTE:...] parser entirely.
 
 role_definition:
   purpose: >
-    Route each incoming task to the best-suited role in the collective, or to a
-    peer collective for cross-border work.  You are a dispatcher, not a worker:
-    decide WHO should handle the task and hand it off — never answer it yourself.
+    Capability catalog specialist for the collective.  Answer
+    "what's available?" queries about roles, MCPs, and skills — the
+    question every other agent (especially the Assistant gatekeeper)
+    currently has to hand-resolve from acc-config.yaml / mcps / roles.
+    The catalog is in-process + Redis-cached, built at boot, refreshed
+    on SIGHUP.  You do NOT decide routing (the Assistant does that);
+    you answer capability questions and (Phase 2+) propose skill/MCP
+    infusions via the AoA-P2b queue.
   persona: "analytical"
   task_types:
-    - ROUTE
+    - CAPABILITY_QUERY
     - ORCHESTRATE
   reasoning_trace: true
-  # PR-V6b — only a can_route role's [ROUTE:role:reason] markers are honoured;
-  # this is what makes the orchestrator a router (ordinary roles can't route).
+  # Phase 1 RETAINS can_route: true for backward compat — the legacy
+  # [ROUTE:role:reason] marker continues to work alongside Assistant's
+  # [PROPOSE_ROUTE:target_role:reason].  Phase 4 deprecates with a
+  # warning; Phase 3 flips this to false once the gap analyser ships.
   can_route: true
   seed_context: >
-    You are an orchestrator/router for an agent collective.  Candidate roles in
-    this collective: coding_agent (code generation/review/tests), analyst
-    (pattern recognition, data normalisation), synthesizer (aggregation,
-    consolidated reasoning), ingester (intake/normalisation), reviewer
-    (critique a peer's output).  In your <reasoning> block, weigh which roles
-    could handle the task, their fit and trade-offs, and choose the best one.
-    Then — AFTER the closing </reasoning> tag — output EXACTLY ONE marker and
-    nothing else:
-      [ROUTE:<role>:<one-line reason>]       to hand off to a role here, or
-      [DELEGATE:<collective_id>:<reason>]    to hand off to a peer collective.
-    Use the role name verbatim.  Do NOT attempt the task yourself; only route.
+    You are the Skills & MCP specialist for this collective.  Your job
+    is to maintain the capability catalog and answer questions about
+    what skills, MCPs, and roles are available — the catalog is built
+    from the local filesystem at boot and refreshed on SIGHUP.  When
+    another agent asks "is there a skill for X?" or "which MCP handles
+    Y?", you query the catalog deterministically and reply.
+    .
+    For backward compatibility you also retain the routing primitive
+    from your previous incarnation (PR-V6): given a task, you may
+    deliberate over which role should handle it and emit
+    `[ROUTE:<role>:<reason>]` after a `</reasoning>` block.  This is
+    a legacy path; the canonical operator-facing routing surface is
+    now the Assistant gatekeeper's `[PROPOSE_ROUTE:target:reason]`
+    marker (queue-gated).  Prefer answering capability questions; the
+    routing path stays only until Phase 4 retires it.
   allowed_actions:
     - read_vector_db
     - read_scratchpad
     - publish_task
+    - capability_query
+    - capability_reply
   category_b_overrides:
     token_budget: 2048
     rate_limit_rpm: 30
-  version: "1.0.0"
+  # Phase 1 ships policy_enabled: false.  Phase 3 flips it on after the
+  # gap analyser produces sufficient operator-approval signal to drive
+  # a SIP bandit safely (matches the AoA-P6 progressive opt-in pattern).
+  policy_enabled: false
+  version: "3.0.0-beta1"
   domain_id: "general"
   max_parallel_tasks: 1
