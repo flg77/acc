@@ -122,16 +122,20 @@ def test_persist_episode_feeds_recent_ring():
     assert recent[0]["signal_type"] == "TASK_ASSIGN"
 
 
-def test_role_memory_reflection_defaults_false():
+def test_role_memory_reflection_defaults_true():
+    """v0.3.41 (followup #51) — flipped default from False to True so
+    PR-MEM2 reflection is enabled across the roster by default.  Roles
+    that don't want it can opt out explicitly."""
     rd = RoleDefinitionConfig.model_validate(
         {"purpose": "p", "persona": "concise", "version": "0.1.0"},
     )
-    assert rd.memory_reflection is False
+    assert rd.memory_reflection is True
+    # Opt-out still possible per role.
     rd2 = RoleDefinitionConfig.model_validate(
         {"purpose": "p", "persona": "concise", "version": "0.1.0",
-         "memory_reflection": True},
+         "memory_reflection": False},
     )
-    assert rd2.memory_reflection is True
+    assert rd2.memory_reflection is False
 
 
 # ---------------------------------------------------------------------------

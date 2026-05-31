@@ -64,9 +64,17 @@ class RoleDefinitionConfig(BaseModel):
     # PR-MEM2 — self-reflective memory.  When True, an out-of-band loop
     # periodically consolidates this agent's recent episodes into durable
     # "memory notes" (LLM summaries) that sharpen future retrieval.
-    # Default False: it makes extra LLM calls, so opt in per role.  The
-    # cadence is the ``reflection_interval_s`` Cat-B setpoint.
-    memory_reflection: bool = False
+    # The cadence is the ``reflection_interval_s`` Cat-B setpoint.
+    #
+    # v0.3.41 (followup #51 continuation) — flipped default to True.
+    # Pre-v0.3.41 this defaulted False AND no role.yaml flipped it on,
+    # so reflection was off across the entire roster even after v0.3.40
+    # turned on the loop's env-gated outer wrapper.  Roles that genuinely
+    # don't want reflection (the arbiter is a candidate, since it doesn't
+    # reason on tasks) can opt out by setting ``memory_reflection: false``
+    # in their role.yaml.  Cost: one extra LLM call per
+    # ``reflection_interval_s`` window per active role.
+    memory_reflection: bool = True
 
     # PR-V6b — routing authority.  When True, this role's ``[ROUTE:role:reason]``
     # markers are honoured: the agent re-dispatches the task to the named role
