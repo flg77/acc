@@ -201,6 +201,79 @@ class TestOutputHandler:
         # Verify publish_signal not in violations
         assert True  # test that it doesn't raise
 
+    # v0.3.38 — followup #45 regression tests.  Bare-paren regex
+    # `word(` was structurally broken; rich English replies (and any
+    # code block / LaTeX-style call) tripped LLM02 with risk=CRITICAL.
+    # The Assistant gatekeeper's rich replies routinely hit this on
+    # lighthouse (`unauthorized_actions=['corpus']`).  Real tool calls
+    # always use a structured shape (ACC marker or tool_calls JSON);
+    # bare-paren English is intentionally ignored now.
+
+    @pytest.mark.asyncio
+    async def test_english_word_paren_does_not_trigger_llm02(self):
+        """The lighthouse repro: rich Assistant reply containing
+        ``corpus(s) of documents`` must not produce an LLM02 violation."""
+        from acc.guardrails.output_handler import check_output
+        output = (
+            "I've reviewed the corpus(s) of documents in your workspace. "
+            "Three (3) themes recurred. Would you like me to summarise?"
+        )
+        violations, _, detail, _ = await check_output(output, _role(), _cfg())
+        assert violations == []
+        assert detail["unauthorized_actions"] == []
+        assert detail["extracted_actions"] == []
+
+    @pytest.mark.asyncio
+    async def test_code_block_function_call_does_not_trigger_llm02(self):
+        """A Python snippet inside an explanation must not be parsed
+        as an action invocation."""
+        from acc.guardrails.output_handler import check_output
+        output = (
+            "Here's how you'd do it:\n"
+            "```python\n"
+            "def parse(data):\n"
+            "    return json.loads(data)\n"
+            "```\n"
+            "That handles the common case."
+        )
+        violations, _, detail, _ = await check_output(output, _role(), _cfg())
+        assert violations == []
+        assert detail["extracted_actions"] == []
+
+    @pytest.mark.asyncio
+    async def test_propose_markers_not_extracted_as_actions(self):
+        """AoA-P2a `[PROPOSE_*]` markers are operator-proposal markers,
+        not action invocations.  They are parsed by
+        `acc/assistant_proposal.py` and must NOT trip LLM02."""
+        from acc.guardrails.output_handler import check_output
+        output = (
+            "I'll route this to the coding worker. "
+            "[PROPOSE_ROUTE:coding_agent:operator asked for code]"
+        )
+        violations, _, detail, _ = await check_output(output, _role(), _cfg())
+        assert violations == []
+        assert detail["extracted_actions"] == []
+
+    @pytest.mark.asyncio
+    async def test_openai_tool_call_json_still_extracted(self):
+        """The structured tool-call JSON shape must still extract."""
+        from acc.guardrails.output_handler import check_output
+        output = (
+            '{"tool_calls": [{"function": {"name": "delete_database"}}]}'
+        )
+        violations, _, detail, _ = await check_output(output, _role(), _cfg())
+        assert "LLM02" in violations
+        assert "delete_database" in detail["unauthorized_actions"]
+
+    @pytest.mark.asyncio
+    async def test_partial_json_name_field_still_extracted(self):
+        """Partial-JSON `"name": "..."` shape must still extract."""
+        from acc.guardrails.output_handler import check_output
+        output = 'Calling tool {"name": "drop_table", "args": {...}}'
+        violations, _, detail, _ = await check_output(output, _role(), _cfg())
+        assert "LLM02" in violations
+        assert "drop_table" in detail["unauthorized_actions"]
+
 
 # ===========================================================================
 # LLM08 — Agency Limiter

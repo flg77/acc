@@ -23,12 +23,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("acc.guardrails.output_handler")
 
-# Patterns for extracting action invocations from LLM output
+# Patterns for extracting action invocations from LLM output.
+#
+# Three structured shapes that an LLM uses when it intends a tool call:
+#   1. ACC-native marker:  [ACTION: action_name]
+#   2. OpenAI tool_calls JSON:  {"tool_calls": [{"function": {"name": ...}}]}
+#   3. Partial-JSON name field:  "name": "tool_name"
+#
+# v0.3.38 (followup #45) — REMOVED the bare-paren pattern
+# ``\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(`` that previously matched ``word(``
+# anywhere in the output.  It was structurally broken: any English
+# parenthetical (``the corpus(s) of documents``), Python expression in
+# a code block (``def foo(``), or LaTeX-style function call (``f(x)``)
+# was extracted as an "action" and tripped LLM02 with risk=CRITICAL.
+# The Assistant gatekeeper's rich English replies routinely hit this.
+# Real tool calls always use one of the three structured shapes above;
+# nothing of value is lost.
 _ACTION_PATTERNS = [
-    # ACC native: [ACTION: action_name]
+    # ACC-native marker: [ACTION: action_name]
     re.compile(r"\[ACTION:\s*([^\]]+)\]", re.IGNORECASE),
-    # Simple function-call-like: tool_name(args)
-    re.compile(r"\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", re.MULTILINE),
 ]
 
 # Tool-call JSON patterns (OpenAI function calling format)
@@ -36,7 +49,12 @@ _TOOL_CALL_RE = re.compile(r'"name"\s*:\s*"([^"]+)"', re.IGNORECASE)
 
 
 def _extract_actions(text: str) -> list[str]:
-    """Extract all action names referenced in the LLM output."""
+    """Extract all action names referenced in the LLM output.
+
+    Returns only **structured** invocations (ACC markers + tool-call
+    JSON).  Bare function-call-shaped English is intentionally ignored
+    — see the comment on ``_ACTION_PATTERNS`` and followup #45.
+    """
     actions: set[str] = set()
 
     for pat in _ACTION_PATTERNS:
