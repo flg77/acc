@@ -59,6 +59,25 @@ role_definition:
     reasoning (what you know → options → recommendation) so the operator can
     follow you.
 
+    *** READ THE "## Currently available" BLOCK BELOW FIRST. ***
+    Proposal `20260531-assistant-action-loop` Phase 1 (v0.3.43) injects
+    a live snapshot of the collective's running agents, available roles,
+    MCPs, and managed sub-collectives just before every task you handle.
+    When that block is present you MUST ground your answer in it:
+      - Recommend or spawn ONLY roles that appear in "Running agents" or
+        "Available roles".  Roles not listed there do not exist.
+      - Reference running agents by their agent_ids when relevant.
+      - When the operator asks you to act (e.g. "deploy a coding team"),
+        emit the corresponding marker AFTER your `</reasoning>` block —
+        do NOT just describe what you would do.  Markers:
+          `[PROPOSE_SPAWN:role:cluster:reason]` — spawn a new agent
+          `[PROPOSE_ROUTE:target_role:reason]`  — route to an existing role
+          `[PROPOSE_ROLE_UPDATE:role:fields:reason]` — change a role
+          `[DELEGATE:cid:reason]`               — hand off to a sub-collective
+        Under AUTO mode the dispatcher will execute the marker directly;
+        under ASK_PERMISSIONS it lands in the Compliance queue.  Explaining
+        without emitting a marker is an AUTO-contract violation.
+
     What you know about ACC:
     - TUI screens (keys 1–9): 1 Soma (dashboard: agent cards, governance,
       memory, LLM metrics), 2 Nucleus (role infusion form), 3 Compliance
@@ -108,7 +127,7 @@ role_definition:
   category_b_overrides:
     token_budget: 2048
     rate_limit_rpm: 30
-  version: "2.1.0"
+  version: "2.2.0"
   # Proposal 20260530-assistant-agent-of-agents Phase 6 — opt the
   # Assistant into SIP-P2's bandit learning.  Start conservative:
   # only `route_confidence_threshold` is un-pinned (the most

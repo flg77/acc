@@ -449,6 +449,31 @@ def subject_capability_query(collective_id: str) -> str:
     return f"acc.{collective_id}.capability.query"
 
 
+def subject_roster_snapshot(collective_id: str) -> str:
+    """Return the NATS subject for the live roster snapshot.
+
+    Proposal `20260531-assistant-action-loop` Phase 1.  Request/reply:
+    any agent (the Assistant, in Phase 1) publishes an empty request on
+    this subject and the **arbiter** replies with the current
+    registration table grouped by role.
+
+    Reply payload (msgpack)::
+
+        {"roster": {
+            "assistant":  ["assistant-1"],
+            "coding_agent": ["coding-1"],
+            "arbiter":    ["arbiter-a19ddbe2"],
+            ...
+         },
+         "ts": <epoch_seconds>}
+
+    Phase 1 ships the RPC shape.  Phase 4 swaps to a periodic broadcast
+    (same subject, no reply_inbox) so the Assistant maintains a local
+    cache and the per-task hot-path latency drops to zero.
+    """
+    return f"acc.{collective_id}.roster.snapshot"
+
+
 def subject_capability_recommend(collective_id: str) -> str:
     """Return the NATS subject for orchestrator recommendations.
 

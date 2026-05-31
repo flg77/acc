@@ -413,6 +413,18 @@ class CognitiveCore:
         # single-collective deployments (and on every non-Assistant
         # role) so build_system_prompt's block is skipped.
         self._sub_collectives = None
+        # Proposal `20260531-assistant-action-loop` Phase 1 —
+        # populated by the agent constructor with a reference to the
+        # NATS signaling backend.  Required for the Assistant's
+        # perception step (capability + roster query before LLM call).
+        # None on non-Assistant deployments + during tests that
+        # construct the core directly.
+        self._bus = None
+        # The latest perception snapshot.  Set per-task in
+        # ``_process_task_body`` for assistant roles; consumed by
+        # ``build_system_prompt`` to render the ``## Currently available``
+        # block.  None means "no snapshot this task" — block omitted.
+        self._perception = None
 
         # In-process stress state
         self._stress = StressIndicators()
@@ -764,6 +776,30 @@ class CognitiveCore:
         else:
             _emit(2, "Building system prompt")
         emit_stage("acc.pipeline.prompt_build")
+        # Proposal `20260531-assistant-action-loop` Phase 1 — the
+        # Observe step.  Snapshot capability + roster + sub-collectives
+        # under a 100ms budget so the Assistant grounds its reasoning
+        # in live state instead of hallucinating role names.  Gated to
+        # ``role.role_label == "assistant"`` so non-Assistant roles see
+        # zero behaviour change.  Stale-OK > stale-block: any source
+        # that times out gets a ``[stale]`` annotation in the rendered
+        # block; we never block the task hot path on perception.
+        if self._role_label == "assistant" and self._bus is not None:
+            try:
+                from acc.perception import (  # noqa: PLC0415
+                    snapshot_for_assistant,
+                )
+                self._perception = await snapshot_for_assistant(
+                    bus=self._bus,
+                    cid=self._collective_id,
+                    sub_collectives=self._sub_collectives,
+                )
+            except Exception:
+                logger.debug(
+                    "cognitive_core: perception snapshot failed",
+                    exc_info=True,
+                )
+                self._perception = None
         # PR-CA1 — the system prompt is the STABLE per-role prefix (no
         # RAG), so every backend's prefix cache hits.  The variable RAG
         # block rides the LLM user message instead.
@@ -1099,6 +1135,36 @@ class CognitiveCore:
                     mode = _norm_mode(
                         task_payload.get("operating_mode", "AUTO"),
                     )
+                    # Proposal `20260531-assistant-action-loop` Phase 1 —
+                    # marker dispatch validation.  When the perception
+                    # snapshot is populated, reject markers whose target
+                    # role is hallucinated (not present in the live
+                    # roster OR available-roles catalog).  This is the
+                    # line of defence against the lighthouse trace's
+                    # ``[PROPOSE_SPAWN:worker-pool:...]`` failure mode.
+                    perception = getattr(self, "_perception", None)
+                    if perception is not None:
+                        from acc.perception import (  # noqa: PLC0415
+                            validate_marker_target,
+                        )
+                        valid: list = []
+                        for p in parsed:
+                            target = getattr(p, "target_role", "") or ""
+                            if not target or validate_marker_target(
+                                perception, target
+                            ):
+                                valid.append(p)
+                            else:
+                                logger.warning(
+                                    "perception: rejected hallucinated marker "
+                                    "kind=%s target=%r — not in snapshot "
+                                    "roster (%s) or catalog (%d roles)",
+                                    p.kind,
+                                    target,
+                                    list(perception.roster.keys()),
+                                    len(perception.available_roles),
+                                )
+                        parsed = valid
                     for p in parsed:
                         # Fill context the parser couldn't know about.
                         p.collective_id = self._collective_id
@@ -1424,6 +1490,32 @@ class CognitiveCore:
                 # main prompt path.
                 logger.debug(
                     "cognitive_core: sub-collective block render failed",
+                    exc_info=True,
+                )
+
+        # Proposal `20260531-assistant-action-loop` Phase 1 —
+        # inject the Observe step's PerceptionSnapshot as a
+        # ``## Currently available`` block.  Populated per task in
+        # ``_process_task_body`` for assistant roles; None for every
+        # other role (block omitted).  Today's lighthouse trace
+        # showed the Assistant hallucinating ``worker-pool`` / ``prompt``
+        # role names because the static seed_context describes ACC
+        # concepts abstractly but doesn't list what's running RIGHT
+        # NOW.  This block fills that gap.
+        perception = getattr(self, "_perception", None)
+        if perception is not None:
+            try:
+                from acc.perception import (  # noqa: PLC0415
+                    render_currently_available_block,
+                )
+                pb = render_currently_available_block(perception)
+                if pb:
+                    parts.append("\n" + pb)
+            except Exception:
+                # Non-fatal — a render error must not break the main
+                # prompt path.  Assistant still gets the seed_context.
+                logger.debug(
+                    "cognitive_core: perception block render failed",
                     exc_info=True,
                 )
 

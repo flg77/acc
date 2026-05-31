@@ -391,6 +391,12 @@ class Agent:
                 skill_registry=self._skill_registry,
                 mcp_registry=self._mcp_registry,
             )
+            # Proposal `20260531-assistant-action-loop` Phase 1 —
+            # cognitive_core needs a NATS handle so the Assistant's
+            # perception step can issue capability + roster requests.
+            # Set right after construction so non-Assistant cores get
+            # the same handle (harmless; gated by role check inside).
+            self._cognitive_core._bus = self.backends.signaling
 
         # Pending bridge delegations: task_id → asyncio.Future (ACC-9)
         # Keyed by the task_id embedded in the TASK_ASSIGN payload.
@@ -2010,6 +2016,12 @@ class Agent:
                 skill_registry=self._skill_registry,
                 mcp_registry=self._mcp_registry,
             )
+            # Proposal `20260531-assistant-action-loop` Phase 1 —
+            # cognitive_core needs a NATS handle so the Assistant's
+            # perception step can issue capability + roster requests.
+            # Set right after construction so non-Assistant cores get
+            # the same handle (harmless; gated by role check inside).
+            self._cognitive_core._bus = self.backends.signaling
 
         # 4. operator-supplied tags propagate via env so the heartbeat
         # carries them per PR-D.
@@ -2073,12 +2085,45 @@ class Agent:
             except Exception:
                 logger.exception("worker_reconcile: run failed")
 
+        # Proposal `20260531-assistant-action-loop` Phase 1 — the
+        # arbiter is the canonical owner of "who's heartbeating right
+        # now," so it serves the roster_snapshot RPC.  The Assistant
+        # calls this on its perception step before every task.  Phase 4
+        # will swap to push-broadcast for zero hot-path latency.
+        async def _handle_roster_snapshot(msg: object) -> None:
+            reply_to = getattr(msg, "reply", None) or getattr(msg, "reply_to", "")
+            if not reply_to:
+                logger.debug(
+                    "roster_snapshot: no reply_inbox on request — discarding"
+                )
+                return
+            roster_by_role: dict[str, list[str]] = {}
+            for aid, entry in self._worker_roster.items():
+                role = getattr(entry, "role", "") or ""
+                if not role:
+                    continue
+                roster_by_role.setdefault(role, []).append(aid)
+            for role in roster_by_role:
+                roster_by_role[role].sort()
+            payload = msgpack.packb({
+                "roster": roster_by_role,
+                "ts": time.time(),
+            })
+            try:
+                await self.backends.signaling.publish(reply_to, payload)
+            except Exception as exc:
+                logger.warning("roster_snapshot: reply publish failed: %s", exc)
+
         try:
             await self.backends.signaling.subscribe(
                 subject_heartbeat(collective_id), _track_heartbeat,
             )
             await self.backends.signaling.subscribe(
                 subject_collective_reconcile(collective_id), _on_reconcile,
+            )
+            from acc.signals import subject_roster_snapshot  # noqa: PLC0415
+            await self.backends.signaling.subscribe(
+                subject_roster_snapshot(collective_id), _handle_roster_snapshot,
             )
             await self._stop_event.wait()
         except Exception as exc:
