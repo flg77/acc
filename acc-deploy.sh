@@ -374,6 +374,20 @@ case "$COMMAND" in
             exit 1
         fi
         OVERLAY_PATH="$REPO_ROOT/container/production/podman-compose.overlay.yml"
+        # Bootstrap host-Python deps if missing.  The synthesize call needs
+        # msgpack + pydantic + ruamel.yaml on whatever `python` resolves to;
+        # production hosts (lighthouse) often ship /usr/bin/python3 without
+        # them and the first `apply` fails with ModuleNotFoundError.  Probe
+        # once, install once via `pip install --user`, never re-prompt.
+        if ! python -c "import msgpack, pydantic, ruamel.yaml" 2>/dev/null; then
+            echo "▶ Host Python is missing acc-cli deps — installing once via pip --user..."
+            if python -m pip install --user --quiet msgpack pydantic "ruamel.yaml" 2>&1 | tail -3; then
+                echo "  ✓ msgpack + pydantic + ruamel.yaml installed for $(python -c 'import sys; print(sys.executable)')"
+            else
+                echo "ERROR: pip install --user failed.  Install msgpack pydantic ruamel.yaml manually and retry." >&2
+                exit 1
+            fi
+        fi
         echo "▶ Synthesizing overlay from $SPEC..."
         if ! python -m acc.cli collective synthesize \
                 "$REPO_ROOT/$SPEC" -o "$OVERLAY_PATH"; then

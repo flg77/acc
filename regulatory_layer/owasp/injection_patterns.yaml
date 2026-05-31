@@ -1,0 +1,73 @@
+# OWASP LLM01 — prompt-injection pattern registry.
+#
+# Consumed by `acc/guardrails/prompt_injection.py::_load_patterns()`.  Each
+# pattern is a Python regex compiled with re.IGNORECASE | re.DOTALL.
+#
+# Editing notes for operators:
+#   - Patterns are reloaded on SIGHUP without an agent restart.
+#   - A bad pattern is skipped + logged; it does not block boot.
+#   - When this file is absent the guardrail falls back to a built-in
+#     pattern set with identical semantics to group "core".  Externalising
+#     here makes the set version-controllable and operator-tunable.
+#   - File path is overridable via ACC_INJECTION_PATTERNS_PATH.
+#
+# Each group has a free-form `name`, an optional `description`, and a
+# `patterns:` list.  Categorisation is informational only — every pattern
+# matches with equal weight.
+
+version: "1.0.0"
+
+groups:
+  - name: core
+    description: >
+      The minimum-viable set ACC ships with.  Mirrors the built-in fallback
+      in `acc/guardrails/prompt_injection.py::_builtin_patterns()` so the
+      runtime behaviour with this file present matches the historical
+      behaviour without it (modulo the WARNING log line that this file
+      eliminates).
+    patterns:
+      - "ignore\\s+(all\\s+)?(previous|prior|above)\\s+(instructions?|prompts?|context)"
+      - "disregard\\s+(all\\s+)?(previous|prior)\\s+(instructions?|directives?)"
+      - "you\\s+are\\s+now\\s+(a\\s+)?(different|new|another)\\s+(AI|assistant|model|bot)"
+      - "forget\\s+(everything|all|your\\s+instructions)"
+      - "(system|developer|admin)\\s*:\\s*(override|bypass|unlock|ignore)"
+      - "do\\s+anything\\s+now\\b"
+      - "jailbreak"
+      - "prompt\\s+injection"
+      - "</?(system|instruction|context)>"
+      - "\\[\\[?INST\\]?\\]"
+
+  - name: roleplay-escape
+    description: >
+      Common social-engineering shapes that frame a takeover as a
+      hypothetical role-play.  Tightens the "you are now a different AI"
+      core pattern by also catching mode-switch framings.
+    patterns:
+      - "pretend\\s+(to\\s+be|you\\s+are)\\s+(a\\s+)?(different|new|another|unrestricted)\\s+(AI|assistant|model|bot)"
+      - "act\\s+as\\s+(if\\s+you\\s+were\\s+)?(a\\s+)?(different|new|another|unrestricted|jailbroken)"
+      - "(developer|debug|maintenance|admin)\\s+mode\\s+(activated|enabled|on)"
+      - "(simulate|emulate)\\s+(a\\s+)?(different|unrestricted|jailbroken)\\s+(AI|model|version)"
+
+  - name: meta-instruction-injection
+    description: >
+      Markers that try to smuggle new system / developer messages into
+      the running conversation.  Catches the common chat-template
+      injections that LLM01-aware models otherwise leak on.
+    patterns:
+      - "<\\|im_start\\|>\\s*system"
+      - "<\\|im_start\\|>\\s*assistant"
+      - "<\\|im_end\\|>"
+      - "<\\s*system\\s+role\\s*=\\s*['\"]?override['\"]?\\s*>"
+      - "###\\s*(new|updated|override)\\s+(system|instructions)"
+      - "^\\s*system\\s*:\\s*you\\s+(are|will|must)"
+
+  - name: tool-bypass
+    description: >
+      Phrases attempting to enable tools / actions the role's
+      ``allowed_actions`` whitelist forbids.  Pairs with LLM02 (output
+      handler) which catches the *invocation*; LLM01 catches the *ask*.
+    patterns:
+      - "(enable|allow|grant)\\s+(all|any|every)\\s+(tool|action|permission)s?"
+      - "(disable|skip|remove)\\s+(the\\s+)?(safety|guardrail|filter|allowlist)"
+      - "without\\s+(any\\s+)?(restriction|limit|guardrail|approval)"
+      - "bypass\\s+(the\\s+)?(approval|allowlist|whitelist|policy)"
