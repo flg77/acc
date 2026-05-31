@@ -125,9 +125,17 @@ role_definition:
     - propose_role_update
     - propose_route
   category_b_overrides:
-    token_budget: 2048
+    # v0.3.44 (followup #58) — bumped from 2048 to 4096.  v0.3.43
+    # added the ``## Currently available`` perception block to the
+    # Assistant's system prompt (capability + roster + sub-collectives),
+    # which roughly doubled per-task input-token count (~1000 → ~2000
+    # on lighthouse).  At 2048 the Assistant hit Cat-B utilization
+    # 1.10 after 3 back-to-back tasks and started ALERT_ESCALATE
+    # blocking.  4096 matches the doubled prompt size with headroom for
+    # multi-turn context and the future Phase-2 JSON action block.
+    token_budget: 4096
     rate_limit_rpm: 30
-  version: "2.2.0"
+  version: "2.2.1"
   # Proposal 20260530-assistant-agent-of-agents Phase 6 — opt the
   # Assistant into SIP-P2's bandit learning.  Start conservative:
   # only `route_confidence_threshold` is un-pinned (the most
