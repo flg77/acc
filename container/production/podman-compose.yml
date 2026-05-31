@@ -212,6 +212,104 @@ services:
       - acc-net
     restart: unless-stopped
 
+  # ── Agent: Assistant (AoA gatekeeper, v0.3.24+) ──────────────────────────
+  # AoA-P1 made `assistant` the default TUI Prompt target.  Without a
+  # container subscribed to assistant's bus subjects, every default-target
+  # prompt times out at 180s.  Ships as baseline so `./acc-deploy.sh up`
+  # brings the gatekeeper live by default.
+  acc-agent-assistant:
+    image: localhost/acc-agent-core:0.2.0
+    container_name: acc-agent-assistant
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: assistant
+      ACC_AGENT_ID: assistant-1
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/assistant-1
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../roles:/app/roles:ro,z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  # ── Agent: Coding worker (v0.3.24+) ──────────────────────────────────────
+  # Single-replica baseline coding worker so the gatekeeper has somewhere
+  # to route code tasks (and so direct-target `coding_agent` prompts from
+  # the TUI dropdown resolve).  The multi-replica peer pool stays available
+  # behind the `coding-split` profile below.
+  acc-agent-coding-agent:
+    image: localhost/acc-agent-core:0.2.0
+    container_name: acc-agent-coding-agent
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: coding_agent
+      ACC_AGENT_ID: coding-1
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/coding-1
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../roles:/app/roles:ro,z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  # ── Agent: Compliance officer (AoA-P2b queue reviewer) ───────────────────
+  # Reviews AssistantProposal queue entries (Cat-A approvals, Cat-B/C role
+  # mutations).  Gated on the agent.role Literal in acc/config.py including
+  # `compliance_officer` — fix shipped alongside this PR.
+  acc-agent-compliance-officer:
+    image: localhost/acc-agent-core:0.2.0
+    container_name: acc-agent-compliance-officer
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: compliance_officer
+      ACC_AGENT_ID: compliance-1
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/compliance-1
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../roles:/app/roles:ro,z
+      - ../../regulatory_layer:/app/regulatory_layer:ro
+    networks:
+      - acc-net
+    restart: unless-stopped
+
   # ── Coding-split demo: three peer coding_agent workers ───────────────────
   # Profile-gated; only started when --profile coding-split is passed (or
   # via CODING_SPLIT=true ./acc-deploy.sh up).  All three reuse the

@@ -388,8 +388,13 @@ case "$COMMAND" in
             exit 0
         fi
         echo "▶ Applying $SPEC..."
+        # NOTE: do NOT pass "$@" here — at this point $@ still carries the
+        # consumed positional args (the spec filename, possibly --dry-run),
+        # which podman-compose interprets as service names and silently
+        # filters everything out with "missing services [<spec>]".
+        # See follow-up: AoA-P1 baseline-roster fix (v0.3.35).
         podman-compose -f "$COMPOSE_FILE" -f "$OVERLAY_PATH" up -d \
-            --remove-orphans "$@"
+            --remove-orphans
         echo ""
         echo "✓ Applied $SPEC.  Synthesized services:"
         podman ps --filter "label=acc.synthesized=true" \

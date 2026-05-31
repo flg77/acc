@@ -28,7 +28,7 @@ from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBac
 # ---------------------------------------------------------------------------
 
 DeployMode = Literal["standalone", "rhoai", "edge"]
-AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer", "coding_agent", "orchestrator", "assistant"]
+AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer", "coding_agent", "orchestrator", "assistant", "compliance_officer"]
 LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack", "openai_compat"]
 MetricsBackendChoice = Literal["log", "otel"]
 VectorBackendChoice = Literal["lancedb", "milvus"]
