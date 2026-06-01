@@ -421,10 +421,16 @@ class CognitiveCore:
         # construct the core directly.
         self._bus = None
         # The latest perception snapshot.  Set per-task in
-        # ``_process_task_body`` for assistant roles; consumed by
+        # ``_process_task_body`` when the role opts in via
+        # ``role.perception_profile != "none"``; consumed by
         # ``build_system_prompt`` to render the ``## Currently available``
         # block.  None means "no snapshot this task" — block omitted.
         self._perception = None
+        # The profile the most-recent snapshot was built under — used by
+        # marker validation to dispatch per-profile rules.  Defaults
+        # to ``"none"`` so the validation pass is a no-op until a real
+        # snapshot lands.
+        self._perception_profile: str = "none"
 
         # In-process stress state
         self._stress = StressIndicators()
@@ -778,20 +784,25 @@ class CognitiveCore:
         emit_stage("acc.pipeline.prompt_build")
         # Proposal `20260531-assistant-action-loop` Phase 1 — the
         # Observe step.  Snapshot capability + roster + sub-collectives
-        # under a 100ms budget so the Assistant grounds its reasoning
-        # in live state instead of hallucinating role names.  Gated to
-        # ``role.role_label == "assistant"`` so non-Assistant roles see
-        # zero behaviour change.  Stale-OK > stale-block: any source
-        # that times out gets a ``[stale]`` annotation in the rendered
-        # block; we never block the task hot path on perception.
-        if self._role_label == "assistant" and self._bus is not None:
+        # under a 100ms budget so the agent grounds its reasoning in
+        # live state instead of hallucinating role names / skill names.
+        # Gated on ``role.perception_profile != "none"`` per OpenSpec
+        # ``20260531-role-perception-profiles`` Phase 1 — generalises
+        # the v0.3.43 Assistant-only gate to any spawnable role whose
+        # role.yaml opts in.  Stale-OK > stale-block: any source that
+        # times out gets a ``[stale]`` annotation; we never block the
+        # task hot path on perception.
+        self._perception_profile = getattr(role, "perception_profile", "none")
+        if self._perception_profile != "none" and self._bus is not None:
             try:
                 from acc.perception import (  # noqa: PLC0415
-                    snapshot_for_assistant,
+                    snapshot_for_role,
                 )
-                self._perception = await snapshot_for_assistant(
+                self._perception = await snapshot_for_role(
                     bus=self._bus,
                     cid=self._collective_id,
+                    profile=self._perception_profile,
+                    role=role,
                     sub_collectives=self._sub_collectives,
                 )
             except Exception:
@@ -1145,24 +1156,27 @@ class CognitiveCore:
                     perception = getattr(self, "_perception", None)
                     if perception is not None:
                         from acc.perception import (  # noqa: PLC0415
-                            validate_marker_target,
+                            validate_marker,
+                        )
+                        profile = getattr(
+                            self, "_perception_profile", "control"
                         )
                         valid: list = []
                         for p in parsed:
-                            target = getattr(p, "target_role", "") or ""
-                            if not target or validate_marker_target(
-                                perception, target
+                            if validate_marker(
+                                profile, perception, p, role=role
                             ):
                                 valid.append(p)
                             else:
                                 logger.warning(
                                     "perception: rejected hallucinated marker "
-                                    "kind=%s target=%r — not in snapshot "
-                                    "roster (%s) or catalog (%d roles)",
+                                    "kind=%s target=%r profile=%s — not in "
+                                    "snapshot roster (%s) or role-allowed "
+                                    "skills/MCPs",
                                     p.kind,
-                                    target,
+                                    getattr(p, "target_role", ""),
+                                    profile,
                                     list(perception.roster.keys()),
-                                    len(perception.available_roles),
                                 )
                         parsed = valid
                     for p in parsed:
@@ -1506,9 +1520,9 @@ class CognitiveCore:
         if perception is not None:
             try:
                 from acc.perception import (  # noqa: PLC0415
-                    render_currently_available_block,
+                    render_for_role,
                 )
-                pb = render_currently_available_block(perception)
+                pb = render_for_role(perception, role)
                 if pb:
                     parts.append("\n" + pb)
             except Exception:

@@ -29,6 +29,38 @@ from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBac
 
 DeployMode = Literal["standalone", "rhoai", "edge"]
 AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer", "coding_agent", "orchestrator", "assistant", "compliance_officer"]
+
+# Proposal `20260531-role-perception-profiles` Phase 1 — typed
+# per-role perception profile.  Selects which live-state slice gets
+# injected into the system prompt before each LLM call.  v0.3.43
+# (PR #9) shipped the `control` profile on the Assistant only;
+# v0.3.45 (this PR) generalises so every spawnable role can opt
+# into the slice that fits its job.
+#
+# Profile shapes:
+#   * `none`     — no block injected (default — preserves v0.3.42
+#                  behaviour byte-identically).
+#   * `control`  — roster + role catalog + MCPs + sub-collectives.
+#                  For gatekeeper-class roles (assistant, future
+#                  control roles).
+#   * `workspace`— workspace path + allowed_skills ∩ catalog +
+#                  allowed_mcps ∩ catalog + sibling workers in
+#                  cluster.  For coding_agent / ingester / analyst.
+#   * `domain`   — Phase 2.
+#   * `reviewer` — Phase 3.
+#   * `output`   — Phase 3.
+#   * `customer` — Phase 5 (gates on AoA-P5b TUI auth).
+#   * `queue`    — Phase 4.
+PerceptionProfile = Literal[
+    "none",
+    "control",
+    "workspace",
+    "domain",
+    "reviewer",
+    "output",
+    "customer",
+    "queue",
+]
 LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack", "openai_compat"]
 MetricsBackendChoice = Literal["log", "otel"]
 VectorBackendChoice = Literal["lancedb", "milvus"]
@@ -75,6 +107,18 @@ class RoleDefinitionConfig(BaseModel):
     # in their role.yaml.  Cost: one extra LLM call per
     # ``reflection_interval_s`` window per active role.
     memory_reflection: bool = True
+
+    # Proposal `20260531-role-perception-profiles` Phase 1
+    # (v0.3.45) — opt this role into a typed perception profile.
+    # The cognitive_core's Observe step queries the slice of live
+    # state appropriate to this role's job and injects a
+    # ``## Currently available`` block into the system prompt before
+    # the LLM call.  Default ``none`` preserves v0.3.42 behaviour
+    # byte-identically: no block, no per-task perception fan-out.
+    # Each profile carries its own renderer + marker validator in
+    # ``acc/perception.py``; see the typed `PerceptionProfile`
+    # alias above for the full enum.
+    perception_profile: PerceptionProfile = "none"
 
     # PR-V6b — routing authority.  When True, this role's ``[ROUTE:role:reason]``
     # markers are honoured: the agent re-dispatches the task to the named role

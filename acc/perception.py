@@ -1,6 +1,13 @@
-"""Assistant perception snapshot — the Observe step the gatekeeper was missing.
+"""Per-role perception snapshot — the Observe step in the cognitive pipeline.
 
-OpenSpec `20260531-assistant-action-loop`, Phase 1.
+OpenSpec history:
+  * `20260531-assistant-action-loop` Phase 1 (v0.3.43, PR #9) shipped
+    the Assistant-only proof-of-concept.
+  * `20260531-role-perception-profiles` Phase 1 (v0.3.45, this file)
+    generalises it: any role with ``RoleDefinitionConfig.perception_profile
+    != "none"`` gets a tailored ``## Currently available`` block before
+    its LLM call.  Seven standard profiles, each rendered + validated by a
+    profile-specific function registered below.
 
 The Assistant gatekeeper (proposal `20260530-assistant-agent-of-agents`)
 shipped every downstream primitive — CapabilityIndex (v0.3.42), AoA-P2b
@@ -274,7 +281,68 @@ def _payload_bytes(msg: Any) -> bytes:
 # ---------------------------------------------------------------------------
 
 
+async def snapshot_for_role(
+    *,
+    bus: Any,
+    cid: str,
+    profile: str = "control",
+    role: Any = None,
+    sub_collectives: dict[str, dict[str, Any]] | None = None,
+    roles_root: str | os.PathLike | None = None,
+    timeout_s: float | None = None,
+) -> PerceptionSnapshot:
+    """Build a fresh PerceptionSnapshot tailored to *profile*.
+
+    Each profile selects which sources are queried:
+
+    +-------------+-----------+--------+----------------+
+    | Profile     | Catalog?  | Roster?| Sub-collectives|
+    +=============+===========+========+================+
+    | control     | yes       | yes    | yes            |
+    | workspace   | yes       | yes    | no             |
+    | domain      | partial   | yes    | yes            |
+    | reviewer    | no        | yes    | no             |
+    | output      | no        | yes    | no             |
+    | customer    | partial   | yes    | no             |
+    | queue       | no        | yes    | no             |
+    +-------------+-----------+--------+----------------+
+
+    The Phase 1 implementation runs the same parallel fan-out for both
+    ``control`` and ``workspace`` (the source set is the same; the
+    rendering differs).  Later phases narrow per profile to save tokens
+    when a profile genuinely doesn't need a source.
+    """
+    return await _snapshot(
+        bus=bus,
+        cid=cid,
+        sub_collectives=sub_collectives,
+        roles_root=roles_root,
+        timeout_s=timeout_s,
+    )
+
+
 async def snapshot_for_assistant(
+    *,
+    bus: Any,
+    cid: str,
+    sub_collectives: dict[str, dict[str, Any]] | None = None,
+    roles_root: str | os.PathLike | None = None,
+    timeout_s: float | None = None,
+) -> PerceptionSnapshot:
+    """v0.3.43 backward-compat shim.  Delegates to ``snapshot_for_role``
+    with ``profile="control"`` so existing callers keep working
+    byte-identically."""
+    return await snapshot_for_role(
+        bus=bus,
+        cid=cid,
+        profile="control",
+        sub_collectives=sub_collectives,
+        roles_root=roles_root,
+        timeout_s=timeout_s,
+    )
+
+
+async def _snapshot(
     *,
     bus: Any,
     cid: str,
@@ -364,23 +432,68 @@ def validate_marker_target(
     running roster OR available-roles catalog.  False otherwise (the
     classic case: an LLM emitting ``[PROPOSE_SPAWN:worker-pool:...]``
     when no ``worker-pool`` role exists).
+
+    Kept for backward compatibility with the v0.3.43 Assistant-only
+    code-path.  New callers should prefer :func:`validate_marker`,
+    which dispatches per profile.
     """
     if target_role in snapshot.roster:
         return True
     return any(r.get("name") == target_role for r in snapshot.available_roles)
 
 
-# ---------------------------------------------------------------------------
-# Prompt block renderer — used by cognitive_core.build_system_prompt.
-# ---------------------------------------------------------------------------
+def validate_marker(
+    profile: str,
+    snapshot: PerceptionSnapshot,
+    marker: Any,
+    *,
+    role: Any = None,
+) -> bool:
+    """Profile-aware marker validation.
 
+    * ``control``  — ``target_role`` must be in snapshot.roster or
+                     available_roles (matches today's behaviour).
+    * ``workspace``— ``[USE_SKILL:name:...]`` must name a skill in
+                     ``role.allowed_skills``; ``[USE_MCP:name:...]`` must
+                     name an MCP in ``role.allowed_mcps``.  Other marker
+                     kinds pass through unchanged (workspace roles
+                     should not be emitting [PROPOSE_SPAWN]).
+    * Other profiles fall back to control-style ``target_role`` check.
 
-def render_currently_available_block(snapshot: PerceptionSnapshot) -> str:
-    """Render the ``## Currently available`` block for the system prompt.
-
-    Lives in this module (not in cognitive_core) so the renderer + the
-    data model evolve together.  Keep it small: every line costs tokens.
+    ``marker`` is the parsed proposal object (has ``kind`` and
+    ``target_role`` attributes when emitted by
+    :func:`parse_proposal_markers`); for workspace markers the
+    ``target_role`` field carries the skill / MCP name.
     """
+    target = getattr(marker, "target_role", "") or ""
+    kind = getattr(marker, "kind", "") or ""
+
+    if profile == "workspace":
+        if kind == "USE_SKILL" and role is not None:
+            allowed = set(getattr(role, "allowed_skills", []) or [])
+            return target in allowed
+        if kind == "USE_MCP" and role is not None:
+            allowed = set(getattr(role, "allowed_mcps", []) or [])
+            return target in allowed
+        # Workspace roles emitting other marker kinds — accept (no
+        # snapshot-side data to validate against in Phase 1).
+        return True
+
+    # control / fallback profiles — match v0.3.43 semantics.
+    if not target:
+        return True
+    return validate_marker_target(snapshot, target)
+
+
+# ---------------------------------------------------------------------------
+# Prompt block renderers — profile dispatch via _PROFILE_RENDERERS.
+# ---------------------------------------------------------------------------
+
+
+def _render_control(snapshot: PerceptionSnapshot, role: Any = None) -> str:
+    """``control`` profile — the v0.3.43 Assistant ``## Currently available``
+    block.  Surfaces full roster + catalog + sub-collectives.  Token
+    budget ~1 KB on the lighthouse 6-role baseline."""
     lines: list[str] = ["## Currently available"]
 
     if snapshot.stale:
@@ -394,12 +507,10 @@ def render_currently_available_block(snapshot: PerceptionSnapshot) -> str:
     if snapshot.roster:
         lines.append("")
         lines.append("**Running agents** (use these first if they fit):")
-        for role, agent_ids in sorted(snapshot.roster.items()):
+        for role_name, agent_ids in sorted(snapshot.roster.items()):
             ids = ", ".join(sorted(agent_ids))
-            lines.append(f"- {role} → {ids}")
+            lines.append(f"- {role_name} → {ids}")
 
-    # Available roles NOT already running (avoid duplicating the roster
-    # block above).  Token-budget conscious — cap at 25 entries.
     running = set(snapshot.roster.keys())
     other_roles = [r for r in snapshot.available_roles
                    if r.get("name") and r["name"] not in running]
@@ -435,3 +546,122 @@ def render_currently_available_block(snapshot: PerceptionSnapshot) -> str:
     )
 
     return "\n".join(lines)
+
+
+def _render_workspace(snapshot: PerceptionSnapshot, role: Any = None) -> str:
+    """``workspace`` profile — tailored to roles like ``coding_agent`` /
+    ``ingester`` / ``analyst`` whose action surface is *their own
+    workspace + allowed skills/MCPs*, not the full roster.
+
+    Surfaces:
+      * Workspace path (env-derived; the agent's bind-mounted dir).
+      * Allowed skills intersected with the live catalog.
+      * Allowed MCPs intersected with the live catalog (with risk).
+      * Sibling workers (other agents sharing this role).
+
+    Token budget ~400 B — roughly half the control block, since most
+    workspace roles only care about their own tools.
+    """
+    lines: list[str] = ["## Currently available"]
+
+    if snapshot.stale:
+        flag = []
+        if snapshot.stale_capability:
+            flag.append("capability stale")
+        if snapshot.stale_roster:
+            flag.append("roster stale")
+        lines.append(f"_[snapshot: {' + '.join(flag)} — proceed but with reduced confidence]_")
+
+    # Workspace path — env-derived, mounted by the operator at agent boot.
+    ws = os.environ.get("ACC_WORKSPACE_BASE") or os.environ.get(
+        "ACC_WORKSPACE_DIR", ""
+    )
+    if ws:
+        lines.append("")
+        lines.append(f"**Your workspace:** `{ws}`")
+
+    role_name = getattr(role, "role_label", "") if role is not None else ""
+
+    # Intersect role-declared skills with the live catalog so the LLM
+    # only sees what's actually deployable RIGHT NOW.
+    allowed_skills = list(getattr(role, "allowed_skills", []) or []) if role else []
+    if allowed_skills:
+        catalog_skills = {
+            r.get("name") for r in snapshot.available_roles
+            if r.get("kind") == "skill"
+        }
+        # Catalog may not surface skills (Phase 1 catalog covers role+mcp);
+        # in that case fall back to role.allowed_skills verbatim.
+        if catalog_skills:
+            visible = [s for s in allowed_skills if s in catalog_skills]
+        else:
+            visible = list(allowed_skills)
+        if visible:
+            lines.append("")
+            lines.append(
+                "**Your allowed skills** (call via `[USE_SKILL:name:args]`):"
+            )
+            for s in visible[:15]:
+                lines.append(f"- {s}")
+
+    allowed_mcps = list(getattr(role, "allowed_mcps", []) or []) if role else []
+    if allowed_mcps:
+        # Build a name → (summary, risk) view of the catalog for any
+        # MCPs we do see; otherwise list verbatim.
+        catalog_mcps = {m.get("name"): m for m in snapshot.available_mcps}
+        visible_mcps = [m for m in allowed_mcps if not catalog_mcps or m in catalog_mcps]
+        if visible_mcps:
+            lines.append("")
+            lines.append(
+                "**Your allowed MCPs** (call via `[USE_MCP:name:args]`):"
+            )
+            for m in visible_mcps[:10]:
+                meta = catalog_mcps.get(m) or {}
+                risk = (meta.get("metadata") or {}).get("risk_level", "UNKNOWN")
+                summary = (meta.get("summary") or "").strip()
+                if summary:
+                    lines.append(f"- {m} ({risk}): {summary}")
+                else:
+                    lines.append(f"- {m}")
+
+    # Sibling workers — other agents on the same role.
+    if role_name and role_name in snapshot.roster:
+        siblings = [a for a in snapshot.roster.get(role_name, [])
+                    if a]
+        if siblings:
+            lines.append("")
+            lines.append(
+                f"**Sibling workers in cluster** ({role_name}): "
+                + ", ".join(sorted(siblings))
+            )
+
+    return "\n".join(lines)
+
+
+# Registry of profile → renderer.  Profiles without a renderer
+# (Phase 1: every value except ``control`` / ``workspace``) fall back
+# to the control renderer until their dedicated implementation lands
+# in subsequent phases.
+_PROFILE_RENDERERS: dict[str, Any] = {
+    "control": _render_control,
+    "workspace": _render_workspace,
+}
+
+
+def render_for_role(snapshot: PerceptionSnapshot, role: Any) -> str:
+    """Dispatch on ``role.perception_profile`` and call the matching
+    renderer.  Returns an empty string when the profile is ``none``
+    (the default for legacy roles) — caller should skip injection.
+    """
+    profile = getattr(role, "perception_profile", "none") if role else "none"
+    if profile == "none":
+        return ""
+    renderer = _PROFILE_RENDERERS.get(profile, _render_control)
+    return renderer(snapshot, role)
+
+
+def render_currently_available_block(snapshot: PerceptionSnapshot) -> str:
+    """v0.3.43 backward-compat wrapper — emits the control-profile block
+    so existing callers (and the Assistant-only code path) keep their
+    byte-identical output."""
+    return _render_control(snapshot, None)

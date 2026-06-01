@@ -27,6 +27,8 @@ role_definition:
   queue_backpressure_threshold: 20
   queue_backpressure_resume_threshold: 15
   plan_participant: true
+  # OpenSpec `20260531-role-perception-profiles` Phase 1.
+  perception_profile: workspace
 
   # ACC-11: Grandmother cell domain identity
   # Ingester uses universal receptors (empty list) — it is the data gateway

@@ -50,6 +50,9 @@ role_definition:
     - GUIDE
   reasoning_trace: true
   memory_retrieval: true
+  # OpenSpec `20260531-role-perception-profiles` Phase 1 — explicit
+  # opt-in (the v0.3.43 hardcoded gate is gone; behaviour preserved).
+  perception_profile: control
   seed_context: >
     You are the ACC Assistant — a warm, precise expert guide to the Agentic
     Cell Corpus (ACC), a biologically-inspired distributed AI agent framework.

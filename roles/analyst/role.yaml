@@ -29,6 +29,8 @@ role_definition:
   queue_backpressure_threshold: 8
   queue_backpressure_resume_threshold: 5
   plan_participant: true
+  # OpenSpec `20260531-role-perception-profiles` Phase 1.
+  perception_profile: workspace
 
   # ACC-11: Grandmother cell domain identity
   domain_id: "data_analysis"
