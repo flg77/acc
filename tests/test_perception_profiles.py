@@ -107,15 +107,16 @@ class TestWorkspaceRenderer:
         assert "USE_SKILL" in out
 
     def test_skills_fall_back_when_catalog_empty(self, monkeypatch) -> None:
-        # When the catalog surfaces no skills (Phase 1 catalog covers
-        # role+mcp), we still list role.allowed_skills verbatim so the
-        # LLM has something to work with.
+        # When the catalog surfaces no skills (orchestrator running
+        # without a SkillRegistry), the renderer lists role.allowed_skills
+        # verbatim so the LLM still has something to work with.
         monkeypatch.delenv("ACC_WORKSPACE_BASE", raising=False)
         snap = PerceptionSnapshot(
             roster={"coding_agent": ["c-1"]},
             available_roles=[
                 {"kind": "role", "name": "coding_agent"},
-            ],  # no kind=skill entries
+            ],
+            available_skills=[],
         )
         role = SimpleNamespace(
             role_label="coding_agent",
@@ -126,6 +127,29 @@ class TestWorkspaceRenderer:
         out = _render_workspace(snap, role)
         assert "fs_write" in out
         assert "fs_read" in out
+
+    def test_skills_intersected_with_available_skills(self, monkeypatch) -> None:
+        # When the catalog DOES surface skills, the renderer shows only
+        # the intersection — protects against role.yaml drifting ahead
+        # of the live skill registry.
+        monkeypatch.delenv("ACC_WORKSPACE_BASE", raising=False)
+        snap = PerceptionSnapshot(
+            roster={"coding_agent": ["c-1"]},
+            available_skills=[
+                {"kind": "skill", "name": "fs_write", "summary": "write files"},
+            ],
+        )
+        role = SimpleNamespace(
+            role_label="coding_agent",
+            perception_profile="workspace",
+            # fs_read is in role.yaml but NOT in the live registry —
+            # must be hidden so the LLM doesn't try to call it.
+            allowed_skills=["fs_write", "fs_read"],
+            allowed_mcps=[],
+        )
+        out = _render_workspace(snap, role)
+        assert "fs_write" in out
+        assert "fs_read" not in out
 
     def test_surfaces_allowed_mcps_with_risk(self, monkeypatch) -> None:
         monkeypatch.delenv("ACC_WORKSPACE_BASE", raising=False)

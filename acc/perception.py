@@ -94,6 +94,12 @@ class PerceptionSnapshot(BaseModel):
     # Available MCPs — same shape.
     available_mcps: list[dict[str, Any]] = Field(default_factory=list)
 
+    # Available skills — same shape.  Populated when the orchestrator's
+    # CapabilityIndex was constructed with a SkillRegistry; empty
+    # otherwise (workspace renderer falls back to role.allowed_skills
+    # verbatim in that case).
+    available_skills: list[dict[str, Any]] = Field(default_factory=list)
+
     # Sub-collective registry (from CollectiveSpec.managed_sub_collectives).
     # Shape: ``{"sol-code": {"domain": "...", "description": "..."}, ...}``.
     sub_collectives: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -182,11 +188,20 @@ async def _query_capabilities(
     cid: str,
     *,
     timeout_s: float,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, bool]:
-    """Ask the orchestrator's capability_query subject for roles + MCPs.
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    int,
+    bool,
+]:
+    """Ask the orchestrator's capability_query subject for roles + MCPs
+    + skills.
 
-    Returns (roles, mcps, capability_revision, stale_flag).  Stale=True
-    when the orchestrator didn't reply within the budget.
+    Returns (roles, mcps, skills, capability_revision, stale_flag).
+    Stale=True when no orchestrator source replied within the budget —
+    skills alone failing is silent because skills are an additive hint
+    for the workspace profile, not a critical signal.
     """
     import msgpack  # noqa: PLC0415
     from acc.signals import subject_capability_query  # noqa: PLC0415
@@ -194,6 +209,7 @@ async def _query_capabilities(
     subject = subject_capability_query(cid)
     roles: list[dict[str, Any]] = []
     mcps: list[dict[str, Any]] = []
+    skills: list[dict[str, Any]] = []
     revision = 0
     stale = False
 
@@ -218,17 +234,22 @@ async def _query_capabilities(
         revision = max(revision, int(data.get("catalog_revision") or 0))
         return matches
 
-    # Parallel fan-out for role + mcp queries under one combined budget.
+    # Parallel fan-out — three queries under one combined budget.
     try:
         roles_task = asyncio.create_task(_one("role"))
         mcps_task = asyncio.create_task(_one("mcp"))
+        skills_task = asyncio.create_task(_one("skill"))
         roles = await roles_task
         mcps = await mcps_task
+        skills = await skills_task
     except asyncio.TimeoutError:
         stale = True
+    # Stale iff *all* sources fell back to empty (skills alone may
+    # legitimately be empty — orchestrator runs without a SkillRegistry
+    # in some deployments).
     if not roles and not mcps:
         stale = True
-    return roles, mcps, revision, stale
+    return roles, mcps, skills, revision, stale
 
 
 async def _query_roster(
@@ -387,10 +408,11 @@ async def _snapshot(
             cap_result, roster_result = await asyncio.gather(
                 cap_task, roster_task, return_exceptions=False,
             )
-            roles, mcps, revision, cap_stale = cap_result
+            roles, mcps, skills, revision, cap_stale = cap_result
             roster, roster_stale = roster_result
             snap.available_roles = roles
             snap.available_mcps = mcps
+            snap.available_skills = skills
             snap.capability_revision = revision
             snap.roster = roster
             snap.stale_capability = cap_stale
@@ -583,15 +605,12 @@ def _render_workspace(snapshot: PerceptionSnapshot, role: Any = None) -> str:
     role_name = getattr(role, "role_label", "") if role is not None else ""
 
     # Intersect role-declared skills with the live catalog so the LLM
-    # only sees what's actually deployable RIGHT NOW.
+    # only sees what's actually deployable RIGHT NOW.  Falls back to
+    # role.allowed_skills verbatim when the catalog has no skills
+    # (orchestrator running without a SkillRegistry).
     allowed_skills = list(getattr(role, "allowed_skills", []) or []) if role else []
     if allowed_skills:
-        catalog_skills = {
-            r.get("name") for r in snapshot.available_roles
-            if r.get("kind") == "skill"
-        }
-        # Catalog may not surface skills (Phase 1 catalog covers role+mcp);
-        # in that case fall back to role.allowed_skills verbatim.
+        catalog_skills = {s.get("name") for s in snapshot.available_skills}
         if catalog_skills:
             visible = [s for s in allowed_skills if s in catalog_skills]
         else:
