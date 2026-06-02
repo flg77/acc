@@ -134,6 +134,16 @@ PERCEPTION_PROMPT_TOKEN_BUDGET = int(
     os.environ.get("ACC_PERCEPTION_PROMPT_TOKENS", "600") or "600"
 )
 
+# OpenSpec `20260602-assistant-blindspots` Phase 1.2 — how many catalog
+# entries the control profile renders with their full summary line
+# before falling back to a single comma-joined tail line.  At ~8 tokens
+# per detailed entry + ~2 tokens per tail name, 40 detailed + 100 tail
+# names ≈ 320 + 200 = 520 tokens, comfortably under the default block
+# budget.
+_DETAILED_ROLE_CAP = int(
+    os.environ.get("ACC_PERCEPTION_DETAILED_ROLE_CAP", "40") or "40"
+)
+
 
 # ---------------------------------------------------------------------------
 # Filesystem fallback — synchronous; used when the orchestrator is
@@ -539,11 +549,26 @@ def _render_control(snapshot: PerceptionSnapshot, role: Any = None) -> str:
     if other_roles:
         lines.append("")
         lines.append("**Available roles** (can be spawned via `[PROPOSE_SPAWN:role:cluster:reason]`):")
-        for r in other_roles[:25]:
+        # OpenSpec `20260602-assistant-blindspots` Phase 1.2 — kill the
+        # "... and N more" cliff.  Today's lighthouse trace truncated
+        # the catalog at 25 roles and the Assistant proposed a
+        # hallucinated `research_agent` because it couldn't see the real
+        # tail.  Detailed entries cap at ``_DETAILED_ROLE_CAP``; any
+        # overflow gets emitted as a single comma-joined name-only line
+        # so the LLM still sees the names and can ask follow-up.
+        for r in other_roles[:_DETAILED_ROLE_CAP]:
             summary = (r.get("summary") or "").strip()
             lines.append(f"- {r['name']}: {summary}")
-        if len(other_roles) > 25:
-            lines.append(f"- ... and {len(other_roles) - 25} more")
+        if len(other_roles) > _DETAILED_ROLE_CAP:
+            tail_names = [
+                r["name"] for r in other_roles[_DETAILED_ROLE_CAP:]
+                if r.get("name")
+            ]
+            if tail_names:
+                lines.append(
+                    "- (also available, ask if relevant): "
+                    + ", ".join(tail_names)
+                )
 
     if snapshot.available_mcps:
         lines.append("")

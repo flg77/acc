@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -199,6 +200,12 @@ class CollectiveSpec(BaseModel):
 def load_collective(path: Path | str) -> CollectiveSpec:
     """Parse a ``collective.yaml`` and validate as :class:`CollectiveSpec`.
 
+    OpenSpec `20260602-assistant-blindspots` Phase 1.3 — after the file
+    is loaded, optionally merge in sibling ``collective.yaml`` files
+    discovered under ``ACC_DISCOVER_SUBCOLLECTIVES_ROOT`` so the
+    Assistant's perception block surfaces sub-collectives the operator
+    dropped on disk without editing the hub's checked-in collective.yaml.
+
     Raises:
         FileNotFoundError: if *path* does not exist.
         pydantic.ValidationError: on schema violation.
@@ -211,7 +218,78 @@ def load_collective(path: Path | str) -> CollectiveSpec:
         raise ValueError(
             f"{path} top-level must be a mapping, got {type(data).__name__}"
         )
-    return CollectiveSpec.model_validate(data)
+    spec = CollectiveSpec.model_validate(data)
+    return _merge_discovered_subcollectives(spec)
+
+
+def _merge_discovered_subcollectives(spec: CollectiveSpec) -> CollectiveSpec:
+    """Add sibling sub-collectives found on the local filesystem.
+
+    Opt-in via ``ACC_DISCOVER_SUBCOLLECTIVES_ROOT`` (default unset).
+    When set, scan ``<root>/*/collective.yaml``; for each file, build a
+    :class:`SubCollectiveSpec` from the sibling's own ``collective_id``
+    + ``domain`` + ``description``.  Entries explicitly listed in the
+    hub's ``managed_sub_collectives`` win — discovery is purely
+    additive.  Malformed sibling files are skipped silently (best-
+    effort surfacing, never break boot).
+    """
+    root_env = os.environ.get("ACC_DISCOVER_SUBCOLLECTIVES_ROOT", "")
+    if not root_env:
+        return spec
+    root = Path(root_env)
+    if not root.is_dir():
+        return spec
+    discovered: dict[str, SubCollectiveSpec] = {}
+    for child in sorted(p for p in root.iterdir() if p.is_dir()):
+        sibling = child / "collective.yaml"
+        if not sibling.exists():
+            continue
+        try:
+            with sibling.open("r", encoding="utf-8") as fh:
+                raw = yaml.safe_load(fh) or {}
+            if not isinstance(raw, dict):
+                continue
+            sib_spec = CollectiveSpec.model_validate(raw)
+        except Exception:  # pragma: no cover (defensive)
+            continue
+        cid = sib_spec.collective_id
+        if not cid or cid == spec.collective_id or cid in spec.managed_sub_collectives:
+            continue
+        discovered[cid] = SubCollectiveSpec(
+            role_templates=[],
+            domain=_infer_domain_from_spec(sib_spec),
+            description=_infer_description_from_spec(sib_spec, child.name),
+        )
+    if not discovered:
+        return spec
+    # Merge: hub-declared entries win over discovered ones.
+    merged = dict(discovered)
+    merged.update(spec.managed_sub_collectives)
+    return spec.model_copy(update={"managed_sub_collectives": merged})
+
+
+def _infer_domain_from_spec(spec: CollectiveSpec) -> str:
+    """Best-effort domain inference — read ``domain_id`` from the
+    optional shared ``role_definition`` overlay.  Empty string when the
+    sibling spec doesn't expose one (the renderer prints ``?``)."""
+    rd = getattr(spec, "role_definition", None)
+    if isinstance(rd, dict):
+        domain = rd.get("domain_id", "") or ""
+        if isinstance(domain, str) and domain:
+            return domain
+    return ""
+
+
+def _infer_description_from_spec(spec: CollectiveSpec, dirname: str) -> str:
+    """Surface a one-line summary for the sibling.  Falls back to the
+    directory name so the operator at least sees *something* in the
+    Assistant's perception block."""
+    rd = getattr(spec, "role_definition", None)
+    if isinstance(rd, dict):
+        purpose = (rd.get("purpose") or "").strip()
+        if purpose:
+            return purpose[:140]
+    return f"sub-collective at {dirname}"
 
 
 def collective_to_yaml(spec: CollectiveSpec) -> str:

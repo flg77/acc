@@ -299,19 +299,29 @@ def test_render_includes_sub_collectives_with_delegate_marker():
     assert "[DELEGATE:cid:reason]" in block
 
 
-def test_render_caps_other_roles_at_25():
-    """Token budget defence."""
+def test_render_overflows_to_name_only_tail():
+    """OpenSpec ``20260602-assistant-blindspots`` Phase 1.2 — the
+    detailed list caps at ``_DETAILED_ROLE_CAP`` entries; any overflow
+    lands as a single comma-joined name-only tail so the LLM at least
+    sees the names instead of an opaque ``and N more`` line."""
+    from acc.perception import _DETAILED_ROLE_CAP
+
+    n = _DETAILED_ROLE_CAP + 15
     many_roles = [
         {"kind": "role", "name": f"role_{i}", "summary": "x",
          "metadata": {}}
-        for i in range(40)
+        for i in range(n)
     ]
     snap = PerceptionSnapshot(
         roster={}, available_roles=many_roles,
     )
     block = render_currently_available_block(snap)
-    # Should truncate to 25 + "and N more" line.
-    assert "and 15 more" in block
+    # No opaque ellipsis-count line.
+    assert "and 15 more" not in block
+    assert "and " + str(n - _DETAILED_ROLE_CAP) + " more" not in block
+    # Tail names rendered on a single "(also available …)" line.
+    assert "(also available, ask if relevant):" in block
+    assert f"role_{n - 1}" in block
 
 
 def test_render_concludes_with_grounding_directive():

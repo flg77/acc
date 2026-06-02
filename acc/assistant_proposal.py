@@ -196,7 +196,7 @@ def decide_dispatch(operating_mode: str, kind: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-# Shapes:
+# Shapes (canonical):
 #   [PROPOSE_SPAWN:<role>:<cluster_id>:<reason>]
 #   [PROPOSE_ROLE_UPDATE:<role>:<field=value;field=value>:<reason>]
 #   [PROPOSE_ROUTE:<target_role>:<reason>]
@@ -211,12 +211,48 @@ _RE_ROUTE = re.compile(
 )
 
 
+# OpenSpec `20260602-assistant-blindspots` Phase 1.1 — marker-form
+# tolerance.  Today's lighthouse trace shows the small Assistant LLM
+# emitting a backtick-wrapped PROPOSE_SPAWN marker rather than the
+# canonical square-bracket form; the strict regexes above silently
+# drop it.  We pre-normalise three alternative delimiter forms back
+# to the canonical shape so the parser + downstream `validate_marker`
+# still catch hallucinated role names.
+_RE_BACKTICK_MARKER = re.compile(
+    r"`(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE):[^`\n]+)`"
+)
+_RE_BARE_LINE_MARKER = re.compile(
+    r"(?m)^(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE):[^\n\[\]`]+)$"
+)
+
+
+def _normalize_marker_delimiters(text: str) -> str:
+    """Rewrite backtick- and bare-line marker forms into the canonical
+    square-bracket form so the strict per-marker regexes match.
+
+    Idempotent on already-canonical input.  Touches only sequences that
+    start with ``PROPOSE_SPAWN`` / ``PROPOSE_ROLE_UPDATE`` /
+    ``PROPOSE_ROUTE`` — leaves prose mentioning other words alone.
+    """
+    if not text:
+        return text
+    text = _RE_BACKTICK_MARKER.sub(r"[\1]", text)
+    text = _RE_BARE_LINE_MARKER.sub(r"[\1]", text)
+    return text
+
+
 def parse_proposal_markers(text: str) -> list[AssistantProposal]:
     """Extract every ``[PROPOSE_*:…]`` marker from ``text``.
 
     Empty list when nothing matches — the Assistant didn't propose
     anything (most prompts are answer-it-yourself).  Multiple markers
     can co-exist in one response; each becomes its own proposal.
+
+    The parser tolerates three delimiter forms (per Phase 1.1 of
+    `20260602-assistant-blindspots`):
+    - canonical square-bracket: ``[PROPOSE_*:...]``
+    - backtick-wrapped (small-LLM drift): see ``_RE_BACKTICK_MARKER``
+    - bare ``PROPOSE_*:...`` on its own line
 
     Field semantics:
     - Spawn ``params``: ``{"role": str, "cluster_id": str}``.
@@ -228,6 +264,7 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
     """
     if not text:
         return []
+    text = _normalize_marker_delimiters(text)
     out: list[AssistantProposal] = []
     for role, cluster_id, reason in _RE_SPAWN.findall(text):
         out.append(AssistantProposal(
