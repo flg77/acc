@@ -16,6 +16,7 @@ role_definition:
   seed_context: ""
   allowed_actions:
     - execute_shell
+    - execute_ssh
     - read_vector_db
     - write_working_memory
     - read_scratchpad
@@ -37,6 +38,7 @@ role_definition:
 
   allowed_skills:
     - shell_exec
+    - ssh_exec
     - code_generation
     - code_review
   default_skills:

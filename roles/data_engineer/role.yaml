@@ -17,6 +17,7 @@ role_definition:
     Always specify data types precisely. Flag PII columns explicitly.
   allowed_actions:
     - execute_shell
+    - execute_ssh
     - read_vector_db
     - read_working_memory
     - write_working_memory
@@ -29,6 +30,7 @@ role_definition:
   # OpenSpec `20260603-capability-pool` Phase 1.2 — engineering-family opt-in.
   allowed_skills:
     - shell_exec
+    - ssh_exec
   max_skill_risk_level: HIGH
   category_b_overrides:
     token_budget: 4096

@@ -24,6 +24,7 @@ role_definition:
   seed_context: ""    # populated by system_prompt.md at load time
   allowed_actions:
     - execute_shell
+    - execute_ssh
     - read_vector_db
     - write_working_memory
     - read_scratchpad
@@ -45,6 +46,7 @@ role_definition:
 
   allowed_skills:
     - shell_exec
+    - ssh_exec
     - code_review
     - code_generation
   default_skills:

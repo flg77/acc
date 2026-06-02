@@ -59,6 +59,7 @@ role_definition:
     0/2 to ~4/6 on Llama-3.2-3B; see acc-dev-harness findings.)
   allowed_actions:
     - execute_shell
+    - execute_ssh
     - read_vector_db
     - write_working_memory
     - read_scratchpad
@@ -105,6 +106,7 @@ role_definition:
   # production roles should replace them with real entries.
   allowed_skills:
     - shell_exec
+    - ssh_exec
     - echo
   default_skills:
     - echo

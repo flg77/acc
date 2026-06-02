@@ -93,6 +93,37 @@ def resolve_auth_config() -> AuthConfig:
             "secret; all sessions are invalidated on restart. Set it explicitly "
             "for session continuity / multiple replicas."
         )
+
+    # OpenSpec follow-up to v0.3.48 lighthouse smoke: warn loud at
+    # startup when ``ACC_WEBGUI_HTPASSWD_PATH`` points at a path that
+    # doesn't exist (typical bug: the operator exports the host path
+    # rather than the in-container path; compose then propagates it and
+    # every login silently 401s).  We do NOT raise here — an htpasswd
+    # file can be created post-boot — but the WARNING line lands in
+    # `podman logs` so the operator notices before the first login.
+    htpasswd_path = os.environ.get("ACC_WEBGUI_HTPASSWD_PATH", "").strip()
+    if mode == MODE_HTPASSWD and htpasswd_path:
+        if not os.path.isfile(htpasswd_path):
+            logger.warning(
+                "webgui: ACC_WEBGUI_HTPASSWD_PATH=%r does not exist or is not "
+                "a file at startup. If you mounted the htpasswd into the "
+                "container at a different path, set the env var to the "
+                "IN-CONTAINER path (typically /app/acc-webgui.htpasswd). "
+                "Every login will return 401 until this is corrected.",
+                htpasswd_path,
+            )
+        elif not os.access(htpasswd_path, os.R_OK):
+            logger.warning(
+                "webgui: ACC_WEBGUI_HTPASSWD_PATH=%r exists but is not "
+                "readable by the webgui process (uid=%d). Login will "
+                "return 401 until the file is readable.",
+                htpasswd_path, os.geteuid(),
+            )
+    if mode == MODE_HTPASSWD and not htpasswd_path:
+        logger.warning(
+            "webgui: ACC_WEBGUI_AUTH_MODE=htpasswd but "
+            "ACC_WEBGUI_HTPASSWD_PATH is unset; every login will return 401."
+        )
     try:
         session_ttl = int(os.environ.get("ACC_WEBGUI_SESSION_TTL",
                                          str(_DEFAULT_SESSION_TTL)))

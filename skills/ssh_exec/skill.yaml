@@ -1,0 +1,101 @@
+# skills/ssh_exec/skill.yaml — remote shell execution via SSH.
+#
+# OpenSpec follow-up to `20260603-capability-pool` Phase 1.  HIGH-risk
+# sibling to `shell_exec` for verifying agent outcomes on a remote
+# host (e.g. an analyst SSHing to a build server to confirm an
+# artefact landed; a devops_engineer verifying a service is healthy).
+#
+# Hard rules — enforced at the adapter level:
+#   * argv list only.  The remote command vector is shlex-quoted so
+#     no LLM-supplied string is ever interpreted by a shell.
+#   * `BatchMode=yes` — never prompt for a password; only key-based
+#     auth (and only when ACC_SSH_IDENTITY is set or the agent's
+#     ~/.ssh has a default key).
+#   * Host allowlist via env var `ACC_SSH_HOST_ALLOWLIST` (CSV).
+#     Empty/unset = deny every host except `localhost`.  Operator
+#     opts each host in explicitly.
+#   * `StrictHostKeyChecking=accept-new` by default; the first
+#     connection records the host key, every subsequent run rejects
+#     mismatches.  Operator can tighten to ``yes`` via env.
+#   * Subprocess timeout default 60 s, max 600 s.  Output capped at
+#     64 KB stdout + 16 KB stderr.
+#
+# Roles must additionally set `max_skill_risk_level: HIGH` AND
+# include `execute_ssh` in `allowed_actions`.  Every approved call
+# enqueues an OVERSIGHT_SUBMIT on the Compliance pane.
+
+purpose:        "Run a command on a remote host via SSH (argv only, key auth, allowlisted hosts)."
+version:        "0.1.0"
+adapter_class:  "SshExecSkill"
+risk_level:     "HIGH"
+domain_id:      "remote_ops"
+tags:           ["ssh", "remote", "verification", "engineering"]
+
+requires_actions:
+  - "execute_ssh"
+
+input_schema:
+  type: object
+  properties:
+    host:
+      type: string
+      description: "Target host (must be in ACC_SSH_HOST_ALLOWLIST or localhost)."
+      minLength: 1
+      maxLength: 253
+    user:
+      type: string
+      description: "Remote user (optional; falls back to SSH config)."
+      maxLength: 64
+    argv:
+      type: array
+      items: { type: string }
+      minItems: 1
+      maxItems: 64
+      description: "Remote argv.  shlex-quoted; never interpolated as a shell string."
+    port:
+      type: integer
+      minimum: 1
+      maximum: 65535
+      description: "Remote SSH port (default 22)."
+    identity_file:
+      type: string
+      description: "Path to private key.  Defaults to ACC_SSH_IDENTITY env if set."
+      maxLength: 512
+    timeout_s:
+      type: integer
+      minimum: 1
+      maximum: 600
+      description: "Total subprocess timeout (default 60, max 600)."
+  required: ["host", "argv"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    host: { type: string }
+    returncode: { type: integer }
+    stdout: { type: string }
+    stderr: { type: string }
+    duration_s: { type: number }
+  required: ["host", "returncode", "stdout", "stderr", "duration_s"]
+  additionalProperties: false
+
+description: |
+  Run a command on a remote host via SSH.  The argv list is shlex-
+  joined into a single safely-quoted remote-command string so the
+  LLM-supplied args never reach a shell's word splitter.
+
+  Authentication is key-only (`BatchMode=yes`).  Host allowlist is
+  read from `ACC_SSH_HOST_ALLOWLIST` (CSV); `localhost` always
+  resolves.  StrictHostKeyChecking=accept-new — first contact
+  records the host key, every subsequent run rejects mismatches.
+
+  Use cases:
+    * Analyst verifies a remote artefact landed
+      (`ssh_exec` → `ls -la /var/lib/deploys/`)
+    * Coding agent confirms a service is healthy after deploy
+      (`ssh_exec` → `systemctl is-active myservice`)
+    * Devops engineer reads a remote log tail
+      (`ssh_exec` → `journalctl -u myservice -n 50`)
+
+  Every approved call lands in the Compliance oversight queue.
