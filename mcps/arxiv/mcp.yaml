@@ -1,0 +1,48 @@
+# mcps/arxiv/mcp.yaml — arxiv research paper read access (stdio).
+#
+# Upstream: github.com/blazickjp/arxiv-mcp-server
+#   * Python; 1.5k+ stars; active maintenance (2025-2026).
+#   * Install via `uvx arxiv-mcp-server` or `pip install arxiv-mcp-server`.
+#   * Read-only — search, fetch metadata, download PDFs.
+#
+# OpenSpec `20260603-capability-pool` Phase 1.3 — added to the
+# universal research MCP triad alongside `wikipedia` + `web_fetch`.
+# LOW risk because the content is public and read-only; operator can
+# raise to MEDIUM via overlay if rate-limit policy needs tightening.
+
+purpose:        "arxiv read-only — search papers, fetch metadata + PDFs."
+version:        "0.1.0"
+
+transport:      "stdio"
+command:
+  - "uvx"
+  - "--from"
+  - "arxiv-mcp-server"
+  - "arxiv-mcp-server"
+env: {}
+timeout_s:      60
+
+# Empty allowlist = expose every tool the upstream advertises.
+# Tighten if upstream adds destructive/expensive tools.
+allowed_tools: []
+denied_tools: []
+
+requires_actions: []
+risk_level:     "LOW"
+domain_id:      "research"
+tags:           ["research", "papers", "arxiv", "literature"]
+
+description: |
+  Read-only access to the arxiv.org research corpus.  Provides paper
+  search by query / category / author, metadata lookup, and PDF
+  download.  Backed by blazickjp/arxiv-mcp-server (Python, BSD-3).
+
+  Install on the host before bringing the agent up:
+    pip install --user uv
+    uvx --from arxiv-mcp-server arxiv-mcp-server --help
+
+  Operator vet checklist before adding the manifest:
+    * Stars > 1000 (2026-06: ~1500)
+    * Last commit < 90 days (2026-06: active)
+    * License: MIT/BSD/Apache — compatible
+    * Pin upstream version in CI when stability matters more than freshness

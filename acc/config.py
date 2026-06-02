@@ -155,6 +155,16 @@ class RoleDefinitionConfig(BaseModel):
     # only flips one boolean.
     workspace_access: bool = False
 
+    # OpenSpec `20260603-capability-pool` Phase 1.4 — when ``True``,
+    # the ``_grant_os_basics_skills`` validator auto-adds the twelve
+    # OS-navigation primitives (ls_dir, stat_path, read_text_head,
+    # read_text_tail, grep_text, find_files, which_cmd, env_get, pwd,
+    # disk_free + git_status / git_log_recent when the role's
+    # ``domain_id`` looks code-shaped) to ``allowed_skills`` and
+    # ``default_skills``.  Default ``False`` keeps every existing role
+    # behaviour-identical until the bulk role.yaml flip lands.
+    os_basics: bool = False
+
     # D-003 (PR-L) — operator-controlled autonomy gate.
     # ``AUTO`` (default) matches today's behaviour: Cat-A blocks,
     # Cat-B observes, all other invocations run.  Other valid
@@ -354,6 +364,22 @@ class RoleDefinitionConfig(BaseModel):
     _WORKSPACE_SKILLS = ("fs_read", "fs_write")
     _RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
+    # OpenSpec `20260603-capability-pool` Phase 1 — the universal
+    # OS-navigation suite.  Every shipped role with ``os_basics: True``
+    # receives these.  ``_GIT_SKILLS`` are filtered out for non-code
+    # roles (domain_id outside the ``_CODE_DOMAINS`` set).
+    _OS_BASIC_SKILLS = (
+        "ls_dir", "stat_path", "read_text_head", "read_text_tail",
+        "grep_text", "find_files", "which_cmd", "env_get", "pwd",
+        "disk_free",
+    )
+    _GIT_SKILLS = ("git_status", "git_log_recent")
+    _CODE_DOMAINS = frozenset({
+        "software_engineering", "platform_engineering",
+        "data_engineering", "machine_learning",
+        "devops", "site_reliability", "code_quality",
+    })
+
     @model_validator(mode="after")
     def _grant_workspace_skills(self) -> "RoleDefinitionConfig":
         """D-007 (PR-U2) — when ``workspace_access`` is True, auto-grant
@@ -378,6 +404,31 @@ class RoleDefinitionConfig(BaseModel):
                 self.default_skills.append(sid)
         if self._RISK_ORDER.get(self.max_skill_risk_level, 1) < self._RISK_ORDER["HIGH"]:
             self.max_skill_risk_level = "HIGH"
+        return self
+
+    @model_validator(mode="after")
+    def _grant_os_basics_skills(self) -> "RoleDefinitionConfig":
+        """OpenSpec `20260603-capability-pool` Phase 1.4 — when
+        ``os_basics`` is True, auto-grant the ten always-on OS-navigation
+        primitives, plus the two git skills for code-shaped roles.
+        Roles outside the code-domain set still receive the read-only
+        navigation primitives (ls_dir, grep_text, find_files, …) but
+        not git tooling — they don't need it.
+
+        Idempotent: re-granting on an already-populated role.yaml is a
+        no-op.  Composes cleanly with ``_grant_workspace_skills``
+        (workspace_access ⇒ fs_read/fs_write, os_basics ⇒ navigation)
+        — they touch disjoint skill sets."""
+        if not getattr(self, "os_basics", False):
+            return self
+        grant = list(self._OS_BASIC_SKILLS)
+        if self.domain_id in self._CODE_DOMAINS:
+            grant += list(self._GIT_SKILLS)
+        for sid in grant:
+            if sid not in self.allowed_skills:
+                self.allowed_skills.append(sid)
+            if sid not in self.default_skills:
+                self.default_skills.append(sid)
         return self
 
 

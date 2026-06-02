@@ -16,6 +16,7 @@ role_definition:
     For RUNBOOK_WRITE: include trigger_condition, severity, impact_assessment, step_by_step_procedure (numbered list), rollback_steps, escalation_path.
     Always state tool versions. Flag security implications of infrastructure changes.
   allowed_actions:
+    - execute_shell
     - read_vector_db
     - read_working_memory
     - write_working_memory
@@ -25,6 +26,10 @@ role_definition:
     - publish_eval_outcome
     - publish_episode_nominate
     - publish_knowledge_share
+  # OpenSpec `20260603-capability-pool` Phase 1.2 — engineering-family opt-in.
+  allowed_skills:
+    - shell_exec
+  max_skill_risk_level: HIGH
   category_b_overrides:
     token_budget: 4096
     rate_limit_rpm: 30
@@ -38,3 +43,10 @@ role_definition:
   domain_receptors:
     - software_engineering
     - it_security
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
+  # OpenSpec `20260603-capability-pool` Phase 1.5.
+  allowed_mcps:
+    - arxiv
+    - wikipedia
+    - web_fetch

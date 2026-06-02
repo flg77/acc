@@ -40,3 +40,10 @@ role_definition:
     - sales_revenue
     - software_engineering
     - product_delivery
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
+  # OpenSpec `20260603-capability-pool` Phase 1.5.
+  allowed_mcps:
+    - arxiv
+    - wikipedia
+    - web_fetch

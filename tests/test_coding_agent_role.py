@@ -137,14 +137,13 @@ def test_coding_agent_risk_ceilings(coding_role):
     so toggling ``workspace_access`` never silently breaks this test.
     """
     raw = _raw_role_yaml("coding_agent")
-    # Source-of-truth ceilings: both authored as MEDIUM.
-    assert raw.get("max_skill_risk_level") == "MEDIUM"
+    # Source-of-truth: MCP ceiling stays MEDIUM.  Skill ceiling is HIGH
+    # post-OpenSpec `20260603-capability-pool` Phase 1.2 because
+    # coding_agent now allowlists shell_exec (HIGH risk).
     assert raw.get("max_mcp_risk_level") == "MEDIUM"
-    # Resolved skill ceiling tracks the workspace_access flag; MCP is untouched.
-    if raw.get("workspace_access"):
-        assert coding_role.max_skill_risk_level == "HIGH"
-    else:
-        assert coding_role.max_skill_risk_level == "MEDIUM"
+    assert raw.get("max_skill_risk_level") == "HIGH"
+    # Resolved skill ceiling stays at HIGH (workspace_access also raises it).
+    assert coding_role.max_skill_risk_level == "HIGH"
     assert coding_role.max_mcp_risk_level == "MEDIUM"
 
 

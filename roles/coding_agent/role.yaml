@@ -58,6 +58,7 @@ role_definition:
     seems obvious. (PR-V3b — measured to lift small-model reasoning depth from
     0/2 to ~4/6 on Llama-3.2-3B; see acc-dev-harness findings.)
   allowed_actions:
+    - execute_shell
     - read_vector_db
     - write_working_memory
     - read_scratchpad
@@ -71,6 +72,8 @@ role_definition:
     rate_limit_rpm: 40
     max_task_duration_ms: 1800000
   version: "1.1.0"
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
 
   # ACC-10 fields
   progress_reporting_interval_ms: 20000
@@ -101,10 +104,11 @@ role_definition:
   # both LOW-risk diagnostic capabilities used to smoke-test the wiring;
   # production roles should replace them with real entries.
   allowed_skills:
+    - shell_exec
     - echo
   default_skills:
     - echo
-  max_skill_risk_level: "MEDIUM"
+  max_skill_risk_level: HIGH
   # D-007 (PR-U2) — coding_agent ships with workspace access ON.
   # The ``_grant_workspace_skills`` validator auto-adds fs_read /
   # fs_write to allowed+default skills and raises the risk ceiling to
@@ -122,6 +126,9 @@ role_definition:
   # tokens/latency; other roles leave this off by default.
   reasoning_trace: true
   allowed_mcps:
+    - web_fetch
+    - wikipedia
+    - arxiv
     - echo_server
   default_mcps:
     - echo_server

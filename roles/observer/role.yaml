@@ -23,6 +23,13 @@ role_definition:
   max_parallel_tasks: 1
   # Observer does not participate in PLAN DAG execution (monitoring only)
   plan_participant: false
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
+  # OpenSpec `20260603-capability-pool` Phase 1.5.
+  allowed_mcps:
+    - arxiv
+    - wikipedia
+    - web_fetch
 
   # ACC-11: Grandmother cell domain identity
   # Observer uses universal receptors — monitoring must cover all domains.

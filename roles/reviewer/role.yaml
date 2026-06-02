@@ -41,3 +41,10 @@ role_definition:
   version: "1.0.0"
   domain_id: "general"
   max_parallel_tasks: 1
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
+  # OpenSpec `20260603-capability-pool` Phase 1.5.
+  allowed_mcps:
+    - arxiv
+    - wikipedia
+    - web_fetch

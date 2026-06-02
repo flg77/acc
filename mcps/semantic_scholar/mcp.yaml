@@ -1,0 +1,43 @@
+# mcps/semantic_scholar/mcp.yaml — Semantic Scholar academic search (stdio).
+#
+# Upstream: github.com/zongmin-yu/semantic-scholar-fast-mcp-server
+#   * Python; niche, focused on the Semantic Scholar API.
+#   * Read-only paper search + citation graph traversal.
+#
+# OpenSpec `20260603-capability-pool` Phase 1.3 — research family.
+# LOW risk; public read-only API.
+
+purpose:        "Semantic Scholar read-only — paper search + citation graph."
+version:        "0.1.0"
+
+transport:      "stdio"
+command:
+  - "uvx"
+  - "--from"
+  - "semantic-scholar-fast-mcp-server"
+  - "semantic-scholar-fast-mcp-server"
+env:
+  # Optional but recommended — raises rate limit from 100/5min to 5000/5min.
+  S2_API_KEY: ""
+timeout_s:      30
+
+allowed_tools: []
+denied_tools: []
+
+requires_actions: []
+risk_level:     "LOW"
+domain_id:      "research"
+tags:           ["research", "papers", "academic", "citations"]
+
+description: |
+  Semantic Scholar API wrapper — paper search, author lookup,
+  citation graph traversal, recommendations.  Backed by
+  zongmin-yu/semantic-scholar-fast-mcp-server (Python).
+
+  Install:
+    uvx --from semantic-scholar-fast-mcp-server semantic-scholar-fast-mcp-server --help
+
+  Operator vet checklist:
+    * Pin to a tag / commit hash, not main.
+    * S2_API_KEY optional but raises rate limit.
+    * Cross-check with arxiv MCP for papers Semantic Scholar misses.

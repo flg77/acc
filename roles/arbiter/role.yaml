@@ -30,6 +30,13 @@ role_definition:
   # Arbiter is the governance node — it does not nominate its own episodes
   can_nominate_episodes: false
   plan_participant: false
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
+  # OpenSpec `20260603-capability-pool` Phase 1.5.
+  allowed_mcps:
+    - arxiv
+    - wikipedia
+    - web_fetch
 
   # ACC-11: Grandmother cell domain identity
   # Arbiter uses universal receptors — governance authority must see all domains.

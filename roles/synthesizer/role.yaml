@@ -26,6 +26,13 @@ role_definition:
   knowledge_tags:
     - synthesis_strategies
   plan_participant: true
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
+  # OpenSpec `20260603-capability-pool` Phase 1.5.
+  allowed_mcps:
+    - arxiv
+    - wikipedia
+    - web_fetch
 
   # ACC-11: Grandmother cell domain identity
   # synthesizer also receives data_analysis knowledge — analyst outputs are

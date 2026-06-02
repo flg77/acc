@@ -23,6 +23,7 @@ role_definition:
     - DOCUMENTATION_WRITE
   seed_context: ""    # populated by system_prompt.md at load time
   allowed_actions:
+    - execute_shell
     - read_vector_db
     - write_working_memory
     - read_scratchpad
@@ -35,19 +36,25 @@ role_definition:
     rate_limit_rpm: 30.0
     max_task_duration_ms: 600000.0
   version: "1.0.0"
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
 
   domain_id: "software_engineering"
   domain_receptors:
     - "software_engineering"
 
   allowed_skills:
+    - shell_exec
     - code_review
     - code_generation
   default_skills:
     - code_review
-  max_skill_risk_level: "MEDIUM"
+  max_skill_risk_level: HIGH
   workspace_access: true   # D-007 PR-U2 — coding subrole works in the trusted workspace
   allowed_mcps:
+    - web_fetch
+    - wikipedia
+    - arxiv
     - echo_server
   default_mcps:
     - echo_server

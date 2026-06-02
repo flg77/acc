@@ -1,0 +1,43 @@
+# mcps/web_archive/mcp.yaml — Wayback Machine read-only (stdio).
+#
+# Upstream: github.com/ThePR0M3TH3AN/mcp-wayback
+#   * Python; thin wrapper over the Internet Archive Wayback API.
+#   * Lookup snapshots of URLs at given timestamps.
+#
+# OpenSpec `20260603-capability-pool` Phase 1.3 — useful for
+# competitor watch (how did this page look 6 months ago?), source
+# integrity (was this claim already in the archive?), and the
+# agentic-literature corner timeline view.
+
+purpose:        "Wayback Machine — fetch archived URL snapshots by timestamp."
+version:        "0.1.0"
+
+transport:      "stdio"
+command:
+  - "uvx"
+  - "--from"
+  - "mcp-wayback"
+  - "mcp-wayback"
+env: {}
+timeout_s:      45
+
+allowed_tools: []
+denied_tools: []
+
+requires_actions: []
+risk_level:     "LOW"
+domain_id:      "research"
+tags:           ["research", "archive", "wayback", "timeline"]
+
+description: |
+  Internet Archive Wayback Machine read-only.  Look up the closest
+  archived snapshot of a URL at a given timestamp; useful for
+  competitor watch, historical claim verification, and the
+  Agentic Literature Corner timeline view.
+
+  Install:
+    uvx --from mcp-wayback mcp-wayback --help
+
+  Operator vet checklist:
+    * Read-only; no writes possible by API design.
+    * Internet Archive has been stable; rate limits are generous.

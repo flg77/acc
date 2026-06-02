@@ -107,7 +107,12 @@ def test_persona_estimator_strategy_and_cap(persona: str):
     strategy, max_par, default_skills = _EXPECTED[persona]
     assert rd.estimator.get("strategy") == strategy
     assert rd.max_parallel_tasks == max_par
-    assert rd.default_skills == default_skills
+    # OpenSpec `20260603-capability-pool` Phase 1.4 — every role now
+    # carries `os_basics: true`, so default_skills is a superset of
+    # the persona's authored skills.  Assert containment rather than
+    # equality so each new universal skill doesn't churn this test.
+    for sid in default_skills:
+        assert sid in rd.default_skills, f"{persona}: missing {sid}"
 
 
 # ---------------------------------------------------------------------------

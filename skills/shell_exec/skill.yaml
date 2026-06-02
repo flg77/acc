@@ -1,0 +1,58 @@
+# skills/shell_exec/skill.yaml — opt-in arbitrary shell execution.
+#
+# OpenSpec `20260603-capability-pool` Phase 1.2.  HIGH-risk skill
+# gated by ``requires_actions: [execute_shell]`` AND by the
+# operator-approved Compliance oversight queue (every invocation
+# enqueues an OVERSIGHT_SUBMIT; the operator approves per call).
+#
+# Roles must additionally set ``max_skill_risk_level: HIGH`` to use
+# this skill (default is MEDIUM, which rejects HIGH).  Only flipped
+# on for the engineering family: coding_agent + variants,
+# devops_engineer, data_engineer, ml_engineer.
+
+purpose:        "Run a process (argv list, no shell expansion) and return stdout/stderr."
+version:        "0.1.0"
+adapter_class:  "ShellExecSkill"
+risk_level:     "HIGH"
+domain_id:      "os_basics"
+tags:           ["shell", "subprocess", "engineering"]
+
+requires_actions:
+  - "execute_shell"
+
+input_schema:
+  type: object
+  properties:
+    argv:
+      type: array
+      items: { type: string }
+      minItems: 1
+      maxItems: 64
+      description: "Argument vector.  shell=False; no string passed to sh."
+    cwd:
+      type: string
+      description: "Working directory (must exist)."
+    timeout_s:
+      type: integer
+      minimum: 1
+      maximum: 600
+      description: "Subprocess timeout in seconds (default 30, max 600)."
+  required: ["argv"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    returncode: { type: integer }
+    stdout: { type: string }
+    stderr: { type: string }
+    duration_s: { type: number }
+  required: ["returncode", "stdout", "stderr", "duration_s"]
+  additionalProperties: false
+
+description: |
+  Execute a process via subprocess.run(argv, shell=False, …).  Never
+  invokes a shell; no string expansion.  Every call is HIGH risk and
+  requires both an operator-approved oversight queue verdict and the
+  role's ``execute_shell`` action label.  Output capped at 64 KB
+  stdout + 16 KB stderr.

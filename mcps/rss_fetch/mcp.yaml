@@ -1,0 +1,44 @@
+# mcps/rss_fetch/mcp.yaml — RSS / Atom feed read (stdio).
+#
+# Upstream: github.com/spences10/mcp-rssfeed
+#   * TypeScript; thin RSS parser via `npx`.
+#
+# Roll-our-own candidate — the upstream is small (< 200 LOC) and
+# rolling a Python equivalent via `feedparser` is ~50 LOC with
+# better auditability + supply-chain footprint.  Phase 1 ships the
+# community package; Phase 5 may replace with an in-repo adapter.
+#
+# OpenSpec `20260603-capability-pool` Phase 1.3 — agentic-literature
+# corner + competitor watch + product news feeds.
+
+purpose:        "RSS / Atom feed read — fetch + parse feed entries."
+version:        "0.1.0"
+
+transport:      "stdio"
+command:
+  - "npx"
+  - "-y"
+  - "mcp-rssfeed"
+env: {}
+timeout_s:      30
+
+allowed_tools: []
+denied_tools: []
+
+requires_actions: []
+risk_level:     "LOW"
+domain_id:      "research"
+tags:           ["research", "rss", "news", "literature"]
+
+description: |
+  Fetch + parse RSS / Atom feeds.  Returns entries with title, link,
+  summary, published timestamp.  Backed by spences10/mcp-rssfeed.
+
+  Install:
+    npx -y mcp-rssfeed --help
+
+  Operator vet checklist:
+    * Pin commit hash in `command` when stability matters.
+    * Future: replace with in-repo `feedparser`-based adapter
+      under `mcps/rss_fetch/server.py` (Phase 5) for tighter
+      supply-chain audit.

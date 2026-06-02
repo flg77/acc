@@ -20,6 +20,8 @@ role_definition:
     rate_limit_rpm: 20.0
     max_task_duration_ms: 1800000.0
   version: "1.0.0"
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
 
   domain_id: "business_research"
   domain_receptors:
@@ -33,6 +35,8 @@ role_definition:
     - citation_tracker
   max_skill_risk_level: "MEDIUM"
   allowed_mcps:
+    - wikipedia
+    - arxiv
     - web_fetch
   default_mcps:
     - web_fetch

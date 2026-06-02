@@ -1,0 +1,32 @@
+purpose: Locate an executable on PATH (shutil.which).
+version: 0.1.0
+adapter_class: WhichCmdSkill
+risk_level: LOW
+domain_id: os_basics
+tags:
+- os_basics
+input_schema:
+  type: object
+  properties:
+    name:
+      type: string
+      minLength: 1
+      maxLength: 64
+  required:
+  - name
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    name:
+      type: string
+    path:
+      type: string
+    found:
+      type: boolean
+  required:
+  - name
+  - path
+  - found
+  additionalProperties: false
+description: Locate an executable on PATH (shutil.which).

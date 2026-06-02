@@ -1,0 +1,33 @@
+purpose: Run `git status --short` in a workspace directory.
+version: 0.1.0
+adapter_class: GitStatusSkill
+risk_level: MEDIUM
+domain_id: git
+tags:
+- git
+input_schema:
+  type: object
+  properties:
+    cwd:
+      type: string
+  required:
+  - cwd
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    cwd:
+      type: string
+    returncode:
+      type: integer
+    stdout:
+      type: string
+    stderr:
+      type: string
+  required:
+  - cwd
+  - returncode
+  - stdout
+  - stderr
+  additionalProperties: false
+description: Run `git status --short` in a workspace directory.

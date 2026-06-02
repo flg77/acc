@@ -1,0 +1,65 @@
+# mcps/github_api/mcp.yaml — GitHub REST API access (stdio).
+#
+# Upstream: github.com/modelcontextprotocol/servers/tree/main/src/github
+#   * Anthropic-official MCP server (Tier A trust).
+#   * Repo browse, issue/PR read+write, code search.
+#
+# OpenSpec `20260603-capability-pool` Phase 1.3 — code-family
+# capability.  MEDIUM risk because some tools mutate state (create
+# issues / PRs / labels).  Operator can tighten via `allowed_tools`
+# to read-only subset.
+
+purpose:        "GitHub REST API — repo browse, issues, PRs, code search."
+version:        "0.1.0"
+
+transport:      "stdio"
+command:
+  - "npx"
+  - "-y"
+  - "@modelcontextprotocol/server-github"
+env:
+  # Required.  Set on the host before bringing the agent up.
+  GITHUB_PERSONAL_ACCESS_TOKEN: ""
+timeout_s:      30
+
+# MEDIUM-risk: limit to read-shape tools by default; operator can
+# expand via overlay.  Names match the upstream MCP tool registry.
+allowed_tools:
+  - "search_repositories"
+  - "search_issues"
+  - "search_pull_requests"
+  - "search_code"
+  - "get_file_contents"
+  - "list_commits"
+  - "get_issue"
+  - "get_pull_request"
+  - "list_issues"
+  - "list_pull_requests"
+denied_tools:
+  - "create_or_update_file"
+  - "delete_file"
+  - "create_issue"
+  - "create_pull_request"
+
+requires_actions:
+  - "use_external_api"
+risk_level:     "MEDIUM"
+domain_id:      "software_engineering"
+tags:           ["code", "github", "vcs", "search"]
+
+description: |
+  Read-shape GitHub access — repository search, file contents,
+  commit log, issue / PR read.  Backed by the Anthropic-official
+  MCP server (modelcontextprotocol/servers/src/github).
+
+  Install:
+    npx -y @modelcontextprotocol/server-github --help
+
+  Setup:
+    export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_... (read-only scopes)
+
+  Operator vet checklist:
+    * Use a PAT with minimum scopes — repo:read for private, none for public.
+    * `allowed_tools` already trimmed to read-shape; if you need write
+      operations (create_issue, etc.), copy this manifest to a sibling
+      `github_api_write` MCP with HIGH risk + tighter `requires_actions`.

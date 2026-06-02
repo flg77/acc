@@ -1,0 +1,39 @@
+purpose: Stat a filesystem path (size, mtime, type).
+version: 0.1.0
+adapter_class: StatPathSkill
+risk_level: LOW
+domain_id: os_basics
+tags:
+- os_basics
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+  required:
+  - path
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    path:
+      type: string
+    exists:
+      type: boolean
+    is_file:
+      type: boolean
+    is_dir:
+      type: boolean
+    size:
+      type: integer
+    mtime:
+      type: number
+  required:
+  - path
+  - exists
+  - is_file
+  - is_dir
+  - size
+  - mtime
+  additionalProperties: false
+description: Stat a filesystem path (size, mtime, type).

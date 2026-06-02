@@ -34,3 +34,10 @@ role_definition:
   domain_receptors:
     - operations_strategy
     - legal_compliance
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
+  # OpenSpec `20260603-capability-pool` Phase 1.5.
+  allowed_mcps:
+    - arxiv
+    - wikipedia
+    - web_fetch

@@ -94,11 +94,12 @@ def test_persona_estimator_strategy_and_cap(persona: str):
     assert rd.estimator.get("strategy") == strategy
     assert rd.max_parallel_tasks == max_par
     # ``workspace_access`` (D-007) makes the role validator auto-append the
-    # sandbox fs skills to every coding persona.  Compare against the
-    # role-specific defaults only, sourcing the injected set from the model
-    # instance so this never needs restating if that set changes.
-    workspace_skills = set(rd._WORKSPACE_SKILLS)
-    role_specific = [s for s in rd.default_skills if s not in workspace_skills]
+    # sandbox fs skills; OpenSpec `20260603-capability-pool` Phase 1.4 then
+    # adds the OS-basics + git skills.  Compare against the role-specific
+    # defaults only, sourcing the auto-injected sets from the model
+    # instance so this never needs restating when either set grows.
+    injected = set(rd._WORKSPACE_SKILLS) | set(rd._OS_BASIC_SKILLS) | set(rd._GIT_SKILLS)
+    role_specific = [s for s in rd.default_skills if s not in injected]
     assert role_specific == default_skills
 
 

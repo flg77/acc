@@ -1,0 +1,32 @@
+purpose: Report disk usage (total, used, free) for a path.
+version: 0.1.0
+adapter_class: DiskFreeSkill
+risk_level: LOW
+domain_id: os_basics
+tags:
+- os_basics
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+  required: []
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    path:
+      type: string
+    total:
+      type: integer
+    used:
+      type: integer
+    free:
+      type: integer
+  required:
+  - path
+  - total
+  - used
+  - free
+  additionalProperties: false
+description: Report disk usage (total, used, free) for a path.

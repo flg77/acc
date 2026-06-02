@@ -1,0 +1,20 @@
+purpose: Report the agent's current working directory.
+version: 0.1.0
+adapter_class: PwdSkill
+risk_level: LOW
+domain_id: os_basics
+tags:
+- os_basics
+input_schema:
+  type: object
+  properties: {}
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    cwd:
+      type: string
+  required:
+  - cwd
+  additionalProperties: false
+description: Report the agent's current working directory.

@@ -115,6 +115,13 @@ role_definition:
       agentsets.md (spawning/swapping/collaborating agentsets),
       docs/role-authoring.md (new roles), docs/multimodel_reviewer.md
       (per-agent models + the reviewer critic loop).
+  # OpenSpec `20260603-capability-pool` Phase 1.4.
+  os_basics: true
+  # OpenSpec `20260603-capability-pool` Phase 1.5 — universal research triad.
+  allowed_mcps:
+    - arxiv
+    - wikipedia
+    - web_fetch
   allowed_actions:
     - read_vector_db
     - read_scratchpad
@@ -174,5 +181,4 @@ role_definition:
   plan_participant: false
   allowed_skills: []
   default_skills: []
-  allowed_mcps: []
   default_mcps: []

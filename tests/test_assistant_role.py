@@ -64,13 +64,23 @@ def test_assistant_shows_reasoning_and_uses_memory(assistant_role):
 # the worker pool executes.
 
 def test_assistant_has_no_direct_execute_surface(assistant_role):
-    """v2 still holds no direct-execute primitives (skills/MCPs/workspace);
-    it owns the proposal-and-approve surface instead."""
-    assert list(assistant_role.allowed_skills or []) == []
-    assert list(assistant_role.default_skills or []) == []
-    assert list(assistant_role.allowed_mcps or []) == []
-    assert list(assistant_role.default_mcps or []) == []
+    """v2 holds no *risky* direct-execute primitives — no workspace,
+    no shell_exec, no write skills.  OpenSpec
+    ``20260603-capability-pool`` Phase 1.4 grants the universal
+    OS-basics (read-only navigation) and the research MCP triad
+    (arxiv / wikipedia / web_fetch) to every role so the gatekeeper
+    can ground answers in OS + literature without execution risk.
+    The proposal-and-approve surface still owns every mutation.
+    """
+    # Workspace + shell stay OFF — gatekeeper is read-only.
     assert getattr(assistant_role, "workspace_access", False) is False
+    assert "shell_exec" not in assistant_role.allowed_skills
+    assert "fs_write" not in assistant_role.allowed_skills
+    # Read-only OS skills + universal research MCPs are present (Phase 1).
+    assert "ls_dir" in assistant_role.allowed_skills
+    assert {"arxiv", "wikipedia", "web_fetch"}.issubset(
+        set(assistant_role.allowed_mcps)
+    )
 
 
 def test_assistant_can_route_per_phase_2(assistant_role):

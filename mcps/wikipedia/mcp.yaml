@@ -1,0 +1,42 @@
+# mcps/wikipedia/mcp.yaml — Wikipedia read-only (stdio).
+#
+# Upstream: github.com/Rudra-ravi/wikipedia-mcp
+#   * Python; ~300 stars; simple search + summary + content fetch.
+#
+# OpenSpec `20260603-capability-pool` Phase 1.3 — universal research
+# triad.  LOW risk; public read-only.
+
+purpose:        "Wikipedia read-only — search articles, fetch summaries + content."
+version:        "0.1.0"
+
+transport:      "stdio"
+command:
+  - "uvx"
+  - "--from"
+  - "wikipedia-mcp"
+  - "wikipedia-mcp"
+env: {}
+timeout_s:      30
+
+allowed_tools: []
+denied_tools: []
+
+requires_actions: []
+risk_level:     "LOW"
+domain_id:      "research"
+tags:           ["research", "wikipedia", "literature", "reference"]
+
+description: |
+  Read-only Wikipedia access — search by title / query, fetch article
+  summaries and full content.  Backed by Rudra-ravi/wikipedia-mcp
+  (Python, MIT).  Useful for grounding general-knowledge claims and
+  source citations.
+
+  Install:
+    uvx --from wikipedia-mcp wikipedia-mcp --help
+
+  Operator vet checklist:
+    * License MIT, compatible.
+    * Read-only — no edit calls exposed.
+    * Alternate options: github.com/geobio/mcp-wikipedia (TS),
+      Anthropic-official fetch + wiki URL.
