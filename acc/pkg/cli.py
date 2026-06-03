@@ -452,6 +452,19 @@ def _build_parser() -> argparse.ArgumentParser:
     e = sub.add_parser("eval", help="load + summarise a package's evals/ tree")
     e.add_argument("package", help="path to an installed package directory")
 
+    # login (Stage 1.3 — surface OIDC token + issuer status)
+    sub.add_parser("login", help="report OIDC token + issuer readiness for publish")
+
+    # publish (Stage 1.3 — sign + upload to catalog endpoint)
+    pub = sub.add_parser("publish", help="OIDC-keyless sign + upload a .accpkg to a catalog")
+    pub.add_argument("package", help="path to the .accpkg file")
+    pub.add_argument("--catalog-url", required=True,
+                     help="base URL of the catalog upload endpoint")
+    pub.add_argument("--token",
+                     help="bearer token for the catalog endpoint (optional)")
+    pub.add_argument("--issuer",
+                     help="OIDC issuer URL (default: public Sigstore)")
+
     # list
     l = sub.add_parser("list", help="list installed packages or catalog availability")
     l.add_argument("--available", action="store_true",
@@ -503,6 +516,53 @@ def _cmd_eval(args: argparse.Namespace, out: _Output) -> int:
     return EXIT_OK
 
 
+def _cmd_login(args: argparse.Namespace, out: _Output) -> int:
+    """Stage 1.3 — surface OIDC token + issuer status."""
+    from acc.pkg.publish import login_hint  # noqa: PLC0415
+
+    out.emit(login_hint())
+    return EXIT_OK
+
+
+def _cmd_publish(args: argparse.Namespace, out: _Output) -> int:
+    """Stage 1.3 — sign + upload a .accpkg to a catalog endpoint."""
+    from acc.pkg.publish import (  # noqa: PLC0415
+        CatalogUploadFailed,
+        CosignSignFailed,
+        PublishError,
+        publish,
+    )
+
+    pkg = Path(args.package).resolve()
+    if not pkg.is_file():
+        print(f"error: package not found: {pkg}", file=sys.stderr)
+        return EXIT_USER_ERROR
+
+    try:
+        result = publish(
+            pkg, args.catalog_url,
+            token=args.token,
+            oidc_issuer=args.issuer or "https://oauth2.sigstore.dev/auth",
+        )
+    except CosignSignFailed as exc:
+        print(f"error: {exc}\n{exc.cosign_stderr}", file=sys.stderr)
+        return EXIT_SIGNATURE
+    except CatalogUploadFailed as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    except PublishError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USER_ERROR
+
+    out.emit({
+        "ok": True,
+        "tarball_url": result.tarball_url,
+        "signature_url": result.signature_url,
+        "rekor_log_index": result.rekor_log_index,
+    })
+    return EXIT_OK
+
+
 _HANDLERS = {
     "build": _cmd_build,
     "install": _cmd_install,
@@ -510,6 +570,8 @@ _HANDLERS = {
     "inspect": _cmd_inspect,
     "list": _cmd_list,
     "eval": _cmd_eval,
+    "login": _cmd_login,
+    "publish": _cmd_publish,
 }
 
 
