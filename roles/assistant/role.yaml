@@ -134,6 +134,9 @@ role_definition:
     - propose_spawn
     - propose_role_update
     - propose_route
+    # OpenSpec follow-up to `20260603-capability-pool` — operator-asked
+    # promotion of the Assistant from gatekeeper to capable navigator.
+    - execute_shell
   category_b_overrides:
     # v0.3.44 (followup #58) — bumped from 2048 to 4096.  v0.3.43
     # added the ``## Currently available`` perception block to the
@@ -176,9 +179,30 @@ role_definition:
   # the cognitive-core integration lands in Phase 2b.  Phase 2a
   # only requires the flag so role-validation accepts ROUTE markers.
   can_route: true
-  workspace_access: false
+  # OpenSpec follow-up to `20260603-capability-pool` — operator-asked
+  # elevation: the Assistant now reads + writes inside the trusted
+  # workspace (auto-grants fs_read/fs_write via _grant_workspace_skills)
+  # so it can actually verify outcomes instead of only describing them.
+  workspace_access: true
   max_parallel_tasks: 1
   plan_participant: false
-  allowed_skills: []
-  default_skills: []
+  # OpenSpec follow-up to `20260603-capability-pool` — operator-curated
+  # skill set for the Assistant.  os_basics still auto-grants the 10
+  # navigation primitives; this block names the extras the operator
+  # asked for verbatim plus shell_exec (HIGH risk, oversight-gated)
+  # and test_execution (Phase 2 stub — surfaces in the perception
+  # block so the operator can see what's wired even before the real
+  # handler lands).
+  allowed_skills:
+    - shell_exec
+    - test_execution
+    - echo
+    # Operator-requested git access even though domain_id isn't in the
+    # code-domain auto-grant set.
+    - git_status
+    - git_log_recent
+  default_skills:
+    - echo
+  # shell_exec is HIGH risk; raise the ceiling so A-017 admits it.
+  max_skill_risk_level: HIGH
   default_mcps: []

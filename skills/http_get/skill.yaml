@@ -1,0 +1,51 @@
+purpose: HTTP GET a URL (cross-platform via httpx; MEDIUM risk).
+version: 0.1.0
+adapter_class: HttpGetSkill
+risk_level: MEDIUM
+domain_id: external_api
+tags:
+- xplatform
+input_schema:
+  type: object
+  properties:
+    url:
+      type: string
+    timeout_s:
+      type: number
+      minimum: 1
+      maximum: 60
+    max_bytes:
+      type: integer
+      minimum: 1
+      maximum: 1048576
+    headers:
+      type: object
+  required:
+  - url
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    url:
+      type: string
+    status:
+      type: integer
+    content_type:
+      type: string
+    body:
+      type: string
+    bytes:
+      type: integer
+    truncated:
+      type: boolean
+  required:
+  - url
+  - status
+  - content_type
+  - body
+  - bytes
+  - truncated
+  additionalProperties: false
+description: HTTP GET a URL (cross-platform via httpx; MEDIUM risk).
+requires_actions:
+- use_external_api

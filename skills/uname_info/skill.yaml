@@ -1,0 +1,35 @@
+purpose: Report OS / architecture / kernel (cross-platform via platform module).
+version: 0.1.0
+adapter_class: UnameInfoSkill
+risk_level: LOW
+domain_id: xplatform
+tags:
+- xplatform
+input_schema:
+  type: object
+  properties: {}
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    system:
+      type: string
+    release:
+      type: string
+    version:
+      type: string
+    machine:
+      type: string
+    processor:
+      type: string
+    python:
+      type: string
+  required:
+  - system
+  - release
+  - version
+  - machine
+  - processor
+  - python
+  additionalProperties: false
+description: Report OS / architecture / kernel (cross-platform via platform module).

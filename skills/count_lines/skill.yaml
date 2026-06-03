@@ -1,0 +1,27 @@
+purpose: Count lines in a text file (wc -l equivalent, cross-platform).
+version: 0.1.0
+adapter_class: CountLinesSkill
+risk_level: LOW
+domain_id: xplatform
+tags:
+- xplatform
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+  required:
+  - path
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    path:
+      type: string
+    lines:
+      type: integer
+  required:
+  - path
+  - lines
+  additionalProperties: false
+description: Count lines in a text file (wc -l equivalent, cross-platform).

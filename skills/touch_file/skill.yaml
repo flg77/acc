@@ -1,0 +1,30 @@
+purpose: Create an empty file or update mtime (touch, cross-platform).
+version: 0.1.0
+adapter_class: TouchFileSkill
+risk_level: MEDIUM
+domain_id: xplatform
+tags:
+- xplatform
+input_schema:
+  type: object
+  properties:
+    path:
+      type: string
+  required:
+  - path
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    path:
+      type: string
+    exists:
+      type: boolean
+    bytes:
+      type: integer
+  required:
+  - path
+  - exists
+  - bytes
+  additionalProperties: false
+description: Create an empty file or update mtime (touch, cross-platform).

@@ -1,0 +1,26 @@
+purpose: Report the current UTC + local time as ISO-8601 (cross-platform).
+version: 0.1.0
+adapter_class: DateNowSkill
+risk_level: LOW
+domain_id: xplatform
+tags:
+- xplatform
+input_schema:
+  type: object
+  properties: {}
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    utc_iso:
+      type: string
+    epoch:
+      type: number
+    tz_local:
+      type: string
+  required:
+  - utc_iso
+  - epoch
+  - tz_local
+  additionalProperties: false
+description: Report the current UTC + local time as ISO-8601 (cross-platform).

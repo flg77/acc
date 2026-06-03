@@ -1,0 +1,23 @@
+purpose: Report the current process user (cross-platform).
+version: 0.1.0
+adapter_class: WhoamiSkill
+risk_level: LOW
+domain_id: xplatform
+tags:
+- xplatform
+input_schema:
+  type: object
+  properties: {}
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    user:
+      type: string
+    uid:
+      type: integer
+  required:
+  - user
+  - uid
+  additionalProperties: false
+description: Report the current process user (cross-platform).

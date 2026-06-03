@@ -1,0 +1,235 @@
+# ACC role.yaml — annotated sample (v0.3.50).
+#
+# Copy this file into `roles/<your_role>/role.yaml` and trim what you
+# don't need.  Every field below is documented inline.  Fields marked
+# REQUIRED must be set; OPTIONAL ones fall back to the values in
+# `roles/_base/role.yaml`.
+#
+# When you add a role here, the runtime auto-discovers it on next
+# boot — no code changes required.  The bulk script
+# `scripts/grant_os_basics_to_roles.py` will pick it up next time it
+# runs.
+#
+# Live schema: see `acc/config.py:RoleDefinitionConfig` (Pydantic v2).
+# Cat-A governance for skills/MCPs: A-017 / A-018 in
+# `acc/governance_capabilities.py`.
+
+role_definition:
+
+  # --------------------------------------------------------------------
+  # IDENTITY + INTENT
+  # --------------------------------------------------------------------
+
+  # REQUIRED — one sentence describing what this role exists to do.
+  # The LLM uses this verbatim for self-identification in every prompt.
+  purpose: >
+    Verify and report deployment outcomes by inspecting build artifacts,
+    log files, and running services across the development workspace
+    and approved remote hosts.
+
+  # REQUIRED — LLM persona style applied to the system prompt.
+  # One of: concise | formal | exploratory | analytical
+  persona: "analytical"
+
+  # REQUIRED — labels this role can be dispatched against.  Free-form
+  # strings; convention is SCREAMING_SNAKE_CASE per domain.
+  task_types:
+    - DEPLOY_VERIFY
+    - LOG_INSPECT
+    - SERVICE_HEALTH_CHECK
+    - ARTIFACT_AUDIT
+
+  # OPTIONAL — extra system-prompt block prepended after `purpose`.
+  # Folded scalars (`>`) collapse line breaks; literal (`|`) preserves
+  # them.  Keep this concise — it's prepended to every LLM call.
+  seed_context: >
+    You are a verification specialist.  When asked about an outcome,
+    run the smallest set of skills/MCPs that actually answers the
+    question.  Prefer ls_dir + stat_path over shell_exec; prefer
+    shell_exec over ssh_exec.  Always report what you ran and what
+    came back — never claim success without evidence.
+
+  # OPTIONAL — opt-in to externalised reasoning.  Adds ~200 output
+  # tokens per task; surfaces "options → evaluation → plan → review"
+  # on the Prompt screen.  Worth it for reviewer-shape roles.
+  reasoning_trace: true
+
+  # OPTIONAL — PR-MEM2/3.  When True, the cognitive_core retrieves the
+  # role's hot memory_notes and injects them in the system prompt.
+  memory_retrieval: true
+
+  # --------------------------------------------------------------------
+  # GOVERNANCE — actions (Cat-A LLM08 + capability gates)
+  # --------------------------------------------------------------------
+
+  # REQUIRED-ish — empty list = "any action allowed" (default).  Each
+  # label gates classes of behaviour.  Common labels:
+  #   - read_vector_db, write_working_memory, read_scratchpad,
+  #     write_scratchpad, search_episodes, publish_task,
+  #     publish_eval_outcome, publish_episode_nominate,
+  #     publish_knowledge_share
+  # OpenSpec `20260603-capability-pool` Phase 1.2 adds:
+  #   - execute_shell  → required by shell_exec skill
+  #   - execute_ssh    → required by ssh_exec skill
+  # And the universal external-API gate:
+  #   - use_external_api → required by http_get + most MCPs
+  allowed_actions:
+    - read_vector_db
+    - read_scratchpad
+    - write_scratchpad
+    - execute_shell
+    - execute_ssh
+    - use_external_api
+    - publish_eval_outcome
+
+  # --------------------------------------------------------------------
+  # CAPABILITIES — skills (A-017)
+  # --------------------------------------------------------------------
+
+  # OpenSpec `20260603-capability-pool` Phase 1.4 — flip this and the
+  # role auto-receives the 10 universal OS-navigation primitives + 2
+  # git skills (when domain_id is in the code-domains set).  Compose
+  # cleanly with `workspace_access`.
+  os_basics: true
+
+  # D-007 — when True, the role auto-receives fs_read + fs_write and
+  # max_skill_risk_level is bumped to HIGH (fs_write is HIGH).  The
+  # actual working directory is selected at prompt time via the TUI
+  # "Select Directory" picker; nothing happens until the operator
+  # picks a trusted path.
+  workspace_access: true
+
+  # Explicit additions on top of the auto-grants above.  Idempotent —
+  # listing a skill already auto-granted is a no-op.
+  allowed_skills:
+    # OpenSpec `20260603-capability-pool` Phase 1.2 — HIGH-risk.
+    - shell_exec
+    # OpenSpec follow-up to v0.3.49 — HIGH-risk; argv-only, key-auth,
+    # host-allowlist (ACC_SSH_HOST_ALLOWLIST env).
+    - ssh_exec
+    # Phase 2 stub — real handler ships later; manifest is here so the
+    # perception block surfaces it.
+    - test_execution
+    # Cross-platform skills (v0.3.50) — stdlib-only, work identically
+    # on Linux / macOS / Windows.
+    - http_get
+    - read_json
+    - hostname
+    - uname_info
+    - date_now
+
+  # Subset advertised in the LLM's "## Currently available" perception
+  # block.  Empty list = advertise all of allowed_skills (the default
+  # in `roles/_base/role.yaml`).  Trim this to reduce prompt tokens.
+  default_skills:
+    - ls_dir
+    - stat_path
+    - read_text_head
+    - grep_text
+    - shell_exec
+
+  # OpenSpec `20260603-capability-pool` Phase 1.2 / v0.3.49.  Must be
+  # at least HIGH to admit shell_exec / ssh_exec / fs_write.  Default
+  # in _base is MEDIUM.
+  max_skill_risk_level: HIGH
+
+  # --------------------------------------------------------------------
+  # CAPABILITIES — MCP servers (A-018)
+  # --------------------------------------------------------------------
+
+  allowed_mcps:
+    # OpenSpec `20260603-capability-pool` Phase 1.5 — universal triad.
+    - arxiv
+    - wikipedia
+    - web_fetch
+    # Operator-curated additions go below.
+    - github_api          # MEDIUM, read-shape only by manifest
+    - web_archive
+  default_mcps:
+    - web_fetch
+
+  # _base default is MEDIUM.  Raise to HIGH only if you allowlist a
+  # HIGH MCP (e.g. web_browser_harness).
+  max_mcp_risk_level: "MEDIUM"
+
+  # --------------------------------------------------------------------
+  # CAT-B — token + rate budgets (operator-tunable at runtime)
+  # --------------------------------------------------------------------
+
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 30
+    max_task_duration_ms: 600000
+
+  # --------------------------------------------------------------------
+  # PERCEPTION (v0.3.45) — the Observe step before each LLM call
+  # --------------------------------------------------------------------
+
+  # One of: none | control | workspace | domain | reviewer | output |
+  # customer | queue.  Each profile renders a tailored
+  # "## Currently available" block + applies role-shape marker
+  # validation.  Phase 1 implements `control` + `workspace`; others
+  # fall back to `control` until their dedicated renderer lands.
+  perception_profile: workspace
+
+  # --------------------------------------------------------------------
+  # MEMORY + LEARNING
+  # --------------------------------------------------------------------
+
+  knowledge_tags:
+    - deploy_verifications
+    - service_health_findings
+
+  eval_rubric_ref: "eval_rubric.yaml"
+
+  can_nominate_episodes: true
+  plan_participant: true
+
+  # ACC-11 grandmother-cell domain identity.  The code-domain set
+  # (`software_engineering`, `platform_engineering`, `data_engineering`,
+  # `machine_learning`, `devops`, `site_reliability`, `code_quality`)
+  # additionally triggers git_status + git_log_recent in the
+  # os_basics auto-grant.
+  domain_id: "site_reliability"
+  domain_receptors:
+    - "site_reliability"
+    - "software_engineering"
+    - "security_audit"
+
+  # --------------------------------------------------------------------
+  # OPERATING MODE (PR-L / D-003)
+  # --------------------------------------------------------------------
+
+  # PLAN | ACCEPT_EDITS | ASK_PERMISSIONS | AUTO.  The Prompt screen
+  # prefills its Mode dropdown from this on infusion; the operator
+  # can cycle modes with Shift+Tab.
+  default_operating_mode: ASK_PERMISSIONS
+
+  # --------------------------------------------------------------------
+  # SIP / POLICY (AoA-P6)
+  # --------------------------------------------------------------------
+
+  # List of θ-vector knob NAMES the policy-gradient bandit must not
+  # touch.  Empty list = bandit may tune everything (default).  Use
+  # `["spawn_threshold"]` etc. to pin specific knobs while leaving
+  # others adaptive.  See AoA-P6.
+  policy_pinned: []
+  policy_drift_cap: 0.35
+  policy_update_every: 50
+
+  # --------------------------------------------------------------------
+  # BACKPRESSURE (PR-Z)
+  # --------------------------------------------------------------------
+
+  queue_backpressure_threshold: 8
+  queue_backpressure_resume_threshold: 5
+
+  # --------------------------------------------------------------------
+  # METADATA
+  # --------------------------------------------------------------------
+
+  version: "1.0.0"
+
+  # Optional max_parallel_tasks — concurrency for this role's PLAN
+  # fan-out.  Default 1; raise for stateless verification roles.
+  max_parallel_tasks: 3

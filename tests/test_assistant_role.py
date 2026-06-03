@@ -63,24 +63,31 @@ def test_assistant_shows_reasoning_and_uses_memory(assistant_role):
 # Skills, MCPs, and workspace access remain off — the gatekeeper proposes,
 # the worker pool executes.
 
-def test_assistant_has_no_direct_execute_surface(assistant_role):
-    """v2 holds no *risky* direct-execute primitives — no workspace,
-    no shell_exec, no write skills.  OpenSpec
-    ``20260603-capability-pool`` Phase 1.4 grants the universal
-    OS-basics (read-only navigation) and the research MCP triad
-    (arxiv / wikipedia / web_fetch) to every role so the gatekeeper
-    can ground answers in OS + literature without execution risk.
-    The proposal-and-approve surface still owns every mutation.
+def test_assistant_has_direct_execute_surface(assistant_role):
+    """v0.3.50 — operator-requested elevation.  The Assistant gained
+    direct-execute primitives so it can verify outcomes, not only
+    propose mutations:
+      * ``workspace_access: true`` → fs_read + fs_write auto-granted.
+      * ``shell_exec`` in allowed_skills + ``execute_shell`` action.
+      * ``max_skill_risk_level: HIGH``.
+      * Universal MCP triad (arxiv, wikipedia, web_fetch) plus
+        os_basics navigation.
+    The proposal-and-approve markers still exist; they just no
+    longer fence the role off from the workspace.
     """
-    # Workspace + shell stay OFF — gatekeeper is read-only.
-    assert getattr(assistant_role, "workspace_access", False) is False
-    assert "shell_exec" not in assistant_role.allowed_skills
-    assert "fs_write" not in assistant_role.allowed_skills
-    # Read-only OS skills + universal research MCPs are present (Phase 1).
+    assert assistant_role.workspace_access is True
+    assert assistant_role.max_skill_risk_level == "HIGH"
+    assert "shell_exec" in assistant_role.allowed_skills
+    assert "fs_read" in assistant_role.allowed_skills
+    assert "fs_write" in assistant_role.allowed_skills
     assert "ls_dir" in assistant_role.allowed_skills
+    assert "execute_shell" in assistant_role.allowed_actions
     assert {"arxiv", "wikipedia", "web_fetch"}.issubset(
         set(assistant_role.allowed_mcps)
     )
+    # Proposal markers still wired.
+    for action in ("propose_spawn", "propose_role_update", "propose_route"):
+        assert action in assistant_role.allowed_actions
 
 
 def test_assistant_can_route_per_phase_2(assistant_role):
