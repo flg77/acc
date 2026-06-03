@@ -181,31 +181,51 @@ class CapabilityIndex:
     @staticmethod
     def _scan_roles(roles_root: Path) -> dict[str, dict[str, Any]]:
         out: dict[str, dict[str, Any]] = {}
-        if not roles_root.is_dir():
-            return out
-        for role_dir in sorted(p for p in roles_root.iterdir() if p.is_dir()):
-            yaml_path = role_dir / "role.yaml"
-            if not yaml_path.exists():
-                continue
+
+        def _ingest(role_name: str, yaml_path: Path, source: str) -> None:
             try:
                 data = yaml.safe_load(yaml_path.read_text()) or {}
             except Exception as exc:  # pragma: no cover (defensive)
                 logger.warning(
                     "capability_index: skip role %s — bad YAML: %s",
-                    role_dir.name,
-                    exc,
+                    role_name, exc,
                 )
-                continue
+                return
             # role.yaml has either a top-level ``role_definition:`` block
             # (the canonical shape) or the fields directly at the top.
             rd = data.get("role_definition", data) if isinstance(data, dict) else {}
-            out[role_dir.name] = {
+            out[role_name] = {
                 "purpose": rd.get("purpose", "") or "",
                 "persona": rd.get("persona", "") or "",
                 "task_types": list(rd.get("task_types") or []),
                 "allowed_actions": list(rd.get("allowed_actions") or []),
                 "version": rd.get("version", "") or "",
+                "source": source,    # NEW (Stage 1.5.1): "in-tree" or "installed:<pkg>@<ver>"
             }
+
+        # Stage 1.5.1 — Dual source: installed packages first, in-tree
+        # fills the rest.  RoleResolution skips the 7 CONTROL roles
+        # (substrate; never packaged).
+        try:
+            from acc.pkg.role_resolution import list_installed_roles
+            for name, resolved in list_installed_roles().items():
+                _ingest(name, resolved.role_yaml_path, resolved.audit_label)
+        except ImportError:  # pragma: no cover
+            pass
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("capability_index: installed-roles scan skipped (%s)", exc)
+
+        # In-tree roles (CONTROL + any movable role not yet packaged).
+        if roles_root.is_dir():
+            for role_dir in sorted(p for p in roles_root.iterdir() if p.is_dir()):
+                if role_dir.name in out:
+                    # Installed-package version already took this slot.
+                    continue
+                yaml_path = role_dir / "role.yaml"
+                if not yaml_path.exists():
+                    continue
+                _ingest(role_dir.name, yaml_path, "in-tree")
+
         return out
 
     @staticmethod

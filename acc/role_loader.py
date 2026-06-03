@@ -201,6 +201,21 @@ class RoleLoader:
 
         role_def = self._load_and_merge(role_path)
         if role_def is not None:
+            # Audit-log the resolution path: installed-package vs
+            # in-tree.  Logged on cache fill (first load + each
+            # reload), not on every call.
+            try:
+                in_tree = self._root / self._role_name / "role.yaml"
+                source = (
+                    "in-tree"
+                    if role_path == in_tree
+                    else f"installed:{role_path}"
+                )
+                logger.info(
+                    "RoleLoader: resolved %s from %s", self._role_name, source
+                )
+            except Exception:  # pragma: no cover - audit log must not break load
+                pass
             self._cached = role_def
             self._cached_mtime = mtime
         return role_def
@@ -256,9 +271,35 @@ class RoleLoader:
     # ------------------------------------------------------------------
 
     def _role_yaml_path(self) -> Path:
+        """Resolve role.yaml — installed-package source wins over in-tree.
+
+        Stage 1.5.1 (dual-source loader): check the
+        :mod:`acc.pkg.registry` for a package providing this role; if
+        found, use the package's role.yaml.  Otherwise fall back to
+        the in-tree path (Stage-0 behaviour, unchanged for the 7
+        CONTROL roles + any role not advertised by an installed
+        package).
+
+        Resolution is logged at INFO once per (process, role)
+        lifetime via the cache miss path in :meth:`load`.
+        """
+        # Lazy import — keeps acc.role_loader independent of the
+        # acc.pkg subsystem at module-load time (some test harnesses
+        # patch role_loader before acc.pkg is importable).
+        try:
+            from acc.pkg.role_resolution import resolve_role_source
+        except ImportError:  # pragma: no cover
+            return self._root / self._role_name / "role.yaml"
+
+        resolved = resolve_role_source(self._role_name)
+        if resolved is not None:
+            return resolved.role_yaml_path
         return self._root / self._role_name / "role.yaml"
 
     def _base_yaml_path(self) -> Path:
+        # ``_base/role.yaml`` is substrate — always in-tree.  Packages
+        # never ship a _base role; if they did, it would break the
+        # inheritance contract.
         return self._root / _BASE_ROLE_NAME / "role.yaml"
 
     def _load_and_merge(
