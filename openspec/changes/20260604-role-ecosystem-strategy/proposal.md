@@ -161,56 +161,19 @@ self-fund."
 
 ## Comparable products + what they teach us
 
-Each row in this table cites concrete revenue / pricing data —
-sources at the bottom of this section and full evidence in
-`competitive-analysis.md`.
+| Comparable | Lesson |
+|---|---|
+| Hugging Face Hub | Free hub + paid hosted compute. $250M Series D. |
+| Docker Hub | Free public + paid private repos. |
+| npm + Enterprise npm | Substrate free; enterprise gating drives revenue. |
+| VS Code + Marketplace | Free editor; Microsoft monetizes via Azure / Copilot. |
+| GitLab Open Core | OSS edition + paid features (EE). IPO at $11B. |
+| WordPress.com vs .org | Same code; .com is SaaS + premium themes. |
 
-| Comparable | Headline numbers | Pattern that maps to ACC |
-|---|---|---|
-| **Hugging Face Hub** | $130M ARR (2024); $235M Series D at $4.5B valuation; Pro $9/mo, Team $20/mo, enterprise custom ([Sacra][cp-hf], [Latka][cp-hf-latka], [TechCrunch][cp-hf-tc]) | Open hub = loss-leader; **enterprise + hosted compute = revenue** |
-| **Docker** | Personal free; Pro $9/mo (was $5/mo); Team $15/user/mo; Business $24/user/mo; reversed consumption pricing Feb 2025 ([Docker][cp-dk], [TechTarget][cp-dk-tt], [Docker blog][cp-dk-2024]) | **Tiered subscription works; beware consumption pricing** |
-| **npm + GitHub Packages** | Acquired by GitHub (Microsoft) 2020; 1.3M packages, 75B downloads/mo at acquisition ([CNBC][cp-npm], [New Stack][cp-npm-tns]) | Public registry = strategic asset; **private + enterprise audit = recurring revenue** |
-| **VS Code Marketplace** | Free verification (6-mo track record + 5-day review); **5% transaction fee** on paid extensions; only ~15% of extensions are paid; solo devs $300-$2,100/mo recurring ([code.visualstudio.com][cp-vs], [markaicode][cp-vs-sell]) | **5%, not 30%** is the modern marketplace fee; transaction revenue is small — value is platform lock-in (Copilot) |
-| **GitLab Open Core** | Free / Premium $29/user/mo / Ultimate $99/user/mo; enterprise contracts $3k-$120k/yr ([GitLab][cp-gl], [eesel][cp-gl-eesel]) | **Open core works** when EE features are clearly delineated from the substrate |
-| **WordPress.com / Automattic** | $500M-$710M revenue 2024; GPL substrate; recent WP Engine dispute ([Pragmatic Engineer][cp-wp-pe], [appsrhino][cp-wp-apps]) | **Avoid GPL.** WP Engine built a competing hosting business on the GPL substrate — exactly the failure mode |
-| **Sentry (BSD → BUSL → FSL)** | Moved BSD→BUSL (2019)→Functional Source License (2023) to prevent hyperscaler free-riding; FSL converts to Apache 2.0 after 2 years ([Sentry blog][cp-sentry-fsl], [InfoQ][cp-sentry-infoq], [TechCrunch][cp-fair-tc]) | **FSL is the modern fallback** if hyperscaler clones the substrate; not the starting point |
-| **MCP Registry (Anthropic-led)** | Launched Sep 2025; 0 → ~10,000 servers in 12 months (407% MoM growth); canonical hub + public/private subregistries ([MCP blog][cp-mcp], [MCP anniversary][cp-mcp-anniv], [digitalapplied][cp-mcp-stats]) | **Direct precedent for ACC's hub architecture** |
-| **Red Hat Partner Validation** | Free at the program level; Partner Validation = self-verified; Partner Certification = deeper testing; tech resources subsidized ([Red Hat Connect][cp-rh], [docs.redhat.com][cp-rh-docs]) | **Two-tier verification (free entry + paid depth) works at enterprise scale** |
-| **Tidelift (now Sonar-owned)** | $10k/year guaranteed minimum per pre-approved package; payments based on SBOM-to-customer attribution; recently acquired by Sonar ([dev.to][cp-tide], [PR Newswire][cp-tide-pr], [Tidelift support][cp-tide-pay], [Socket][cp-tide-sonar]) | **Demand-side maintainer payments** are a viable Stream 6; SBOM attribution math is reusable |
-
-**Pattern across all of these:** the substrate stays open + free.
-Revenue comes from **hosting** (Stream 3) + **features not shipped
-OSS** (Streams 2, 4) + **trust + support contracts** (Stream 5).
-Marketplace transaction fees (Stream 1) are real but secondary in
-dollar volume — VS Code's 5% on a market where only 15% of
-extensions monetize at all is the realistic ceiling.
-
-[cp-hf]: https://sacra.com/c/hugging-face/
-[cp-hf-latka]: https://getlatka.com/companies/hugging-face
-[cp-hf-tc]: https://techcrunch.com/2023/08/24/hugging-face-raises-235m-from-investors-including-salesforce-and-nvidia/
-[cp-dk]: https://www.docker.com/pricing/
-[cp-dk-2024]: https://www.docker.com/blog/november-2024-updated-plans-announcement/
-[cp-dk-tt]: https://www.techtarget.com/searchsoftwarequality/news/366610229/Docker-pricing-changes-hike-midtier-costs
-[cp-npm]: https://www.cnbc.com/2020/03/16/microsoft-github-agrees-to-buy-code-distribution-start-up-npm.html
-[cp-npm-tns]: https://thenewstack.io/github-acquires-npm-buying-microsoft-a-presence-in-the-node-javascript-community/
-[cp-vs]: https://code.visualstudio.com/api/working-with-extensions/publishing-extension
-[cp-vs-sell]: https://markaicode.com/sell-vs-code-extensions-2025/
-[cp-gl]: https://about.gitlab.com/pricing/
-[cp-gl-eesel]: https://www.eesel.ai/blog/gitlab-pricing
-[cp-wp-pe]: https://blog.pragmaticengineer.com/wordpress-struggles/
-[cp-wp-apps]: https://www.appsrhino.com/blogs/business-model-of-wordpress-complete-guide
-[cp-sentry-fsl]: https://blog.sentry.io/sentry-is-now-fair-source/
-[cp-sentry-infoq]: https://www.infoq.com/news/2023/12/functional-source-license/
-[cp-fair-tc]: https://techcrunch.com/2024/09/22/some-startups-are-going-fair-source-to-avoid-the-pitfalls-of-open-source-licensing/
-[cp-mcp]: https://blog.modelcontextprotocol.io/posts/2025-09-08-mcp-registry-preview/
-[cp-mcp-anniv]: https://blog.modelcontextprotocol.io/posts/2025-11-25-first-mcp-anniversary/
-[cp-mcp-stats]: https://www.digitalapplied.com/blog/mcp-adoption-statistics-2026-model-context-protocol
-[cp-rh]: https://connect.redhat.com/en/blog/announcing-partner-validation-new-entry-point-red-hat-ecosystem
-[cp-rh-docs]: https://docs.redhat.com/en/documentation/red_hat_software_certification/2025/html-single/red_hat_enterprise_linux_software_certification_policy_guide/index
-[cp-tide]: https://dev.to/tidelift/1m-to-pay-open-source-maintainers-on-tidelift-294m
-[cp-tide-pr]: https://www.prnewswire.com/news-releases/tidelift-reaches-milestone-of-one-million-dollars-committed-to-pay-open-source-software-maintainers-300713996.html
-[cp-tide-pay]: https://support.tidelift.com/hc/en-us/articles/4406294816916-How-we-pay-lifters
-[cp-tide-sonar]: https://socket.dev/blog/sonar-to-acquire-tidelift
+**Pattern:** substrate stays open + free. Revenue from hosting
+(Stream 3) + features-not-shipped-OSS (Streams 2, 4) + trust +
+support contracts (Stream 5). Marketplace fees (Stream 1) are
+secondary in dollar volume.
 
 ## Sequencing diagram
 
@@ -295,79 +258,23 @@ Once this synthesis lands:
   hosted runtime) — needs its own follow-up proposals when the
   operator is ready to engage commercial scope.
 
-## Strategic decisions — answered with citations
+## Open strategic questions for the operator
 
-The v0.3.52 ship left five strategic questions open. v0.3.53 (this
-revision) answers each with citation-backed reasoning. Full evidence
-in `competitive-analysis.md`; per-decision rationale in
-`strategic-decisions.md`.
-
-| # | Question | Decision | Confidence |
-|---|---|---|---|
-| Q1 | OSS license discipline | **Apache 2.0 + CLA** | High |
-| Q2 | Hub hosting authority | **Single canonical hub + public / private subregistries** | High |
-| Q3 | Verified-Publisher pricing | **Free Community / $5k Standard / $25k Premium tiers** | Medium |
-| Q4 | Phase B (slim-core) trigger | **v0.4.0 target (Q3 2026)** | Medium |
-| Q5 | Phase E ownership | **Separate `flg77/acc-cloud` private repo** | High |
-
-### Q1 — Apache 2.0 + CLA
-
-Apache's explicit patent grant is what enterprise legal teams
-require ([Apache.org][p-apache]) ([FOSSA][p-fossa]). A CLA preserves
-the right to relicense if business conditions change (Sentry's
-BSD → BUSL → FSL trajectory in 2024 — [Sentry blog][p-sentry-fsl]).
-WordPress's GPL trap with WP Engine
-([Pragmatic Engineer][p-wp-pe]) shows why permissive-without-CLA is
-exposed. HuggingFace (~$130M ARR at $4.5B valuation —
-[Sacra][p-hf]; [TechCrunch][p-hf-tc]), GitLab, npm + Microsoft
-([CNBC][p-npm-cnbc]) all run on the Apache-or-permissive + CLA
-pattern.
-
-### Q2 — Single canonical hub
-
-The MCP Registry's architecture (launched Sep 2025) is the
-freshest direct comparable: canonical hub at
-`registry.modelcontextprotocol.io` + public subregistries
-("opinionated marketplaces" per client) + private corporate
-subregistries ([MCP blog][p-mcp]; [anniversary post][p-mcp-anniv]).
-0 → 10,000 servers in 12 months ([digitalapplied][p-mcp-stats])
-proves the canonical-hub model doesn't bottleneck adoption. npm,
-PyPI, Docker Hub, VS Code all run canonical-first. Federation
-(Phase F) handles cross-hub discovery later.
-
-### Q3 — Three-tier pricing
-
-* **Community Verified — free.** Copies VS Code Marketplace
-  (6-month track record + 5-business-day review, no fee —
-  [code.visualstudio.com][p-vs]) and Red Hat Partner Validation
-  (free at the program level — [Red Hat Connect][p-rh]).
-* **Standard — $5k/year.** Director-level discretionary budget;
-  SLA-backed maintainer response; priority review.
-* **Premium — $25k/year.** VP-level signoff; dedicated channel;
-  cross-promotion in release notes.
-
-Tidelift pays maintainers $10k/year minimum per package
-([dev.to][p-tide-blog]) — that's the demand-side inverse and
-becomes Stream 6 in a future revision.
-
-### Q4 — v0.4.0 in Q3 2026
-
-Phase A (`.accpkg` format) must ratify before Phase B (extraction)
-can run without breaking every operator. Sigstore + cosign is
-"afternoon work" today ([OpenSSF][p-cosign]) — the bottleneck is
-operator migration cost, not crypto plumbing. Re-trigger sooner
-only if hyperscaler clones the substrate or an edge customer signs
-a sub-200 MB image requirement.
-
-### Q5 — Separate `acc-cloud` private repo
-
-Sentry's split (OSS SDKs vs FSL primary repo —
-[Sentry blog][p-sentry-fsl]) and Docker's split (Apache 2.0
-`moby/moby` vs proprietary Docker Inc products) are the clean
-precedents. GitLab's CE+EE-in-one-repo pattern
-([about.gitlab.com][p-gl]) works but creates contamination
-grey-zones on every PR. Take the clean split: `flg77/acc`
-(Apache 2.0 + CLA) + `flg77/acc-cloud` (proprietary, private).
+1. **OSS license discipline.** Apache 2.0 + CLA gives ACC the right
+   to dual-license premium packs. Recommend Apache + CLA.
+2. **Hub hosting authority.** Single canonical hub at `acc-roles.dev`
+   (Anthropic / Red Hat / foundation-operated), or federated from
+   day 1? Recommend single canonical hub for Phase C; federation in
+   Phase F.
+3. **Verified-Publisher pricing.** Free for OSS-only authors,
+   $5-50k/year for commercial vendors. Recommend free-for-OSS.
+4. **Phase B trigger.** Slim-core (image extraction) can ship before
+   any commercial revenue exists. Sequence as v0.4.0 (a year out)
+   or sooner as v0.3.55 (next month)? Recommend v0.4.0 — needs the
+   `.accpkg` format mature first.
+5. **Phase E ownership.** Commercial code paths probably belong in
+   a separate `acc-cloud` repository so the OSS `acc` repo stays
+   clean. Confirm split.
 
 ## References
 
@@ -375,23 +282,5 @@ grey-zones on every PR. Take the clean split: `flg77/acc`
   `C:\Users\micro\Documents\Notes\Notes\Development\AgenticCellCorpus\ACC-Role-Ecosystem\Role Ecosystem — brainstorm.md`
 * Existing brainstorm:
   `C:\Users\micro\Documents\Notes\Notes\Development\AgenticCellCorpus\ACC-Role-Format\Role package format + community hub — brainstorm.md`
-* Competitive evidence: `competitive-analysis.md` (sibling)
-* Per-decision reasoning: `strategic-decisions.md` (sibling)
 * Naming convention: `openspec/RENAMES.md` (this proposal is
   functional, no `-role-proposal-` infix).
-
-[p-apache]: https://www.apache.org/licenses/LICENSE-2.0
-[p-fossa]: https://fossa.com/blog/open-source-licenses-101-apache-license-2-0/
-[p-sentry-fsl]: https://blog.sentry.io/sentry-is-now-fair-source/
-[p-wp-pe]: https://blog.pragmaticengineer.com/wordpress-struggles/
-[p-hf]: https://sacra.com/c/hugging-face/
-[p-hf-tc]: https://techcrunch.com/2023/08/24/hugging-face-raises-235m-from-investors-including-salesforce-and-nvidia/
-[p-npm-cnbc]: https://www.cnbc.com/2020/03/16/microsoft-github-agrees-to-buy-code-distribution-start-up-npm.html
-[p-mcp]: https://blog.modelcontextprotocol.io/posts/2025-09-08-mcp-registry-preview/
-[p-mcp-anniv]: https://blog.modelcontextprotocol.io/posts/2025-11-25-first-mcp-anniversary/
-[p-mcp-stats]: https://www.digitalapplied.com/blog/mcp-adoption-statistics-2026-model-context-protocol
-[p-vs]: https://code.visualstudio.com/api/working-with-extensions/publishing-extension
-[p-rh]: https://connect.redhat.com/en/blog/announcing-partner-validation-new-entry-point-red-hat-ecosystem
-[p-tide-blog]: https://dev.to/tidelift/1m-to-pay-open-source-maintainers-on-tidelift-294m
-[p-cosign]: https://openssf.org/blog/2024/02/16/scaling-up-supply-chain-security-implementing-sigstore-for-seamless-container-image-signing/
-[p-gl]: https://about.gitlab.com/pricing/
