@@ -1,0 +1,40 @@
+# Operator-installed catalog sample for `/etc/acc/catalogs.yaml`.
+#
+# Copy + edit for your deployment.  ACC's catalog resolver layers:
+#   /etc/acc/catalogs.yaml          (this file — system default)
+#   ~/.acc/catalogs.yaml            (per-user)
+#   <workspace>/.acc/catalogs.yaml  (per-collective override)
+#
+# Within a layer, ``priority:`` (higher wins) breaks ties when two
+# catalogs advertise the same @scope/name.
+#
+# Every tier requires a valid cosign signature against
+# ``required_signer`` — the signing floor is non-negotiable per
+# brainstorm Q3b.  Tiers differ only in policy depth (Stage 1+
+# Enterprise Contract attestations on top).
+
+catalogs:
+  # ACC-canonical trusted tier (Stage 2+: public hub at acc-roles.dev).
+  # During Stage 0 + Stage 1 this is the internal acc1 K8s endpoint
+  # described in examples/catalogs.dev.yaml; operators promote to
+  # acc-roles.dev once Stage 2 ships.
+  - id: acc-canonical
+    tier: trusted
+    mode: https
+    url: https://acc-roles.dev
+    required_signer:
+      issuer: https://token.actions.githubusercontent.com
+      subject_pattern: "^https://github\\.com/flg77/acc-ecosystem/"
+    priority: 100
+
+  # Community Verified tier — free, OIDC-signed by GitHub Actions
+  # identity; any publisher accepted.  Policy depth: signature +
+  # manifest valid only (no ACC-internal eval attestation).
+  - id: community-public
+    tier: community
+    mode: https
+    url: https://hub.acc-roles.dev/community
+    required_signer:
+      issuer: https://token.actions.githubusercontent.com
+      subject_pattern: ".*"
+    priority: 50

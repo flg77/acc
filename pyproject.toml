@@ -112,6 +112,7 @@ acc-agent = "acc.agent:main"
 acc-tui = "acc.tui.app:main"
 acc-cli = "acc.cli:main"
 acc-webgui = "acc.webgui.app:main"
+acc-pkg = "acc.pkg.cli:main"
 # Slack channel daemon — operator runs `pip install 'acc[slack]'` first
 # so slack_bolt is on the PYTHONPATH before this entry point is invoked.
 acc-channel-slack = "acc.channels.slack:main"
