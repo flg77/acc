@@ -65,6 +65,7 @@ from acc.pkg.manifest import AccPkgManifest
 from acc.pkg.registry import Registry
 from acc.pkg.verify import (
     CosignNotInstalled,
+    EnterpriseContractRejected,
     SignatureMissing,
     SignatureRejected,
     VerifyError,
@@ -83,6 +84,7 @@ EXIT_SCHEMA = 2
 EXIT_DEPS = 3
 EXIT_HASH_MISMATCH = 4
 EXIT_SIGNATURE = 5
+EXIT_EC_FAILURE = 6   # Stage 1.2 — Enterprise Contract policy violation
 
 
 # ---------------------------------------------------------------------------
@@ -201,14 +203,25 @@ def _cmd_install(args: argparse.Namespace, out: _Output) -> int:
             subject_pattern=args.subject or ".*",
             key_path=args.key or "",
         )
+        attestations_path = Path(args.attestations) if args.attestations else None
+        ec_policy_path = Path(args.ec_policy) if args.ec_policy else None
         try:
-            verify_pkg(pkg, sig_path, signer)
+            verify_pkg(
+                pkg, sig_path, signer,
+                attestations_path=attestations_path,
+                ec_policy_path=ec_policy_path,
+            )
         except SignatureMissing as exc:
             print(f"error: {exc}", file=sys.stderr)
             return EXIT_SIGNATURE
         except SignatureRejected as exc:
             print(f"error: {exc}\n{exc.cosign_stderr}", file=sys.stderr)
             return EXIT_SIGNATURE
+        except EnterpriseContractRejected as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            for v in exc.violations:
+                print(f"  - {v}", file=sys.stderr)
+            return EXIT_EC_FAILURE
         except (CosignNotInstalled, VerifyError) as exc:
             print(f"error: {exc}", file=sys.stderr)
             return EXIT_SIGNATURE
@@ -277,14 +290,25 @@ def _cmd_verify(args: argparse.Namespace, out: _Output) -> int:
         subject_pattern=args.subject or ".*",
         key_path=args.key or "",
     )
+    attestations_path = Path(args.attestations) if args.attestations else None
+    ec_policy_path = Path(args.ec_policy) if args.ec_policy else None
     try:
-        result = verify_pkg(pkg, sig, signer)
+        result = verify_pkg(
+            pkg, sig, signer,
+            attestations_path=attestations_path,
+            ec_policy_path=ec_policy_path,
+        )
     except SignatureMissing as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_SIGNATURE
     except SignatureRejected as exc:
         print(f"error: {exc}\n{exc.cosign_stderr}", file=sys.stderr)
         return EXIT_SIGNATURE
+    except EnterpriseContractRejected as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        for v in exc.violations:
+            print(f"  - {v}", file=sys.stderr)
+        return EXIT_EC_FAILURE
     except (CosignNotInstalled, VerifyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_SIGNATURE
@@ -401,6 +425,11 @@ def _build_parser() -> argparse.ArgumentParser:
     i.add_argument("--subject", help="OIDC subject regex (keyless mode)")
     i.add_argument("--allow-unsigned", action="store_true",
                    help="bypass signature verification (operator-explicit, audit-logged)")
+    i.add_argument("--attestations",
+                   help="path to attestation bundle YAML (Stage 1.2)")
+    i.add_argument("--ec-policy",
+                   help="path to Enterprise Contract policy YAML "
+                        "(default: /etc/acc/policy/enterprise-contract.yaml)")
 
     # verify
     v = sub.add_parser("verify", help="verify a .accpkg signature without installing")
@@ -409,6 +438,11 @@ def _build_parser() -> argparse.ArgumentParser:
     v.add_argument("--key", help="cosign public-key PEM path (keypair mode)")
     v.add_argument("--issuer", help="OIDC issuer (keyless mode)")
     v.add_argument("--subject", help="OIDC subject regex (keyless mode)")
+    v.add_argument("--attestations",
+                   help="path to attestation bundle YAML (Stage 1.2)")
+    v.add_argument("--ec-policy",
+                   help="path to Enterprise Contract policy YAML "
+                        "(default: /etc/acc/policy/enterprise-contract.yaml)")
 
     # inspect
     s = sub.add_parser("inspect", help="pretty-print a package's manifest")

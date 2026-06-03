@@ -78,6 +78,19 @@ class SignatureMissing(VerifyError):
     """
 
 
+class EnterpriseContractRejected(VerifyError):
+    """Stage 1.2 — EC policy violation.
+
+    Cosign succeeded, but the attestation bundle (or its absence)
+    violates the active Enterprise Contract policy.  Carries the full
+    violations tuple for audit display.
+    """
+
+    def __init__(self, msg: str, violations: tuple[str, ...]) -> None:
+        super().__init__(msg)
+        self.violations = violations
+
+
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
@@ -120,8 +133,18 @@ def verify(
     pkg_path: Path,
     signature_path: Path,
     required_signer: RequiredSigner,
+    *,
+    attestations_path: Path | None = None,
+    ec_policy_path: Path | None = None,
 ) -> VerifyResult:
     """Verify ``pkg_path`` against ``signature_path`` for ``required_signer``.
+
+    Stage 1.2: when ``attestations_path`` is supplied (catalog ships
+    an attestation bundle), the resolved EC policy at
+    ``ec_policy_path`` (default :data:`acc.pkg.ec_policy.DEFAULT_POLICY_PATH`)
+    runs after cosign succeeds.  Policy violations raise
+    :class:`EnterpriseContractRejected` — a sub-error of
+    :class:`VerifyError`.
 
     Returns a :class:`VerifyResult` on success.  Raises:
 
@@ -129,6 +152,7 @@ def verify(
     * :class:`CosignNotInstalled` if cosign isn't on PATH.
     * :class:`SignatureRejected` if cosign returns non-zero (carries
       the cosign stderr for audit).
+    * :class:`EnterpriseContractRejected` if the EC policy fails.
     """
     pkg_path = pkg_path.resolve()
     if not pkg_path.is_file():
@@ -181,11 +205,38 @@ def verify(
         "verified %s against %s (mode=%s)",
         pkg_path.name, signer_identity, required_signer.mode,
     )
-    logger.info(
-        "WARNING: Enterprise Contract policy depth (eval + Cat-A/B/C "
-        "attestations) is a Stage 1 feature; Stage 0 verifies the bare "
-        "cosign signature only."
+
+    # Stage 1.2 — Enterprise Contract policy depth.
+    from acc.pkg.ec_policy import (  # noqa: PLC0415
+        check_policy, load_attestations, load_policy,
     )
+    policy = load_policy(ec_policy_path)
+    attestations = load_attestations(attestations_path)
+    policy_result = check_policy(policy, attestations)
+    if not policy_result.ok:
+        logger.warning(
+            "ec_policy: %d violation(s) for %s: %s",
+            len(policy_result.violations), pkg_path.name,
+            "; ".join(policy_result.violations),
+        )
+        raise EnterpriseContractRejected(
+            f"EC policy violations ({len(policy_result.violations)}): "
+            + "; ".join(policy_result.violations),
+            violations=policy_result.violations,
+        )
+    if policy_result.matched_kinds:
+        logger.info(
+            "ec_policy: %d required attestation(s) matched: %s",
+            len(policy_result.matched_kinds),
+            ", ".join(policy_result.matched_kinds),
+        )
+    elif policy.required_attestations:
+        # No attestations matched but no violations either — means
+        # empty bundle + allow_empty_attestation_bundle=true.  Note
+        # the soft-pass for audit.
+        logger.info(
+            "ec_policy: empty attestation bundle accepted (policy.allow_empty_attestation_bundle=true)"
+        )
 
     return VerifyResult(
         ok=True,

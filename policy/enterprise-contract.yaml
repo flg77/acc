@@ -1,0 +1,51 @@
+# Default Enterprise Contract policy — Stage 1.2.
+#
+# Per Stage 1 proposal Q1 + brainstorm Q4, the canonical EC language
+# is Rego.  Stage 1.2 ships a declarative YAML form so the runtime
+# doesn't depend on an OPA binary; a Stage 2 follow-up adds a Rego
+# backend that shells out to `opa eval`.  Same shape, same exit
+# codes, same exception envelope — backend choice is transparent
+# to callers.
+#
+# Operators override via:
+#   acc-pkg install <pkg> --ec-policy /path/to/custom.yaml
+#
+# The empty bundle case (`allow_empty_attestation_bundle: true`) is
+# the DEFAULT for now so Stage 1.2 lands without forcing every
+# published package to grow an attestation bundle the same week.
+# Tighten to `false` once Stage 1.3 (publish) populates bundles
+# automatically.
+
+schema_version: 1
+
+# Allow installs to proceed when the package carries NO attestation
+# bundle (cosign signature still required by the Stage-0 signing
+# floor).  Once Stage 1.3 ships, flip this to `false` in production
+# catalogs to enforce the depth check.
+allow_empty_attestation_bundle: true
+
+# Minimum number of distinct signers.  Stage 1.2 keeps this at 1
+# (the publisher); Stage 2's dual-signer rollout bumps to 2 (Red Hat
+# / community Verified Publisher + EC attestor).
+minimum_signers: 1
+
+# The attestations a package must carry once the bundle exists.
+# Each required entry maps to a row in the package's attestation
+# bundle file shipped alongside the .accpkg + .sig.
+required_attestations:
+
+  # SLSA-style build provenance — what built the package, from what
+  # source commit, on what runner.  Populated by Tekton Chains in
+  # the Konflux pipeline (Stage 1.3).
+  - kind: build_provenance
+    predicate_type: "https://slsa.dev/provenance/v0.2"
+
+  # Stage 1.1 evals — JSONL sha256 + per-model pass/fail verdicts.
+  # `require_verdict_pass: true` means EVERY model in the recorded
+  # verdicts must report `pass` for the install to proceed.
+  - kind: eval_pass
+    require_verdict_pass: true
+
+  # Cat-A/B/C governance smoke pass — the role's golden-prompt
+  # suite ran clean against the reference ACC core.
+  - kind: cat_abc_smoke
