@@ -414,6 +414,10 @@ def _build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("inspect", help="pretty-print a package's manifest")
     s.add_argument("package", help="path to the .accpkg file")
 
+    # eval (Stage 1.1 — load + summarise; real LLM run is Stage 1.2)
+    e = sub.add_parser("eval", help="load + summarise a package's evals/ tree")
+    e.add_argument("package", help="path to an installed package directory")
+
     # list
     l = sub.add_parser("list", help="list installed packages or catalog availability")
     l.add_argument("--available", action="store_true",
@@ -424,12 +428,54 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _cmd_eval(args: argparse.Namespace, out: _Output) -> int:
+    """Stage 1.1 — load + summarise a package's evals/ tree.
+
+    Validates every YAML file under ``evals/`` and prints a per-
+    package summary (count of behavioral + safety evals, curated-
+    panel size).  Stage 1.2 adds the real-LLM execution path against
+    the resolved panel.
+    """
+    from acc.pkg.evals import load_evals  # noqa: PLC0415
+
+    pkg = Path(args.package).resolve()
+    if not pkg.is_dir():
+        print(f"error: not an installed package dir: {pkg}", file=sys.stderr)
+        return EXIT_USER_ERROR
+
+    try:
+        loaded = load_evals(pkg)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_SCHEMA
+
+    payload = {
+        "package_path": str(pkg),
+        "behavior_count": len(loaded.behavior),
+        "safety_count": len(loaded.safety),
+        "curated_panel_size": (
+            len(loaded.curated.additional_models)
+            if loaded.curated else 0
+        ),
+        "include_rhoai_default": (
+            loaded.curated.include_rhoai_default if loaded.curated else False
+        ),
+        "evals": {
+            "behavior": [e.name for e in loaded.behavior],
+            "safety": [e.name for e in loaded.safety],
+        },
+    }
+    out.emit(payload)
+    return EXIT_OK
+
+
 _HANDLERS = {
     "build": _cmd_build,
     "install": _cmd_install,
     "verify": _cmd_verify,
     "inspect": _cmd_inspect,
     "list": _cmd_list,
+    "eval": _cmd_eval,
 }
 
 
