@@ -1,6 +1,6 @@
 """Capability catalog — the collective-scoped index of roles + MCPs + skills.
 
-OpenSpec `20260531-orchestrator-repurpose-skills-mcp-specialist`, Phase 1.
+OpenSpec `20260531-role-proposal-orchestrator-skills-mcp-specialist`, Phase 1.
 
 Closes followup #37 in code: the orchestrator role stops competing with the
 Assistant on routing (`[ROUTE:role:reason]`) and starts answering

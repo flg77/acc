@@ -391,7 +391,7 @@ class Agent:
                 skill_registry=self._skill_registry,
                 mcp_registry=self._mcp_registry,
             )
-            # Proposal `20260531-assistant-action-loop` Phase 1 —
+            # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 —
             # cognitive_core needs a NATS handle so the Assistant's
             # perception step can issue capability + roster requests.
             # Set right after construction so non-Assistant cores get
@@ -609,14 +609,14 @@ class Agent:
         )
 
     # ------------------------------------------------------------------
-    # Dormancy state (proposal 20260530-assistant-agent-of-agents Phase 1)
+    # Dormancy state (proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1)
     # ------------------------------------------------------------------
 
     def _maybe_build_capability_index(self) -> None:
         """Build the CapabilityIndex when this agent's role is
         ``orchestrator``.
 
-        Proposal `20260531-orchestrator-repurpose-skills-mcp-specialist`
+        Proposal `20260531-role-proposal-orchestrator-skills-mcp-specialist`
         Phase 1.  Synchronous — the filesystem scan takes a few ms even
         for the full 52-role / 5-MCP catalog and we want the index
         ready before the task-loop subscription accepts queries.  Best-
@@ -664,7 +664,7 @@ class Agent:
             return
         if not is_enabled():
             return
-        # Proposal 20260530-assistant-agent-of-agents Phase 6 — thread
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 6 — thread
         # the role-supplied policy config into the harness so SIP-P2's
         # bandit honours per-role pin / cadence / drift cap.  The
         # `policy_enabled=False` default preserves SIP-P1 observation-
@@ -722,7 +722,7 @@ class Agent:
     ) -> None:
         """Dispatch + queue the Assistant's proposals from one task.
 
-        Proposal `20260530-assistant-agent-of-agents` Phase 2b.
+        Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 2b.
         Cognitive core has classified by mode; here we:
 
         - EXECUTE list → publish the underlying mutation via
@@ -830,7 +830,7 @@ class Agent:
         """When ``oversight_id`` matches a cached Assistant proposal,
         publish the underlying mutation.
 
-        Proposal `20260530-assistant-agent-of-agents` Phase 2b.  Looks
+        Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 2b.  Looks
         the proposal up at ``acc:{cid}:assistant_proposal:{oversight_id}``
         in Redis; no-op when the key is absent (the oversight item came
         from a regular capability invocation, not a proposal).  After
@@ -1041,7 +1041,7 @@ class Agent:
                 # ACC-12: enterprise compliance health
                 "compliance_health_score": stress.compliance_health_score,
                 "owasp_violation_count": stress.owasp_violation_count,
-                # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+                # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
                 # Knative-style dormant-watcher invariant: heartbeat
                 # carries the dormancy flag + when it started.  TUI
                 # renders a 💤 badge; OODA observability stays intact
@@ -1199,7 +1199,7 @@ class Agent:
 
                 progress_callback = _publish_progress
 
-            # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+            # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
             # Knative-style dormant-watcher activator decision.  Only
             # the Assistant role observes this guard; every other role
             # keeps the legacy behaviour.  When the Assistant is dormant
@@ -1252,7 +1252,7 @@ class Agent:
                 progress_callback=progress_callback,
             )
 
-            # Proposal 20260530-assistant-agent-of-agents Phase 2b —
+            # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 2b —
             # Assistant proposal I/O.  Cognitive core parsed +
             # classified proposals by mode (PLAN/QUEUE/EXECUTE); we
             # do the bus + queue work here.  No-op for non-Assistant
@@ -1408,7 +1408,7 @@ class Agent:
                 subject_task_complete(collective_id), complete_payload
             )
 
-            # Proposal 20260530-assistant-agent-of-agents Phase 6 —
+            # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 6 —
             # feed the reward harness one task observation so SIP-P2's
             # bandit can fire on its windowed cadence.  Frozen-in-AUTO
             # is enforced inside observe_task itself (rail 6): when the
@@ -1450,7 +1450,7 @@ class Agent:
                     subject_alert(collective_id), alert_payload
                 )
 
-        # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
         # Assistant subscribes to its sleep/wake control subject so the
         # TUI's /sleep · /wake slash commands can flip the dormant flag.
         # The handler toggles StressIndicators.dormant and (best-effort)
@@ -1500,7 +1500,7 @@ class Agent:
                     exc_info=True,
                 )
 
-        # Proposal 20260531-orchestrator-repurpose-skills-mcp-specialist
+        # Proposal 20260531-role-proposal-orchestrator-skills-mcp-specialist
         # Phase 1 — orchestrator answers capability queries on a NATS
         # request/reply subject.  Catalog is in-process; queries are
         # deterministic; no LLM call.  Phase 2 adds recommendation
@@ -2016,7 +2016,7 @@ class Agent:
                 skill_registry=self._skill_registry,
                 mcp_registry=self._mcp_registry,
             )
-            # Proposal `20260531-assistant-action-loop` Phase 1 —
+            # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 —
             # cognitive_core needs a NATS handle so the Assistant's
             # perception step can issue capability + roster requests.
             # Set right after construction so non-Assistant cores get
@@ -2085,7 +2085,7 @@ class Agent:
             except Exception:
                 logger.exception("worker_reconcile: run failed")
 
-        # Proposal `20260531-assistant-action-loop` Phase 1 — the
+        # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 — the
         # arbiter is the canonical owner of "who's heartbeating right
         # now," so it serves the roster_snapshot RPC.  The Assistant
         # calls this on its perception step before every task.  Phase 4
@@ -2466,7 +2466,7 @@ class Agent:
             try:
                 if decision == "APPROVE":
                     await queue.approve(oversight_id, approver)
-                    # Proposal 20260530-assistant-agent-of-agents
+                    # Proposal 20260530-role-proposal-assistant-agent-of-agents
                     # Phase 2b — if this oversight item originated as
                     # an Assistant proposal, load the cached payload
                     # and dispatch the underlying mutation.
@@ -2781,7 +2781,7 @@ class Agent:
         a2a_runner = await self._maybe_start_a2a_server()
         try:
             await self._register()
-            # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+            # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
             # restore the Assistant's dormancy flag from Redis so a
             # container restart doesn't silently wake him.  Best-
             # effort: no-op when Redis isn't configured or when this
@@ -2794,7 +2794,7 @@ class Agent:
             # accumulates an EWMA per reward kind.  No policy
             # updates land in SIP-P1 — this is observation only.
             await self._maybe_start_reward_harness()
-            # Proposal 20260531-orchestrator-repurpose-skills-mcp-specialist
+            # Proposal 20260531-role-proposal-orchestrator-skills-mcp-specialist
             # Phase 1 — orchestrator-role agents build a CapabilityIndex
             # of roles + MCPs + skills, then serve queries on the
             # capability.query NATS subject (wired in _task_loop).  Cheap

@@ -241,4 +241,4 @@ ACC-9 bridge — two purpose-built agentsets collaborating across collectives.
 - [`docs/multimodel_reviewer.md`](multimodel_reviewer.md) — per-agent models, endpoints, API keys, the reviewer critic loop.
 - [`docs/role-authoring.md`](role-authoring.md) — author new roles for your agentsets.
 - [`docs/howto-coding-split-demo.md`](howto-coding-split-demo.md) — the coding-split demo in depth.
-- `openspec/changes/20260526-multiagent-reasoning-orchestrator/` — the orchestrator + multi-agent reasoning design.
+- `openspec/changes/20260526-role-proposal-orchestrator-multiagent-reasoning/` — the orchestrator + multi-agent reasoning design.

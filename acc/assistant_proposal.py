@@ -1,6 +1,6 @@
 """ASSISTANT_PROPOSAL — gatekeeper mutations gated by Compliance queue.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 2 (sub-phase 2a).
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 2 (sub-phase 2a).
 
 The Assistant is the operator's gatekeeper.  When his reasoning concludes
 "I should spawn a coding_agent" / "I should infuse this role.yaml diff" /
@@ -211,7 +211,7 @@ _RE_ROUTE = re.compile(
 )
 
 
-# OpenSpec `20260602-assistant-blindspots` Phase 1.1 — marker-form
+# OpenSpec `20260602-role-proposal-assistant-blindspots` Phase 1.1 — marker-form
 # tolerance.  Today's lighthouse trace shows the small Assistant LLM
 # emitting a backtick-wrapped PROPOSE_SPAWN marker rather than the
 # canonical square-bracket form; the strict regexes above silently
@@ -249,7 +249,7 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
     can co-exist in one response; each becomes its own proposal.
 
     The parser tolerates three delimiter forms (per Phase 1.1 of
-    `20260602-assistant-blindspots`):
+    `20260602-role-proposal-assistant-blindspots`):
     - canonical square-bracket: ``[PROPOSE_*:...]``
     - backtick-wrapped (small-LLM drift): see ``_RE_BACKTICK_MARKER``
     - bare ``PROPOSE_*:...`` on its own line

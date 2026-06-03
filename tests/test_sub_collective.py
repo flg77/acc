@@ -1,6 +1,6 @@
 """AoA Phase 3 — hub + on-demand sub-collectives.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 3.
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 3.
 
 These tests pin:
 

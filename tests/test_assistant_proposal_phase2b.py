@@ -1,6 +1,6 @@
 """AoA Phase 2b — cognitive_core proposal classification + agent I/O.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 2 (sub-phase 2b).
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 2 (sub-phase 2b).
 
 Covers the end-to-end shape:
 

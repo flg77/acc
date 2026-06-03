@@ -2,7 +2,7 @@
 
 | Field      | Value                                                       |
 |------------|-------------------------------------------------------------|
-| Change ID  | 20260526-multiagent-reasoning-orchestrator                  |
+| Change ID  | 20260526-role-proposal-orchestrator-multiagent-reasoning                  |
 | Date       | 2026-05-26                                                  |
 | Status     | Draft                                                       |
 | Branch     | `feat/ACC-multiagent-reasoning-orchestrator`                |

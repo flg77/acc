@@ -1,6 +1,6 @@
 """Activator decision tree + catch-up trace tests for AoA Phase 1.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 1 ships:
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 1 ships:
 
 * a per-role wake-trigger helper in ``acc.cognitive_core.is_wake_trigger``
   used by the agent task-loop to decide whether a dormant Assistant

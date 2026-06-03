@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Change ID | `20260530-assistant-agent-of-agents` |
+| Change ID | `20260530-role-proposal-assistant-agent-of-agents` |
 | Status | Phases 1, 2a, 2b, 3a, 3b, 4, 5, 6 LANDED (v0.3.24 → v0.3.34) |
 | Companion | `20260530-acc-self-improvement-policy-gradient` |
 | Sequencing contract | `Notes/.../20260530-aoa-and-self-improve — integration & sequencing.md` |
-| Notes mirror | `Notes/Development/AgenticCellCorpus/ACC Openspec/20260530-assistant-agent-of-agents — OpenSpec (proposed).md` |
+| Notes mirror | `Notes/Development/AgenticCellCorpus/ACC Openspec/20260530-role-proposal-assistant-agent-of-agents — OpenSpec (proposed).md` |
 
 ## Problem statement
 

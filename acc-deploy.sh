@@ -490,7 +490,7 @@ case "$COMMAND" in
         ;;
 
     resume)
-        # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b —
         # bring a hibernated sub-collective back online.
         #
         # Each sub-collective ships its own collective.<cid>.yaml
@@ -517,7 +517,7 @@ case "$COMMAND" in
         ;;
 
     hibernate)
-        # Proposal 20260530-assistant-agent-of-agents Phase 3b — stop
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b — stop
         # the sub-collective's containers but KEEP the named volumes so
         # the next `resume` boots into the same memory state.
         SUB_CID="${1:?usage: hibernate <sub-collective-cid>}"
@@ -537,7 +537,7 @@ case "$COMMAND" in
         ;;
 
     lifecycle-watcher)
-        # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b —
         # manage the host-side sub-collective lifecycle watcher.
         # Same pattern as `watcher` (PR-X) but for the bus →
         # resume/hibernate bridge.
@@ -716,7 +716,7 @@ case "$COMMAND" in
         # .acc-apply bind mount.
         if [[ "$STACK" == "production" && "$DETACH" == "true" ]]; then
             "$0" watcher start || true
-            # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+            # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b —
             # sub-collective lifecycle watcher.  Idempotent same way
             # the apply-watcher is.
             "$0" lifecycle-watcher start || true

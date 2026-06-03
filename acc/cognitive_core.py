@@ -111,7 +111,7 @@ class StressIndicators:
     prompt_input_tokens: int = 0
     """Cumulative LLM input tokens (for the cache-hit ratio denominator)."""
 
-    # Proposal 20260530-assistant-agent-of-agents Phase 1 — Knative-style
+    # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 — Knative-style
     # dormant-watcher.  When ``dormant`` is True the agent stays running,
     # keeps heartbeating, keeps subscribed to TASK_ASSIGN — but only
     # processes tasks matching the activator decision tree (target_role
@@ -176,7 +176,7 @@ class CognitiveResult:
     route_reason: str = ""
     """Short rationale the orchestrator gave for the ``route_to`` decision."""
 
-    # Proposal 20260530-assistant-agent-of-agents Phase 2 (sub-phase 2b)
+    # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 2 (sub-phase 2b)
     # — Assistant proposal intents.  Cognitive core PARSES + CLASSIFIES
     # by mode (decide_dispatch); agent.py owns the I/O (queue submit,
     # bus publish, Redis cache).  All three lists default to empty so
@@ -201,7 +201,7 @@ class CognitiveResult:
 # Bridge delegation marker (ACC-9)
 # ---------------------------------------------------------------------------
 
-# Proposal 20260530-assistant-agent-of-agents Phase 1 — Knative-style
+# Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 — Knative-style
 # dormant-watcher activator decision tree.  Used by the agent task loop
 # (acc/agent.py) just before dispatching into ``process_task``.
 def is_wake_trigger(task_payload: dict, target_role: str) -> bool:
@@ -407,13 +407,13 @@ class CognitiveCore:
         self._role_label = role_label
         self._peer_collectives: list[str] = peer_collectives or []
         self._bridge_enabled: bool = bridge_enabled
-        # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b —
         # populated by the agent constructor after registry init
         # from CollectiveSpec.managed_sub_collectives.  None on
         # single-collective deployments (and on every non-Assistant
         # role) so build_system_prompt's block is skipped.
         self._sub_collectives = None
-        # Proposal `20260531-assistant-action-loop` Phase 1 —
+        # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 —
         # populated by the agent constructor with a reference to the
         # NATS signaling backend.  Required for the Assistant's
         # perception step (capability + roster query before LLM call).
@@ -782,7 +782,7 @@ class CognitiveCore:
         else:
             _emit(2, "Building system prompt")
         emit_stage("acc.pipeline.prompt_build")
-        # Proposal `20260531-assistant-action-loop` Phase 1 — the
+        # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 — the
         # Observe step.  Snapshot capability + roster + sub-collectives
         # under a 100ms budget so the agent grounds its reasoning in
         # live state instead of hallucinating role names / skill names.
@@ -1116,7 +1116,7 @@ class CognitiveCore:
                 route_to, route_reason = ("", "")
 
         # 8 — ASSISTANT PROPOSAL PARSE (proposal
-        # 20260530-assistant-agent-of-agents Phase 2b).  Only the
+        # 20260530-role-proposal-assistant-agent-of-agents Phase 2b).  Only the
         # Assistant role emits ``[PROPOSE_*:…]`` markers; we gate the
         # entire block on role_label == "assistant" so non-Assistant
         # outputs that happen to contain a literal "[PROPOSE_…" don't
@@ -1146,7 +1146,7 @@ class CognitiveCore:
                     mode = _norm_mode(
                         task_payload.get("operating_mode", "AUTO"),
                     )
-                    # Proposal `20260531-assistant-action-loop` Phase 1 —
+                    # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 —
                     # marker dispatch validation.  When the perception
                     # snapshot is populated, reject markers whose target
                     # role is hallucinated (not present in the live
@@ -1485,7 +1485,7 @@ class CognitiveCore:
         if seed:
             parts.append(f"\n{seed}")
 
-        # Proposal 20260530-assistant-agent-of-agents Phase 3b —
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b —
         # inject the sub-collective routing surface into the
         # Assistant's prompt so the LLM sees what's available to
         # delegate to.  Gated on a populated registry attribute so
@@ -1507,7 +1507,7 @@ class CognitiveCore:
                     exc_info=True,
                 )
 
-        # Proposal `20260531-assistant-action-loop` Phase 1 —
+        # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 —
         # inject the Observe step's PerceptionSnapshot as a
         # ``## Currently available`` block.  Populated per task in
         # ``_process_task_body`` for assistant roles; None for every

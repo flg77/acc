@@ -1,6 +1,6 @@
 """Default-target dropdown is Assistant — AoA Phase 1.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 1 makes the
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 1 makes the
 Assistant the Prompt screen's default target.  Pinned here so a
 casual reorder doesn't accidentally revert the gatekeeper contract.
 """

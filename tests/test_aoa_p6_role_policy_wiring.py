@@ -1,6 +1,6 @@
 """AoA Phase 6 — role.yaml policy block + harness threading.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 6.
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 6.
 
 Pins:
 

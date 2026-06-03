@@ -5,7 +5,7 @@
 | Change ID | `20260531-acc-role-package-format` |
 | Status | Proposed (Phase 1 ready to implement) |
 | Sibling | `20260527-agentcard-discovery` (post-install discovery surface) · `20260527-a2a-agent-interop` (cross-hub transport) |
-| Companion | `20260530-assistant-agent-of-agents` (gatekeeper proposes infusion of packaged roles) |
+| Companion | `20260530-role-proposal-assistant-agent-of-agents` (gatekeeper proposes infusion of packaged roles) |
 | Notes mirror | `Notes/Development/AgenticCellCorpus/ACC Openspec/20260531-acc-role-package-format — OpenSpec (proposed).md` |
 | Brainstorm | `Notes/Development/AgenticCellCorpus/ACC-Role-Format/Role package format + community hub — brainstorm.md` |
 
@@ -271,11 +271,11 @@ forward to hub via ACC-9 NATS bridge — see
   note 06) — formalised and externalised by this proposal.
 - Ecosystem editor: PR-A/B/C (note 07) — the Marketplace pane
   extends this.
-- Gatekeeper: `20260530-assistant-agent-of-agents` — Phase 5 TUI
+- Gatekeeper: `20260530-role-proposal-assistant-agent-of-agents` — Phase 5 TUI
   Marketplace pane uses AoA-P2b queue to gate package installs.
 - SIP: `20260530-acc-self-improvement-policy-gradient` —
   community-vetted policy bounds travel in `policy/policy-bounds.yaml`.
-- Dreamer: `20260530-acc-dreaming-agent` — `memory-seed/` block in
+- Dreamer: `20260530-role-proposal-dreamer-agent` — `memory-seed/` block in
   a package is its starting memory_notes corpus.
 - Drift follow-ups closed by Phase 3:
   [[37 no orig Spec - Orchestrator routing superseded by AoA gatekeeper - followup - 20260531]],

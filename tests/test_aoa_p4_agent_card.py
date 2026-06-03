@@ -1,6 +1,6 @@
 """AoA Phase 4 — Assistant gatekeeper AgentCard extension.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 4.  Lays the
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 4.  Lays the
 A2A handover seam by surfacing the gatekeeper's autonomy contract
 in the AgentCard's ACC vendor extension.  Full A2A integration lands
 when the parent `20260527-a2a-agent-interop` proposal reaches
@@ -90,7 +90,7 @@ def test_assistant_card_has_gatekeeper_block():
     )
     gk = card["acc"]["gatekeeper"]
     assert gk["isGatekeeper"] is True
-    assert gk["openSpec"] == "20260530-assistant-agent-of-agents"
+    assert gk["openSpec"] == "20260530-role-proposal-assistant-agent-of-agents"
 
 
 def test_assistant_card_lists_three_proposal_kinds():

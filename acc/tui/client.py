@@ -564,7 +564,7 @@ class NATSObserver:
             data.get("oversight_pending_count", snap.oversight_pending_count)
         )
 
-        # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
         # dormant-watcher flag from the Assistant's heartbeat.
         snap.dormant = bool(data.get("dormant", snap.dormant))
         snap.dormant_at_ts = float(

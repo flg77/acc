@@ -1,7 +1,7 @@
 """Per-role perception snapshot — the Observe step in the cognitive pipeline.
 
 OpenSpec history:
-  * `20260531-assistant-action-loop` Phase 1 (v0.3.43, PR #9) shipped
+  * `20260531-role-proposal-assistant-action-loop` Phase 1 (v0.3.43, PR #9) shipped
     the Assistant-only proof-of-concept.
   * `20260531-role-perception-profiles` Phase 1 (v0.3.45, this file)
     generalises it: any role with ``RoleDefinitionConfig.perception_profile
@@ -9,7 +9,7 @@ OpenSpec history:
     its LLM call.  Seven standard profiles, each rendered + validated by a
     profile-specific function registered below.
 
-The Assistant gatekeeper (proposal `20260530-assistant-agent-of-agents`)
+The Assistant gatekeeper (proposal `20260530-role-proposal-assistant-agent-of-agents`)
 shipped every downstream primitive — CapabilityIndex (v0.3.42), AoA-P2b
 proposal queue (v0.3.27), mode-aware dispatcher (v0.3.26), sub-collective
 registry (v0.3.29), identity (v0.3.34), policy learning (v0.3.30) — but
@@ -134,7 +134,7 @@ PERCEPTION_PROMPT_TOKEN_BUDGET = int(
     os.environ.get("ACC_PERCEPTION_PROMPT_TOKENS", "600") or "600"
 )
 
-# OpenSpec `20260602-assistant-blindspots` Phase 1.2 — how many catalog
+# OpenSpec `20260602-role-proposal-assistant-blindspots` Phase 1.2 — how many catalog
 # entries the control profile renders with their full summary line
 # before falling back to a single comma-joined tail line.  At ~8 tokens
 # per detailed entry + ~2 tokens per tail name, 40 detailed + 100 tail
@@ -549,7 +549,7 @@ def _render_control(snapshot: PerceptionSnapshot, role: Any = None) -> str:
     if other_roles:
         lines.append("")
         lines.append("**Available roles** (can be spawned via `[PROPOSE_SPAWN:role:cluster:reason]`):")
-        # OpenSpec `20260602-assistant-blindspots` Phase 1.2 — kill the
+        # OpenSpec `20260602-role-proposal-assistant-blindspots` Phase 1.2 — kill the
         # "... and N more" cliff.  Today's lighthouse trace truncated
         # the catalog at 25 roles and the Assistant proposed a
         # hallucinated `research_agent` because it couldn't see the real

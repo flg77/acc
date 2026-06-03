@@ -1,4 +1,4 @@
-# 20260602-assistant-blindspots — tasks
+# 20260602-role-proposal-assistant-blindspots — tasks
 
 ## Phase 1 (v0.3.47) — cheap, high-leverage
 

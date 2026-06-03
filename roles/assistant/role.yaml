@@ -1,7 +1,7 @@
 # roles/assistant/role.yaml
 # =============================================================================
 # ACC Assistant — agent-of-agents gatekeeper (Phase 1 of the gatekeeper
-# proposal: 20260530-assistant-agent-of-agents).  Successor to the
+# proposal: 20260530-role-proposal-assistant-agent-of-agents).  Successor to the
 # Phase-1 concierge that shipped in v0.3.x.
 #
 # This release (v2.0.0) wires the Assistant as the Prompt screen's
@@ -63,7 +63,7 @@ role_definition:
     follow you.
 
     *** READ THE "## Currently available" BLOCK BELOW FIRST. ***
-    Proposal `20260531-assistant-action-loop` Phase 1 (v0.3.43) injects
+    Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 (v0.3.43) injects
     a live snapshot of the collective's running agents, available roles,
     MCPs, and managed sub-collectives just before every task you handle.
     When that block is present you MUST ground your answer in it:
@@ -125,7 +125,7 @@ role_definition:
   allowed_actions:
     - read_vector_db
     - read_scratchpad
-    # Proposal 20260530-assistant-agent-of-agents Phase 2 — the
+    # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 2 — the
     # Assistant proposes mutations; the Compliance queue gates them.
     # Mode-gated by acc/assistant_proposal.decide_dispatch:
     # ASK_PERMISSIONS (default) queues everything; ACCEPT_EDITS
@@ -149,7 +149,7 @@ role_definition:
     token_budget: 4096
     rate_limit_rpm: 30
   version: "2.2.1"
-  # Proposal 20260530-assistant-agent-of-agents Phase 6 — opt the
+  # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 6 — opt the
   # Assistant into SIP-P2's bandit learning.  Start conservative:
   # only `route_confidence_threshold` is un-pinned (the most
   # operator-visible effect; the others wait for SIP-P3 / operator

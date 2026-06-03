@@ -219,7 +219,7 @@ class _PromptHarness(App):
 
 @pytest.mark.asyncio
 async def test_prompt_pane_target_role_defaults_to_assistant():
-    """Proposal 20260530-assistant-agent-of-agents Phase 1 — the
+    """Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 — the
     default target is now the Assistant gatekeeper, not coding_agent.
 
     coding_agent remains selectable from the dropdown for direct-target

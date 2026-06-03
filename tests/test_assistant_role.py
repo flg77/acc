@@ -57,7 +57,7 @@ def test_assistant_shows_reasoning_and_uses_memory(assistant_role):
 
 
 # --- v2 holds NO direct-execute capability surface but CAN route ----------
-# Proposal 20260530-assistant-agent-of-agents Phase 2 — the gatekeeper can
+# Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 2 — the gatekeeper can
 # now emit [PROPOSE_ROUTE:…] markers (gated by the Compliance queue in
 # ASK_PERMISSIONS / auto-executed in ACCEPT_EDITS+AUTO under Cat-A/B/C).
 # Skills, MCPs, and workspace access remain off — the gatekeeper proposes,

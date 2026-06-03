@@ -69,7 +69,7 @@ KIND_SKILLS = "skills"
 KIND_OVERSIGHT_PENDING = "oversight_pending"
 KIND_OVERSIGHT_APPROVE = "oversight_approve"
 KIND_OVERSIGHT_REJECT = "oversight_reject"
-# Proposal 20260530-assistant-agent-of-agents Phase 1 — Assistant
+# Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 — Assistant
 # sleep/wake from the Prompt screen.  Args carry ``"action": "sleep"|"wake"``.
 KIND_ASSISTANT_CONTROL = "assistant_control"
 KIND_UNKNOWN = "unknown"
@@ -160,7 +160,7 @@ def parse(text: str) -> SlashIntent:
     if verb == "skills":
         return SlashIntent(kind=KIND_SKILLS)
 
-    # Proposal 20260530-assistant-agent-of-agents Phase 1.
+    # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1.
     if verb in ("sleep", "wake"):
         return SlashIntent(
             kind=KIND_ASSISTANT_CONTROL, args={"action": verb},

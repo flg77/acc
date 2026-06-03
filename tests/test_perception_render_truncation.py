@@ -1,4 +1,4 @@
-"""Tests for OpenSpec `20260602-assistant-blindspots` Phase 1.2 — the
+"""Tests for OpenSpec `20260602-role-proposal-assistant-blindspots` Phase 1.2 — the
 control profile no longer hides catalog entries behind the opaque
 "... and N more" line.  Overflow now lands as a single comma-joined
 name-only tail line so the LLM at least sees that the roles exist.

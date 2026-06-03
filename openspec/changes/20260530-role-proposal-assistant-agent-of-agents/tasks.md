@@ -1,4 +1,4 @@
-# Tasks — `20260530-assistant-agent-of-agents`
+# Tasks — `20260530-role-proposal-assistant-agent-of-agents`
 
 All tasks land per [[20260530-aoa-and-self-improve — integration & sequencing]].
 

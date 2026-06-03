@@ -1,4 +1,4 @@
-# 20260602-assistant-blindspots — proposal
+# 20260602-role-proposal-assistant-blindspots — proposal
 
 ## Why
 

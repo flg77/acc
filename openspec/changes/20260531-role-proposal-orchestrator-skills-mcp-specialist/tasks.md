@@ -1,4 +1,4 @@
-# Tasks — `20260531-orchestrator-repurpose-skills-mcp-specialist`
+# Tasks — `20260531-role-proposal-orchestrator-skills-mcp-specialist`
 
 ## Phase 1 — catalog + query (read-only, additive)
 
@@ -77,7 +77,7 @@ Gates on `20260531-acc-role-package-format` Phase 4 (Hub MVP).
 
 ## Phase 6 — dreamer M9 ingestion — DEFERRED
 
-Gates on `20260530-acc-dreaming-agent` Phase 5 (M9 skill library
+Gates on `20260530-role-proposal-dreamer-agent` Phase 5 (M9 skill library
 distillation).
 
 - [ ] Dreamer-distilled skills flow into orchestrator's catalog via

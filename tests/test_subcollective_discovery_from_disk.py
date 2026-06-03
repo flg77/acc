@@ -1,4 +1,4 @@
-"""Tests for OpenSpec `20260602-assistant-blindspots` Phase 1.3 —
+"""Tests for OpenSpec `20260602-role-proposal-assistant-blindspots` Phase 1.3 —
 filesystem-discovery of sibling sub-collectives.
 
 When ``ACC_DISCOVER_SUBCOLLECTIVES_ROOT`` points at a directory of

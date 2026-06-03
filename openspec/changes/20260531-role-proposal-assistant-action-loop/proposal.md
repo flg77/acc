@@ -2,16 +2,16 @@
 
 | Field | Value |
 |---|---|
-| Change ID | `20260531-assistant-action-loop` |
+| Change ID | `20260531-role-proposal-assistant-action-loop` |
 | Status | Proposed (Phase 1 ready to implement) |
-| Companion | `20260530-assistant-agent-of-agents` (the gatekeeper this hardens) |
+| Companion | `20260530-role-proposal-assistant-agent-of-agents` (the gatekeeper this hardens) |
 | Builds on | v0.3.42 orchestrator CapabilityIndex (PR #8) — the consumer side that was missing |
-| Notes mirror | `Notes/.../ACC Openspec/20260531-assistant-action-loop — OpenSpec (proposed).md` |
+| Notes mirror | `Notes/.../ACC Openspec/20260531-role-proposal-assistant-action-loop — OpenSpec (proposed).md` |
 | Brainstorm | `Notes/.../ACC-Assistant-Action-Loop/Assistant action loop — brainstorm.md` |
 
 ## Problem statement
 
-The Assistant gatekeeper (proposal `20260530-assistant-agent-of-agents`)
+The Assistant gatekeeper (proposal `20260530-role-proposal-assistant-agent-of-agents`)
 shipped its full eight-phase ledger over 2026-05-30 — default
 target, dormant-watcher, proposal markers, queue-gated dispatcher,
 sub-collective registry, AgentCard, operator identity, role policy
@@ -219,7 +219,7 @@ tokens). Filtering (in order until budget met):
 
 ## Linked
 
-- Companion: `20260530-assistant-agent-of-agents` — the gatekeeper.
+- Companion: `20260530-role-proposal-assistant-agent-of-agents` — the gatekeeper.
 - Builds on: v0.3.42 PR #8 — orchestrator CapabilityIndex
   (the source the perception snapshot reads).
 - Brainstorm: `Notes/.../ACC-Assistant-Action-Loop/Assistant action loop — brainstorm.md`

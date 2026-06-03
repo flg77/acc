@@ -5,7 +5,7 @@
 | Change ID | `20260531-compliance-pane-multikind-consolidation` |
 | Status | Proposed (Phase 1 ready to implement) |
 | Closes followup | #39 |
-| Affected proposals (each registers a kind) | `20260530-assistant-agent-of-agents` · `20260530-acc-self-improvement-policy-gradient` · `20260530-acc-dreaming-agent` · `20260531-orchestrator-repurpose-skills-mcp-specialist` |
+| Affected proposals (each registers a kind) | `20260530-role-proposal-assistant-agent-of-agents` · `20260530-acc-self-improvement-policy-gradient` · `20260530-role-proposal-dreamer-agent` · `20260531-role-proposal-orchestrator-skills-mcp-specialist` |
 | Brainstorm | `Notes/.../ACC-Compliance-Pane-Multikind/Compliance pane multi-kind consolidation — brainstorm.md` |
 
 ## Problem statement
@@ -180,7 +180,7 @@ Future producers (Dreamer, Orchestrator) tag from day one.
 - Closes followup: `Notes/.../ACC Openspec/39 no orig Spec - Compliance pane new surfaces (AoA proposal queue + DREAM_REPORT + POLICY_UPDATE) - followup - 20260531.md`
 - Historic origin: note 14 — `OpenSpec — Compliance- governance layers + oversight (PR-H, Z1a–c) (v0.3.1)`
 - Affected proposals (each registers its kind):
-  - `20260530-assistant-agent-of-agents` (AssistantProposal)
+  - `20260530-role-proposal-assistant-agent-of-agents` (AssistantProposal)
   - `20260530-acc-self-improvement-policy-gradient` (POLICY_UPDATE)
-  - `20260530-acc-dreaming-agent` (DREAM_REPORT)
-  - `20260531-orchestrator-repurpose-skills-mcp-specialist` (CapabilityRecommendation)
+  - `20260530-role-proposal-dreamer-agent` (DREAM_REPORT)
+  - `20260531-role-proposal-orchestrator-skills-mcp-specialist` (CapabilityRecommendation)

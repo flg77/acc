@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # acc-lifecycle-watcher.sh — host-side sub-collective lifecycle watcher.
 #
-# Proposal 20260530-assistant-agent-of-agents Phase 3b.
+# Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b.
 #
 # Sister to scripts/acc-apply-watcher.sh (PR-X v0.3.23).  Subscribes to
 # the bus subject the Assistant publishes on when his cognitive loop

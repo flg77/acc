@@ -94,7 +94,7 @@ class AgentSpec(BaseModel):
 class SubCollectiveSpec(BaseModel):
     """One managed sub-collective.
 
-    Proposal `20260530-assistant-agent-of-agents` Phase 3 — the hub's
+    Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 3 — the hub's
     Assistant routes domain-specific prompts into sub-collectives that
     spin up on demand and hibernate when idle.  Each sub-collective is
     a first-class collective in its own right (own NATS subjects, own
@@ -170,7 +170,7 @@ class CollectiveSpec(BaseModel):
     # this is informational — kept for parity with the K8s shape.
     role_definition: Optional[dict[str, Any]] = None
 
-    # Proposal 20260530-assistant-agent-of-agents Phase 3 —
+    # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3 —
     # hub + on-demand sub-collectives.  The hub's collective.yaml
     # declares which sub-collective cids it manages + the domain
     # mapping the Assistant uses to route prompts.  Empty (default)
@@ -200,7 +200,7 @@ class CollectiveSpec(BaseModel):
 def load_collective(path: Path | str) -> CollectiveSpec:
     """Parse a ``collective.yaml`` and validate as :class:`CollectiveSpec`.
 
-    OpenSpec `20260602-assistant-blindspots` Phase 1.3 — after the file
+    OpenSpec `20260602-role-proposal-assistant-blindspots` Phase 1.3 — after the file
     is loaded, optionally merge in sibling ``collective.yaml`` files
     discovered under ``ACC_DISCOVER_SUBCOLLECTIVES_ROOT`` so the
     Assistant's perception block surfaces sub-collectives the operator

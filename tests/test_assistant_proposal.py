@@ -1,6 +1,6 @@
 """AoA Phase 2a — AssistantProposal model + marker parser + dispatch.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 2 (sub-phase 2a).
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 2 (sub-phase 2a).
 Phase 2a ships the infrastructure (model, parser, mode-gating, dispatch);
 Phase 2b will wire the parser into the cognitive core.
 

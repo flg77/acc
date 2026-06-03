@@ -4,7 +4,7 @@
 |---|---|
 | Change ID | `20260530-acc-self-improvement-policy-gradient` |
 | Status | Phases 1 + 2 + 3 LANDED (v0.3.25, v0.3.28, v0.3.32); Phase 4 carved into sibling `20260531-acc-self-improvement-marl-credit-assignment` |
-| Companion | `20260530-assistant-agent-of-agents` |
+| Companion | `20260530-role-proposal-assistant-agent-of-agents` |
 | Sequencing contract | `Notes/.../20260530-aoa-and-self-improve — integration & sequencing.md` |
 | Notes mirror | `Notes/Development/AgenticCellCorpus/ACC Openspec/20260530-acc-self-improvement-policy-gradient — OpenSpec (proposed).md` |
 
@@ -52,7 +52,7 @@ autonomy capabilities."* SIP closes those loops.
 
 ## Linked
 
-- Companion: `20260530-assistant-agent-of-agents` (Phase 6 wires the
+- Companion: `20260530-role-proposal-assistant-agent-of-agents` (Phase 6 wires the
   Assistant first).
 - Sibling (multi-agent credit): `20260531-acc-self-improvement-marl-
   credit-assignment`.

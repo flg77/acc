@@ -1,7 +1,7 @@
 """AoA Phase 3b — host-side sub-collective lifecycle + cognitive-core
 seed-context injection.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 3b.
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 3b.
 
 Covers:
 

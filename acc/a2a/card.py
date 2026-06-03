@@ -187,7 +187,7 @@ def _acc_extension(
         # to the feature definition; useful while A2A integration is alpha.
         "openSpec": "20260527-a2a-agent-interop",
     }
-    # Proposal 20260530-assistant-agent-of-agents Phase 4 — the
+    # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 4 — the
     # Assistant publishes a gatekeeper-specific extension so A2A peers
     # see the propose-then-approve contract (mode-gated, Cat-A/B/C-
     # bound) without having to inspect the role.yaml.  The block is
@@ -203,7 +203,7 @@ def _assistant_gatekeeper_extension(role: RoleDefinitionConfig) -> dict[str, Any
     surface — proposal kinds it emits, dormancy mode, sub-collective
     routing surface.
 
-    Proposal 20260530-assistant-agent-of-agents Phase 4.  This is the
+    Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 4.  This is the
     seam A2A peers (and the future MCP / Kagenti directory) read to
     decide:
     - Is this peer a gatekeeper? (capability discovery)
@@ -232,5 +232,5 @@ def _assistant_gatekeeper_extension(role: RoleDefinitionConfig) -> dict[str, Any
         # the collective.yaml managed_sub_collectives block at boot.
         "canRouteSubCollectives": getattr(role, "can_spawn_sub_collective", False),
         "policyEnabled": getattr(role, "policy_enabled", False),
-        "openSpec": "20260530-assistant-agent-of-agents",
+        "openSpec": "20260530-role-proposal-assistant-agent-of-agents",
     }

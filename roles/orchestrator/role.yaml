@@ -1,7 +1,7 @@
 # roles/orchestrator/role.yaml
 #
 # v3.0.0-beta1 — Skills & MCP specialist (proposal
-# 20260531-orchestrator-repurpose-skills-mcp-specialist Phase 1).
+# 20260531-role-proposal-orchestrator-skills-mcp-specialist Phase 1).
 #
 # Origin: PR-V6 / V6b shipped this as a routing role
 # (`[ROUTE:role:reason]`).  After AoA-P2a (v0.3.26) the Assistant

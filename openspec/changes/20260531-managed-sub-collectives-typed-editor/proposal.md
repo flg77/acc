@@ -5,10 +5,10 @@
 | Change ID | `20260531-managed-sub-collectives-typed-editor` |
 | Status | Proposed (Phase 1 ready to implement) |
 | Closes followup | #42 |
-| Schema source | `20260530-assistant-agent-of-agents` Phase 3a (AoA-P3a, v0.3.29) |
+| Schema source | `20260530-role-proposal-assistant-agent-of-agents` Phase 3a (AoA-P3a, v0.3.29) |
 | Lifecycle integration | AoA-P3b (`acc-deploy.sh resume/hibernate` + lifecycle-watcher) |
 | Companion (Phase 4 ride) | `20260531-acc-role-package-format` |
-| Companion (Phase 5 ride) | `20260531-orchestrator-repurpose-skills-mcp-specialist` |
+| Companion (Phase 5 ride) | `20260531-role-proposal-orchestrator-skills-mcp-specialist` |
 | Brainstorm | `Notes/.../ACC-Subcollective-Editor/managed_sub_collectives typed editor — brainstorm.md` |
 
 ## Problem statement
@@ -166,7 +166,7 @@ Add to a new scenario `tui_scenario.subcollective-editor.yaml`:
 - Brainstorm: `Notes/.../ACC-Subcollective-Editor/managed_sub_collectives typed editor — brainstorm.md`
 - Closes followup: `Notes/.../ACC Openspec/42 no orig Spec - collective.yaml schema gains managed_sub_collectives - followup - 20260531.md`
 - Historic origin: note 07 — `OpenSpec — Ecosystem + Nucleus TUI (agentset editor, infusion) (v0.3.1)`
-- Schema source: AoA-P3a `20260530-assistant-agent-of-agents`
+- Schema source: AoA-P3a `20260530-role-proposal-assistant-agent-of-agents`
 - Lifecycle integration: AoA-P3b
 - Phase 4 ride: `20260531-acc-role-package-format`
-- Phase 5 ride: `20260531-orchestrator-repurpose-skills-mcp-specialist`
+- Phase 5 ride: `20260531-role-proposal-orchestrator-skills-mcp-specialist`

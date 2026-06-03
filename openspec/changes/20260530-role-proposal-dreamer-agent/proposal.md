@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Change ID | `20260530-acc-dreaming-agent` |
+| Change ID | `20260530-role-proposal-dreamer-agent` |
 | Status | Proposed (Phase 1 ready to implement) |
 | Sibling | `20260530-acc-self-improvement-policy-gradient` (drift diagnostics feed the bandit) |
-| Companion | `20260530-assistant-agent-of-agents` (queue-gated mutations reuse the proposal pipeline) |
-| Notes mirror | `Notes/Development/AgenticCellCorpus/ACC Openspec/20260530-acc-dreaming-agent — OpenSpec (proposed).md` |
+| Companion | `20260530-role-proposal-assistant-agent-of-agents` (queue-gated mutations reuse the proposal pipeline) |
+| Notes mirror | `Notes/Development/AgenticCellCorpus/ACC Openspec/20260530-role-proposal-dreamer-agent — OpenSpec (proposed).md` |
 | Brainstorm | `Notes/Development/AgenticCellCorpus/ACC-Dreaming/Agent dreamer — brainstorm.md` |
 
 ## Problem statement
@@ -235,7 +235,7 @@ sibling proposals for the open cons:
 
 - Sibling: `20260530-acc-self-improvement-policy-gradient` — the
   bandit consumes the dreamer's centroid-drift diagnostics.
-- Companion: `20260530-assistant-agent-of-agents` — Phase 2+
+- Companion: `20260530-role-proposal-assistant-agent-of-agents` — Phase 2+
   mutations land via the AoA-P2b proposal queue.
 - Telemetry: `20260527-mlflow-otel-telemetry` — `DREAM_AUDIT` events
   (Phase 3+) promote to MLflow span events automatically.

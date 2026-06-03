@@ -1,4 +1,4 @@
-# Tasks — `20260531-assistant-action-loop`
+# Tasks — `20260531-role-proposal-assistant-action-loop`
 
 ## Phase 1 — perception snapshot + system-prompt injection
 

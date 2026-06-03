@@ -194,7 +194,7 @@ class RoleDefinitionConfig(BaseModel):
     be infused without its parent being currently loaded."""
 
     # Proposal 20260530-acc-self-improvement-policy-gradient — per-role
-    # learning surface.  Proposal 20260530-assistant-agent-of-agents
+    # learning surface.  Proposal 20260530-role-proposal-assistant-agent-of-agents
     # Phase 6 wires these from role.yaml into the agent's
     # RewardHarness so SIP-P2's bandit can move the right knobs at
     # the right cadence for each role.

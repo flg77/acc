@@ -1,6 +1,6 @@
 """Sub-collective registry + lifecycle helpers — AoA Phase 3.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 3.
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 3.
 
 The hub collective hosts the Assistant + baseline observer / arbiter
 infrastructure; each knowledge domain runs as its own sub-collective

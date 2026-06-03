@@ -1,6 +1,6 @@
 """Operator identity — multi-user-ready single-user seam.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 5.
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 5.
 
 Today's deployments are single-operator: every prompt, every
 proposal, every sleep/wake control signal lands with

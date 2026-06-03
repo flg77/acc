@@ -5,7 +5,7 @@
 | Change ID | `20260531-role-perception-profiles` |
 | Status | Proposed (Phase 1 ready to implement) |
 | Builds on | v0.3.43 PR #9 — assistant-action-loop Phase 1 (the proof-of-concept) · v0.3.42 PR #8 — orchestrator CapabilityIndex (the source) |
-| Companion | `20260531-assistant-action-loop` (the gateway) · `20260531-orchestrator-repurpose-skills-mcp-specialist` (catalog source) |
+| Companion | `20260531-role-proposal-assistant-action-loop` (the gateway) · `20260531-role-proposal-orchestrator-skills-mcp-specialist` (catalog source) |
 | Notes mirror | `Notes/.../ACC Openspec/20260531-role-perception-profiles — OpenSpec (proposed).md` |
 | Brainstorm | `Notes/.../ACC-Role-Perception-Profiles/Role perception profiles — brainstorm.md` |
 
@@ -237,9 +237,9 @@ instead of `render_currently_available_block(perception)`.
 ## Linked
 
 - **Proof-of-concept (lighthouse-verified 2026-05-31 20:38):**
-  `20260531-assistant-action-loop` Phase 1 — PR #9, v0.3.43.
+  `20260531-role-proposal-assistant-action-loop` Phase 1 — PR #9, v0.3.43.
 - **Catalog source:**
-  `20260531-orchestrator-repurpose-skills-mcp-specialist`
+  `20260531-role-proposal-orchestrator-skills-mcp-specialist`
   Phase 1 — PR #8, v0.3.42.
 - **Roster source:** arbiter heartbeat ring (PR-J / J-2) +
   `subject_roster_snapshot` (v0.3.43).
@@ -248,7 +248,7 @@ instead of `render_currently_available_block(perception)`.
 - **SIP integration (Phase 7):**
   `20260530-acc-self-improvement-policy-gradient`.
 - **Dreamer integration (M11 cross-role pattern detection):**
-  `20260530-acc-dreaming-agent`.
+  `20260530-role-proposal-dreamer-agent`.
 - **Role-package format:** `accpkg.yaml` will carry
   `perception_profile` as a manifest field
   (`20260531-acc-role-package-format`).

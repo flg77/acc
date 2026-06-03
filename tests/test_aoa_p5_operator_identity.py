@@ -1,6 +1,6 @@
 """AoA Phase 5 — operator_id resolution seam.
 
-Proposal `20260530-assistant-agent-of-agents` Phase 5.
+Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 5.
 
 Pins:
 

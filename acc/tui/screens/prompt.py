@@ -71,7 +71,7 @@ logger = logging.getLogger("acc.tui.screens.prompt")
 # the dropdown; future PR could populate this dynamically from the
 # loaded role registry.
 #
-# Proposal 20260530-assistant-agent-of-agents Phase 1 — the Assistant
+# Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 — the Assistant
 # is now FIRST + default.  He's the gatekeeper that owns the operator's
 # intent; specialist roles are still selectable but the default flow
 # routes through him.  Operators who want direct-target driving simply
@@ -79,7 +79,7 @@ logger = logging.getLogger("acc.tui.screens.prompt")
 # via Ctrl+Z (Knative-style dormant-watcher).
 _TARGET_ROLES: list[tuple[str, str]] = [
     # The ACC Assistant — agent-of-agents gatekeeper (proposal
-    # 20260530-assistant-agent-of-agents).  Default target on first
+    # 20260530-role-proposal-assistant-agent-of-agents).  Default target on first
     # open of the Prompt screen.
     ("assistant", "assistant"),
     ("coding_agent", "coding_agent"),
@@ -195,7 +195,7 @@ class PromptScreen(Screen):
         # Ctrl+R hide/show the reasoning stream entirely (default shown).
         Binding("ctrl+o", "toggle_reasoning", "Reasoning ±", priority=True),
         Binding("ctrl+r", "toggle_reasoning_visible", "Reasoning on/off"),
-        # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
         # Ctrl+Z toggles the Assistant's dormant-watcher mode.  The
         # action publishes on subject_assistant_control and the
         # banner re-renders from the heartbeat-carried `dormant` flag.
@@ -347,7 +347,7 @@ class PromptScreen(Screen):
             yield Select(
                 _TARGET_ROLES,
                 id="select-target-role",
-                # Proposal 20260530-assistant-agent-of-agents Phase 1 —
+                # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
                 # default target is the Assistant (gatekeeper).
                 value="assistant",
                 allow_blank=False,
@@ -511,7 +511,7 @@ class PromptScreen(Screen):
         self._open_workspace_select()
 
     def _set_mode_hint(self) -> None:
-        # Proposal 20260530-assistant-agent-of-agents Phase 6 — when
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 6 — when
         # the operating mode is AUTO, the SIP-P2 bandit is frozen
         # (rail 6: no learning while no human is in the loop).  The
         # hint surfaces this so operators promoting to AUTO see they
@@ -845,7 +845,7 @@ class PromptScreen(Screen):
             )
             return
 
-        # Proposal 20260530-assistant-agent-of-agents Phase 1.
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1.
         if intent.kind == _sc.KIND_ASSISTANT_CONTROL:
             action = str(intent.args.get("action", "") or "").lower()
             if action not in ("sleep", "wake"):
@@ -912,7 +912,7 @@ class PromptScreen(Screen):
         flip via the next heartbeat tick (banner updates from
         ``snapshot.agents[assistant].dormant``).
 
-        Proposal 20260530-assistant-agent-of-agents Phase 1.
+        Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1.
         """
         observer = self._active_observer()
         if observer is None:
@@ -924,7 +924,7 @@ class PromptScreen(Screen):
         cid = self._active_collective_id()
         from acc.operator_identity import resolve_operator_id  # noqa: PLC0415
         from acc.signals import subject_assistant_control  # noqa: PLC0415
-        # Proposal 20260530-assistant-agent-of-agents Phase 5 —
+        # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 5 —
         # operator_id resolved via the seam (override → env-pin →
         # source rule → "default").  Single-operator deployments
         # see "default" unchanged; multi-user lands when the TUI
@@ -955,7 +955,7 @@ class PromptScreen(Screen):
         When the snapshot is unavailable, defaults to /sleep — Ctrl+Z
         most often means "leave me alone for now".
 
-        Proposal 20260530-assistant-agent-of-agents Phase 1.
+        Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1.
         """
         snap = self.snapshot
         currently_dormant = False

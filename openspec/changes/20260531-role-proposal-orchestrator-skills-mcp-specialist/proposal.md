@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Change ID | `20260531-orchestrator-repurpose-skills-mcp-specialist` |
+| Change ID | `20260531-role-proposal-orchestrator-skills-mcp-specialist` |
 | Status | Proposed (Phase 1 ready to implement) |
 | Closes followup | #37 (orchestrator routing superseded by AoA gatekeeper) |
-| Companion | `20260530-assistant-agent-of-agents` (owns routing) · `20260531-acc-role-package-format` (Phase 5 marketplace ride) · `20260530-acc-dreaming-agent` (Phase 6 M9 ride) |
-| Notes mirror | `Notes/.../ACC Openspec/20260531-orchestrator-repurpose-skills-mcp-specialist — OpenSpec (proposed).md` |
+| Companion | `20260530-role-proposal-assistant-agent-of-agents` (owns routing) · `20260531-acc-role-package-format` (Phase 5 marketplace ride) · `20260530-role-proposal-dreamer-agent` (Phase 6 M9 ride) |
+| Notes mirror | `Notes/.../ACC Openspec/20260531-role-proposal-orchestrator-skills-mcp-specialist — OpenSpec (proposed).md` |
 | Brainstorm | `Notes/.../ACC-Orchestrator-Repurpose/Orchestrator as Skills & MCP specialist — brainstorm.md` |
 
 ## Problem statement
@@ -62,7 +62,7 @@ are detected.
 | 3 | Deferred | Periodic gap analyser; flip `can_route: false` |
 | 4 | Deferred | Deprecate `[ROUTE:...]` parser (auto-translate to `[PROPOSE_ROUTE]`) |
 | 5 | Deferred (gates on `20260531-acc-role-package-format` Phase 4) | Marketplace catalog mirror |
-| 6 | Deferred (gates on `20260530-acc-dreaming-agent` Phase 5) | Dreamer M9 distilled-skill ingestion |
+| 6 | Deferred (gates on `20260530-role-proposal-dreamer-agent` Phase 5) | Dreamer M9 distilled-skill ingestion |
 | 7 | Deferred (gates on Phase 4 + ≥ 2 minor versions) | Remove deprecated `[ROUTE:...]` parser |
 
 ## Three lifted invariants (table stakes — every phase)
@@ -203,9 +203,9 @@ Nothing new to merge — AoA already has the pieces.
 ## Linked
 
 - Closes followup: `Notes/.../ACC Openspec/37 no orig Spec - Orchestrator routing superseded by AoA gatekeeper - followup - 20260531.md`
-- Owns routing now: `20260530-assistant-agent-of-agents`
+- Owns routing now: `20260530-role-proposal-assistant-agent-of-agents`
 - Phase 5 ride: `20260531-acc-role-package-format`
-- Phase 6 ride: `20260530-acc-dreaming-agent`
+- Phase 6 ride: `20260530-role-proposal-dreamer-agent`
 - SIP opt-in: `20260530-acc-self-improvement-policy-gradient`
 - Compliance pane multi-kind consolidation: followup #39
 - Historic origin: note 25 `OpenSpec — Orchestrator routing (PR-V6 - V6b) (v0.3.11)`

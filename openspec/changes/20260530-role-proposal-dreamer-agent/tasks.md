@@ -1,4 +1,4 @@
-# Tasks — `20260530-acc-dreaming-agent`
+# Tasks — `20260530-role-proposal-dreamer-agent`
 
 ## Phase 1 — observation-only (M5 + M8 + M10 + M11 + M12)
 

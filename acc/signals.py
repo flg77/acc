@@ -390,7 +390,7 @@ def subject_policy_update(collective_id: str, role: str) -> str:
 def subject_sub_collective_lifecycle(hub_cid: str) -> str:
     """Return the NATS subject for sub-collective resume/hibernate signals.
 
-    Proposal `20260530-assistant-agent-of-agents` Phase 3.  The Assistant
+    Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 3.  The Assistant
     publishes here when his cognitive loop concludes "this prompt needs
     sol-code; bring it up if it's hibernated".  The host-side lifecycle
     handler (a follow-up to AoA-P3) subscribes, dispatches to
@@ -404,7 +404,7 @@ def subject_sub_collective_lifecycle(hub_cid: str) -> str:
 def subject_assistant_proposal(collective_id: str) -> str:
     """Return the NATS subject for ASSISTANT_PROPOSAL pending events.
 
-    Proposal `20260530-assistant-agent-of-agents` Phase 2.  The
+    Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 2.  The
     Assistant publishes here when his cognitive loop emits a
     ``[PROPOSE_*]`` marker and mode-gating routes it to the queue
     (or — under AUTO — when he auto-executes).  Payload is the
@@ -420,7 +420,7 @@ def subject_assistant_proposal(collective_id: str) -> str:
 def subject_capability_query(collective_id: str) -> str:
     """Return the NATS subject for capability-catalog queries.
 
-    Proposal `20260531-orchestrator-repurpose-skills-mcp-specialist`
+    Proposal `20260531-role-proposal-orchestrator-skills-mcp-specialist`
     Phase 1.  Request/reply: the caller publishes a ``CapabilityQuery``
     msgpack payload here and includes a NATS ``reply_inbox`` (handled
     by the NATS client at the request-handler layer); the orchestrator
@@ -452,7 +452,7 @@ def subject_capability_query(collective_id: str) -> str:
 def subject_roster_snapshot(collective_id: str) -> str:
     """Return the NATS subject for the live roster snapshot.
 
-    Proposal `20260531-assistant-action-loop` Phase 1.  Request/reply:
+    Proposal `20260531-role-proposal-assistant-action-loop` Phase 1.  Request/reply:
     any agent (the Assistant, in Phase 1) publishes an empty request on
     this subject and the **arbiter** replies with the current
     registration table grouped by role.
@@ -477,7 +477,7 @@ def subject_roster_snapshot(collective_id: str) -> str:
 def subject_capability_recommend(collective_id: str) -> str:
     """Return the NATS subject for orchestrator recommendations.
 
-    Proposal `20260531-orchestrator-repurpose-skills-mcp-specialist`
+    Proposal `20260531-role-proposal-orchestrator-skills-mcp-specialist`
     Phase 2 (declared in Phase 1 so callers can subscribe early; the
     orchestrator emits nothing on this subject until Phase 2 ships
     the gap analyser).  Informational mirror of the AoA-P2b proposal
@@ -489,7 +489,7 @@ def subject_capability_recommend(collective_id: str) -> str:
 def subject_assistant_control(collective_id: str) -> str:
     """Return the NATS subject for Assistant sleep/wake control signals.
 
-    Proposal `20260530-assistant-agent-of-agents` Phase 1.  Payload:
+    Proposal `20260530-role-proposal-assistant-agent-of-agents` Phase 1.  Payload:
         {"action": "sleep" | "wake",
          "operator_id": "<id>",
          "ts": <epoch_seconds>}

@@ -300,7 +300,7 @@ def test_render_includes_sub_collectives_with_delegate_marker():
 
 
 def test_render_overflows_to_name_only_tail():
-    """OpenSpec ``20260602-assistant-blindspots`` Phase 1.2 — the
+    """OpenSpec ``20260602-role-proposal-assistant-blindspots`` Phase 1.2 — the
     detailed list caps at ``_DETAILED_ROLE_CAP`` entries; any overflow
     lands as a single comma-joined name-only tail so the LLM at least
     sees the names instead of an opaque ``and N more`` line."""

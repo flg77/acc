@@ -76,7 +76,7 @@ class AgentSnapshot:
     owasp_violation_count: int = 0
     oversight_pending_count: int = 0
 
-    # Proposal 20260530-assistant-agent-of-agents Phase 1 — Knative-style
+    # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 — Knative-style
     # dormant-watcher flag carried in the HEARTBEAT payload.  Assistant
     # role uses this; all other roles publish False (the heartbeat field
     # is unconditional so the wire shape stays uniform).

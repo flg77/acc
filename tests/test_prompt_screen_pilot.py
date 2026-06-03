@@ -82,7 +82,7 @@ async def test_send_publishes_task_assign_with_form_values():
         assert isinstance(screen, PromptScreen)
 
         # Fill the form.  Default target is the Assistant gatekeeper
-        # (proposal 20260530-assistant-agent-of-agents Phase 1); set
+        # (proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1); set
         # the dropdown to coding_agent for this flow.
         from textual.widgets import Select  # noqa: PLC0415
         screen.query_one("#select-target-role", Select).value = "coding_agent"

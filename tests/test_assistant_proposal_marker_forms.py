@@ -1,4 +1,4 @@
-"""Tests for OpenSpec `20260602-assistant-blindspots` Phase 1.1 —
+"""Tests for OpenSpec `20260602-role-proposal-assistant-blindspots` Phase 1.1 —
 marker-form tolerance.
 
 Today's lighthouse trace (2026-06-02 05:40) showed the small Assistant

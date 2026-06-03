@@ -61,7 +61,7 @@ Gates on `20260531-acc-role-package-format` Phase 4 (Hub MVP).
 
 ## Phase 5 — orchestrator integration — DEFERRED
 
-Gates on `20260531-orchestrator-repurpose-skills-mcp-specialist`
+Gates on `20260531-role-proposal-orchestrator-skills-mcp-specialist`
 Phase 1.
 
 - [ ] "Suggest skills/MCPs" button queries orchestrator's
