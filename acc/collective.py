@@ -50,6 +50,35 @@ from acc._atomic_write import atomic_write_text
 # (DNS-label-safe — used in NATS subjects and container names).
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$")
 
+# Required-package spec: ``@scope/name@<constraint>`` where the
+# constraint accepts exact (``1.2.3``), caret (``^1.2``), tilde
+# (``~1.2.3``), bounds (``>=1.2``, ``<2.0``), or a space-separated
+# range (``">=1.2.3 <2.0.0"``).
+#
+# Stage 1.5.2: shape-validated here; full constraint resolution
+# lives in :mod:`acc.pkg._semver` (used by
+# :meth:`CollectiveSpec.unsatisfied_requirements`).
+_REQUIRED_PKG_RE = re.compile(
+    r"^(?P<name>@[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_-]*)"
+    r"@(?P<constraint>.+)$"
+)
+
+
+def parse_required_package(spec: str) -> tuple[str, str]:
+    """Split ``"@scope/name@constraint"`` into ``(name, constraint)``.
+
+    Raises :class:`ValueError` if the shape is wrong.  Used by
+    :class:`CollectiveSpec.required_packages` field validation and
+    by :meth:`CollectiveSpec.unsatisfied_requirements` at runtime.
+    """
+    m = _REQUIRED_PKG_RE.match(spec)
+    if not m:
+        raise ValueError(
+            f"required-package spec must be '@scope/name@<constraint>': "
+            f"{spec!r}"
+        )
+    return m["name"], m["constraint"].strip()
+
 
 class AgentSpec(BaseModel):
     """One slot in a :class:`CollectiveSpec`'s agentset.
@@ -180,6 +209,17 @@ class CollectiveSpec(BaseModel):
         default_factory=dict,
     )
 
+    # Stage 1.5.2 — declarative package requirements.  Each entry is
+    # a semver-pinned reference like ``"@acc/coding-roles@^1.2"``.
+    # ``acc-deploy.sh`` (sub-slice 1.5.3) parses this list at boot and
+    # invokes ``acc-pkg install`` for each entry before agent spawn;
+    # the Stage-0 install path's idempotent re-install means already-
+    # installed packages are no-ops.  Per-collective catalog override
+    # lives at ``<workspace>/.acc/catalogs.yaml`` and is picked up
+    # automatically by :func:`acc.pkg.catalog.resolve` when invoked
+    # with ``workspace=<this collective's dir>``.
+    required_packages: list[str] = Field(default_factory=list)
+
     @field_validator("collective_id")
     @classmethod
     def _validate_collective_id(cls, v: str) -> str:
@@ -191,10 +231,89 @@ class CollectiveSpec(BaseModel):
             )
         return v
 
+    @field_validator("required_packages")
+    @classmethod
+    def _validate_required_packages(cls, v: list[str]) -> list[str]:
+        seen: set[str] = set()
+        for spec in v:
+            try:
+                name, constraint = parse_required_package(spec)
+            except ValueError as exc:
+                # Pydantic surfaces this as a ValidationError on the field.
+                raise ValueError(str(exc)) from exc
+            # Constraint shape check — full resolution is at install
+            # time, but obvious typos fail fast at load time.
+            from acc.pkg.manifest import _is_valid_constraint  # noqa: PLC0415
+            if not _is_valid_constraint(constraint):
+                raise ValueError(
+                    f"invalid semver constraint in {spec!r}: "
+                    f"{constraint!r}"
+                )
+            if name in seen:
+                raise ValueError(
+                    f"package {name!r} pinned more than once in "
+                    "required_packages"
+                )
+            seen.add(name)
+        return v
+
+    # --- Stage 1.5.2 helpers ----------------------------------------------
+
+    def iter_required_packages(self) -> list[tuple[str, str]]:
+        """Return ``[(name, constraint), ...]`` for ``required_packages``."""
+        return [parse_required_package(s) for s in self.required_packages]
+
+    def unsatisfied_requirements(self, registry: Any = None) -> list[str]:
+        """Return the subset of ``required_packages`` not yet satisfied
+        by the local package registry.
+
+        A requirement is *satisfied* when the registry contains at
+        least one entry for the package name at a version that meets
+        the constraint.  Returned entries are the original spec
+        strings, ready to feed to ``acc-pkg install``.
+
+        Stage 1.5.3 calls this from ``acc-deploy.sh`` at boot; any
+        unsatisfied entry triggers an install attempt.
+        """
+        # Lazy imports keep ``acc/collective.py`` importable in
+        # environments without ``acc.pkg`` (legacy stand-alone
+        # deployments).
+        try:
+            from acc.pkg._semver import version_satisfies  # noqa: PLC0415
+            from acc.pkg.registry import Registry  # noqa: PLC0415
+        except ImportError:
+            # Without the pkg subsystem, every requirement is by
+            # definition unsatisfied — caller will surface the error.
+            return list(self.required_packages)
+
+        reg = registry or Registry()
+        missing: list[str] = []
+        for spec, (name, constraint) in zip(
+            self.required_packages, self.iter_required_packages()
+        ):
+            installed = reg.find_by_name(name)
+            if not installed:
+                missing.append(spec)
+                continue
+            if not any(version_satisfies(e.version, constraint) for e in installed):
+                missing.append(spec)
+        return missing
+
 
 # ---------------------------------------------------------------------------
 # YAML I/O
 # ---------------------------------------------------------------------------
+
+
+def collective_workspace(path: Path | str) -> Path:
+    """Return the workspace directory for a ``collective.yaml`` path.
+
+    The workspace is simply the parent directory of the spec file —
+    it's where the optional ``.acc/catalogs.yaml`` per-collective
+    catalog override lives (Stage 1.5.2).  The catalog resolver
+    accepts this path via its ``workspace=`` kwarg.
+    """
+    return Path(path).resolve().parent
 
 
 def load_collective(path: Path | str) -> CollectiveSpec:
