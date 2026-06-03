@@ -370,6 +370,59 @@ def resolve(
     return ResolvedPackage(catalog=cat, entry=entry, alternates=alternates)
 
 
+def resolve_constraint(
+    name: str,
+    constraint: str,
+    *,
+    workspace: Path | None = None,
+) -> ResolvedPackage | None:
+    """Resolve ``@scope/name`` against a semver *constraint* (Stage 1.5.3).
+
+    Like :func:`resolve` but accepts range constraints (``^1.2``,
+    ``~1.2.3``, ``>=1.2 <2.0``, etc.) rather than an exact version.
+    Walks layered catalogs in resolution order; within the chosen
+    catalog picks the *highest* version satisfying the constraint.
+    Alternates carry every other catalog that also advertises this
+    name (for the Compliance pane).
+
+    Returns ``None`` if no catalog has a version satisfying the
+    constraint.
+    """
+    # Lazy import so acc.pkg.catalog doesn't pull _semver at module
+    # load time (catalog is loaded by code paths that don't otherwise
+    # need install-time semver math).
+    from acc.pkg._semver import version_satisfies  # noqa: PLC0415
+
+    primary: tuple[Catalog, CatalogIndexEntry] | None = None
+    alternates: list[Catalog] = []
+
+    for catalog in _iter_layered(workspace):
+        try:
+            index = fetch_index(catalog)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog %s: index fetch failed (%s)", catalog.id, exc)
+            continue
+
+        matches = [
+            e for e in index
+            if e.name == name and version_satisfies(e.version, constraint)
+        ]
+        if not matches:
+            continue
+
+        if primary is None:
+            chosen = sorted(matches, key=lambda e: e.version, reverse=True)[0]
+            primary = (catalog, chosen)
+        else:
+            alternates.append(catalog)
+
+    if primary is None:
+        return None
+
+    cat, entry = primary
+    return ResolvedPackage(catalog=cat, entry=entry, alternates=alternates)
+
+
 def list_available(
     name: str | None = None,
     *,

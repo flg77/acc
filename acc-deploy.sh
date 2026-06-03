@@ -388,6 +388,27 @@ case "$COMMAND" in
                 exit 1
             fi
         fi
+        # Stage 1.5.3 — boot-time required_packages fetch.  Reads
+        # the spec, resolves each unsatisfied @scope/name@constraint
+        # through the layered catalog, downloads + verifies +
+        # installs.  Idempotent: already-installed packages are
+        # no-ops.  Skipped silently when the spec has no
+        # required_packages (back-compat).  ACC_ALLOW_UNSIGNED=1
+        # bypasses the signing floor (audit-logged) for dev hubs
+        # that haven't wired cosign yet.
+        REQ_PKG_ARGS=()
+        if [[ "${ACC_ALLOW_UNSIGNED:-0}" == "1" ]]; then
+            REQ_PKG_ARGS+=(--allow-unsigned)
+        fi
+        echo "▶ Resolving required_packages from $SPEC..."
+        if ! python -m acc.cli collective pkg-install \
+                "$REPO_ROOT/$SPEC" "${REQ_PKG_ARGS[@]}"; then
+            echo "ERROR: required_packages install failed" >&2
+            echo "       check /etc/acc/catalogs.yaml or set" >&2
+            echo "       ACC_ALLOW_UNSIGNED=1 for unsigned dev installs" >&2
+            exit 1
+        fi
+
         echo "▶ Synthesizing overlay from $SPEC..."
         if ! python -m acc.cli collective synthesize \
                 "$REPO_ROOT/$SPEC" -o "$OVERLAY_PATH"; then
