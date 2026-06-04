@@ -52,6 +52,7 @@ Highlights from the current `0.3.1-dev` cycle — see [`CHANGELOG.md`](CHANGELOG
 
 | Feature | What it is | Status |
 |---|---|---|
+| **Role & package ecosystem** | The 43 movable roles moved out of core into signed, versioned `@acc/*` **family packs** served from the public [`acc-ecosystem`](https://github.com/flg77/acc-ecosystem) registry. `acc-pkg` builds/signs/verifies/installs `.accpkg` bundles; `collective.yaml` `required_packages:` + a dual-source loader fetch and verify them at boot; **Marketplace** + **Catalog** panes (TUI/WebGUI) and the [`acc-podman-desktop`](https://github.com/flg77/acc-podman-desktop) extension are the discovery surfaces. Core keeps only the 7 CONTROL roles. See [**Role & Package Ecosystem**](#role--package-ecosystem). | ✅ Landed (Stage 1 + Stage 2 cutover) |
 | **Compliance governance & frameworks** | The full governance surface in both UIs: browse the **Category A/B/C rule layers**, import regulatory **frameworks** (NIST AI RMF, SOC 2, EU AI Act, …) and **run a gap scan** (coverage %, gaps), then review **arbiter-proposed Category-C rule proposals** learned from collective violations — approve/reject with the action stamped to your identity. Standalone-first; shared report/proposal store between `acc-tui` and `acc-webgui`. | ✅ Landed (PR-Z1/Z2/Z3) |
 | **Per-agent models (multimodel)** | A central `models.yaml` registry lets each agent role run on a different backend/model (e.g. a `reviewer` on a powerful model driving a critic loop). The TUI/WebGUI Ecosystem surfaces the registry; `AgentSpec.model` selects per role. | ✅ Landed (PR-MM1/2/3) |
 | **Self-reflective memory** | An out-of-band consolidation loop distils episodic memory into durable `memory_notes` an agent reads on the hot path — opt-in per role via `memory_reflection`. | ✅ Landed (PR-MEM1/2/3) |
@@ -206,6 +207,71 @@ See [`docs/howto-rhoai.md`](docs/howto-rhoai.md) for the full operator setup, CR
 | `observer` | Passive telemetry; emits OTel spans and Prometheus metrics; zero bus writes | No |
 
 Each role is defined by a **role definition** — a versioned, Ed25519-signed document that shapes the agent's system prompt, task scope, allowed actions, and OPA setpoints. See [`docs/howto-role-infusion.md`](docs/howto-role-infusion.md).
+
+These are the canonical collective-pipeline roles. After the Stage 2 cutover, core ships only the **7 CONTROL roles** — `arbiter`, `assistant`, `compliance_officer`, `ingester`, `observer`, `orchestrator`, `reviewer` — while `analyst`, `synthesizer`, and every other role ship as packages from the ecosystem (below).
+
+---
+
+## Role & Package Ecosystem
+
+Core ships the **7 CONTROL roles** (the table above). The other **43 movable
+roles** — coding-agent variants, research, business, and DevOps personas — now
+ship as signed, versioned **role packages** from a public registry, so you
+install only the roles you need and can publish your own.
+
+**How it works**
+
+- **`acc-pkg`** builds, signs, verifies, and installs `.accpkg` bundles — a
+  byte-deterministic tarball carrying a role definition, its bundled
+  skills/MCPs, behavioral + safety evals, and optional Cat-A/B/C policy bounds.
+- **Catalogs** (`catalogs.yaml`, layered system → user → workspace) point ACC at
+  one or more registries. Every package is cosign-verified against the catalog's
+  `required_signer` before it installs — the signing floor is non-negotiable.
+- **Declare packages** in `collective.yaml` under `required_packages:`; ACC's
+  boot-time fetch resolves, verifies, and unpacks them before agents spawn. The
+  **dual-source loader** prefers an installed package over the in-tree fallback.
+- **Discover + install** from the **Marketplace** and **Catalog admin** panes in
+  both the TUI and WebGUI, or with `acc-pkg install @acc/research-roles@^1.0`.
+
+**The registry — [`flg77/acc-ecosystem`](https://github.com/flg77/acc-ecosystem)**
+
+The canonical registry serves four `@acc/*` family packs:
+
+| Pack | Roles |
+|---|---|
+| `@acc/workspace-roles` | coding-agent + 5 variants, analyst, synthesizer (8) |
+| `@acc/research-roles` | research planner, critic, strategist, economist, … (6) |
+| `@acc/business-roles` | HR, sales, marketing, finance, legal, ops, IT, support (25) |
+| `@acc/devops-roles` | data, devops, ML, and security engineers (4) |
+
+Point a catalog at it:
+
+```yaml
+# .acc/catalogs.yaml
+catalogs:
+  - id: acc-canonical
+    tier: trusted
+    mode: https
+    url: https://flg77.github.io/acc-ecosystem
+    required_signer:
+      issuer: https://token.actions.githubusercontent.com
+      subject_pattern: "^https://github\\.com/flg77/acc-ecosystem/"
+    priority: 100
+```
+
+See [`examples/catalogs.yaml`](examples/catalogs.yaml) for the full layered example (trusted / community / self tiers).
+
+**Create your own role pack** — `acc-pkg init` → author the role → write evals →
+sign keyless via GitHub Actions OIDC → publish, in under an hour. See
+[`docs/CONTRIBUTING-ROLE.md`](docs/CONTRIBUTING-ROLE.md).
+
+**Migrating from in-tree roles** — operators upgrading across the Stage 2 cutover
+declare `required_packages:` once; the dual-source loader does the rest. See
+[`docs/MIGRATING-FROM-INTREE.md`](docs/MIGRATING-FROM-INTREE.md).
+
+**Podman Desktop** — the [`acc-podman-desktop`](https://github.com/flg77/acc-podman-desktop)
+extension brings up and governs an ACC collective (and browses roles/skills/MCPs)
+from inside Podman Desktop, alongside Podman AI Lab.
 
 ---
 
@@ -491,6 +557,9 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 | [`docs/howto-edge.md`](docs/howto-edge.md) | Edge node setup, NATS leaf topology, bridge delegation, offline operation |
 | [`docs/howto-rhoai.md`](docs/howto-rhoai.md) | OpenShift operator install, CRD reference, GPU inference, KEDA/Gatekeeper/OTel |
 | [`docs/howto-role-infusion.md`](docs/howto-role-infusion.md) | Role definition schema, 4-tier load order, ROLE_UPDATE hot-reload, Ed25519 signing |
+| [`docs/CONTRIBUTING-ROLE.md`](docs/CONTRIBUTING-ROLE.md) | Publish your own role package: `acc-pkg init` → evals → keyless cosign → publish; package layout, tiers |
+| [`docs/MIGRATING-FROM-INTREE.md`](docs/MIGRATING-FROM-INTREE.md) | Moving from in-tree roles to `@acc/*` packages: `required_packages:`, the dual-source loader, the deprecation cycle |
+| [`docs/PUBLISHING-FAMILY-PACKS.md`](docs/PUBLISHING-FAMILY-PACKS.md) | Operator runbook: build, sign, and publish the four family packs to `acc-ecosystem` |
 | [`docs/howto-tui.md`](docs/howto-tui.md) | Terminal UI: dashboard screen, infuse screen, container deployment, keyboard shortcuts |
 | [`docs/webgui.md`](docs/webgui.md) | acc-webgui — the optional FastAPI + React web frontend: architecture, auth tiers, per-mode deployment, the tracing views, the TUI-parity screens |
 | [`docs/compliance_governance.md`](docs/compliance_governance.md) | Category A/B/C governance inventory, regulatory frameworks + gap analysis, arbiter rule proposals + the learn-from-violations loop |
@@ -512,6 +581,20 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 | [`docs/operator-certification.md`](docs/operator-certification.md) | Red Hat OperatorHub certification roadmap |
 | [`docs/IMPLEMENTATION_SPEC_v0.2.0.md`](docs/IMPLEMENTATION_SPEC_v0.2.0.md) | RHOAI 3 integration design: compatibility matrix, dual-mode pattern |
 | [`docs/ACCv3.md`](docs/ACCv3.md) | ACC v3 design paper: sovereign edge-first architecture, biological grounding |
+
+---
+
+## Related repositories
+
+ACC is developed as a small family of repositories:
+
+| Repository | What it is |
+|---|---|
+| [`flg77/acc`](https://github.com/flg77/acc) | **This repo** — the ACC runtime, operator, TUI/WebGUI, and the `acc-pkg` package toolchain. |
+| [`flg77/acc-ecosystem`](https://github.com/flg77/acc-ecosystem) | Public package registry serving the `@acc/*` family packs — discover roles, and publish your own. |
+| [`flg77/acc-podman-desktop`](https://github.com/flg77/acc-podman-desktop) | Podman Desktop extension — bring up and govern an ACC collective from the desktop, alongside Podman AI Lab. |
+
+See [**Role & Package Ecosystem**](#role--package-ecosystem) for how they fit together.
 
 ---
 
