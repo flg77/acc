@@ -39,8 +39,8 @@ Find the 44 movable role names you actually use in your
 | `@acc/research-roles` | `research_planner`, `research_competitor`, `research_critic`, `research_economist`, `research_strategist`, `research_synthesizer` |
 | `@acc/devops-roles` | `data_engineer`, `devops_engineer`, `ml_engineer`, `security_analyst` |
 | `@acc/hr-roles` | `hr_business_partner`, `learning_development_specialist`, `recruiter` |
-| `@acc/finance-roles` | `financial_analyst`, `fpa_analyst`, `revenue_operations_analyst` |
-| `@acc/sales-roles` | `account_executive`, `sales_development_rep`, `sales_engineer`, `key_account_manager`, `inside_sales_rep`, `sales_operations_manager` |
+| `@acc/finance-roles` | `financial_analyst`, `fpa_analyst` |
+| `@acc/sales-roles` | `account_executive`, `sales_development_rep`, `sales_engineer`, `key_account_manager`, `inside_sales_rep`, `sales_operations_manager`, `revenue_operations_analyst` |
 | `@acc/marketing-roles` | `content_marketer`, `demand_generation_specialist`, `marketing_analyst`, `product_marketer`, `brand_manager` |
 | `@acc/legal-roles` | `contract_analyst`, `risk_compliance_analyst` |
 | `@acc/support-roles` | `customer_success_manager`, `customer_support_agent`, `technical_support_specialist` |

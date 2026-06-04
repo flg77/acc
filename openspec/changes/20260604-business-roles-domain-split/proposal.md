@@ -37,17 +37,20 @@ Three adjacent needs ride along:
 | Pack (`1.0.0`) | Roles |
 |---|---|
 | `@acc/hr-roles` | hr_business_partner, learning_development_specialist, recruiter |
-| `@acc/finance-roles` | financial_analyst, fpa_analyst, revenue_operations_analyst |
-| `@acc/sales-roles` | account_executive, sales_development_rep, sales_engineer, **key_account_manager**, **inside_sales_rep**, **sales_operations_manager** |
+| `@acc/finance-roles` | financial_analyst, fpa_analyst |
+| `@acc/sales-roles` | account_executive, sales_development_rep, sales_engineer, **key_account_manager**, **inside_sales_rep**, **sales_operations_manager**, revenue_operations_analyst |
 | `@acc/marketing-roles` | content_marketer, demand_generation_specialist, marketing_analyst, product_marketer, **brand_manager** |
 | `@acc/legal-roles` | contract_analyst, risk_compliance_analyst |
 | `@acc/support-roles` | customer_success_manager, customer_support_agent, technical_support_specialist |
 | `@acc/operations-roles` | business_analyst, operations_analyst, procurement_specialist, project_manager, product_manager, it_operations_specialist, it_support_specialist |
 
 29 roles = 25 existing + 4 new.  `revenue_operations_analyst` →
-finance (data/forecasting); the new `sales_operations_manager` is the
-sales-side process/tooling owner.  `risk_compliance_analyst` → legal
-(keeps its `finance_accounting` receptor).
+**sales** (RevOps reports into the sales org; the role already carries
+`domain_id: sales_revenue`) alongside the new `sales_operations_manager`
+(process/tooling owner) — the two are differentiated in their
+`seed_context`s (data/forecasting vs process/territory/quota design).
+`risk_compliance_analyst` → legal (keeps its `finance_accounting`
+receptor).
 
 ### Umbrella + backward-compat
 

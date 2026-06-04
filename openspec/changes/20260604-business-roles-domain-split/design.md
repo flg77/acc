@@ -7,8 +7,8 @@
 @acc/business-roles@2.0.0   (umbrella — depends_on the 7 below)
         │
         ├── @acc/hr-roles@1.0.0          (3)
-        ├── @acc/finance-roles@1.0.0     (3)
-        ├── @acc/sales-roles@1.0.0       (6)  ← +3 new
+        ├── @acc/finance-roles@1.0.0     (2)
+        ├── @acc/sales-roles@1.0.0       (7)  ← +3 new, + revenue_operations_analyst
         ├── @acc/marketing-roles@1.0.0   (5)  ← +1 new
         ├── @acc/legal-roles@1.0.0       (2)
         ├── @acc/support-roles@1.0.0     (3)
@@ -46,11 +46,14 @@ between the single-package and closure paths.
 
 ## 3. Domain assignment decisions
 
-* **`revenue_operations_analyst` → finance.**  It owns CRM-data
-  quality, forecasting, and pipeline analytics — a finance/RevOps
-  function.  The *new* `sales_operations_manager` owns the sales
-  operating system (territory/quota/comp/tooling).  Both `seed_context`s
-  state the boundary explicitly so they don't collide.
+* **`revenue_operations_analyst` → sales.**  RevOps reports into the
+  sales org, and the role already carries `domain_id: sales_revenue`, so
+  `@acc/sales-roles` is its natural home.  It owns CRM-data quality,
+  forecasting, and pipeline analytics; the *new* `sales_operations_manager`
+  (same pack) owns the sales operating system (territory/quota/comp/
+  tooling).  Both `seed_context`s state the boundary explicitly so they
+  don't collide.  `@acc/finance-roles` is then the pure accounting/FP&A
+  pair (`financial_analyst`, `fpa_analyst`).
 * **`risk_compliance_analyst` → legal.**  Compliance focus; it keeps
   `domain_receptors: [finance_accounting, legal_compliance]` so it still
   answers finance paracrine signals.
