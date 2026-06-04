@@ -14,14 +14,23 @@
 # Enterprise Contract attestations on top).
 
 catalogs:
-  # ACC-canonical trusted tier (Stage 2+: public hub at acc-roles.dev).
-  # During Stage 0 + Stage 1 this is the internal acc1 K8s endpoint
-  # described in examples/catalogs.dev.yaml; operators promote to
-  # acc-roles.dev once Stage 2 ships.
+  # ACC-canonical trusted tier — hosts the four family packs
+  # extracted from this repo's roles/ tree in Stage 2:
+  #   @acc/workspace-roles  (coding_agent + variants + analyst + synthesizer)
+  #   @acc/research-roles   (research_*)
+  #   @acc/business-roles   (HR + sales + marketing + ops + finance + legal)
+  #   @acc/devops-roles     (data / devops / ml / security engineers)
+  #
+  # The repo is `flg77/acc-ecosystem` (created by operator in Stage 2.1).
+  # Until the public `acc-roles.dev` hub goes live (Stage 2.3 DNS
+  # decision), point at one of:
+  #   - GitHub Releases:   https://github.com/flg77/acc-ecosystem/releases/download/<tag>/
+  #   - GitHub Pages:      https://flg77.github.io/acc-ecosystem
+  #   - acc1 internal hub: https://acc-hub.acc1.internal (dev only)
   - id: acc-canonical
     tier: trusted
     mode: https
-    url: https://acc-roles.dev
+    url: https://flg77.github.io/acc-ecosystem
     required_signer:
       issuer: https://token.actions.githubusercontent.com
       subject_pattern: "^https://github\\.com/flg77/acc-ecosystem/"
