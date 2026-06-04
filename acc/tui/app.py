@@ -41,6 +41,8 @@ from acc.tui.screens.configuration import ConfigurationScreen
 from acc.tui.screens.dashboard import DashboardScreen, _RefreshMessage
 from acc.tui.screens.diagnostics import DiagnosticsScreen
 from acc.tui.screens.ecosystem import EcosystemScreen
+from acc.tui.screens.marketplace import MarketplaceScreen
+from acc.tui.screens.catalogs import CatalogsScreen
 from acc.tui.screens.infuse import InfuseScreen, _PublishMessage
 from acc.tui.screens.performance import PerformanceScreen
 from acc.tui.screens.prompt import PromptScreen
@@ -102,6 +104,8 @@ class ACCTUIApp(App):
         "comms":         CommunicationsScreen,
         "performance":   PerformanceScreen,
         "ecosystem":     EcosystemScreen,
+        "marketplace":   MarketplaceScreen,  # Stage 2.4 — pkg discovery
+        "catalogs":      CatalogsScreen,     # Stage 2.4 — catalog admin
         "prompt":        PromptScreen,    # PR-B
         "configuration": ConfigurationScreen,  # proposal 003 PR-4
         "diagnostics":   DiagnosticsScreen,    # PR-N (K-2)

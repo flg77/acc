@@ -50,7 +50,7 @@ def create_app():
     from acc.webgui.observers import ObserverHub
     from acc.webgui import (
         auth, routes_action, routes_auth, routes_governance, routes_read,
-        routes_trace, ws,
+        routes_roles, routes_trace, ws,
     )
 
     nats_url = os.environ.get("ACC_NATS_URL", _DEFAULT_NATS_URL)
@@ -94,6 +94,7 @@ def create_app():
     # Governance / compliance / diagnostics / models parity (PR-W).  Each
     # endpoint gates itself (reads → viewer, actions → operator).
     app.include_router(routes_governance.router)
+    app.include_router(routes_roles.router)  # Stage 2.4 — each endpoint gates its own auth
     app.include_router(ws.router)
 
     static = _static_dir()
