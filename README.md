@@ -593,6 +593,7 @@ ACC is developed as a small family of repositories:
 | [`flg77/acc`](https://github.com/flg77/acc) | **This repo** — the ACC runtime, operator, TUI/WebGUI, and the `acc-pkg` package toolchain. |
 | [`flg77/acc-ecosystem`](https://github.com/flg77/acc-ecosystem) | Public package registry serving the `@acc/*` family packs — discover roles, and publish your own. |
 | [`flg77/acc-podman-desktop`](https://github.com/flg77/acc-podman-desktop) | Podman Desktop extension — bring up and govern an ACC collective from the desktop, alongside Podman AI Lab. |
+| [`flg77/acc-web-project`](https://github.com/flg77/acc-web-project) | The project website — intro, operations guide, the `/roles` marketplace, and the roadmap (links to this runtime). |
 
 See [**Role & Package Ecosystem**](#role--package-ecosystem) for how they fit together.
 
