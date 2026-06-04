@@ -106,6 +106,32 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     install_p.set_defaults(func=_cmd_pkg_install)
 
+    # Stage 1.6b — direct install entry point used by the operator
+    # reconciler.  Takes a single ``@scope/name@constraint`` spec and
+    # invokes fetch_and_install directly, no collective.yaml in the
+    # loop.  The output JSON shape matches `pkg-install` so the
+    # operator can reuse the same parser.
+    direct_p = root_sub.add_parser(
+        "pkg-install-direct",
+        help="Install one @scope/name@constraint without a "
+             "collective.yaml; used by the operator reconciler.",
+    )
+    direct_p.add_argument("package_spec",
+                          help="@scope/name@constraint, e.g. @acc/coding-roles@^1.2")
+    direct_p.add_argument(
+        "--allow-unsigned", action="store_true",
+        help="Operator-explicit bypass of the signing floor (audit-logged).",
+    )
+    direct_p.add_argument(
+        "--catalog",
+        help="Optional catalog id to pin resolution to a single catalog.",
+    )
+    direct_p.add_argument(
+        "--json", action="store_true",
+        help="Emit JSON results (always on for reconciler use).",
+    )
+    direct_p.set_defaults(func=_cmd_pkg_install_direct)
+
 
 # ---------------------------------------------------------------------------
 # Subcommand handlers
@@ -235,6 +261,58 @@ def _cmd_pkg_install(args: argparse.Namespace) -> int:
         "installed": results,
         "failed": failures,
     }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        for r in results:
+            print(f"  installed {r['installed']} -> {r['install_path']}")
+        for f in failures:
+            print(f"  FAILED   {f['spec']}: {f['error']}", file=sys.stderr)
+    return 0 if not failures else 3
+
+
+def _cmd_pkg_install_direct(args: argparse.Namespace) -> int:
+    """Stage 1.6b — direct single-package install for the operator
+    reconciler.
+
+    Output shape matches ``pkg-install`` so the operator's JSON parser
+    can reuse one struct.
+    """
+    try:
+        from acc.collective import parse_required_package  # noqa: PLC0415
+        from acc.pkg.fetch import FetchError, fetch_and_install  # noqa: PLC0415
+    except ImportError as exc:
+        print(
+            f"acc-cli collective pkg-install-direct: acc.pkg unavailable ({exc})",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        name, constraint = parse_required_package(args.package_spec)
+    except ValueError as exc:
+        print(f"acc-cli collective pkg-install-direct: {exc}", file=sys.stderr)
+        return 1
+
+    results: list[dict] = []
+    failures: list[dict] = []
+    try:
+        res = fetch_and_install(
+            name, constraint,
+            allow_unsigned=args.allow_unsigned,
+        )
+        results.append({
+            "spec": args.package_spec,
+            "installed": f"{res.install.entry.name}@{res.install.entry.version}",
+            "install_path": str(res.install.install_path),
+            "was_already_installed": res.install.was_already_installed,
+        })
+    except FetchError as exc:
+        failures.append({"spec": args.package_spec, "error": str(exc)})
+    except Exception as exc:  # noqa: BLE001
+        failures.append({"spec": args.package_spec, "error": f"{type(exc).__name__}: {exc}"})
+
+    payload = {"installed": results, "failed": failures}
     if args.json:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
