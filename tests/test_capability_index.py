@@ -25,6 +25,15 @@ from acc.capability_index import (
 )
 
 
+# Isolate this file from the session-scoped @acc/* family-pack install
+# in tests/conftest.py — the synthetic fixture tree uses real packaged
+# role names (coding_agent, analyst) that would otherwise be shadowed
+# by the installed-package version.
+@pytest.fixture(autouse=True)
+def _empty_packages_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACC_PACKAGES_ROOT", str(tmp_path / "no-packages"))
+
+
 # ---------------------------------------------------------------------------
 # Fixture — minimal roles/ + mcps/ tree
 # ---------------------------------------------------------------------------

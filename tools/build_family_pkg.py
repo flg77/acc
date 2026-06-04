@@ -206,16 +206,18 @@ def _assemble(
     mcps_manifest: list[dict] = []
 
     for role_name in family.roles:
-        # Role file
-        role_src = repo_root / "roles" / role_name / "role.yaml"
+        # Role directory — copy the whole tree so siblings of role.yaml
+        # (role.md, eval_rubric.yaml, system_prompt.md, ...) travel with
+        # the role.  Stage 2 cutover removed roles/<name>/ from the
+        # in-tree dir; the package is now the sole source of truth.
+        role_src_dir = repo_root / "roles" / role_name
+        role_src = role_src_dir / "role.yaml"
         if not role_src.is_file():
             raise SystemExit(
                 f"error: role {role_name!r} not found at {role_src} — "
                 "family manifest is out of sync with the roles/ tree"
             )
-        role_dst = build_tree / "roles" / role_name / "role.yaml"
-        role_dst.parent.mkdir(parents=True)
-        role_dst.write_bytes(role_src.read_bytes())
+        _copy_tree(role_src_dir, build_tree / "roles" / role_name)
         roles_manifest.append({
             "name": role_name,
             "path": f"roles/{role_name}/role.yaml",

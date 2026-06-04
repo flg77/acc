@@ -49,8 +49,15 @@ def coding_role():
 @pytest.fixture(scope="module")
 def coding_rubric() -> dict:
     """Raw eval_rubric.yaml as a dict — bypasses any pydantic gating
-    so weight-sum tests assert on the operator-edited source of truth."""
-    rubric_path = _ROLES_ROOT / "coding_agent" / "eval_rubric.yaml"
+    so weight-sum tests assert on the operator-edited source of truth.
+
+    Stage 2 cutover: rubric lives in @acc/workspace-roles pack; resolve
+    via the installed-package source.
+    """
+    from acc.pkg.role_resolution import resolve_role_source
+    src = resolve_role_source("coding_agent")
+    assert src is not None, "no installed package provides coding_agent"
+    rubric_path = src.role_yaml_path.parent / "eval_rubric.yaml"
     return yaml.safe_load(rubric_path.read_text(encoding="utf-8"))
 
 
@@ -161,7 +168,12 @@ def _raw_role_yaml(role_name: str) -> dict:
     these invariants we inspect the YAML source of truth without going
     through the pydantic model.
     """
-    role_path = _ROLES_ROOT / role_name / "role.yaml"
+    # Stage 2 cutover: movable roles live in @acc/* packs.  Resolve
+    # via the installed-package source; fall back to in-tree for
+    # CONTROL roles.
+    from acc.pkg.role_resolution import resolve_role_source
+    src = resolve_role_source(role_name)
+    role_path = src.role_yaml_path if src is not None else _ROLES_ROOT / role_name / "role.yaml"
     if not role_path.is_file():
         return {}
     raw = yaml.safe_load(role_path.read_text(encoding="utf-8")) or {}
@@ -188,12 +200,37 @@ def test_no_other_role_has_can_spawn_sub_collective_set():
     sub-collective spawn gate becomes a back-door capability the
     arbiter's A-010 + Cat-B rules weren't audited for.
     """
+    # Stage 2 cutover: roles live in @acc/* packs; walk every installed
+    # package's roles/ tree and assert coding_agent is still the sole
+    # flag-bearer.  Also check the 7 in-tree CONTROL roles since they
+    # MUST NOT have the flag.
+    import yaml as _yaml
+    from acc.pkg.registry import Registry
     from acc.role_loader import list_roles
+
     roles_with_flag: list[str] = []
+
+    # In-tree CONTROL roles
     for role_name in list_roles(_ROLES_ROOT):
-        if _raw_role_yaml(role_name).get("can_spawn_sub_collective") is True:
+        rd = _raw_role_yaml(role_name)
+        if rd.get("can_spawn_sub_collective") is True:
             roles_with_flag.append(role_name)
-    assert roles_with_flag == ["coding_agent"], (
+
+    # Installed packages
+    for entry in Registry().list():
+        pkg_roles_dir = Path(entry.install_path) / "roles"
+        if not pkg_roles_dir.is_dir():
+            continue
+        for role_dir in pkg_roles_dir.iterdir():
+            role_yaml = role_dir / "role.yaml"
+            if not role_yaml.is_file():
+                continue
+            data = _yaml.safe_load(role_yaml.read_text(encoding="utf-8")) or {}
+            rd = (data.get("role_definition") or {})
+            if rd.get("can_spawn_sub_collective") is True:
+                roles_with_flag.append(role_dir.name)
+
+    assert sorted(set(roles_with_flag)) == ["coding_agent"], (
         f"unexpected roles can spawn sub-collectives: {roles_with_flag}"
     )
 

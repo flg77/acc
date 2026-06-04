@@ -332,6 +332,9 @@ def test_main_cli_version_override(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="Stage 2 cutover removed roles/coding_agent/ in-tree; "
+                  "pilot single-role builder superseded by family-pack builder "
+                  "(tools/build_family_pkg.py).")
 def test_real_coding_agent_smoke():
     """Live test: build the real coding_agent pilot pack against the
     actual repo's roles/skills/mcps tree.  Confirms the script works

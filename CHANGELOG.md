@@ -11,6 +11,34 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased] — 0.3.1-dev cycle
 
+### Removed
+
+- **The 43 movable roles have been extracted from `roles/` to four
+  published packages (Stage 2 cutover).**  The dual-source
+  `RoleLoader` now resolves them from the installed-package path —
+  add `required_packages:` to your `collective.yaml` before
+  upgrading:
+
+  ```yaml
+  required_packages:
+    - "@acc/workspace-roles@^1.0"   # coding_agent + variants, analyst, synthesizer
+    - "@acc/research-roles@^1.0"    # research_planner, research_critic, ...
+    - "@acc/business-roles@^1.0"    # 25 business roles
+    - "@acc/devops-roles@^1.0"      # data_engineer, ml_engineer, ...
+  ```
+
+  Packages are signed (Sigstore keyless OIDC) and served from
+  `https://flg77.github.io/acc-ecosystem`.  The 7 CONTROL roles
+  (arbiter, assistant, compliance_officer, ingester, observer,
+  orchestrator, reviewer) stay in core — they ARE the substrate.
+
+  Runbook: `docs/CUTOVER-PLAN.md`.  Migration guide:
+  `docs/MIGRATING-FROM-INTREE.md`.  The deprecation warning that
+  surfaced in the preceding release is gone — the in-tree dir no
+  longer exists for movable roles, so the warning code path is
+  removed too.
+
+
 ### Added
 
 - **acc-webgui — optional FastAPI + React web frontend (proposal acc-webgui).**

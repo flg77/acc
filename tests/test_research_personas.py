@@ -69,7 +69,12 @@ def mcp_registry() -> MCPRegistry:
 
 @pytest.mark.parametrize("persona", _PERSONAS)
 def test_persona_role_md_lints_clean(persona: str):
-    md_path = _ROLES_ROOT / persona / "role.md"
+    # Stage 2 cutover: role.md travels inside the @acc/research-roles
+    # pack; resolve via the installed-package source.
+    from acc.pkg.role_resolution import resolve_role_source
+    src = resolve_role_source(persona)
+    assert src is not None, f"{persona}: no installed package found"
+    md_path = src.role_yaml_path.parent / "role.md"
     assert md_path.is_file(), f"{md_path} missing"
     issues = lint_markdown(md_path.read_text(encoding="utf-8"))
     assert not issues, f"{persona} lint issues: {issues}"
@@ -221,7 +226,12 @@ def test_low_risk_personas_do_not_reach_browser_harness():
 
 @pytest.mark.parametrize("persona", _PERSONAS)
 def test_persona_rubric_weights_sum_to_one(persona: str):
-    rubric_path = _ROLES_ROOT / persona / "eval_rubric.yaml"
+    # Stage 2 cutover: rubrics now travel inside the @acc/research-roles
+    # pack.  Resolve via the installed-package source instead of in-tree.
+    from acc.pkg.role_resolution import resolve_role_source
+    src = resolve_role_source(persona)
+    assert src is not None, f"{persona}: no installed package found"
+    rubric_path = src.role_yaml_path.parent / "eval_rubric.yaml"
     data = yaml.safe_load(rubric_path.read_text(encoding="utf-8"))
     weights = [c["weight"] for c in data["criteria"].values()]
     total = sum(weights)
@@ -235,7 +245,12 @@ def test_persona_rubric_security_at_least_ten_percent(persona: str):
     """Mirrors the invariant pinned in tests/test_coding_agent_personas.py
     — every research-family role allocates ≥ 10% of its rubric to
     security."""
-    rubric_path = _ROLES_ROOT / persona / "eval_rubric.yaml"
+    # Stage 2 cutover: rubrics now travel inside the @acc/research-roles
+    # pack.  Resolve via the installed-package source instead of in-tree.
+    from acc.pkg.role_resolution import resolve_role_source
+    src = resolve_role_source(persona)
+    assert src is not None, f"{persona}: no installed package found"
+    rubric_path = src.role_yaml_path.parent / "eval_rubric.yaml"
     data = yaml.safe_load(rubric_path.read_text(encoding="utf-8"))
     sec = data["criteria"].get("security", {}).get("weight", 0.0)
     assert sec >= 0.10, (
