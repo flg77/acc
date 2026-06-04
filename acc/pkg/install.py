@@ -108,6 +108,17 @@ def _read_manifest_from_tar(tar: tarfile.TarFile) -> tuple[AccPkgManifest, tarfi
     return AccPkgManifest.model_validate(raw), first
 
 
+def read_manifest(pkg_path: Path) -> AccPkgManifest:
+    """Read + validate the manifest of a built ``.accpkg`` without installing.
+
+    Used by the catalog-aware fetch layer to inspect ``depends_on``
+    before installing (transitive dependency resolution).
+    """
+    with gzip.open(pkg_path, "rb") as gz, tarfile.open(fileobj=gz, mode="r|") as tar:
+        manifest, _ = _read_manifest_from_tar(tar)
+    return manifest
+
+
 def _split_scope_name(name: str) -> tuple[str, str]:
     """``@scope/name`` → ``("scope", "name")``."""
     assert name.startswith("@") and "/" in name, name

@@ -454,7 +454,10 @@ async def _dispatch_infuse(signaling, cid: str, p: AssistantProposal) -> bool:
     the cosign / EC / dep error and return False (caller may retry
     or surface the error in the Compliance pane).
     """
-    from acc.pkg.fetch import FetchError, fetch_and_install  # noqa: PLC0415
+    from acc.pkg.fetch import (  # noqa: PLC0415
+        FetchError,
+        fetch_and_install_closure,
+    )
     from acc.signals import subject_assistant_proposal  # noqa: PLC0415
 
     name = p.params.get("name", "").strip()
@@ -467,7 +470,7 @@ async def _dispatch_infuse(signaling, cid: str, p: AssistantProposal) -> bool:
         return False
 
     try:
-        result = fetch_and_install(name, constraint)
+        result = fetch_and_install_closure(name, constraint)
     except FetchError as exc:
         logger.warning(
             "assistant_proposal: infuse %s@%s failed: %s",

@@ -245,7 +245,7 @@ def test_pkg_install_allow_unsigned_passes_through(catalog_env, tmp_path, monkey
         from acc.pkg.fetch import FetchError
         raise FetchError("test-stub")
 
-    with patch("acc.pkg.fetch.fetch_and_install", side_effect=fake_fetch):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", side_effect=fake_fetch):
         spec_path = _make_spec_file(catalog_env, ["@acc/x@1.0.0"])
         _run_cli([
             "collective", "pkg-install", str(spec_path),
