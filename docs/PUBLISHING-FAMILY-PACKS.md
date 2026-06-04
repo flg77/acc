@@ -1,8 +1,21 @@
 # Publishing the family packs to `flg77/acc-ecosystem`
 
-Operator runbook for promoting the four family packages from the
-ACC repo into the public `acc-ecosystem` repo.  Run this once per
-ACC release that bumps a family-pack version.
+Operator runbook for promoting the role packages into the public
+`acc-ecosystem` repo.  Run this once per release that bumps a pack
+version.
+
+> **Source of truth.** The editable role sources + family manifests
+> live in the **private** `flg77/acc-ecosystem-spearhead` repo (mirrors
+> the `acc-spearhead` → `flg77/acc` model). Build there; only the built
+> `.accpkg` artifacts flow to the public registry.
+
+> **The corporate split.** `@acc/business-roles` is no longer a single
+> 25-role monolith — it is seven per-domain packs (`@acc/hr-roles`,
+> `@acc/finance-roles`, `@acc/sales-roles`, `@acc/marketing-roles`,
+> `@acc/legal-roles`, `@acc/support-roles`, `@acc/operations-roles`)
+> plus the `@acc/business-roles@2.0.0` **umbrella** meta-pack that
+> `depends_on` all seven. **Keep the frozen `@acc/business-roles@1.0.x`
+> monolith published** so existing `^1.0` pins keep resolving.
 
 ## Prerequisites (one-time)
 
@@ -15,27 +28,40 @@ ACC release that bumps a family-pack version.
     `tools/cosign-pilot-keygen.sh` (Stage 0 pilot path)
 * `gh` CLI authenticated against `flg77/acc-ecosystem`
 
-## Step 1 — Build all four packs locally
+## Step 1 — Build the packs locally
+
+The corporate domain packs + umbrella build from the
+`acc-ecosystem-spearhead` checkout (`acc` must be importable — `pip
+install -e ../agentic-cell-corpus` or set `PYTHONPATH`):
 
 ```bash
-cd <acc-repo-root>
-mkdir -p dist/
-for fam in workspace research business devops; do
-  python tools/build_family_pkg.py "$fam"
-done
-ls dist/acc-*-roles-*.accpkg
+cd <acc-ecosystem-spearhead>
+./sync-sources.sh ../agentic-cell-corpus      # refresh vendored inputs
+PYTHONPATH=../agentic-cell-corpus ./build-all.sh
+ls dist/*.accpkg
 ```
 
 Expected output:
 
 ```
-dist/acc-business-roles-1.0.0.accpkg     (25 roles)
-dist/acc-devops-roles-1.0.0.accpkg       (4 roles)
-dist/acc-research-roles-1.0.0.accpkg     (6 roles)
-dist/acc-workspace-roles-1.0.0.accpkg    (8 roles)
+dist/acc-hr-roles-1.0.0.accpkg           (3 roles)
+dist/acc-finance-roles-1.0.0.accpkg      (3 roles)
+dist/acc-sales-roles-1.0.0.accpkg        (6 roles)
+dist/acc-marketing-roles-1.0.0.accpkg    (5 roles)
+dist/acc-legal-roles-1.0.0.accpkg        (2 roles)
+dist/acc-support-roles-1.0.0.accpkg      (3 roles)
+dist/acc-operations-roles-1.0.0.accpkg   (7 roles)
+dist/business-roles-2.0.0.accpkg         (umbrella → depends_on the 7)
 ```
 
 Each is **byte-deterministic** — rebuilding produces identical bytes.
+The foundational families (`workspace`, `research`, `devops`) build the
+same way from their own manifests. **Do not rebuild
+`@acc/business-roles@1.0.x`** — the frozen monolith stays as published.
+
+> When staging into the registry, drop the `acc-` filename prefix so the
+> file-mode/HTTPS catalog parses the scope correctly, e.g.
+> `dist/acc-sales-roles-1.0.0.accpkg` → `packages/acc/sales-roles-1.0.0.accpkg`.
 
 ## Step 2 — Verify shapes
 

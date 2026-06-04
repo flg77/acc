@@ -18,8 +18,14 @@ catalogs:
   # extracted from this repo's roles/ tree in Stage 2:
   #   @acc/workspace-roles  (coding_agent + variants + analyst + synthesizer)
   #   @acc/research-roles   (research_*)
-  #   @acc/business-roles   (HR + sales + marketing + ops + finance + legal)
   #   @acc/devops-roles     (data / devops / ml / security engineers)
+  # plus the corporate domain packs (former @acc/business-roles monolith,
+  # split per knowledge domain):
+  #   @acc/hr-roles · @acc/finance-roles · @acc/sales-roles ·
+  #   @acc/marketing-roles · @acc/legal-roles · @acc/support-roles ·
+  #   @acc/operations-roles
+  #   @acc/business-roles@^2.0  (umbrella → depends_on all seven;
+  #     @acc/business-roles@^1.0 still resolves the frozen 25-role monolith)
   #
   # The repo is `flg77/acc-ecosystem` (created by operator in Stage 2.1).
   # Until the public `acc-roles.dev` hub goes live (Stage 2.3 DNS

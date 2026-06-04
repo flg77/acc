@@ -235,14 +235,15 @@ install only the roles you need and can publish your own.
 
 **The registry — [`flg77/acc-ecosystem`](https://github.com/flg77/acc-ecosystem)**
 
-The canonical registry serves four `@acc/*` family packs:
+The canonical registry serves the `@acc/*` role packs:
 
 | Pack | Roles |
 |---|---|
 | `@acc/workspace-roles` | coding-agent + 5 variants, analyst, synthesizer (8) |
 | `@acc/research-roles` | research planner, critic, strategist, economist, … (6) |
-| `@acc/business-roles` | HR, sales, marketing, finance, legal, ops, IT, support (25) |
 | `@acc/devops-roles` | data, devops, ML, and security engineers (4) |
+| `@acc/hr-roles` · `@acc/finance-roles` · `@acc/sales-roles` · `@acc/marketing-roles` · `@acc/legal-roles` · `@acc/support-roles` · `@acc/operations-roles` | the corporate domains — the former `@acc/business-roles` monolith, split so you install only what you need (29 roles total) |
+| `@acc/business-roles@^2.0` | **umbrella** — `depends_on` all seven corporate packs; one entry installs the whole suite (`@acc/business-roles@^1.0` still resolves the frozen 25-role monolith) |
 
 Point a catalog at it:
 
@@ -559,7 +560,7 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 | [`docs/howto-role-infusion.md`](docs/howto-role-infusion.md) | Role definition schema, 4-tier load order, ROLE_UPDATE hot-reload, Ed25519 signing |
 | [`docs/CONTRIBUTING-ROLE.md`](docs/CONTRIBUTING-ROLE.md) | Publish your own role package: `acc-pkg init` → evals → keyless cosign → publish; package layout, tiers |
 | [`docs/MIGRATING-FROM-INTREE.md`](docs/MIGRATING-FROM-INTREE.md) | Moving from in-tree roles to `@acc/*` packages: `required_packages:`, the dual-source loader, the deprecation cycle |
-| [`docs/PUBLISHING-FAMILY-PACKS.md`](docs/PUBLISHING-FAMILY-PACKS.md) | Operator runbook: build, sign, and publish the four family packs to `acc-ecosystem` |
+| [`docs/PUBLISHING-FAMILY-PACKS.md`](docs/PUBLISHING-FAMILY-PACKS.md) | Operator runbook: build, sign, and publish the role packs (incl. the 7 corporate domain packs + umbrella) to `acc-ecosystem` |
 | [`docs/howto-tui.md`](docs/howto-tui.md) | Terminal UI: dashboard screen, infuse screen, container deployment, keyboard shortcuts |
 | [`docs/webgui.md`](docs/webgui.md) | acc-webgui — the optional FastAPI + React web frontend: architecture, auth tiers, per-mode deployment, the tracing views, the TUI-parity screens |
 | [`docs/compliance_governance.md`](docs/compliance_governance.md) | Category A/B/C governance inventory, regulatory frameworks + gap analysis, arbiter rule proposals + the learn-from-violations loop |
