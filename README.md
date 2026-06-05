@@ -219,6 +219,10 @@ roles** — coding-agent variants, research, business, and DevOps personas — n
 ship as signed, versioned **role packages** from a public registry, so you
 install only the roles you need and can publish your own.
 
+> **End-to-end walkthrough:** [`docs/howto-build-deploy-infuse.md`](docs/howto-build-deploy-infuse.md)
+> covers the whole lifecycle (build → publish → deploy → infuse → verify) from
+> the CLI, TUI, and WebGUI.
+
 **How it works**
 
 - **`acc-pkg`** builds, signs, verifies, and installs `.accpkg` bundles — a
@@ -554,6 +558,7 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 
 | Document | Description |
 |----------|-------------|
+| [`docs/howto-build-deploy-infuse.md`](docs/howto-build-deploy-infuse.md) | **Start here** — the full role lifecycle (build → publish → deploy → infuse → verify) across the CLI, TUI, and WebGUI, with a worked connected/keypair-signed deploy |
 | [`docs/howto-standalone.md`](docs/howto-standalone.md) | Podman Compose setup, env vars, Redis auth, Ed25519 keys |
 | [`docs/howto-edge.md`](docs/howto-edge.md) | Edge node setup, NATS leaf topology, bridge delegation, offline operation |
 | [`docs/howto-rhoai.md`](docs/howto-rhoai.md) | OpenShift operator install, CRD reference, GPU inference, KEDA/Gatekeeper/OTel |
