@@ -1,0 +1,10 @@
+name: "@acc/control-roles"
+description: "ACC core CONTROL roles (base layer) — arbiter, assistant, compliance_officer, ingester, observer, orchestrator, reviewer."
+roles:
+  - arbiter
+  - assistant
+  - compliance_officer
+  - ingester
+  - observer
+  - orchestrator
+  - reviewer

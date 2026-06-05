@@ -57,6 +57,11 @@ CONTROL_ROLES: frozenset[str] = frozenset(
     }
 )
 
+# The authoritative base pack that may serve CONTROL/core roles. Under
+# uniform packaging core roles ARE packaged — but only this pack may
+# provide them (anti-shadowing: a community pack cannot override `arbiter`).
+CONTROL_ROLES_PACKAGE = "@acc/control-roles"
+
 
 @dataclass(frozen=True)
 class ResolvedRoleSource:
@@ -81,9 +86,10 @@ def resolve_role_source(
     * ``role_name`` is a CONTROL role (substrate; never packaged)
     * No installed package contains ``roles/<role_name>/role.yaml``
     """
-    if role_name in CONTROL_ROLES:
-        return None
-
+    # Uniform packaging: control/core roles resolve from an installed
+    # package too (e.g. @acc/control-roles). When no installed package
+    # provides the role we return None and the caller falls back to the
+    # in-tree ./roles tree (graceful during migration).
     registry = registry or Registry()
     try:
         installed = registry.list()
@@ -101,6 +107,11 @@ def resolve_role_source(
         )
         if candidate.is_file():
             matches.append((entry, candidate))
+
+    if role_name in CONTROL_ROLES:
+        # Anti-shadowing: a control/core role may ONLY be served by the
+        # authoritative base pack — never an arbitrary (community) pack.
+        matches = [m for m in matches if m[0].name == CONTROL_ROLES_PACKAGE]
 
     if not matches:
         return None
@@ -155,7 +166,8 @@ def list_installed_roles(
         for role_dir in roles_dir.iterdir():
             if not role_dir.is_dir():
                 continue
-            if role_dir.name in CONTROL_ROLES:
+            # Anti-shadowing: only the base pack may serve control roles.
+            if role_dir.name in CONTROL_ROLES and entry.name != CONTROL_ROLES_PACKAGE:
                 continue
             role_yaml = role_dir / "role.yaml"
             if not role_yaml.is_file():
