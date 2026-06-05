@@ -401,6 +401,98 @@ def _cmd_list(args: argparse.Namespace, out: _Output) -> int:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# RPM-like query verbs (capability index over installed packages)
+# ---------------------------------------------------------------------------
+
+
+def _cmd_owner(args: argparse.Namespace, out: _Output) -> int:
+    """``-qf`` — which installed package provides a role/skill/mcp."""
+    from acc.pkg.capability_index import find_owners  # noqa: PLC0415
+
+    owners = find_owners(args.name, kind=args.kind)
+    if not owners:
+        print(
+            f"error: no installed package provides "
+            f"{args.kind or 'capability'} {args.name!r}",
+            file=sys.stderr,
+        )
+        return EXIT_USER_ERROR
+    out.emit([
+        {"name": args.name, "kind": k[:-1], "package": e.name,
+         "version": e.version, "install_path": e.install_path}
+        for e, k in owners
+    ])
+    return EXIT_OK
+
+
+def _cmd_contents(args: argparse.Namespace, out: _Output) -> int:
+    """``-ql`` — list roles/skills/mcps an installed package provides."""
+    from acc.pkg.capability_index import find_package, package_provides  # noqa: PLC0415
+
+    entry = find_package(args.package)
+    if entry is None:
+        print(f"error: not installed: {args.package}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    out.emit({"package": entry.name, "version": entry.version,
+              **package_provides(entry)})
+    return EXIT_OK
+
+
+def _cmd_info(args: argparse.Namespace, out: _Output) -> int:
+    """``-qi`` — package detail (``@scope/name``) or capability ownership."""
+    from acc.pkg.capability_index import (  # noqa: PLC0415
+        find_owners, find_package, package_provides,
+    )
+
+    name = args.name
+    if name.startswith("@") and "/" in name:
+        entry = find_package(name)
+        if entry is None:
+            print(f"error: not installed: {name}", file=sys.stderr)
+            return EXIT_USER_ERROR
+        out.emit({
+            "package": entry.name, "version": entry.version,
+            "install_path": entry.install_path,
+            "installed_at": entry.installed_at,
+            "content_sha256": entry.content_sha256,
+            "provides": package_provides(entry),
+        })
+        return EXIT_OK
+    owners = find_owners(name, kind=args.kind)
+    if not owners:
+        print(f"error: unknown package/capability: {name}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    out.emit([
+        {"name": name, "kind": k[:-1], "package": e.name, "version": e.version}
+        for e, k in owners
+    ])
+    return EXIT_OK
+
+
+def _cmd_verify_installed(args: argparse.Namespace, out: _Output) -> int:
+    """``-V`` — re-check installed content hashes (tamper detection)."""
+    from acc.pkg.capability_index import find_package, verify_installed  # noqa: PLC0415
+
+    reg = Registry()
+    if args.package:
+        entry = find_package(args.package, registry=reg)
+        if entry is None:
+            print(f"error: not installed: {args.package}", file=sys.stderr)
+            return EXIT_USER_ERROR
+        entries = [entry]
+    else:
+        entries = reg.list()
+    rows = []
+    bad = False
+    for e in entries:
+        ok, detail = verify_installed(e)
+        bad = bad or not ok
+        rows.append({"package": e.name, "version": e.version, "ok": ok, "detail": detail})
+    out.emit(rows)
+    return EXIT_OK if not bad else EXIT_HASH_MISMATCH
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="acc-pkg",
@@ -471,6 +563,29 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="list packages available from configured catalogs")
     l.add_argument("--name", help="filter --available by scoped name")
     l.add_argument("--workspace", help="workspace dir whose .acc/catalogs.yaml to include")
+
+    # owner (rpm -qf): which installed package provides a capability
+    o = sub.add_parser("owner", aliases=["qf"],
+                       help="which installed package provides a role/skill/mcp")
+    o.add_argument("name")
+    o.add_argument("--kind", choices=["role", "skill", "mcp"], default=None)
+
+    # contents (rpm -ql): what an installed package provides
+    c = sub.add_parser("contents", aliases=["ql"],
+                       help="list roles/skills/mcps an installed package provides")
+    c.add_argument("package", help="@scope/name")
+
+    # info (rpm -qi): package detail or capability ownership
+    inf = sub.add_parser("info", aliases=["qi"],
+                         help="package detail (@scope/name) or capability ownership")
+    inf.add_argument("name", help="@scope/name OR a role/skill/mcp name")
+    inf.add_argument("--kind", choices=["role", "skill", "mcp"], default=None)
+
+    # verify-installed (rpm -V): re-check on-disk content hashes
+    vi = sub.add_parser("verify-installed", aliases=["qv"],
+                        help="re-check installed content hashes (tamper detection)")
+    vi.add_argument("package", nargs="?", default=None,
+                    help="@scope/name (default: all installed)")
 
     return p
 
@@ -569,6 +684,10 @@ _HANDLERS = {
     "verify": _cmd_verify,
     "inspect": _cmd_inspect,
     "list": _cmd_list,
+    "owner": _cmd_owner, "qf": _cmd_owner,
+    "contents": _cmd_contents, "ql": _cmd_contents,
+    "info": _cmd_info, "qi": _cmd_info,
+    "verify-installed": _cmd_verify_installed, "qv": _cmd_verify_installed,
     "eval": _cmd_eval,
     "login": _cmd_login,
     "publish": _cmd_publish,
