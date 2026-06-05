@@ -191,6 +191,52 @@ The current dispatcher does NOT pause on `needs_oversight`; it logs
 the request at INFO and proceeds.  A future PR will add a blocking
 mode for CRITICAL invocations.
 
+## Discovery, packaging tiers & scoping
+
+**Where skills come from.** The registry discovers skills from two
+sources (dual-source loader):
+
+1. **In-tree** `./skills/<skill_id>/` in this repo — core only
+   (the `core_baseline` skills).
+2. **Installed packages** under `ACC_PACKAGES_ROOT` (default
+   `/var/lib/acc/packages`): each `.accpkg` extracts to
+   `<scope>/<name>-<version>/` carrying its **own** `skills/<skill_id>/`
+   subtree. They do **not** merge into this repo's `./skills`.
+
+Discovery is **flat and one level per source** (`*/skill.yaml`) — it is
+**not recursive**. So skill IDs are global/flat (`compute_ratios`), and
+there is no `skills/<agentset>/<skill>` nesting; the package boundary is
+the grouping (`…/capital-markets-roles-0.1.0/skills/compute_ratios/`). On
+an id collision in-tree wins; across packages the newer version wins.
+(MCPs follow the identical model under `mcps/` — see
+[`docs/howto-mcp.md`](howto-mcp.md).)
+
+**Tiers — role-specific vs broadly-used** (`tools/skill_mcp_tiers.yaml`,
+computed by `tools/classify_skills_mcps.py` from `used_by`):
+
+| Tier | Used by | Ships in |
+|------|---------|----------|
+| `core_baseline` | universal + low-risk | ACC core (in-tree); never packaged |
+| `bundle_in_role` | exactly **one** movable role | that role's pack |
+| `own_pack` | **2+** movable roles | its own shared `@acc/skills-*` pack (role packs `depends_on`) |
+
+Make a one-role helper `bundle_in_role`; promote to `own_pack` when a
+second role adopts it; reserve `core_baseline` for truly universal,
+low-risk skills.
+
+**Scoping by risk (least privilege).** Read-only/idempotent skills can be
+broad; side-effecting/execution skills must be role-gated:
+
+- The `os_basics: true` flag auto-grants a **read-only OS-navigation**
+  suite (`ls_dir, stat_path, read_text_head/tail, grep_text, find_files,
+  which_cmd, env_get, pwd, disk_free`); `git_status/git_log_recent` only
+  for code domains. Safe to adopt broadly.
+- **Execution** skills (`shell_exec`, `ssh_exec`) are `core_baseline` but
+  **not** in `os_basics`. A role only gets them by *explicitly* adding
+  them to `allowed_skills` **and** raising `max_skill_risk_level` — A-017
+  rejects otherwise. Keep these to coding / engineering / devops roles;
+  don't grant them to business / FSI / research roles.
+
 ## Troubleshooting
 
 | Symptom | Likely cause |
