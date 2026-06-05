@@ -99,3 +99,17 @@
 - [ ] Compliance pane finance sub-tab.
 - [ ] Backtest reproducibility framework: seed + data snapshot
       hash baked into every quant_researcher run.
+
+## Phase 6 (deferred) — prescriptive optimization (cuOpt)
+- [ ] `mcps/cuopt/` — `@acc/mcp-cuopt` manifest (`own_pack`, MEDIUM
+      risk) over an external cuOpt REST/NIM endpoint; tools
+      `solve_lp`, `solve_milp`. rhoai/GPU-gated in config.
+- [ ] Skills: `cvar_optimise` (LP), `cardinality_rebalance` (MILP),
+      `liability_match` (LP/MILP), `scenario_optimise` (LP).
+- [ ] Turn `optimise_weights` into a router (cuOpt → scipy fallback).
+- [ ] Edge→hub delegation path: `[DELEGATE:dc-hub:cuopt …]` over the
+      ACC-9 bridge; JetStream-queued when offline.
+- [ ] Reproducibility: solver-input hash on every `ALLOCATE`.
+- [ ] Tests: LP/MILP spec round-trip (mocked solver), router fallback,
+      deploy-mode gating, delegation marker parse.
+- [ ] Cross-ref: `20260604-business-roles-domain-split/design-cuopt.md`.
