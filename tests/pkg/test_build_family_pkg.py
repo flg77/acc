@@ -215,24 +215,17 @@ def test_unknown_family_key_refused(synthetic_repo, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Default-family manifests — schema sanity
+# Post-cutover: families are defined in the spearhead, not here
 # ---------------------------------------------------------------------------
 
 
-def test_default_families_cover_expected_keys():
-    assert set(bf.DEFAULT_FAMILIES) == {
-        "workspace", "research", "business", "devops",
-    }
+def test_default_families_is_empty_post_cutover():
+    # The movable-role sources + canonical family manifests live in
+    # flg77/acc-ecosystem-spearhead now, not this repo.
+    assert bf.DEFAULT_FAMILIES == {}
 
 
-def test_default_families_each_have_roles():
-    for key, family in bf.DEFAULT_FAMILIES.items():
-        assert family.name.startswith("@acc/")
-        assert family.name.endswith("-roles")
-        assert len(family.roles) > 0
-
-
-def test_default_workspace_family_covers_coding_agent_set():
-    workspace = bf.DEFAULT_FAMILIES["workspace"]
-    coding = [r for r in workspace.roles if r.startswith("coding_agent")]
-    assert len(coding) >= 6  # base + 5 variants
+def test_cli_requires_manifest_without_a_family():
+    # With DEFAULT_FAMILIES empty, the builder must be driven by --manifest.
+    with pytest.raises(SystemExit):
+        bf.main([])

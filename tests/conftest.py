@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
-import sys
 from pathlib import Path
 from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -30,10 +28,15 @@ def event_loop():
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 cutover — install the four @acc/* family packs into a
-# session-scoped ACC_PACKAGES_ROOT so RoleLoader's dual-source resolver
-# finds the 43 movable roles after they were removed from the in-tree
-# roles/ dir.  See docs/CUTOVER-PLAN.md.
+# Stage 2 cutover — install the @acc/* family packs into a session-scoped
+# ACC_PACKAGES_ROOT so the dual-source loaders resolve the movable roles
+# after they were removed from the in-tree roles/ dir.
+#
+# The movable-role SOURCES + the canonical family build now live in the
+# private flg77/acc-ecosystem-spearhead repo, so this repo can no longer
+# *build* them.  We install committed snapshots from tests/fixtures/packs/
+# instead — hermetic on a fresh clone (no build, no network).  See that
+# directory's README for provenance + how to refresh.
 #
 # Tests that need a clean (empty) package root can override with
 # monkeypatch.setenv("ACC_PACKAGES_ROOT", str(tmp_path)) — pytest
@@ -42,7 +45,7 @@ def event_loop():
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_DIST_DIR = _REPO_ROOT / "dist"
+_FIXTURE_PACKS_DIR = _REPO_ROOT / "tests" / "fixtures" / "packs"
 _FAMILY_PACKS = (
     "acc-workspace-roles-1.0.0.accpkg",
     "acc-research-roles-1.0.0.accpkg",
@@ -51,48 +54,23 @@ _FAMILY_PACKS = (
 )
 
 
-def _build_family_packs_if_missing() -> None:
-    """Build the 4 packs into dist/ when any are missing.
-
-    Triggered the first time the session fixture runs after a fresh
-    clone (CI, contributor checkout).  In daily local dev the packs
-    are already in dist/ from the Stage 2 build, so this is a no-op.
-    """
-    _DIST_DIR.mkdir(parents=True, exist_ok=True)
-    missing = [p for p in _FAMILY_PACKS if not (_DIST_DIR / p).is_file()]
-    if not missing:
-        return
-    build_script = _REPO_ROOT / "tools" / "build_family_pkg.py"
-    for fam in ("workspace", "research", "business", "devops"):
-        subprocess.run(
-            [sys.executable, str(build_script), fam],
-            check=True,
-            cwd=str(_REPO_ROOT),
-        )
-
-
 @pytest.fixture(scope="session", autouse=True)
 def installed_family_packs(tmp_path_factory):
-    """Install the four @acc/* family packs into a session-scoped
-    ACC_PACKAGES_ROOT so RoleLoader resolves movable roles from the
-    installed package path.
+    """Install the committed @acc/* family-pack fixtures into a
+    session-scoped ACC_PACKAGES_ROOT so loaders resolve movable roles
+    from the installed package path.
 
     Autouse: most tests load real packaged roles (coding_agent,
     research_planner, data_engineer ...) which now live only in the
     packages.  Tests that synthesise roles under tmp_path must use a
-    name that does NOT collide with the 43 packaged role names
+    name that does NOT collide with the packaged role names
     (e.g. ``synthetic_test_role``) OR monkeypatch ``ACC_PACKAGES_ROOT``
     to a fresh empty ``tmp_path``.
-
-    Tests that want a guaranteed-empty registry should monkeypatch
-    ``ACC_PACKAGES_ROOT`` to a fresh ``tmp_path``.
     """
     # acc.pkg.install lives only when the package format ships; defer
     # the import so this conftest stays importable on partial checkouts.
     from acc.pkg.install import install as _install
     from acc.pkg.registry import Registry
-
-    _build_family_packs_if_missing()
 
     install_root = tmp_path_factory.mktemp("acc-packages-session")
     prior = os.environ.get("ACC_PACKAGES_ROOT")
@@ -100,7 +78,7 @@ def installed_family_packs(tmp_path_factory):
     try:
         registry = Registry(root=install_root)
         for fname in _FAMILY_PACKS:
-            pkg = _DIST_DIR / fname
+            pkg = _FIXTURE_PACKS_DIR / fname
             if pkg.is_file():
                 _install(pkg, registry=registry)
         yield install_root
