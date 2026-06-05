@@ -53,6 +53,13 @@ volumes:
   # uid-1001 TUI can write them.
   acc-frameworks-data:
   acc-compliance-data:
+  # Role-split (Stage 2): shared install-root for packaged roles/skills/MCPs
+  # (@acc/workspace-roles etc.).  ACC_PACKAGES_ROOT defaults to
+  # /var/lib/acc/packages, so mounting the volume there needs no env override.
+  # Populated by the boot-time fetch (`acc-cli collective pkg-install`); the
+  # dual-source RoleLoader resolves installed roles from here, in-tree roles
+  # (the 7 control roles) otherwise.
+  acc-packages:
 
 services:
 
@@ -155,6 +162,7 @@ services:
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
@@ -189,6 +197,7 @@ services:
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
@@ -223,6 +232,7 @@ services:
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
@@ -262,6 +272,7 @@ services:
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
       - ../../roles:/app/roles:ro,z
@@ -301,6 +312,7 @@ services:
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
       - ../../roles:/app/roles:ro,z
@@ -339,6 +351,7 @@ services:
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
       - ../../roles:/app/roles:ro,z
       - ../../regulatory_layer:/app/regulatory_layer:ro
@@ -386,6 +399,7 @@ services:
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
@@ -423,6 +437,7 @@ services:
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
@@ -460,6 +475,7 @@ services:
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
