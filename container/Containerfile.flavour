@@ -1,0 +1,58 @@
+# ACC flavour image — multi-stage (builder → stripped runtime).
+#
+# Implements the flavoured-deployment decisions:
+#   D1  full governance always — bakes @acc/control-roles (all 7 control roles).
+#   D2  two images — this is the RUNTIME flavour; the builder stage carries the
+#       full toolchain, the final stage is stripped to "just the running piece".
+#   D-rt packs install-frozen; no dev/build tooling in the runtime layer.
+#
+# Build (CI / acc-deploy.sh flavour|new-stack):
+#   podman build -f container/Containerfile.flavour \
+#     --build-arg PACKS="@acc/capital-markets-roles@^0.1" \
+#     -t quay.io/flg77/acc-fsi:dev .
+#
+# PACKS="" -> the plain base runtime (control roles only).
+# Air-gap: COPY a file: catalog into the builder + a .acc/catalogs.yaml that
+# points at it, and set ACC_ALLOW_UNSIGNED / a pinned key per D3.
+
+ARG PYBASE=registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+# ── Stage 1 — builder: full toolchain, bake control-roles + chosen packs ──────
+FROM ${PYBASE} AS builder
+ARG ACC_VERSION=0.3.0
+ARG PACKS=""
+USER 0
+RUN microdnf install -y --nodocs gcc python3-devel \
+ && microdnf clean all && rm -rf /var/cache/dnf
+
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+COPY acc/ /app/acc/
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir .
+
+ENV ACC_PACKAGES_ROOT=/var/lib/acc/packages
+# D1: full governance is non-negotiable — always baked.
+# (control-roles + the chosen PACKS resolved from the configured catalog;
+#  CI wires the catalog/keys. ACC_ALLOW_UNSIGNED only for self-built test packs.)
+RUN acc-pkg install @acc/control-roles@^1.0 ${PACKS} \
+ && acc-pkg -qa            # bake an SBOM line into the build log
+
+# ── Stage 2 — runtime: stripped, packs frozen (D-rt) ──────────────────────────
+FROM ${PYBASE} AS runtime
+ARG ACC_VERSION=0.3.0
+LABEL org.opencontainers.image.title="acc-flavour" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
+USER 0
+# The installed Python env (incl. the acc-pkg query verbs) + the agent runtime.
+COPY --from=builder /opt/app-root /opt/app-root
+COPY --from=builder /app/acc /app/acc
+COPY --from=builder /var/lib/acc/packages /var/lib/acc/packages   # install-frozen
+COPY regulatory_layer/ /app/regulatory_layer/
+# NOTE: tools/ (build_family_pkg, scaffold, classifiers), tests/, and dev deps
+# are deliberately NOT copied — runtime keeps only `acc-pkg` query/install verbs
+# + the agent. (The full toolchain lives in the separate acc-core-builder image.)
+ENV ACC_PACKAGES_ROOT=/var/lib/acc/packages
+WORKDIR /app
+USER 1001
+ENTRYPOINT ["python", "-m", "acc.agent"]
