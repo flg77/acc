@@ -143,17 +143,28 @@ class MCPRegistry:
             knock out the rest.
         """
         root = Path(base_dir) if base_dir is not None else Path(_mcps_root_default())
-        ids = list_mcp_server_ids(root)
+        # Dual-source discovery: scan MCPs bundled in installed packages
+        # (under ACC_PACKAGES_ROOT) THEN the in-tree root, so in-tree /
+        # core-baseline servers stay authoritative on an id collision.
+        # Only when base_dir is None (the default/production path) — an
+        # explicit base_dir means "scan exactly this directory".
+        roots: list[Path] = []
+        if base_dir is None:
+            from acc.pkg.registry import installed_capability_dirs  # noqa: PLC0415
+            roots.extend(installed_capability_dirs("mcps"))
+        roots.append(root)
+
         manifests: dict[str, MCPManifest] = {}
-        for server_id in ids:
-            try:
-                manifests[server_id] = _load_manifest(root, server_id)
-            except MCPManifestError as exc:
-                logger.warning("mcp_registry: %s", exc)
-            except Exception:
-                logger.exception(
-                    "mcp_registry: unexpected failure loading %r", server_id
-                )
+        for scan_root in roots:
+            for server_id in list_mcp_server_ids(scan_root):
+                try:
+                    manifests[server_id] = _load_manifest(scan_root, server_id)
+                except MCPManifestError as exc:
+                    logger.warning("mcp_registry: %s", exc)
+                except Exception:
+                    logger.exception(
+                        "mcp_registry: unexpected failure loading %r", server_id
+                    )
 
         # Replace state, but keep any cached client whose manifest is
         # unchanged so HTTP connections persist across hot-reloads.
