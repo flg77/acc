@@ -84,6 +84,17 @@ def find_package(
     return reg.find(name, version)
 
 
+def find_dependents(name: str, *, registry: Registry | None = None) -> list[RegistryEntry]:
+    """Installed packages whose ``depends_on`` includes ``name`` (rpm --whatrequires)."""
+    reg = registry or Registry()
+    out: list[RegistryEntry] = []
+    for entry in reg.list():
+        m = _manifest_for(entry)
+        if m is not None and any(d.name == name for d in m.depends_on):
+            out.append(entry)
+    return out
+
+
 def verify_installed(entry: RegistryEntry) -> tuple[bool, str]:
     """Recompute the on-disk content-tree hash and compare to the registry.
 
