@@ -72,8 +72,8 @@ class TestDeepMerge:
 
 class TestRoleLoaderAvailable:
     def test_available_when_file_exists(self, tmp_path):
-        write_role(tmp_path, "analyst", {"version": "1.0.0", "purpose": "test"})
-        loader = RoleLoader(roles_root=tmp_path, role_name="analyst")
+        write_role(tmp_path, "synthetic_role", {"version": "1.0.0", "purpose": "test"})
+        loader = RoleLoader(roles_root=tmp_path, role_name="synthetic_role")
         assert loader.available() is True
 
     def test_not_available_when_missing(self, tmp_path):
@@ -87,8 +87,8 @@ class TestRoleLoaderLoad:
         assert loader.load() is None
 
     def test_loads_minimal_role(self, tmp_path):
-        write_role(tmp_path, "analyst", {"version": "2.0.0", "purpose": "analyse things"})
-        loader = RoleLoader(roles_root=tmp_path, role_name="analyst")
+        write_role(tmp_path, "synthetic_role", {"version": "2.0.0", "purpose": "analyse things"})
+        loader = RoleLoader(roles_root=tmp_path, role_name="synthetic_role")
         role = loader.load()
         assert isinstance(role, RoleDefinitionConfig)
         assert role.version == "2.0.0"
@@ -96,8 +96,8 @@ class TestRoleLoaderLoad:
 
     def test_base_merge_applied(self, tmp_path):
         write_base(tmp_path, {"version": "0.0.1", "persona": "formal", "purpose": "base"})
-        write_role(tmp_path, "analyst", {"version": "1.5.0", "purpose": "override"})
-        loader = RoleLoader(roles_root=tmp_path, role_name="analyst")
+        write_role(tmp_path, "synthetic_role", {"version": "1.5.0", "purpose": "override"})
+        loader = RoleLoader(roles_root=tmp_path, role_name="synthetic_role")
         role = loader.load()
         # Child version wins
         assert role.version == "1.5.0"
@@ -107,22 +107,22 @@ class TestRoleLoaderLoad:
         assert role.purpose == "override"
 
     def test_caches_result_on_repeated_load(self, tmp_path):
-        write_role(tmp_path, "analyst", {"version": "1.0.0"})
-        loader = RoleLoader(roles_root=tmp_path, role_name="analyst")
+        write_role(tmp_path, "synthetic_role", {"version": "1.0.0"})
+        loader = RoleLoader(roles_root=tmp_path, role_name="synthetic_role")
         r1 = loader.load()
         r2 = loader.load()
         assert r1 is r2  # same object from cache
 
     def test_reloads_when_mtime_changes(self, tmp_path):
-        write_role(tmp_path, "analyst", {"version": "1.0.0"})
-        loader = RoleLoader(roles_root=tmp_path, role_name="analyst")
+        write_role(tmp_path, "synthetic_role", {"version": "1.0.0"})
+        loader = RoleLoader(roles_root=tmp_path, role_name="synthetic_role")
         loader.load()
 
         # Simulate file change by overwriting and bumping mtime
         import time
         time.sleep(0.01)
-        write_role(tmp_path, "analyst", {"version": "2.0.0"})
-        role_path = tmp_path / "analyst" / "role.yaml"
+        write_role(tmp_path, "synthetic_role", {"version": "2.0.0"})
+        role_path = tmp_path / "synthetic_role" / "role.yaml"
         # Force mtime change (write already does this, but just in case)
         role_path.touch()
 
@@ -144,8 +144,8 @@ class TestRoleLoaderLoad:
 
 class TestRoleLoaderReloadCallback:
     def test_callback_registered_and_called(self, tmp_path):
-        write_role(tmp_path, "analyst", {"version": "1.0.0"})
-        loader = RoleLoader(roles_root=tmp_path, role_name="analyst", poll_interval_s=1)
+        write_role(tmp_path, "synthetic_role", {"version": "1.0.0"})
+        loader = RoleLoader(roles_root=tmp_path, role_name="synthetic_role", poll_interval_s=1)
         loader.load()
 
         received = []
@@ -154,11 +154,11 @@ class TestRoleLoaderReloadCallback:
         # Simulate a file change
         import time
         time.sleep(0.05)
-        write_role(tmp_path, "analyst", {"version": "2.0.0"})
-        (tmp_path / "analyst" / "role.yaml").touch()
+        write_role(tmp_path, "synthetic_role", {"version": "2.0.0"})
+        (tmp_path / "synthetic_role" / "role.yaml").touch()
 
         # Manually trigger the reload path by calling _load_and_merge
-        role_path = tmp_path / "analyst" / "role.yaml"
+        role_path = tmp_path / "synthetic_role" / "role.yaml"
         mtime = role_path.stat().st_mtime
         prev_version = loader._cached.version if loader._cached else ""
         new_def = loader._load_and_merge(role_path)
@@ -175,8 +175,8 @@ class TestRoleLoaderReloadCallback:
 class TestRoleLoaderWatchTask:
     @pytest.mark.asyncio
     async def test_start_watch_creates_task(self, tmp_path):
-        write_role(tmp_path, "analyst", {"version": "1.0.0"})
-        loader = RoleLoader(roles_root=tmp_path, role_name="analyst", poll_interval_s=600)
+        write_role(tmp_path, "synthetic_role", {"version": "1.0.0"})
+        loader = RoleLoader(roles_root=tmp_path, role_name="synthetic_role", poll_interval_s=600)
         await loader.start_watch()
         assert loader._watch_task is not None
         assert not loader._watch_task.done()
@@ -185,8 +185,8 @@ class TestRoleLoaderWatchTask:
 
     @pytest.mark.asyncio
     async def test_start_watch_idempotent(self, tmp_path):
-        write_role(tmp_path, "analyst", {"version": "1.0.0"})
-        loader = RoleLoader(roles_root=tmp_path, role_name="analyst", poll_interval_s=600)
+        write_role(tmp_path, "synthetic_role", {"version": "1.0.0"})
+        loader = RoleLoader(roles_root=tmp_path, role_name="synthetic_role", poll_interval_s=600)
         await loader.start_watch()
         task1 = loader._watch_task
         await loader.start_watch()  # second call is no-op

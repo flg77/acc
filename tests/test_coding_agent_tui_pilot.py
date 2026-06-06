@@ -94,6 +94,9 @@ class _EcoHarness(App):
         self.captured_preload.append(message)
 
 
+@pytest.mark.skip(reason="Stage 2 cutover: Ecosystem screen reads in-tree roles/ "
+                  "which no longer contains coding_agent; Marketplace pane is "
+                  "the post-cutover surface.")
 @pytest.mark.asyncio
 async def test_ecosystem_role_library_row_for_coding_agent():
     """ROLE LIBRARY contains a row keyed ``coding_agent`` with the
@@ -113,6 +116,9 @@ async def test_ecosystem_role_library_row_for_coding_agent():
         )
 
 
+@pytest.mark.skip(reason="Stage 2 cutover: Ecosystem screen reads in-tree roles/ "
+                  "which no longer contains coding_agent; Marketplace pane is "
+                  "the post-cutover surface.")
 @pytest.mark.asyncio
 async def test_ecosystem_role_detail_renders_coding_agent_seed():
     """Selecting the coding_agent row populates ROLE DETAIL with text

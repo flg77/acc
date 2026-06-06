@@ -34,6 +34,16 @@ from unittest.mock import patch
 
 import pytest
 
+# Stage 2 cutover removed roles/coding_agent/ from in-tree.  The Stage 0
+# pilot single-role roundtrip targeted that exact path; its successor is
+# the Stage 2 family-pack roundtrip in tests/pkg/test_build_family_pkg.py
+# plus the live smoke tools/smoke-acc1-hub.sh.  Whole file is skipped
+# rather than deleted so the contract stays auditable.
+pytestmark = pytest.mark.skip(
+    reason="Stage 2 cutover: pilot single-role roundtrip superseded by "
+    "family-pack roundtrip (tests/pkg/test_build_family_pkg.py)."
+)
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "tools"))
 import build_pilot_pkg as bp  # noqa: E402

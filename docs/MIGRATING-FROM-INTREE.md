@@ -72,8 +72,8 @@ unpacked into `/var/lib/acc/packages/`.
 Watch for the audit log lines:
 
 ```
-acc.pkg.fetch: fetch @acc/workspace-roles@1.0.0 from acc-canonical (tier=trusted)
-acc.pkg.install: installed @acc/workspace-roles@1.0.0 → /var/lib/acc/packages/acc/workspace-roles-1.0.0
+acc.pkg.fetch: fetch @acc/workspace-roles@1.0.2 from acc-canonical (tier=trusted)
+acc.pkg.install: installed @acc/workspace-roles@1.0.2 → /var/lib/acc/packages/acc/workspace-roles-1.0.2
 ```
 
 ### Step 3 — Verify the dual-source loader picks the package
@@ -81,7 +81,7 @@ acc.pkg.install: installed @acc/workspace-roles@1.0.0 → /var/lib/acc/packages/
 When agents boot, you'll see (Stage 1.5.1's audit log):
 
 ```
-acc.role_loader: resolved coding_agent_architect from installed:/var/lib/acc/packages/acc/workspace-roles-1.0.0/roles/coding_agent_architect/role.yaml
+acc.role_loader: resolved coding_agent_architect from installed:/var/lib/acc/packages/acc/workspace-roles-1.0.2/roles/coding_agent_architect/role.yaml
 ```
 
 vs the old in-tree path:
