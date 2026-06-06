@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: acc-hub
+  namespace: acc-hub
+  labels:
+    app.kubernetes.io/name: acc-hub
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: acc-hub
+  ports:
+    - name: http
+      port: 80
+      targetPort: http   # → 8080 in the pod (unprivileged nginx)
+      protocol: TCP

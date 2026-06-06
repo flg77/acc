@@ -202,6 +202,25 @@ class ComplianceScreen(Screen):
                                          id="btn-self-challenge",
                                          variant="default")
                         yield Static("", id="proposals-status")
+                    # Stage 1.4 visual surface — PROPOSE_INFUSE proposals
+                    # routed through the same AoA-P2b oversight queue,
+                    # filtered + rendered with infuse-specific columns
+                    # (package + constraint + tier + signer).  Approve /
+                    # Reject post the same _OversightAction message the
+                    # main oversight queue uses, so the dispatch path is
+                    # the existing one — no parallel wire.
+                    with Collapsible(
+                        title="Package Proposals (PROPOSE_INFUSE)",
+                        collapsed=True,
+                        id="gov-pkg-proposals",
+                    ):
+                        yield DataTable(id="pkg-proposals-table", classes="gov-table")
+                        with Horizontal(id="pkg-proposals-actions"):
+                            yield Button("Approve", id="btn-pkg-proposal-approve",
+                                         variant="primary")
+                            yield Button("Reject", id="btn-pkg-proposal-reject",
+                                         variant="default")
+                        yield Static("", id="pkg-proposals-status")
 
             # Right column: oversight queue + master/detail context + violation log
             #
@@ -268,6 +287,15 @@ class ComplianceScreen(Screen):
         # PR-Z3d — load any pending rule proposals.
         self._proposals_by_id: dict[str, object] = {}
         self._refresh_proposals()
+        # Stage 1.4 — Package Proposals (PROPOSE_INFUSE) sit in the
+        # same AoA-P2b oversight queue.  Table is filtered + projected
+        # by `_render_pkg_proposals` from `oversight_pending_items`.
+        pkg_proposals = self.query_one("#pkg-proposals-table", DataTable)
+        pkg_proposals.add_columns(
+            "ID", "Package", "Constraint", "Tier", "Signer", "Status",
+        )
+        pkg_proposals.cursor_type = "row"
+        self._pkg_proposals_by_id: dict[str, dict] = {}
 
     def _populate_governance(self) -> None:
         """Fill the Cat-A/B/C tables + titles from the inventory loader."""
@@ -519,6 +547,120 @@ class ComplianceScreen(Screen):
             self._decide_proposal(approve=False)
         elif bid == "btn-self-challenge":
             self._run_self_challenge()
+        elif bid == "btn-pkg-proposal-approve":
+            self._decide_pkg_proposal(approve=True)
+        elif bid == "btn-pkg-proposal-reject":
+            self._decide_pkg_proposal(approve=False)
+
+    # ------------------------------------------------------------------
+    # Stage 1.4 visual surface — Package Proposals (PROPOSE_INFUSE)
+    # ------------------------------------------------------------------
+
+    # Keyword fragments that classify an oversight-queue item as a
+    # PROPOSE_INFUSE proposal when the wire payload doesn't yet carry
+    # ``kind="infuse"`` (mixed-version arbiter fleets).
+    _PKG_SUMMARY_PREFIX = "Install @"
+
+    @classmethod
+    def _is_pkg_proposal(cls, item: dict) -> bool:
+        """True iff ``item`` represents a PROPOSE_INFUSE proposal.
+
+        Prefers the explicit ``kind`` field; falls back to a summary
+        prefix heuristic for compat with older arbiter HEARTBEATs.
+        """
+        kind = str(item.get("kind") or "").lower()
+        if kind == "infuse":
+            return True
+        summary = str(item.get("summary") or "")
+        return summary.startswith(cls._PKG_SUMMARY_PREFIX)
+
+    @staticmethod
+    def _pkg_proposal_columns(item: dict) -> tuple[str, str, str, str]:
+        """Extract (name, constraint, tier, signer) for the table row.
+
+        Falls back to summary parsing when ``params`` isn't on the wire.
+        """
+        params = item.get("params") or {}
+        name = str(params.get("name") or "")
+        constraint = str(params.get("constraint") or "")
+        if not name:
+            # Summary shape: "Install @scope/name@constraint"
+            summary = str(item.get("summary") or "")
+            tail = summary[len("Install "):].strip() if summary.startswith("Install ") else ""
+            if "@" in tail[1:]:  # skip leading @ in @scope/name
+                at = tail.index("@", 1)
+                name, constraint = tail[:at], tail[at + 1:]
+        tier = str(item.get("tier") or item.get("catalog_tier") or "—")
+        signer = str(item.get("signer_identity") or item.get("signer") or "—")
+        return name or "—", constraint or "—", tier, signer
+
+    def _render_pkg_proposals(self, snap: "CollectiveSnapshot") -> None:
+        """Filter ``snap.oversight_pending_items`` for PROPOSE_INFUSE and
+        render them in the Package Proposals table.
+
+        Items co-exist in the main oversight queue; this is a
+        package-aware projection, NOT a separate queue.
+        """
+        table = self.query_one("#pkg-proposals-table", DataTable)
+        table.clear()
+        self._pkg_proposals_by_id = {}
+        for item in snap.oversight_pending_items or []:
+            if not self._is_pkg_proposal(item):
+                continue
+            if str(item.get("status") or "PENDING") != "PENDING":
+                continue
+            oid = str(item.get("oversight_id") or "")
+            if not oid:
+                continue
+            self._pkg_proposals_by_id[oid] = dict(item)
+            name, constraint, tier, signer = self._pkg_proposal_columns(item)
+            table.add_row(
+                oid[:14],
+                name[:28],
+                constraint[:16],
+                tier[:10],
+                signer[:30],
+                "PENDING",
+                key=oid,
+            )
+
+    def _set_pkg_proposals_status(self, markup: str) -> None:
+        try:
+            self.query_one("#pkg-proposals-status", Static).update(markup)
+        except Exception:  # pragma: no cover — widget not mounted yet
+            pass
+
+    def _selected_pkg_proposal_id(self) -> str | None:
+        table = self.query_one("#pkg-proposals-table", DataTable)
+        if table.row_count == 0 or table.cursor_row is None:
+            return None
+        try:
+            row_key, _ = table.coordinate_to_cell_key((table.cursor_row, 0))
+            return str(row_key.value) if row_key and row_key.value else None
+        except Exception:  # pragma: no cover
+            return None
+
+    def _decide_pkg_proposal(self, *, approve: bool) -> None:
+        """Approve / reject the highlighted package proposal.
+
+        Posts the same ``_OversightAction`` message the main oversight
+        queue uses — the package-proposals table is a filtered view of
+        the same queue, so the dispatch path is the existing
+        :func:`acc.assistant_proposal.dispatch_approved_proposal`.
+        """
+        oid = self._selected_pkg_proposal_id()
+        if oid is None:
+            self._set_pkg_proposals_status(
+                "[yellow]Highlight a package proposal first.[/yellow]"
+            )
+            return
+        verb = "approve" if approve else "reject"
+        self.app.post_message(
+            _OversightAction(action=verb, oversight_id=oid),
+        )
+        self._set_pkg_proposals_status(
+            f"[green]✓ {verb} dispatched for {oid[:14]}[/green]"
+        )
 
     def _run_self_challenge(self) -> None:
         """Red-team the Cat-A constitution: write the audit doc, emit
@@ -554,6 +696,7 @@ class ComplianceScreen(Screen):
         self._render_owasp_table(snap)
         self._render_health_score(snap)
         self._render_oversight_queue(snap)
+        self._render_pkg_proposals(snap)
         self._render_violation_log(snap)
 
     # ------------------------------------------------------------------

@@ -14,6 +14,17 @@ rules:
 - apiGroups: ["acc.redhat.io"]
   resources: ["agentcorpora/finalizers", "agentcollectives/finalizers"]
   verbs: ["update"]
+# Stage 1.6b — AccCatalog + AccPackageInstall
+- apiGroups: ["acc.redhat.io"]
+  resources: ["acccatalogs", "accpackageinstalls"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["acc.redhat.io"]
+  resources: ["acccatalogs/status", "accpackageinstalls/status"]
+  verbs: ["get", "update", "patch"]
+# Stage 1.6b — pod exec for acc-cli collective pkg-install-direct
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["create"]
 # Core Kubernetes
 - apiGroups: ["apps"]
   resources: ["deployments", "statefulsets"]

@@ -61,6 +61,48 @@ _BASE_ROLE_NAME = "_base"
 _EXCLUDED_ROLE_NAMES = {"_base", "TEMPLATE"}
 
 
+# Stage 2 — soft deprecation per `docs/MIGRATING-FROM-INTREE.md`.
+#
+# These 43 role names are scheduled to move from this repo's
+# ``roles/`` tree to four published packages on ``acc-roles.dev``
+# in Stage 2 release N+1.  In release N (this release), they
+# continue to load from disk AND emit a one-shot DeprecationWarning
+# pointing operators at the migration runbook.
+#
+# CONTROL roles (arbiter, assistant, compliance_officer, ingester,
+# observer, orchestrator, reviewer) stay in this repo permanently
+# and are NOT in this set.
+#
+# Resolution path is reported via ``acc.role_loader: resolved <name>
+# from installed:...`` when a package wins — operators see both
+# signals in their logs and can plan the upgrade.
+_MOVABLE_ROLES_PENDING_EXTRACTION: frozenset[str] = frozenset({
+    # @acc/workspace-roles
+    "coding_agent", "coding_agent_architect", "coding_agent_dependency",
+    "coding_agent_implementer", "coding_agent_reviewer", "coding_agent_tester",
+    "analyst", "synthesizer",
+    # @acc/research-roles
+    "research_competitor", "research_critic", "research_economist",
+    "research_planner", "research_strategist", "research_synthesizer",
+    # @acc/business-roles
+    "account_executive", "business_analyst", "content_marketer",
+    "contract_analyst", "customer_success_manager", "customer_support_agent",
+    "demand_generation_specialist", "financial_analyst", "fpa_analyst",
+    "hr_business_partner", "it_operations_specialist", "it_support_specialist",
+    "learning_development_specialist", "marketing_analyst",
+    "operations_analyst", "procurement_specialist", "product_manager",
+    "product_marketer", "project_manager", "recruiter",
+    "revenue_operations_analyst", "risk_compliance_analyst",
+    "sales_development_rep", "sales_engineer", "technical_support_specialist",
+    # @acc/devops-roles
+    "data_engineer", "devops_engineer", "ml_engineer", "security_analyst",
+})
+
+# Track which warnings have fired so we don't spam — one per role
+# per process is enough.
+_DEPRECATION_FIRED: set[str] = set()
+
+
 def list_roles(base_dir: str | Path = "roles") -> list[str]:
     """Return alphabetically sorted role names found in *base_dir* (REQ-TUI-050).
 
@@ -201,6 +243,46 @@ class RoleLoader:
 
         role_def = self._load_and_merge(role_path)
         if role_def is not None:
+            # Audit-log the resolution path: installed-package vs
+            # in-tree.  Logged on cache fill (first load + each
+            # reload), not on every call.
+            served_from_intree = False
+            try:
+                in_tree = self._root / self._role_name / "role.yaml"
+                served_from_intree = role_path == in_tree
+                source = (
+                    "in-tree"
+                    if served_from_intree
+                    else f"installed:{role_path}"
+                )
+                logger.info(
+                    "RoleLoader: resolved %s from %s", self._role_name, source
+                )
+            except Exception:  # pragma: no cover - audit log must not break load
+                pass
+
+            # Stage 2 soft deprecation — fire once per role per process
+            # when a MOVABLE role loaded from in-tree.  Tells operators
+            # to declare `required_packages:` in their collective.yaml
+            # before the next ACC release removes the in-tree dir.
+            # See docs/MIGRATING-FROM-INTREE.md.
+            if (
+                served_from_intree
+                and self._role_name in _MOVABLE_ROLES_PENDING_EXTRACTION
+                and self._role_name not in _DEPRECATION_FIRED
+            ):
+                _DEPRECATION_FIRED.add(self._role_name)
+                import warnings  # noqa: PLC0415 — keep top-level imports lean
+                warnings.warn(
+                    f"role {self._role_name!r} loaded from in-tree "
+                    "roles/ — this role moves to a package in the next "
+                    "ACC release.  Add @acc/<family>-roles@^1.0 to your "
+                    "collective.yaml `required_packages:` before "
+                    "upgrading.  See docs/MIGRATING-FROM-INTREE.md.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+
             self._cached = role_def
             self._cached_mtime = mtime
         return role_def
@@ -256,9 +338,35 @@ class RoleLoader:
     # ------------------------------------------------------------------
 
     def _role_yaml_path(self) -> Path:
+        """Resolve role.yaml — installed-package source wins over in-tree.
+
+        Stage 1.5.1 (dual-source loader): check the
+        :mod:`acc.pkg.registry` for a package providing this role; if
+        found, use the package's role.yaml.  Otherwise fall back to
+        the in-tree path (Stage-0 behaviour, unchanged for the 7
+        CONTROL roles + any role not advertised by an installed
+        package).
+
+        Resolution is logged at INFO once per (process, role)
+        lifetime via the cache miss path in :meth:`load`.
+        """
+        # Lazy import — keeps acc.role_loader independent of the
+        # acc.pkg subsystem at module-load time (some test harnesses
+        # patch role_loader before acc.pkg is importable).
+        try:
+            from acc.pkg.role_resolution import resolve_role_source
+        except ImportError:  # pragma: no cover
+            return self._root / self._role_name / "role.yaml"
+
+        resolved = resolve_role_source(self._role_name)
+        if resolved is not None:
+            return resolved.role_yaml_path
         return self._root / self._role_name / "role.yaml"
 
     def _base_yaml_path(self) -> Path:
+        # ``_base/role.yaml`` is substrate — always in-tree.  Packages
+        # never ship a _base role; if they did, it would break the
+        # inheritance contract.
         return self._root / _BASE_ROLE_NAME / "role.yaml"
 
     def _load_and_merge(

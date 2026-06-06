@@ -1,0 +1,153 @@
+# Konflux / Tekton pipeline template — Stage 1.3.
+#
+# Strings the full ".accpkg" publish chain:
+#   clone → build → Tekton-Chains attest → cosign sign → upload
+#
+# Operators copy this into their own Konflux workspace and adjust:
+#   - the ``source`` workspace path
+#   - the ``catalog-url`` (acc1 internal hub or production hub)
+#   - the OIDC issuer if substituting Trusted Artifact Signer for air-gap
+#
+# Tekton Chains is configured at the cluster level to emit in-toto
+# attestations to the build artefacts; this pipeline picks them up
+# and feeds them to the publish step alongside the cosign signature.
+
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: accpkg-build
+  labels:
+    app.kubernetes.io/name: acc-pkg
+    app.kubernetes.io/component: build-and-publish
+spec:
+  description: >
+    Build a .accpkg from a role source tree, sign it via OIDC
+    keyless cosign, and upload to the configured catalog endpoint.
+  params:
+    - name: source-url
+      type: string
+      description: Git URL of the role source repository
+    - name: source-revision
+      type: string
+      description: Git ref (branch / tag / sha)
+      default: main
+    - name: role-name
+      type: string
+      description: Role to build (e.g. coding_agent)
+    - name: pkg-version
+      type: string
+      description: Package version to stamp (e.g. 1.2.0)
+    - name: catalog-url
+      type: string
+      description: Catalog upload endpoint base URL
+    - name: oidc-issuer
+      type: string
+      default: "https://oauth2.sigstore.dev/auth"
+  workspaces:
+    - name: source
+      description: Cloned source tree
+    - name: dist
+      description: Build output dir for the .accpkg + signature + cert
+  tasks:
+    # Clone -------------------------------------------------------------
+    - name: clone
+      taskRef:
+        name: git-clone
+      workspaces:
+        - name: output
+          workspace: source
+      params:
+        - name: url
+          value: "$(params.source-url)"
+        - name: revision
+          value: "$(params.source-revision)"
+
+    # Build -------------------------------------------------------------
+    - name: build
+      runAfter: [clone]
+      taskSpec:
+        params:
+          - name: role-name
+          - name: pkg-version
+        workspaces:
+          - name: source
+          - name: dist
+        steps:
+          - name: build-pilot-pkg
+            image: registry.access.redhat.com/ubi9/python-312:latest
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              cd "$(workspaces.source.path)"
+              pip install --user msgpack pydantic "ruamel.yaml" pyyaml
+              python tools/build_pilot_pkg.py "$(params.role-name)" \
+                --version "$(params.pkg-version)" \
+                --output "$(workspaces.dist.path)/$(params.role-name)-$(params.pkg-version).accpkg"
+      workspaces:
+        - name: source
+          workspace: source
+        - name: dist
+          workspace: dist
+      params:
+        - name: role-name
+          value: "$(params.role-name)"
+        - name: pkg-version
+          value: "$(params.pkg-version)"
+
+    # Tekton Chains attestations are emitted automatically by the
+    # cluster's Chains controller observing the build TaskRun.  The
+    # attestation lands in the OCI registry alongside the artefact;
+    # the publish step fetches it for upload to the catalog.
+
+    # Sign + upload via acc-pkg publish ---------------------------------
+    - name: publish
+      runAfter: [build]
+      taskSpec:
+        params:
+          - name: role-name
+          - name: pkg-version
+          - name: catalog-url
+          - name: oidc-issuer
+        workspaces:
+          - name: dist
+        steps:
+          - name: sign-and-publish
+            image: registry.access.redhat.com/ubi9/python-312:latest
+            env:
+              # The pipeline runs in a Tekton Chains-enabled cluster
+              # where SIGSTORE_ID_TOKEN can be derived from the
+              # workload-identity ServiceAccount.  The init-container
+              # below mints it; alternatively, set
+              # SIGSTORE_ID_TOKEN_FILE / SIGSTORE_ID_TOKEN as a
+              # workspace-bound secret.
+              - name: ACC_COSIGN_BIN
+                value: /usr/local/bin/cosign
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+              pip install --user msgpack pydantic "ruamel.yaml" pyyaml
+              ACC_PKG="$(workspaces.dist.path)/$(params.role-name)-$(params.pkg-version).accpkg"
+              python -m acc.pkg.cli --json publish "$ACC_PKG" \
+                --catalog-url "$(params.catalog-url)" \
+                --issuer "$(params.oidc-issuer)" \
+              | tee "$(workspaces.dist.path)/publish-result.json"
+      workspaces:
+        - name: dist
+          workspace: dist
+      params:
+        - name: role-name
+          value: "$(params.role-name)"
+        - name: pkg-version
+          value: "$(params.pkg-version)"
+        - name: catalog-url
+          value: "$(params.catalog-url)"
+        - name: oidc-issuer
+          value: "$(params.oidc-issuer)"
+
+  results:
+    - name: tarball-url
+      value: "$(tasks.publish.results.tarball-url)"
+    - name: signature-url
+      value: "$(tasks.publish.results.signature-url)"
+    - name: rekor-log-index
+      value: "$(tasks.publish.results.rekor-log-index)"

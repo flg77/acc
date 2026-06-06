@@ -1,0 +1,209 @@
+{
+  "$defs": {
+    "Dependency": {
+      "additionalProperties": false,
+      "description": "A semver-pinned reference to another `.accpkg`.\n\nCycle detection + version-range resolution happens in\n``acc/pkg/install.py`` against the catalog index; this model only\nvalidates the *shape* of the constraint string.",
+      "properties": {
+        "name": {
+          "description": "Scoped package name, e.g. @acc/foo",
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "description": "Semver constraint: exact (1.2.3), caret (^1.2), tilde (~1.2.3), bound (>=1.2 <2.0), etc.",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "title": "Dependency",
+      "type": "object"
+    },
+    "McpRef": {
+      "additionalProperties": false,
+      "description": "An MCP bundled inside the package tree.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path inside the package, e.g. mcps/<name>/",
+          "title": "Path",
+          "type": "string"
+        },
+        "tier": {
+          "enum": [
+            "bundle_in_role",
+            "own_pack"
+          ],
+          "title": "Tier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "tier",
+        "path"
+      ],
+      "title": "McpRef",
+      "type": "object"
+    },
+    "RoleRef": {
+      "additionalProperties": false,
+      "description": "Pointer to a ``role.yaml`` inside the package tree.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path inside the package, e.g. roles/coding_agent/role.yaml",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ],
+      "title": "RoleRef",
+      "type": "object"
+    },
+    "SignedDepEntry": {
+      "additionalProperties": false,
+      "description": "One row of the signed dependency closure (Stage 1).\n\nStage 0 leaves the parent list empty.  Stage 1's publish pipeline\npopulates it with ``{name, version, sha256}`` for every transitive\ndep, and ``acc-pkg verify`` then rejects installs whose resolved\ngraph diverges from this closure.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "sha256": {
+          "maxLength": 64,
+          "minLength": 64,
+          "title": "Sha256",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "sha256"
+      ],
+      "title": "SignedDepEntry",
+      "type": "object"
+    },
+    "SkillRef": {
+      "additionalProperties": false,
+      "description": "A skill bundled inside the package tree.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path inside the package, e.g. skills/<name>/",
+          "title": "Path",
+          "type": "string"
+        },
+        "tier": {
+          "enum": [
+            "bundle_in_role",
+            "own_pack"
+          ],
+          "title": "Tier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "tier",
+        "path"
+      ],
+      "title": "SkillRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The top-level ``accpkg.yaml`` model \u2014 v1.\n\nA package MAY ship zero of any one component type (a memory-seed-\nonly pack has no roles + no skills + no mcps), but the manifest\nmust declare ``name`` + ``version`` + ``schema_version`` always.",
+  "properties": {
+    "content_sha256": {
+      "default": "",
+      "description": "sha256 over the deterministic tarball content; populated by `acc-pkg build`, empty in a source manifest.",
+      "title": "Content Sha256",
+      "type": "string"
+    },
+    "depends_on": {
+      "items": {
+        "$ref": "#/$defs/Dependency"
+      },
+      "title": "Depends On",
+      "type": "array"
+    },
+    "description": {
+      "default": "",
+      "title": "Description",
+      "type": "string"
+    },
+    "mcps": {
+      "items": {
+        "$ref": "#/$defs/McpRef"
+      },
+      "title": "Mcps",
+      "type": "array"
+    },
+    "name": {
+      "description": "Scoped package name, @scope/name",
+      "title": "Name",
+      "type": "string"
+    },
+    "roles": {
+      "items": {
+        "$ref": "#/$defs/RoleRef"
+      },
+      "title": "Roles",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "signed_dep_closure": {
+      "items": {
+        "$ref": "#/$defs/SignedDepEntry"
+      },
+      "title": "Signed Dep Closure",
+      "type": "array"
+    },
+    "skills": {
+      "items": {
+        "$ref": "#/$defs/SkillRef"
+      },
+      "title": "Skills",
+      "type": "array"
+    },
+    "version": {
+      "description": "Exact semver of this build",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "version"
+  ],
+  "title": "AccPkgManifest",
+  "type": "object"
+}

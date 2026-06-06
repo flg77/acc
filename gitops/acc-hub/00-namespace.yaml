@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: acc-hub
+  labels:
+    app.kubernetes.io/name: acc-hub
+    app.kubernetes.io/part-of: acc-ecosystem
+    app.kubernetes.io/component: catalog-endpoint

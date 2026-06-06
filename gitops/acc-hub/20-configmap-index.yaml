@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acc-hub-index
+  namespace: acc-hub
+  labels:
+    app.kubernetes.io/name: acc-hub
+data:
+  # Initial empty index — `publish-to-hub.sh` (or operator
+  # `kubectl edit configmap`) appends rows as packages land.
+  #
+  # Schema matches what acc.pkg.catalog._fetch_index_https expects:
+  #
+  #   packages:
+  #     - name: "@scope/name"
+  #       version: "X.Y.Z"
+  #       tarball_sha256: "<64-hex>"
+  #       tarball_url: "/packages/<scope>/<name>-<version>.accpkg"
+  #       signature_url: "/packages/<scope>/<name>-<version>.accpkg.sig"
+  index.json: |
+    {
+      "schema_version": 1,
+      "packages": []
+    }

@@ -34,5 +34,15 @@ core deps.
 """
 
 from .card import build_agent_card
+from .federation import (
+    FederationCache,
+    PeerCardEntry,
+    discover_peer_cards,
+)
 
-__all__ = ["build_agent_card"]
+__all__ = [
+    "build_agent_card",
+    "FederationCache",
+    "PeerCardEntry",
+    "discover_peer_cards",
+]

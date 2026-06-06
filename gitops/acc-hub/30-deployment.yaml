@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acc-hub
+  namespace: acc-hub
+  labels:
+    app.kubernetes.io/name: acc-hub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: acc-hub
+  strategy:
+    type: Recreate  # ReadWriteOnce PVC can't be held by two pods.
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: acc-hub
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101            # nginx user in the official image
+        fsGroup: 101
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          # The unprivileged image listens on 8080 by default; map to
+          # 80 via the Service.
+          env:
+            - name: NGINX_LISTEN
+              value: "8080"
+          volumeMounts:
+            - name: blobs
+              mountPath: /var/www/packages
+            - name: index
+              mountPath: /etc/nginx/index
+              readOnly: true
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: blobs
+          persistentVolumeClaim:
+            claimName: acc-hub-blobs
+        - name: index
+          configMap:
+            name: acc-hub-index
+        - name: nginx-conf
+          configMap:
+            name: acc-hub-nginx
+            items:
+              - key: default.conf
+                path: default.conf

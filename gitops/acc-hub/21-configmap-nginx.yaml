@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acc-hub-nginx
+  namespace: acc-hub
+  labels:
+    app.kubernetes.io/name: acc-hub
+data:
+  default.conf: |
+    server {
+      # The nginx-unprivileged image (see 30-deployment.yaml) listens
+      # on 8080 since it runs as non-root.  The Service maps :80 to
+      # :8080 for clients.
+      listen       8080;
+      server_name  _;
+
+      # Tight error pages — don't leak nginx version.
+      server_tokens off;
+
+      # Top-level catalog index, mounted from acc-hub-index ConfigMap.
+      location = /index.json {
+        alias /etc/nginx/index/index.json;
+        default_type application/json;
+        add_header Cache-Control "no-cache, must-revalidate";
+        add_header Access-Control-Allow-Origin "*" always;
+      }
+
+      # Blob storage for .accpkg + .sig, mounted from the PVC.
+      location /packages/ {
+        alias /var/www/packages/;
+        autoindex off;
+        # Long cache: blob content is immutable per (name, version).
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        # Surface the sha256 sidecar as an HTTP header for clients
+        # that want a fast integrity pre-check before downloading.
+        # acc-pkg install does its own sha256 verification regardless.
+        types {
+          application/octet-stream  accpkg;
+          application/pgp-signature sig;
+        }
+      }
+
+      # Health probe target.
+      location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+        add_header Content-Type text/plain;
+      }
+
+      # Refuse everything else.
+      location / {
+        return 404;
+      }
+    }

@@ -71,9 +71,10 @@ logger = logging.getLogger("acc.assistant_proposal")
 PROPOSAL_SPAWN = "spawn"
 PROPOSAL_ROLE_UPDATE = "role_update"
 PROPOSAL_ROUTE = "route"
+PROPOSAL_INFUSE = "infuse"  # Stage 1.4 — install an @scope/name@constraint pkg
 
 PROPOSAL_KINDS: frozenset[str] = frozenset({
-    PROPOSAL_SPAWN, PROPOSAL_ROLE_UPDATE, PROPOSAL_ROUTE,
+    PROPOSAL_SPAWN, PROPOSAL_ROLE_UPDATE, PROPOSAL_ROUTE, PROPOSAL_INFUSE,
 })
 
 
@@ -84,6 +85,7 @@ DEFAULT_RISK_LEVEL: dict[str, str] = {
     PROPOSAL_SPAWN: "MEDIUM",        # structural; non-reversible until terminate
     PROPOSAL_ROLE_UPDATE: "HIGH",    # changes role definition system-wide
     PROPOSAL_ROUTE: "LOW",           # reversible by next prompt
+    PROPOSAL_INFUSE: "HIGH",         # filesystem state; reversible only by uninstall
 }
 
 
@@ -171,18 +173,32 @@ class AssistantProposal:
 _ACCEPT_EDITS_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_ROUTE})
 
 
+# Stage 1.4 — operator decision: PROPOSE_INFUSE always routes through
+# the Compliance pane regardless of operating mode.  Filesystem state
+# is reversible only by uninstall; per the Stage 1 proposal's open
+# decision Q2 the operator chose "always Compliance pane" over "AUTO
+# may infuse autonomously".
+_NEVER_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_INFUSE})
+
+
 def decide_dispatch(operating_mode: str, kind: str) -> str:
     """Return one of ``DISPATCH_PLAN`` / ``DISPATCH_QUEUE`` / ``DISPATCH_EXECUTE``.
 
     Pure function; safe for unit tests + the cognitive core's per-task
     decision tree.  Unknown ``kind`` defaults to QUEUE (safest: human
     in the loop before any mutation we don't recognise).
+
+    Stage 1.4: kinds in :data:`_NEVER_AUTOEXEC` (currently
+    ``PROPOSAL_INFUSE``) always queue — even in AUTO mode.
     """
     mode = normalise(operating_mode or "")
     if kind not in PROPOSAL_KINDS:
         return DISPATCH_QUEUE
     if mode == MODE_PLAN:
         return DISPATCH_PLAN
+    if kind in _NEVER_AUTOEXEC:
+        # Filesystem-state mutations always go through Compliance pane.
+        return DISPATCH_QUEUE
     if mode == MODE_AUTO:
         return DISPATCH_EXECUTE
     if mode == MODE_ACCEPT_EDITS and kind in _ACCEPT_EDITS_AUTOEXEC:
@@ -200,6 +216,7 @@ def decide_dispatch(operating_mode: str, kind: str) -> str:
 #   [PROPOSE_SPAWN:<role>:<cluster_id>:<reason>]
 #   [PROPOSE_ROLE_UPDATE:<role>:<field=value;field=value>:<reason>]
 #   [PROPOSE_ROUTE:<target_role>:<reason>]
+#   [PROPOSE_INFUSE:<@scope/name@constraint>:<reason>]      (Stage 1.4)
 _RE_SPAWN = re.compile(
     r"\[PROPOSE_SPAWN:([^:\]]+):([^:\]]*):([^\]]+)\]"
 )
@@ -208,6 +225,12 @@ _RE_ROLE_UPDATE = re.compile(
 )
 _RE_ROUTE = re.compile(
     r"\[PROPOSE_ROUTE:([^:\]]+):([^\]]+)\]"
+)
+# INFUSE: first group captures @scope/name@constraint (no colon, no
+# whitespace — constraint ranges like ">=1.2 <2.0" are NOT supported
+# in markers; use a caret/tilde/exact in the LLM's output instead).
+_RE_INFUSE = re.compile(
+    r"\[PROPOSE_INFUSE:(@[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_-]*@[^\s:\]]+):([^\]]+)\]"
 )
 
 
@@ -219,10 +242,10 @@ _RE_ROUTE = re.compile(
 # to the canonical shape so the parser + downstream `validate_marker`
 # still catch hallucinated role names.
 _RE_BACKTICK_MARKER = re.compile(
-    r"`(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE):[^`\n]+)`"
+    r"`(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE|INFUSE):[^`\n]+)`"
 )
 _RE_BARE_LINE_MARKER = re.compile(
-    r"(?m)^(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE):[^\n\[\]`]+)$"
+    r"(?m)^(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE|INFUSE):[^\n\[\]`]+)$"
 )
 
 
@@ -297,6 +320,28 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
             summary=f"Route to {target_role.strip()}",
             rationale=reason.strip(),
         ))
+    # Stage 1.4 — PROPOSE_INFUSE.  First group is "@scope/name@constraint";
+    # parse via the same helper :class:`acc.collective` uses for
+    # ``required_packages`` so the constraint syntax stays consistent.
+    for spec, reason in _RE_INFUSE.findall(text):
+        try:
+            from acc.collective import parse_required_package  # noqa: PLC0415
+            name, constraint = parse_required_package(spec.strip())
+        except Exception:  # noqa: BLE001
+            # Malformed spec — surface as a logged warning, skip the
+            # marker.  Same posture as other malformed markers: we don't
+            # let one bad marker block the rest of the prompt.
+            logger.warning(
+                "assistant_proposal: PROPOSE_INFUSE spec %r failed to parse",
+                spec,
+            )
+            continue
+        out.append(AssistantProposal(
+            kind=PROPOSAL_INFUSE,
+            params={"name": name, "constraint": constraint},
+            summary=f"Install {name}@{constraint}",
+            rationale=reason.strip(),
+        ))
     return out
 
 
@@ -337,6 +382,8 @@ async def dispatch_approved_proposal(
             return await _dispatch_role_update(signaling, cid, proposal)
         if proposal.kind == PROPOSAL_ROUTE:
             return await _dispatch_route(signaling, cid, proposal)
+        if proposal.kind == PROPOSAL_INFUSE:
+            return await _dispatch_infuse(signaling, cid, proposal)
     except Exception:
         logger.exception(
             "assistant_proposal: dispatch failed for kind=%s id=%s",
@@ -390,6 +437,69 @@ async def _dispatch_role_update(signaling, cid: str, p: AssistantProposal) -> bo
     logger.info(
         "assistant_proposal: role_update dispatched — role=%r fields=%s",
         payload["role"], list(payload["fields"].keys()),
+    )
+    return True
+
+
+async def _dispatch_infuse(signaling, cid: str, p: AssistantProposal) -> bool:
+    """Stage 1.4 — install the requested package via the catalog.
+
+    Resolves ``params["name"]`` + ``params["constraint"]`` through
+    :func:`acc.pkg.fetch.fetch_and_install`, which handles the catalog
+    walk + download + cosign verify + install.  Idempotent: a
+    re-approve of an already-installed pkg is a no-op.
+
+    On success we publish a thin notification on the bus so the
+    Marketplace / Capability surfaces can refresh; on failure we log
+    the cosign / EC / dep error and return False (caller may retry
+    or surface the error in the Compliance pane).
+    """
+    from acc.pkg.fetch import FetchError, fetch_and_install  # noqa: PLC0415
+    from acc.signals import subject_assistant_proposal  # noqa: PLC0415
+
+    name = p.params.get("name", "").strip()
+    constraint = p.params.get("constraint", ">=0.0.0").strip() or ">=0.0.0"
+    if not name:
+        logger.warning(
+            "assistant_proposal: infuse proposal %s has no name",
+            p.proposal_id,
+        )
+        return False
+
+    try:
+        result = fetch_and_install(name, constraint)
+    except FetchError as exc:
+        logger.warning(
+            "assistant_proposal: infuse %s@%s failed: %s",
+            name, constraint, exc,
+        )
+        return False
+    except Exception:  # noqa: BLE001 — surface in log, don't crash dispatch loop
+        logger.exception(
+            "assistant_proposal: infuse %s@%s crashed", name, constraint,
+        )
+        return False
+
+    payload = {
+        "trigger": "assistant_proposal",
+        "proposal_id": p.proposal_id,
+        "name": result.install.entry.name,
+        "version": result.install.entry.version,
+        "install_path": str(result.install.install_path),
+        "was_already_installed": result.install.was_already_installed,
+        "ts": time.time(),
+    }
+    try:
+        await signaling.publish(subject_assistant_proposal(cid), payload)
+    except Exception:  # noqa: BLE001 — bus failure is logged; install succeeded
+        logger.exception(
+            "assistant_proposal: failed to publish infuse-completed for %s",
+            p.proposal_id,
+        )
+    logger.info(
+        "assistant_proposal: infuse dispatched — %s@%s%s",
+        payload["name"], payload["version"],
+        " (idempotent)" if payload["was_already_installed"] else "",
     )
     return True
 
@@ -450,6 +560,7 @@ __all__ = [
     "PROPOSAL_SPAWN",
     "PROPOSAL_ROLE_UPDATE",
     "PROPOSAL_ROUTE",
+    "PROPOSAL_INFUSE",
     "PROPOSAL_KINDS",
     "DEFAULT_RISK_LEVEL",
     "DISPATCH_PLAN",

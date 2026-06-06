@@ -1,0 +1,90 @@
+# Sample ArgoCD Application that drives the Stage 1.6 CRDs.
+#
+# Deploys two AccCatalog entries + two AccPackageInstall objects
+# into the `acc` namespace.  The operator's AccPackageInstall
+# controller (Stage 1.6 work) reconciles by exec-ing `acc-cli
+# collective pkg-install` against the AgentCorpus's ACC pod and
+# updates each AccPackageInstall's `.status.phase` field.
+#
+# Operators copy this into their own ArgoCD repo, adjust the catalog
+# URL + required_signer pattern, and let GitOps reconcile the
+# declarative install state.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: acc-packages
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/flg77/acc-spearhead.git
+    targetRevision: main
+    path: gitops/argocd/applications/acc-packages
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: acc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+# The catalog list — declarative drop-in for /etc/acc/catalogs.yaml.
+# The operator's AccCatalog controller renders these into a per-namespace
+# `acc-catalogs` ConfigMap mounted at /etc/acc/catalogs.yaml inside ACC pods.
+apiVersion: acc.redhat.io/v1alpha1
+kind: AccCatalog
+metadata:
+  name: acc-canonical
+  namespace: acc
+spec:
+  catalogId: acc-canonical
+  tier: trusted
+  mode: https
+  url: https://acc-roles.dev
+  requiredSigner:
+    issuer: https://token.actions.githubusercontent.com
+    subjectPattern: "^https://github\\.com/flg77/acc-ecosystem/"
+  priority: 100
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AccCatalog
+metadata:
+  name: corp-internal
+  namespace: acc
+spec:
+  catalogId: corp-internal
+  tier: self
+  mode: file
+  path: /opt/acc/packages
+  requiredSigner:
+    issuer: https://oidc.internal.corp/
+    subjectPattern: "^acc-ci@corp\\.com$"
+  priority: 200       # highest — corp wins collisions
+---
+# Declarative install state — bumps from ^1.2 to ^1.3 in Git
+# trigger reconcile.  AllowUnsigned is set in dev only.
+apiVersion: acc.redhat.io/v1alpha1
+kind: AccPackageInstall
+metadata:
+  name: coding-roles
+  namespace: acc
+spec:
+  name: "@acc/coding-roles"
+  constraint: "^1.2"
+  targetCorpus: dev-corpus
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AccPackageInstall
+metadata:
+  name: research-roles
+  namespace: acc
+spec:
+  name: "@acc/research-roles"
+  constraint: "^2.0"
+  catalogRef: acc-canonical    # pin to a specific catalog
+  targetCorpus: dev-corpus
