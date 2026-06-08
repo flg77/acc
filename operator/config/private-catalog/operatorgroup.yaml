@@ -1,0 +1,9 @@
+---
+# OperatorGroup for the install namespace. Empty spec = AllNamespaces watch
+# (the operator-sdk default CSV install mode).
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: acc-og
+  namespace: acc-system
+spec: {}
