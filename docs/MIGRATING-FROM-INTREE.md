@@ -37,8 +37,26 @@ Find the 44 movable role names you actually use in your
 |---|---|
 | `@acc/workspace-roles` | `coding_agent`, `coding_agent_architect`, `coding_agent_dependency`, `coding_agent_implementer`, `coding_agent_reviewer`, `coding_agent_tester`, `analyst`, `synthesizer` |
 | `@acc/research-roles` | `research_planner`, `research_competitor`, `research_critic`, `research_economist`, `research_strategist`, `research_synthesizer` |
-| `@acc/business-roles` | All 30 business roles (HR, sales, marketing, finance, legal, ops, IT, support) |
 | `@acc/devops-roles` | `data_engineer`, `devops_engineer`, `ml_engineer`, `security_analyst` |
+| `@acc/hr-roles` | `hr_business_partner`, `learning_development_specialist`, `recruiter` |
+| `@acc/finance-roles` | `financial_analyst`, `fpa_analyst` |
+| `@acc/sales-roles` | `account_executive`, `sales_development_rep`, `sales_engineer`, `key_account_manager`, `inside_sales_rep`, `sales_operations_manager`, `revenue_operations_analyst` |
+| `@acc/marketing-roles` | `content_marketer`, `demand_generation_specialist`, `marketing_analyst`, `product_marketer`, `brand_manager` |
+| `@acc/legal-roles` | `contract_analyst`, `risk_compliance_analyst` |
+| `@acc/support-roles` | `customer_success_manager`, `customer_support_agent`, `technical_support_specialist` |
+| `@acc/operations-roles` | `business_analyst`, `operations_analyst`, `procurement_specialist`, `project_manager`, `product_manager`, `it_operations_specialist`, `it_support_specialist` |
+| `@acc/business-roles@^2.0` | **Umbrella** — `depends_on` the seven corporate packs above; one entry installs the whole suite. |
+
+> **The corporate split.** The former 25-role `@acc/business-roles`
+> monolith is now seven per-domain packs. You can pin the individual
+> domain packs you use, or pin the `@acc/business-roles@^2.0` umbrella to
+> pull all seven (ACC's boot-time fetch resolves the umbrella's
+> `depends_on` closure for you). The frozen `@acc/business-roles@1.0.x`
+> monolith stays published, so an existing `@acc/business-roles@^1.0`
+> pin keeps resolving the 25-role monolith unchanged — no forced
+> migration. Four roles are **new** in the split and only available via
+> the domain packs: `key_account_manager`, `inside_sales_rep`,
+> `sales_operations_manager`, `brand_manager`.
 
 Add a `required_packages:` block:
 

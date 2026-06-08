@@ -45,7 +45,12 @@ from acc.pkg.catalog import (
     ResolvedPackage,
     resolve_constraint,
 )
-from acc.pkg.install import InstallResult, install as _install
+from acc.pkg.install import (
+    InstallResult,
+    install as _install,
+    installed_satisfying,
+    read_manifest,
+)
 from acc.pkg.registry import Registry
 from acc.pkg.verify import VerifyError, verify as _verify
 
@@ -200,24 +205,159 @@ def fetch_and_install(
     with tempfile.TemporaryDirectory(prefix="acc-pkg-fetch-") as tmp:
         tmp_dir = Path(tmp)
         tarball_path, sig_path = _materialise(resolved, tmp_dir)
+        install_result = _verify_and_install(
+            resolved,
+            tarball_path,
+            sig_path,
+            allow_unsigned=allow_unsigned,
+            registry=registry,
+        )
 
-        # Verify before install — signing floor.
-        if allow_unsigned:
-            logger.warning(
-                "AUDIT: --allow-unsigned bypass for %s@%s by caller",
-                resolved.entry.name, resolved.entry.version,
+    return FetchResult(install=install_result, resolved=resolved)
+
+
+# ---------------------------------------------------------------------------
+# Verify + install (shared by single-package and closure paths)
+# ---------------------------------------------------------------------------
+
+
+def _verify_and_install(
+    resolved: ResolvedPackage,
+    tarball_path: Path,
+    sig_path: Path | None,
+    *,
+    allow_unsigned: bool,
+    registry: Registry | None,
+) -> InstallResult:
+    """Enforce the signing floor, then install the materialised tarball."""
+    if allow_unsigned:
+        logger.warning(
+            "AUDIT: --allow-unsigned bypass for %s@%s by caller",
+            resolved.entry.name, resolved.entry.version,
+        )
+    else:
+        if sig_path is None or not sig_path.is_file():
+            raise VerifyError(
+                f"catalog {resolved.catalog.id} did not provide a "
+                "signature for "
+                f"{resolved.entry.name}@{resolved.entry.version}; "
+                "the signing floor is non-negotiable — pass "
+                "allow_unsigned=True only with audit-logged approval"
             )
-        else:
-            if sig_path is None or not sig_path.is_file():
-                raise VerifyError(
-                    f"catalog {resolved.catalog.id} did not provide a "
-                    "signature for "
-                    f"{resolved.entry.name}@{resolved.entry.version}; "
-                    "the signing floor is non-negotiable — pass "
-                    "allow_unsigned=True only with audit-logged approval"
-                )
-            _verify(tarball_path, sig_path, resolved.catalog.required_signer)
+        _verify(tarball_path, sig_path, resolved.catalog.required_signer)
 
-        install_result = _install(tarball_path, registry=registry)
+    return _install(tarball_path, registry=registry)
+
+
+# ---------------------------------------------------------------------------
+# Transitive dependency closure
+# ---------------------------------------------------------------------------
+
+
+_MAX_CLOSURE_DEPTH = 16
+
+
+def fetch_and_install_closure(
+    name: str,
+    constraint: str = ">=0.0.0",
+    *,
+    workspace: Path | None = None,
+    registry: Registry | None = None,
+    allow_unsigned: bool = False,
+) -> FetchResult:
+    """Like :func:`fetch_and_install`, but install the full ``depends_on`` closure.
+
+    Resolves ``@scope/name`` matching ``constraint``, then — before
+    installing it — recursively fetches + verifies + installs every
+    ``depends_on:`` entry not already satisfied in the registry, in
+    dependency order (children first).  This is what makes an umbrella
+    meta-pack (e.g. ``@acc/business-roles@^2.0`` → the seven domain
+    packs) install as a single ``required_packages:`` entry.
+
+    The single-package :func:`fetch_and_install` (and the installer's
+    own ``_check_dependencies``) refuse a package whose deps aren't
+    present; this helper satisfies them first.
+
+    Cycles and runaway depth are guarded (``MissingDependency`` will
+    surface for genuinely unsatisfiable circular deps).
+
+    Returns the :class:`FetchResult` for the requested top-level package.
+    """
+    registry = registry or Registry()
+    result = _install_closure(
+        name,
+        constraint,
+        workspace=workspace,
+        registry=registry,
+        allow_unsigned=allow_unsigned,
+        visited=set(),
+        depth=0,
+    )
+    assert result is not None  # top-level is never a pre-visited cycle node
+    return result
+
+
+def _install_closure(
+    name: str,
+    constraint: str,
+    *,
+    workspace: Path | None,
+    registry: Registry,
+    allow_unsigned: bool,
+    visited: set[tuple[str, str]],
+    depth: int,
+) -> FetchResult | None:
+    if depth > _MAX_CLOSURE_DEPTH:
+        raise FetchError(
+            f"dependency closure exceeded max depth {_MAX_CLOSURE_DEPTH} "
+            f"while resolving {name}"
+        )
+
+    resolved = resolve_constraint(name, constraint, workspace=workspace)
+    if resolved is None:
+        raise CatalogResolutionFailed(
+            f"no catalog advertises {name} matching {constraint!r}"
+        )
+
+    key = (resolved.entry.name, resolved.entry.version)
+    if key in visited:
+        # Already handled earlier in this closure pass (diamond / cycle
+        # guard).  Deps don't consume the return value.
+        return None
+    visited.add(key)
+
+    logger.info(
+        "fetch (closure): %s@%s from catalog %s (tier=%s)",
+        resolved.entry.name,
+        resolved.entry.version,
+        resolved.catalog.id,
+        resolved.catalog.tier,
+    )
+
+    with tempfile.TemporaryDirectory(prefix="acc-pkg-fetch-") as tmp:
+        tarball_path, sig_path = _materialise(resolved, Path(tmp))
+
+        # Install unsatisfied dependencies first (children before parent).
+        manifest = read_manifest(tarball_path)
+        for dep in manifest.depends_on:
+            if list(installed_satisfying(registry, dep.name, dep.version)):
+                continue
+            _install_closure(
+                dep.name,
+                dep.version,
+                workspace=workspace,
+                registry=registry,
+                allow_unsigned=allow_unsigned,
+                visited=visited,
+                depth=depth + 1,
+            )
+
+        install_result = _verify_and_install(
+            resolved,
+            tarball_path,
+            sig_path,
+            allow_unsigned=allow_unsigned,
+            registry=registry,
+        )
 
     return FetchResult(install=install_result, resolved=resolved)

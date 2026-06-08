@@ -207,7 +207,10 @@ def _cmd_pkg_install(args: argparse.Namespace) -> int:
     # the pkg subsystem (legacy stand-alone).
     try:
         from acc.collective import collective_workspace  # noqa: PLC0415
-        from acc.pkg.fetch import FetchError, fetch_and_install  # noqa: PLC0415
+        from acc.pkg.fetch import (  # noqa: PLC0415
+            FetchError,
+            fetch_and_install_closure,
+        )
     except ImportError as exc:
         print(
             f"acc-cli collective pkg-install: acc.pkg unavailable ({exc})",
@@ -239,7 +242,7 @@ def _cmd_pkg_install(args: argparse.Namespace) -> int:
         from acc.collective import parse_required_package  # noqa: PLC0415
         name, constraint = parse_required_package(spec_str)
         try:
-            res = fetch_and_install(
+            res = fetch_and_install_closure(
                 name,
                 constraint,
                 workspace=workspace,
@@ -280,7 +283,10 @@ def _cmd_pkg_install_direct(args: argparse.Namespace) -> int:
     """
     try:
         from acc.collective import parse_required_package  # noqa: PLC0415
-        from acc.pkg.fetch import FetchError, fetch_and_install  # noqa: PLC0415
+        from acc.pkg.fetch import (  # noqa: PLC0415
+            FetchError,
+            fetch_and_install_closure,
+        )
     except ImportError as exc:
         print(
             f"acc-cli collective pkg-install-direct: acc.pkg unavailable ({exc})",
@@ -297,7 +303,7 @@ def _cmd_pkg_install_direct(args: argparse.Namespace) -> int:
     results: list[dict] = []
     failures: list[dict] = []
     try:
-        res = fetch_and_install(
+        res = fetch_and_install_closure(
             name, constraint,
             allow_unsigned=args.allow_unsigned,
         )

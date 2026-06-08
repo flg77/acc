@@ -125,6 +125,11 @@ def _walk_source(source_dir: Path) -> list[tuple[str, Path]]:
             )
         rel = p.relative_to(source_dir).as_posix()
         out.append((rel, p))
+    # Sort by the POSIX relpath string (not the OS-native path order from
+    # rglob, which is case-insensitive on Windows) so the content-tree hash
+    # is deterministic cross-platform AND matches the install-side recompute
+    # (acc.pkg.install._content_tree_hash_from_tar sorts the same way).
+    out.sort(key=lambda t: t[0])
     return out
 
 

@@ -135,13 +135,23 @@ class SkillRegistry:
             one bad skill must not knock out every healthy one.
         """
         root = Path(base_dir) if base_dir is not None else Path(_skills_root_default())
-        ids = list_skills(root)
+        # Dual-source discovery: scan skills bundled in installed packages
+        # (under ACC_PACKAGES_ROOT) THEN the in-tree root, so in-tree /
+        # core-baseline skills stay authoritative on an id collision.
+        # Only when base_dir is None (the default/production path).
+        roots: list[Path] = []
+        if base_dir is None:
+            from acc.pkg.registry import installed_capability_dirs  # noqa: PLC0415
+            roots.extend(installed_capability_dirs("skills"))
+        roots.append(root)
+
         new: dict[str, Skill] = {}
-        for skill_id in ids:
-            skill = SkillLoader(root, skill_id).load()
-            if skill is None:
-                continue
-            new[skill_id] = skill
+        for scan_root in roots:
+            for skill_id in list_skills(scan_root):
+                skill = SkillLoader(scan_root, skill_id).load()
+                if skill is None:
+                    continue
+                new[skill_id] = skill
         self._skills = new
         logger.info(
             "skills: registry rebuilt — %d skill(s) loaded from %s (%s)",

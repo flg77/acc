@@ -40,7 +40,7 @@ def test_direct_install_happy_json(capsys):
         assert kw.get("allow_unsigned") is False
         return fake_result
 
-    with patch("acc.pkg.fetch.fetch_and_install", side_effect=fake_fetch):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", side_effect=fake_fetch):
         rc = _run_cli([
             "collective", "pkg-install-direct",
             "@acc/coding-roles@^1.2", "--json",
@@ -61,7 +61,7 @@ def test_direct_install_propagates_allow_unsigned(capsys):
         from acc.pkg.fetch import FetchError
         raise FetchError("stub")
 
-    with patch("acc.pkg.fetch.fetch_and_install", side_effect=fake_fetch):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", side_effect=fake_fetch):
         _run_cli([
             "collective", "pkg-install-direct",
             "@acc/x@1.0.0", "--allow-unsigned", "--json",
@@ -78,7 +78,7 @@ def test_direct_install_idempotent_was_already_installed(capsys):
     })()
     fake_result = type("R", (), {"install": fake_install})()
 
-    with patch("acc.pkg.fetch.fetch_and_install", return_value=fake_result):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", return_value=fake_result):
         rc = _run_cli([
             "collective", "pkg-install-direct",
             "@acc/coding-roles@1.0.0", "--json",
@@ -100,7 +100,7 @@ def test_direct_install_fetch_error_returns_3(capsys):
     def fake_fetch(*a, **kw):
         raise CatalogResolutionFailed("no catalog has it")
 
-    with patch("acc.pkg.fetch.fetch_and_install", side_effect=fake_fetch):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", side_effect=fake_fetch):
         rc = _run_cli([
             "collective", "pkg-install-direct",
             "@acc/missing@^1.0", "--json",
@@ -118,7 +118,7 @@ def test_direct_install_malformed_spec_returns_1(capsys, monkeypatch):
     def fake_fetch(*a, **kw):
         called["fetch"] = True
 
-    with patch("acc.pkg.fetch.fetch_and_install", side_effect=fake_fetch):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", side_effect=fake_fetch):
         rc = _run_cli([
             "collective", "pkg-install-direct",
             "not-a-valid-spec", "--json",
@@ -132,7 +132,7 @@ def test_direct_install_unexpected_exception_caught(capsys):
     def fake_fetch(*a, **kw):
         raise RuntimeError("boom")
 
-    with patch("acc.pkg.fetch.fetch_and_install", side_effect=fake_fetch):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", side_effect=fake_fetch):
         rc = _run_cli([
             "collective", "pkg-install-direct",
             "@acc/x@1.0.0", "--json",
@@ -158,7 +158,7 @@ def test_output_shape_matches_pkg_install(capsys):
         "was_already_installed": False,
     })()
     fake_result = type("R", (), {"install": fake_install})()
-    with patch("acc.pkg.fetch.fetch_and_install", return_value=fake_result):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", return_value=fake_result):
         _run_cli([
             "collective", "pkg-install-direct",
             "@acc/x@1.0.0", "--json",

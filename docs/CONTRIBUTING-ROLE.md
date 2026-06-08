@@ -51,16 +51,19 @@ acc-pkg init my-coding-helper \
   --output ./my-coding-helper
 ```
 
-This creates `./my-coding-helper/` with:
+This creates `./my_coding_helper/` with:
 
 * a starter `accpkg.yaml`
-* a `roles/my_coding_helper/role.yaml` from the `_base` template
-* an empty `evals/` skeleton with one behavioral and one safety
-  example
+* `roles/my_coding_helper/{role.yaml, system_prompt.md, eval_rubric.yaml}`
+  scaffolded with guided TODOs
+* an `evals/` skeleton with one behavioral + one safety example
 * `curated-llms.yaml` defaulted to `include_rhoai_default: true`
+* a `README.md` + a `Makefile` (`build` / `validate` / `eval` targets)
 
-> **Note**: `acc-pkg init` is Stage 2 work — until it ships, copy
-> `tools/build_pilot_pkg.py`'s build tree as a starting point.
+Add more roles to the pack with `acc-pkg new-role <id>`, and lint before
+building with `acc-pkg validate .` (checks the manifest, each
+`role.yaml` against the schema, that no TODOs remain, and that the evals
+parse).
 
 ## Step 2 — Author the role
 

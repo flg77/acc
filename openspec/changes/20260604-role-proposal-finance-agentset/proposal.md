@@ -16,8 +16,8 @@ the substrate: **FinanceDatabase** (300k+ symbol catalog),
 **FinanceToolkit** (150+ ratios + risk + portfolio + technicals +
 options + fixed income + economics), and reference designs
 (**Financial-News-Sentiment-Analyzer**, **FinAnGPT**). Operator
-brainstorm is in the Obsidian vault under
-`ACC-Finance-Agentset/Finance Agentset — brainstorm.md`.
+brainstorm + proposal + agent-interaction-profile are in the Obsidian
+vault under `ACC Openspec/ACC Role Proposals/finance-agentset/`.
 
 This proposal lands the agentset in 5 phases. Phase 1 is the substrate
 that unblocks every later analyst role. Phases 2-5 are designed but
@@ -81,6 +81,32 @@ deferred.
 * Compliance pane dedicated finance sub-tab (mirrors the multikind
   consolidation work).
 
+### Phase 6 (deferred) — prescriptive optimization (cuOpt)
+
+Raises the agentset from *descriptive* (ratios/VaR) to *prescriptive*
+(optimal, constraint-satisfying allocations). See the proposal paper +
+agent interaction profile in the vault, and the business-roles cuOpt
+design (`20260604-business-roles-domain-split/design-cuopt.md`).
+
+* **`@acc/mcp-cuopt`** MCP (`own_pack`, optional): thin first-party
+  wrapper exposing `solve_lp` / `solve_milp` over an external NVIDIA
+  cuOpt (Apache-2.0) REST/NIM endpoint. No community MCP exists.
+* **Skills:** `cvar_optimise` (Rockafellar–Uryasev LP),
+  `cardinality_rebalance` (cardinality/round-lot/turnover MILP),
+  `liability_match` (bond dedication LP/MILP), `scenario_optimise`
+  (robust LP over Monte-Carlo paths). `optimise_weights` becomes a
+  **router**: cuOpt when available, scipy fallback otherwise.
+* **Matures:** `portfolio_manager` (L2→L3: emits an auditable *optimal*
+  `ALLOCATE`, not a heuristic), `quant_researcher` (scenario opt at GPU
+  scale), `fixed_income_analyst` (liability matching).
+* **Scope honesty:** cuOpt is LP/MILP/VRP, not a QP solver — adopt the
+  linear risk measures (CVaR/MAD) as the house objective; Markowitz QP
+  stays on the scipy fallback.
+* **Deploy-mode gating:** wired only in `rhoai` (GPU); standalone/edge
+  degrade to the scipy fallback **or** delegate via the ACC-9
+  cross-collective bridge (`[DELEGATE:dc-hub:cuopt opt]`,
+  JetStream-queued when offline).
+
 ## Impact
 
 * **Affected code (Phase 1):**
@@ -137,8 +163,9 @@ deferred.
 
 ## References
 
-* Brainstorm:
-  `C:\Users\micro\Documents\Notes\Notes\Development\AgenticCellCorpus\ACC-Finance-Agentset\Finance Agentset — brainstorm.md`
+* Vault (brainstorm + proposal + agent interaction profile):
+  `…\AgenticCellCorpus\ACC Openspec\ACC Role Proposals\finance-agentset\`
+* cuOpt design: `openspec/changes/20260604-business-roles-domain-split/design-cuopt.md`
 * Libraries:
   * `C:\Users\micro\Downloads\git\libraries\financial\FinanceDatabase`
   * `C:\Users\micro\Downloads\git\libraries\financial\FinanceToolkit`

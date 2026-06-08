@@ -264,4 +264,8 @@ standalone product.
 * [Model Context Protocol spec](https://spec.modelcontextprotocol.io)
   — the underlying wire protocol.
 * [`docs/howto-skills.md`](howto-skills.md) — sister doc for the
-  in-house Skills surface.
+  in-house Skills surface; see its **Discovery, packaging tiers &
+  scoping** section — MCPs follow the identical dual-source model
+  (in-tree `./mcps` + installed packages under `ACC_PACKAGES_ROOT`,
+  flat/non-recursive scan, `core_baseline`/`bundle_in_role`/`own_pack`
+  tiers).

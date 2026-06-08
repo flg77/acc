@@ -269,3 +269,30 @@ class Registry:
             install_path=str(install_path),
             installed_at=_now_iso(),
         )
+
+
+def installed_capability_dirs(kind: str, registry: "Registry | None" = None) -> list[Path]:
+    """Return existing ``<install_path>/<kind>`` dirs across installed packages.
+
+    ``kind`` is ``"mcps"`` or ``"skills"``.  Used by the MCP/skill
+    registries' dual-source loaders so capabilities bundled in an
+    installed ``.accpkg`` are discovered alongside the in-tree ones
+    (Stage 2 — the packaged skills/MCPs land under ``ACC_PACKAGES_ROOT``
+    but were previously never scanned).
+
+    Ordered by installed ``(name, version)`` so a newer pack's dir is
+    returned after an older one's; callers scan in-tree LAST so core
+    baseline capabilities stay authoritative on an id collision.
+    Best-effort: a missing/empty registry returns ``[]``.
+    """
+    try:
+        reg = registry or Registry()
+        entries = reg.list()
+    except Exception:  # noqa: BLE001 — discovery must never crash agent boot
+        return []
+    dirs: list[Path] = []
+    for entry in entries:
+        d = Path(entry.install_path) / kind
+        if d.is_dir():
+            dirs.append(d)
+    return dirs

@@ -219,7 +219,7 @@ def test_dispatch_calls_fetch_and_install():
         captured["constraint"] = constraint
         return fake_result
 
-    with patch("acc.pkg.fetch.fetch_and_install", side_effect=fake_fetch):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", side_effect=fake_fetch):
         ok = _run(dispatch_approved_proposal(sig, proposal))
 
     assert ok is True
@@ -242,7 +242,7 @@ def test_dispatch_fetch_error_returns_false():
     def fake_fetch(*a, **kw):
         raise CatalogResolutionFailed("no catalog has it")
 
-    with patch("acc.pkg.fetch.fetch_and_install", side_effect=fake_fetch):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", side_effect=fake_fetch):
         ok = _run(dispatch_approved_proposal(sig, proposal))
 
     assert ok is False
@@ -272,7 +272,7 @@ def test_dispatch_idempotent_install_logged():
     })()
     fake_result = type("FetchResult", (), {"install": fake_install})()
 
-    with patch("acc.pkg.fetch.fetch_and_install", return_value=fake_result):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", return_value=fake_result):
         ok = _run(dispatch_approved_proposal(sig, proposal))
     assert ok is True
     assert sig.published[0][1]["was_already_installed"] is True
@@ -295,7 +295,7 @@ def test_dispatch_empty_constraint_defaults_to_match_any():
         captured["constraint"] = constraint
         return fake_result
 
-    with patch("acc.pkg.fetch.fetch_and_install", side_effect=fake_fetch):
+    with patch("acc.pkg.fetch.fetch_and_install_closure", side_effect=fake_fetch):
         _run(dispatch_approved_proposal(sig, proposal))
     # Empty constraint defaults to ">=0.0.0"
     assert captured["constraint"] == ">=0.0.0"

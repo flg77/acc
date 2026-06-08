@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
-"""Build a family `.accpkg` from multiple in-tree roles — Stage 2.2.
+"""Build a family `.accpkg` from a manifest of roles — Stage 2.2.
 
-The Stage 2 family extractions ship four packages:
+This is the generic family **builder**.  After the Stage 2 cutover the
+movable role SOURCES + the canonical family manifests live in the
+private ``flg77/acc-ecosystem-spearhead`` repo (``manifests/*.yaml``),
+NOT in this repo — so ``DEFAULT_FAMILIES`` here is intentionally empty
+and a family is built by pointing ``--manifest`` (and, when the sources
+live elsewhere, ``--repo-root``) at the spearhead checkout.
 
-    @acc/workspace-roles  — coding_agent family + analyst + synthesizer
-    @acc/research-roles   — research_* family
-    @acc/business-roles   — 30 business roles
-    @acc/devops-roles     — data/devops/ml/security engineers
+What it does:
 
-Each is a single .accpkg carrying multiple roles in its ``roles/``
-directory.  This tool composes the build:
-
-    1. Read a family manifest (defaults baked in; YAML override
-       supported via ``--manifest``).
-    2. For each role in the family, copy its tree + bundled
-       skills/MCPs per ``tools/skill_mcp_tiers.yaml``.
+    1. Read a family manifest YAML (``--manifest``): ``{name, roles, description}``.
+    2. For each role in the family, copy its tree from ``<repo-root>/roles/``
+       + bundled skills/MCPs per ``<repo-root>/tools/skill_mcp_tiers.yaml``.
     3. Synthesise an ``accpkg.yaml`` listing all roles.
     4. Invoke ``acc.pkg.build.build`` for the deterministic tarball.
 
-The output is a regular ``.accpkg`` — ``acc-pkg verify``,
-``install``, the catalog resolver, etc. all see it as one package
-with N roles instead of one role.
+The output is a regular ``.accpkg`` — ``acc-pkg verify``, ``install``,
+the catalog resolver, etc. all see it as one package with N roles.
 
-Usage::
+Usage (from an acc-ecosystem-spearhead checkout, acc on PYTHONPATH)::
 
-    python tools/build_family_pkg.py workspace
-    python tools/build_family_pkg.py research --version 1.1.0
-    python tools/build_family_pkg.py business -o /tmp/out/
-    python tools/build_family_pkg.py --manifest custom-family.yaml
+    python tools/build_family_pkg.py --manifest manifests/sales.yaml --version 1.0.0
+    python tools/build_family_pkg.py --manifest manifests/hr.yaml --repo-root .
 """
 
 from __future__ import annotations
@@ -67,75 +62,14 @@ class FamilyManifest:
     description: str
 
 
-DEFAULT_FAMILIES: dict[str, FamilyManifest] = {
-    "workspace": FamilyManifest(
-        name="@acc/workspace-roles",
-        roles=(
-            "coding_agent",
-            "coding_agent_architect",
-            "coding_agent_dependency",
-            "coding_agent_implementer",
-            "coding_agent_reviewer",
-            "coding_agent_tester",
-            "analyst",
-            "synthesizer",
-        ),
-        description="Coding family + analyst + synthesizer.",
-    ),
-    "research": FamilyManifest(
-        name="@acc/research-roles",
-        roles=(
-            "research_competitor",
-            "research_critic",
-            "research_economist",
-            "research_planner",
-            "research_strategist",
-            "research_synthesizer",
-        ),
-        description="Multi-agent research collective.",
-    ),
-    "business": FamilyManifest(
-        name="@acc/business-roles",
-        roles=(
-            "account_executive",
-            "business_analyst",
-            "content_marketer",
-            "contract_analyst",
-            "customer_success_manager",
-            "customer_support_agent",
-            "demand_generation_specialist",
-            "financial_analyst",
-            "fpa_analyst",
-            "hr_business_partner",
-            "it_operations_specialist",
-            "it_support_specialist",
-            "learning_development_specialist",
-            "marketing_analyst",
-            "operations_analyst",
-            "procurement_specialist",
-            "product_manager",
-            "product_marketer",
-            "project_manager",
-            "recruiter",
-            "revenue_operations_analyst",
-            "risk_compliance_analyst",
-            "sales_development_rep",
-            "sales_engineer",
-            "technical_support_specialist",
-        ),
-        description="Business / GTM / ops / HR / finance.",
-    ),
-    "devops": FamilyManifest(
-        name="@acc/devops-roles",
-        roles=(
-            "data_engineer",
-            "devops_engineer",
-            "ml_engineer",
-            "security_analyst",
-        ),
-        description="Engineering family with shell_exec workflows.",
-    ),
-}
+# Intentionally EMPTY after the Stage 2 cutover.  The movable-role
+# sources + the canonical family manifests now live in the private
+# ``flg77/acc-ecosystem-spearhead`` repo under ``manifests/`` (workspace,
+# research, devops, the seven corporate domain packs incl. the
+# business-roles split, and the capital-markets FSI agentset).  Build a
+# family by pointing ``--manifest`` at one of those manifests; this repo
+# no longer defines or builds movable-role families.
+DEFAULT_FAMILIES: dict[str, FamilyManifest] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -357,9 +291,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "family",
         nargs="?",
-        choices=sorted(DEFAULT_FAMILIES),
-        help="Family key (workspace / research / business / devops). "
-             "Omit when supplying --manifest.",
+        choices=sorted(DEFAULT_FAMILIES) or None,
+        help="Legacy family key (DEFAULT_FAMILIES is empty post-cutover; "
+             "use --manifest instead).",
     )
     parser.add_argument("--version", default="1.0.0")
     parser.add_argument("--output", type=Path, default=None)
@@ -392,8 +326,8 @@ def main(argv: list[str] | None = None) -> int:
         family_key = override.name
     else:
         if not args.family:
-            parser.error("specify a family (workspace/research/business/devops) "
-                         "or pass --manifest")
+            parser.error("pass --manifest <family.yaml> (family/role sources "
+                         "live in flg77/acc-ecosystem-spearhead)")
         family_key = args.family
 
     try:

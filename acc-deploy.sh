@@ -19,6 +19,15 @@
 #             collective.autoresearcher.yaml.  --dry-run prints the
 #             reconcile diff without acting.  PR-B.
 #   build     Build container images (must be done before first 'up')
+#   flavour <name> --packs "<packs>" [--base IMG] [--registry R] [--push]
+#             Build an immutable flavour image (base + chosen packs baked at
+#             build time; full governance/control-roles always baked — D1/D2).
+#             Tags acc-<name>:dev (prefixed by --registry); --push to publish.
+#   new-stack <name> --packs "<packs>" [--agents r1,r2] [--profile P]
+#             [--registry R] [--push]
+#             Roll a dedicated stack: emit collective.<name>.yaml (control set
+#             + domain agents) AND build/tag/push a flavour with roles baked
+#             (D5).  profile = full|edge|edge-min|dc.
 #   rebuild   Pull latest from origin (git fetch + git pull --ff-only) and
 #             rebuild every image with --no-cache --pull.  Use after a
 #             merge to main when you need fresh container layers AND fresh
@@ -350,6 +359,77 @@ case "$COMMAND" in
         echo "▶ Building images..."
         "${BASE_CMD[@]}" build "$@"
         echo "✓ Build complete."
+        ;;
+
+    flavour)
+        # D2 — build an immutable flavour image: base + chosen packs baked in.
+        # Full governance (control-roles) is always baked by Containerfile.flavour (D1).
+        # Usage:
+        #   acc-deploy.sh flavour <name> --packs "<@scope/name ...>" \
+        #     [--base IMG] [--registry R] [--push]
+        FNAME="${1:?usage: acc-deploy.sh flavour <name> --packs \"<packs>\" [--base IMG] [--registry R] [--push]}"
+        shift || true
+        FPACKS=""
+        FBASE="${ACC_PYBASE:-registry.access.redhat.com/ubi10/python-312-minimal:latest}"
+        FREG="${ACC_REGISTRY:-}"
+        FPUSH=false
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --packs)    FPACKS="$2"; shift 2 ;;
+                --base)     FBASE="$2";  shift 2 ;;
+                --registry) FREG="$2";   shift 2 ;;
+                --push)     FPUSH=true;  shift   ;;
+                *) echo "flavour: unknown arg '$1'" >&2; exit 1 ;;
+            esac
+        done
+        TAG="${FREG:+$FREG/}acc-${FNAME}:dev"
+        echo "▶ Building flavour $TAG (packs: ${FPACKS:-<none, base+governance only>})"
+        podman build \
+            -f "$REPO_ROOT/container/Containerfile.flavour" \
+            --build-arg PYBASE="$FBASE" \
+            --build-arg PACKS="$FPACKS" \
+            -t "$TAG" \
+            "$REPO_ROOT"
+        echo "✓ Built $TAG"
+        if $FPUSH; then
+            echo "▶ Pushing $TAG"
+            podman push "$TAG"
+            echo "✓ Pushed $TAG"
+        fi
+        ;;
+
+    new-stack)
+        # D5 — generate a dedicated stack: emit collective.yaml (control set +
+        # domain agents) AND build/tag/push a flavour image with the roles baked.
+        # Usage:
+        #   acc-deploy.sh new-stack <name> --packs "<packs>" [--agents "r1,r2"] \
+        #     [--profile full|edge|edge-min|dc] [--registry R] [--push]
+        SNAME="${1:?usage: acc-deploy.sh new-stack <name> --packs \"<packs>\" [--agents r1,r2] [--profile ...] [--registry R] [--push]}"
+        shift || true
+        SPACKS=""; SAGENTS=""; SPROFILE="full"; SREG="${ACC_REGISTRY:-}"; SPUSH=false
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --packs)    SPACKS="$2";   shift 2 ;;
+                --agents)   SAGENTS="$2";  shift 2 ;;
+                --profile)  SPROFILE="$2"; shift 2 ;;
+                --registry) SREG="$2";     shift 2 ;;
+                --push)     SPUSH=true;    shift   ;;
+                *) echo "new-stack: unknown arg '$1'" >&2; exit 1 ;;
+            esac
+        done
+        OUT="$REPO_ROOT/collective.${SNAME}.yaml"
+        echo "▶ Generating $OUT (profile=$SPROFILE)"
+        python -m acc.pkg.stack \
+            --name "$SNAME" --packs "$SPACKS" --agents "$SAGENTS" \
+            --profile "$SPROFILE" --out "$OUT" \
+            || { echo "ERROR: stack generation failed" >&2; exit 1; }
+        echo "✓ Wrote $OUT"
+        # Build (+ optionally push) the baked flavour image (D5: roles baked in).
+        FLAVOUR_ARGS=("$SNAME" --packs "$SPACKS")
+        [[ -n "$SREG" ]] && FLAVOUR_ARGS+=(--registry "$SREG")
+        $SPUSH && FLAVOUR_ARGS+=(--push)
+        "$0" flavour "${FLAVOUR_ARGS[@]}"
+        echo "✓ Stack '$SNAME' ready: image acc-${SNAME} + $OUT"
         ;;
 
     apply)

@@ -401,6 +401,172 @@ def _cmd_list(args: argparse.Namespace, out: _Output) -> int:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# RPM-like query verbs (capability index over installed packages)
+# ---------------------------------------------------------------------------
+
+
+def _cmd_owner(args: argparse.Namespace, out: _Output) -> int:
+    """``-qf`` — which installed package provides a role/skill/mcp."""
+    from acc.pkg.capability_index import find_owners  # noqa: PLC0415
+
+    owners = find_owners(args.name, kind=args.kind)
+    if not owners:
+        print(
+            f"error: no installed package provides "
+            f"{args.kind or 'capability'} {args.name!r}",
+            file=sys.stderr,
+        )
+        return EXIT_USER_ERROR
+    out.emit([
+        {"name": args.name, "kind": k[:-1], "package": e.name,
+         "version": e.version, "install_path": e.install_path}
+        for e, k in owners
+    ])
+    return EXIT_OK
+
+
+def _cmd_contents(args: argparse.Namespace, out: _Output) -> int:
+    """``-ql`` — list roles/skills/mcps an installed package provides."""
+    from acc.pkg.capability_index import find_package, package_provides  # noqa: PLC0415
+
+    entry = find_package(args.package)
+    if entry is None:
+        print(f"error: not installed: {args.package}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    out.emit({"package": entry.name, "version": entry.version,
+              **package_provides(entry)})
+    return EXIT_OK
+
+
+def _cmd_info(args: argparse.Namespace, out: _Output) -> int:
+    """``-qi`` — package detail (``@scope/name``) or capability ownership."""
+    from acc.pkg.capability_index import (  # noqa: PLC0415
+        find_owners, find_package, package_provides,
+    )
+
+    name = args.name
+    if name.startswith("@") and "/" in name:
+        entry = find_package(name)
+        if entry is None:
+            print(f"error: not installed: {name}", file=sys.stderr)
+            return EXIT_USER_ERROR
+        out.emit({
+            "package": entry.name, "version": entry.version,
+            "install_path": entry.install_path,
+            "installed_at": entry.installed_at,
+            "content_sha256": entry.content_sha256,
+            "provides": package_provides(entry),
+        })
+        return EXIT_OK
+    owners = find_owners(name, kind=args.kind)
+    if not owners:
+        print(f"error: unknown package/capability: {name}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    out.emit([
+        {"name": name, "kind": k[:-1], "package": e.name, "version": e.version}
+        for e, k in owners
+    ])
+    return EXIT_OK
+
+
+def _cmd_verify_installed(args: argparse.Namespace, out: _Output) -> int:
+    """``-V`` — re-check installed content hashes (tamper detection)."""
+    from acc.pkg.capability_index import find_package, verify_installed  # noqa: PLC0415
+
+    reg = Registry()
+    if args.package:
+        entry = find_package(args.package, registry=reg)
+        if entry is None:
+            print(f"error: not installed: {args.package}", file=sys.stderr)
+            return EXIT_USER_ERROR
+        entries = [entry]
+    else:
+        entries = reg.list()
+    rows = []
+    bad = False
+    for e in entries:
+        ok, detail = verify_installed(e)
+        bad = bad or not ok
+        rows.append({"package": e.name, "version": e.version, "ok": ok, "detail": detail})
+    out.emit(rows)
+    return EXIT_OK if not bad else EXIT_HASH_MISMATCH
+
+
+def _cmd_uninstall(args: argparse.Namespace, out: _Output) -> int:
+    """``-e`` — remove an installed package (refuses if depended on, unless --force)."""
+    from acc.pkg.capability_index import find_dependents  # noqa: PLC0415
+    from acc.pkg.install import uninstall as uninstall_pkg  # noqa: PLC0415
+
+    deps = find_dependents(args.package)
+    if deps and not args.force:
+        print(
+            f"error: {args.package} is required by "
+            f"{', '.join(e.name for e in deps)} — use --force",
+            file=sys.stderr,
+        )
+        return EXIT_DEPS
+    entry = uninstall_pkg(args.package, args.pkg_version)
+    if entry is None:
+        print(f"error: not installed: {args.package}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    out.emit({"uninstalled": f"{entry.name}@{entry.version}"})
+    return EXIT_OK
+
+
+def _cmd_rdeps(args: argparse.Namespace, out: _Output) -> int:
+    """``--whatrequires`` — installed packages that depend_on <pkg>."""
+    from acc.pkg.capability_index import find_dependents  # noqa: PLC0415
+
+    out.emit([
+        {"package": e.name, "version": e.version}
+        for e in find_dependents(args.package)
+    ])
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# Contributor scaffolding (init / new-role / validate)
+# ---------------------------------------------------------------------------
+
+
+def _cmd_init(args: argparse.Namespace, out: _Output) -> int:
+    from acc.pkg.scaffold import init_pack  # noqa: PLC0415
+
+    try:
+        d = init_pack(
+            args.name, scope=args.scope, kind=args.kind, domain=args.domain,
+            version=args.version,
+            output=Path(args.output).resolve() if args.output else None,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    out.emit({"created": str(d),
+              "name": f"@{args.scope.lstrip('@')}/{args.name.replace('-', '_')}"})
+    return EXIT_OK
+
+
+def _cmd_new_role(args: argparse.Namespace, out: _Output) -> int:
+    from acc.pkg.scaffold import add_role  # noqa: PLC0415
+
+    try:
+        add_role(Path(args.pack).resolve(), args.role, domain=args.domain)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    out.emit({"added_role": args.role, "pack": args.pack})
+    return EXIT_OK
+
+
+def _cmd_validate(args: argparse.Namespace, out: _Output) -> int:
+    from acc.pkg.scaffold import validate_pack  # noqa: PLC0415
+
+    errs = validate_pack(Path(args.pack).resolve())
+    out.emit({"ok": not errs, "errors": errs})
+    return EXIT_OK if not errs else EXIT_SCHEMA
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="acc-pkg",
@@ -471,6 +637,60 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="list packages available from configured catalogs")
     l.add_argument("--name", help="filter --available by scoped name")
     l.add_argument("--workspace", help="workspace dir whose .acc/catalogs.yaml to include")
+
+    # owner (rpm -qf): which installed package provides a capability
+    o = sub.add_parser("owner", aliases=["qf"],
+                       help="which installed package provides a role/skill/mcp")
+    o.add_argument("name")
+    o.add_argument("--kind", choices=["role", "skill", "mcp"], default=None)
+
+    # contents (rpm -ql): what an installed package provides
+    c = sub.add_parser("contents", aliases=["ql"],
+                       help="list roles/skills/mcps an installed package provides")
+    c.add_argument("package", help="@scope/name")
+
+    # info (rpm -qi): package detail or capability ownership
+    inf = sub.add_parser("info", aliases=["qi"],
+                         help="package detail (@scope/name) or capability ownership")
+    inf.add_argument("name", help="@scope/name OR a role/skill/mcp name")
+    inf.add_argument("--kind", choices=["role", "skill", "mcp"], default=None)
+
+    # verify-installed (rpm -V): re-check on-disk content hashes
+    vi = sub.add_parser("verify-installed", aliases=["qv"],
+                        help="re-check installed content hashes (tamper detection)")
+    vi.add_argument("package", nargs="?", default=None,
+                    help="@scope/name (default: all installed)")
+
+    # uninstall (rpm -e)
+    un = sub.add_parser("uninstall", aliases=["remove"],
+                        help="remove an installed package (tree + registry entry)")
+    un.add_argument("package", help="@scope/name")
+    un.add_argument("--version", dest="pkg_version", default=None)
+    un.add_argument("--force", action="store_true",
+                    help="remove even if other packages depend on it")
+
+    # rdeps (rpm --whatrequires)
+    rd = sub.add_parser("rdeps", help="installed packages that depend_on <pkg>")
+    rd.add_argument("package", help="@scope/name")
+
+    # init — scaffold a contributable role pack
+    ini = sub.add_parser("init", help="scaffold a new role pack to fill in")
+    ini.add_argument("name", help="role/pack base name (snake or kebab case)")
+    ini.add_argument("--scope", required=True, help="your scope, e.g. @you")
+    ini.add_argument("--kind", choices=["role", "agentset"], default="role")
+    ini.add_argument("--domain", default="custom", help="domain_id for the role(s)")
+    ini.add_argument("--version", default="0.1.0")
+    ini.add_argument("--output", default=None, help="target dir (default ./<name>)")
+
+    # new-role — add a role to an existing pack
+    nr = sub.add_parser("new-role", help="add a role to an existing pack source dir")
+    nr.add_argument("role")
+    nr.add_argument("--pack", default=".", help="pack source dir (default cwd)")
+    nr.add_argument("--domain", default="custom")
+
+    # validate — lint a pack source tree before build
+    val = sub.add_parser("validate", help="lint a pack source tree before build")
+    val.add_argument("pack", nargs="?", default=".", help="pack source dir (default cwd)")
 
     return p
 
@@ -569,6 +789,15 @@ _HANDLERS = {
     "verify": _cmd_verify,
     "inspect": _cmd_inspect,
     "list": _cmd_list,
+    "owner": _cmd_owner, "qf": _cmd_owner,
+    "contents": _cmd_contents, "ql": _cmd_contents,
+    "info": _cmd_info, "qi": _cmd_info,
+    "verify-installed": _cmd_verify_installed, "qv": _cmd_verify_installed,
+    "uninstall": _cmd_uninstall, "remove": _cmd_uninstall,
+    "rdeps": _cmd_rdeps,
+    "init": _cmd_init,
+    "new-role": _cmd_new_role,
+    "validate": _cmd_validate,
     "eval": _cmd_eval,
     "login": _cmd_login,
     "publish": _cmd_publish,

@@ -108,6 +108,17 @@ def _read_manifest_from_tar(tar: tarfile.TarFile) -> tuple[AccPkgManifest, tarfi
     return AccPkgManifest.model_validate(raw), first
 
 
+def read_manifest(pkg_path: Path) -> AccPkgManifest:
+    """Read + validate the manifest of a built ``.accpkg`` without installing.
+
+    Used by the catalog-aware fetch layer to inspect ``depends_on``
+    before installing (transitive dependency resolution).
+    """
+    with gzip.open(pkg_path, "rb") as gz, tarfile.open(fileobj=gz, mode="r|") as tar:
+        manifest, _ = _read_manifest_from_tar(tar)
+    return manifest
+
+
 def _split_scope_name(name: str) -> tuple[str, str]:
     """``@scope/name`` → ``("scope", "name")``."""
     assert name.startswith("@") and "/" in name, name
@@ -338,3 +349,25 @@ def installed_satisfying(
         e for e in registry.find_by_name(name)
         if version_satisfies(e.version, constraint)
     ]
+
+
+def uninstall(
+    name: str, version: str | None = None, *, registry: Registry | None = None
+) -> RegistryEntry | None:
+    """Remove an installed package: delete its tree + drop the registry entry.
+
+    With ``version=None`` removes the newest installed version. Returns the
+    removed :class:`RegistryEntry`, or ``None`` if nothing matched. Callers
+    are responsible for the reverse-dependency check (see
+    ``acc.pkg.capability_index.find_dependents``).
+    """
+    registry = registry or Registry()
+    entry = registry.find(name, version)
+    if entry is None:
+        return None
+    path = Path(entry.install_path)
+    if path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+    registry.remove(entry.name, entry.version)
+    logger.info("uninstalled %s@%s", entry.name, entry.version)
+    return entry
