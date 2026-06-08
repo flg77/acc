@@ -54,7 +54,7 @@ metadata:
       ]
     capabilities: Seamless Upgrades
     categories: AI/Machine Learning, Integration & Delivery
-    containerImage: registry.access.redhat.com/acc-operator:0.1.0
+    containerImage: quay.io/redhat-ai-dev/acc-operator:0.1.0
     createdAt: "2026-04-15T00:00:00Z"
     description: >-
       The Agentic Cell Corpus (ACC) Operator installs and manages the ACC
@@ -158,6 +158,9 @@ spec:
         - apiGroups: [""]
           resources: ["secrets"]
           verbs: ["get", "list", "watch"]
+        - apiGroups: ["coordination.k8s.io"]
+          resources: ["leases"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
         - apiGroups: ["templates.gatekeeper.sh"]
           resources: ["constrainttemplates"]
           verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -198,7 +201,7 @@ spec:
                 - --metrics-bind-address=:8080
                 command:
                 - /manager
-                image: registry.access.redhat.com/acc-operator:0.1.0
+                image: quay.io/redhat-ai-dev/acc-operator:0.1.0
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -226,7 +229,6 @@ spec:
                     - ALL
               securityContext:
                 runAsNonRoot: true
-                runAsUser: 65532
               serviceAccountName: acc-operator-controller-manager
               terminationGracePeriodSeconds: 10
     strategy: deployment
@@ -259,7 +261,7 @@ spec:
     name: Red Hat
     url: https://www.redhat.com
   relatedImages:
-  - image: registry.access.redhat.com/acc-operator:0.1.0
+  - image: quay.io/redhat-ai-dev/acc-operator:0.1.0
     name: manager
   version: 0.1.0
   webhookdefinitions:

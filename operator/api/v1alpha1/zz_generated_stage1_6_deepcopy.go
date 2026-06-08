@@ -106,8 +106,7 @@ func (in *AccPackageInstallSpec) DeepCopy() *AccPackageInstallSpec {
 func (in *AccPackageInstallStatus) DeepCopyInto(out *AccPackageInstallStatus) {
 	*out = *in
 	if in.LastInstalledAt != nil {
-		t := in.LastInstalledAt.DeepCopy()
-		out.LastInstalledAt = &t
+		out.LastInstalledAt = in.LastInstalledAt.DeepCopy()
 	}
 	if in.Conditions != nil {
 		out.Conditions = make([]metav1.Condition, len(in.Conditions))
@@ -209,8 +208,7 @@ func (in *AccCatalogSpec) DeepCopy() *AccCatalogSpec {
 func (in *AccCatalogStatus) DeepCopyInto(out *AccCatalogStatus) {
 	*out = *in
 	if in.LastRenderedAt != nil {
-		t := in.LastRenderedAt.DeepCopy()
-		out.LastRenderedAt = &t
+		out.LastRenderedAt = in.LastRenderedAt.DeepCopy()
 	}
 	if in.Conditions != nil {
 		out.Conditions = make([]metav1.Condition, len(in.Conditions))

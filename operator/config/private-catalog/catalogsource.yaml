@@ -1,0 +1,18 @@
+---
+# Private CatalogSource — serves the ACC operator from the OCP internal
+# registry (images mirrored there from quay.ic3net.internal by acc1).
+# The index references the bundle by the in-cluster service ref, so no
+# ImageTagMirrorSet (node reboot) is required.
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: acc-catalog
+  namespace: openshift-marketplace
+spec:
+  sourceType: grpc
+  image: image-registry.openshift-image-registry.svc:5000/acc-system/acc-operator:0.1.0-index
+  displayName: ACC Operators (private)
+  publisher: ic3net
+  updateStrategy:
+    registryPoll:
+      interval: 10m

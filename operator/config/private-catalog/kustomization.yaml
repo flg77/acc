@@ -1,0 +1,8 @@
+# Private-catalog OLM wire-up: serve the ACC operator from the OCP internal
+# registry and install it into acc-system. Apply AFTER the images are mirrored
+# (operator/hack/deploy-private-catalog.sh mirror). See the runbook in
+# operator/docs/private-quay-to-ocp-catalog-deploy.md.
+resources:
+- catalogsource.yaml
+- operatorgroup.yaml
+- subscription.yaml

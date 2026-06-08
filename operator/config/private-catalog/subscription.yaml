@@ -1,0 +1,13 @@
+---
+# Subscription installing the ACC operator from the private catalog.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: acc-operator
+  namespace: acc-system
+spec:
+  channel: alpha
+  name: acc-operator
+  source: acc-catalog
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
