@@ -42,6 +42,10 @@ rules:
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["get", "list", "watch", "create"]
+# Leader election (controller-runtime --leader-elect uses a Lease).
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Network policy (proposal 014) — standard NetworkPolicy + the optional
 # FQDN/L7 backends (EgressFirewall on OVN-Kubernetes, CiliumNetworkPolicy).
 - apiGroups: ["networking.k8s.io"]

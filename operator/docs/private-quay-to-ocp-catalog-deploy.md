@@ -64,17 +64,17 @@ from Quay.
    makes the CSV fail `AllNamespaces InstallModeType not supported`. The
    OperatorGroup **must** set `spec.targetNamespaces: [acc-system]`
    (shipped that way in `config/private-catalog/operatorgroup.yaml`).
-7. **OpenShift SCC** — the manager image runs as `USER 65532`; `restricted-v2`
-   requires a uid in the namespace's allocated range, so the pod is rejected
-   (`runAsUser 65532 must be in the ranges …`). Bind the operator SA to
-   `nonroot-v2` (`config/private-catalog/operator-scc.yaml`). Proper fix
-   (needs a rebuild): drop the hardcoded `runAsUser` from
-   `config/manager/manager.yaml` so `restricted-v2` assigns one.
-8. **Leader-election RBAC** — the committed CSV omits
-   `coordination.k8s.io/leases`, so the manager runs (`1/1`) but loops on
-   `leases … is forbidden` and never starts its controllers. Grant it
-   (`config/private-catalog/operator-leader-election.yaml`). Proper fix: add the
-   `leases` rule to the operator's `config/rbac` + regenerate the bundle CSV.
+7. **OpenShift SCC** *(fixed in-bundle)* — the manager image runs as `USER
+   65532`; `restricted-v2` requires a uid in the namespace's allocated range, so
+   a hardcoded `runAsUser` is rejected. **Fixed**: `runAsUser` removed from the
+   CSV + `config/manager/manager.yaml`, so `restricted-v2` assigns a uid (the
+   image is group-0/arbitrary-uid friendly). *Older-bundle workaround:* bind the
+   operator SA to `nonroot-v2`.
+8. **Leader-election RBAC** *(fixed in-bundle)* — controller-runtime
+   `--leader-elect` needs `coordination.k8s.io/leases`; without it the manager
+   runs (`1/1`) but loops on `leases … is forbidden` and never starts its
+   controllers. **Fixed**: leases added to the CSV `clusterPermissions` +
+   `config/rbac/role.yaml`. *Older-bundle workaround:* add a leases Role/RoleBinding.
 
 ---
 
@@ -203,9 +203,12 @@ oc apply -f operator/config/private-catalog/   # CatalogSource + OperatorGroup +
 
 * **CatalogSource** (`openshift-marketplace`) → `spec.image: <SVC>:0.1.0-index`
 * **OperatorGroup** (`acc-system`) — `targetNamespaces: [acc-system]` (single-ns; see gotcha 6)
-* **operator-scc** — RoleBinding of the operator SA to `nonroot-v2` (see gotcha 7)
-* **operator-leader-election** — Role/RoleBinding for `leases` (see gotcha 8)
 * **Subscription** (`acc-system`, channel `alpha`, source `acc-catalog`)
+
+> Gotchas 7 (SCC uid) and 8 (leases RBAC) are now **fixed in the bundle itself**
+> (no `runAsUser`, leases in the CSV `clusterPermissions`), so no SCC/RBAC shim
+> manifests are needed. The inline workarounds below apply only if you deploy an
+> *older* bundle that predates those fixes.
 
 ### 6 — Verify
 

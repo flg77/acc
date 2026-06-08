@@ -158,6 +158,9 @@ spec:
         - apiGroups: [""]
           resources: ["secrets"]
           verbs: ["get", "list", "watch"]
+        - apiGroups: ["coordination.k8s.io"]
+          resources: ["leases"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
         - apiGroups: ["templates.gatekeeper.sh"]
           resources: ["constrainttemplates"]
           verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -226,7 +229,6 @@ spec:
                     - ALL
               securityContext:
                 runAsNonRoot: true
-                runAsUser: 65532
               serviceAccountName: acc-operator-controller-manager
               terminationGracePeriodSeconds: 10
     strategy: deployment
