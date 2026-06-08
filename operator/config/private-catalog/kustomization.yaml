@@ -6,4 +6,5 @@ resources:
 - catalogsource.yaml
 - operatorgroup.yaml
 - operator-scc.yaml
+- operator-leader-election.yaml
 - subscription.yaml

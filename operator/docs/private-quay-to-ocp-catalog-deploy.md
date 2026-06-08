@@ -70,6 +70,11 @@ from Quay.
    `nonroot-v2` (`config/private-catalog/operator-scc.yaml`). Proper fix
    (needs a rebuild): drop the hardcoded `runAsUser` from
    `config/manager/manager.yaml` so `restricted-v2` assigns one.
+8. **Leader-election RBAC** — the committed CSV omits
+   `coordination.k8s.io/leases`, so the manager runs (`1/1`) but loops on
+   `leases … is forbidden` and never starts its controllers. Grant it
+   (`config/private-catalog/operator-leader-election.yaml`). Proper fix: add the
+   `leases` rule to the operator's `config/rbac` + regenerate the bundle CSV.
 
 ---
 
@@ -199,6 +204,7 @@ oc apply -f operator/config/private-catalog/   # CatalogSource + OperatorGroup +
 * **CatalogSource** (`openshift-marketplace`) → `spec.image: <SVC>:0.1.0-index`
 * **OperatorGroup** (`acc-system`) — `targetNamespaces: [acc-system]` (single-ns; see gotcha 6)
 * **operator-scc** — RoleBinding of the operator SA to `nonroot-v2` (see gotcha 7)
+* **operator-leader-election** — Role/RoleBinding for `leases` (see gotcha 8)
 * **Subscription** (`acc-system`, channel `alpha`, source `acc-catalog`)
 
 ### 6 — Verify
@@ -248,6 +254,8 @@ prints each step with a timestamp so it doubles as the live runbook log.
 Full chain validated on the SNO sandbox: build on acc1 → push to Quay (`:8443`)
 → mirror to OCP internal registry → reboot-free FBC CatalogSource `READY` →
 Subscription → InstallPlan `Complete` → CSV `acc-operator.v0.1.0` **Succeeded** →
-`acc-operator-controller-manager` pod **1/1 Running**. All seven gotchas above
-were hit and resolved during this run; the manifests/script here encode the
-working configuration.
+`acc-operator-controller-manager` pod **1/1 Running** → manager **acquired the
+leader lease** and **started all four controllers** (agentcorpus,
+agentcollective, acccatalog, accpackageinstall), pulling its image from the OCP
+internal registry. All eight gotchas above were hit and resolved during this
+run; the manifests/script here encode the working configuration.

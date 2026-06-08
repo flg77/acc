@@ -1,0 +1,29 @@
+---
+# controller-runtime leader election needs coordination.k8s.io/leases in the
+# operator's namespace. The committed bundle CSV omits this permission, so the
+# manager runs but loops on "leases … is forbidden" and never starts its
+# controllers. Grant it here (proper fix: add the leases rule to the operator's
+# config/rbac + regenerate the bundle CSV).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: acc-operator-leader-election
+  namespace: acc-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: acc-operator-leader-election
+  namespace: acc-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: acc-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: acc-operator-controller-manager
+    namespace: acc-system
