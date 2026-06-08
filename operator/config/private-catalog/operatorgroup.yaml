@@ -1,9 +1,13 @@
 ---
-# OperatorGroup for the install namespace. Empty spec = AllNamespaces watch
-# (the operator-sdk default CSV install mode).
+# OperatorGroup for the install namespace. The ACC operator's CSV supports
+# only OwnNamespace/SingleNamespace install modes (NOT AllNamespaces), so the
+# group MUST target a single namespace — an empty spec (AllNamespaces) makes
+# the CSV fail with "AllNamespaces InstallModeType not supported".
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
   name: acc-og
   namespace: acc-system
-spec: {}
+spec:
+  targetNamespaces:
+    - acc-system

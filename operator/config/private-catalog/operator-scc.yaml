@@ -1,0 +1,24 @@
+---
+# The operator manager image runs as a fixed non-root uid (65532, from the
+# Containerfile `USER 65532:0`). OpenShift's restricted-v2 SCC instead requires
+# a uid in the namespace's allocated range, so the manager pod is rejected
+# ("runAsUser 65532 must be in the ranges …"). Bind the operator's
+# ServiceAccount to the nonroot-v2 SCC, which permits an explicit non-root uid.
+#
+# Proper fix (preferred, but a rebuild): drop the hardcoded runAsUser from
+# config/manager/manager.yaml so restricted-v2 assigns one — the image is
+# already group-0 / arbitrary-uid friendly. This binding is the no-rebuild
+# workaround used in the validated run.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: acc-operator-nonroot
+  namespace: acc-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:nonroot-v2
+subjects:
+  - kind: ServiceAccount
+    name: acc-operator-controller-manager
+    namespace: acc-system

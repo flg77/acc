@@ -59,6 +59,17 @@ from Quay.
    image ref you build with. If that's the Quay ref, in-cluster unpack fails
    (`lookup quay.ic3net.internal … no such host`). The refs the **cluster** uses
    must point at the **internal registry** (see Final mile).
+6. **OperatorGroup install mode** — the ACC CSV supports only
+   `OwnNamespace`/`SingleNamespace`. An empty-spec OperatorGroup (AllNamespaces)
+   makes the CSV fail `AllNamespaces InstallModeType not supported`. The
+   OperatorGroup **must** set `spec.targetNamespaces: [acc-system]`
+   (shipped that way in `config/private-catalog/operatorgroup.yaml`).
+7. **OpenShift SCC** — the manager image runs as `USER 65532`; `restricted-v2`
+   requires a uid in the namespace's allocated range, so the pod is rejected
+   (`runAsUser 65532 must be in the ranges …`). Bind the operator SA to
+   `nonroot-v2` (`config/private-catalog/operator-scc.yaml`). Proper fix
+   (needs a rebuild): drop the hardcoded `runAsUser` from
+   `config/manager/manager.yaml` so `restricted-v2` assigns one.
 
 ---
 
@@ -186,7 +197,8 @@ oc apply -f operator/config/private-catalog/   # CatalogSource + OperatorGroup +
 `operator/config/private-catalog/` contains:
 
 * **CatalogSource** (`openshift-marketplace`) → `spec.image: <SVC>:0.1.0-index`
-* **OperatorGroup** (`acc-system`)
+* **OperatorGroup** (`acc-system`) — `targetNamespaces: [acc-system]` (single-ns; see gotcha 6)
+* **operator-scc** — RoleBinding of the operator SA to `nonroot-v2` (see gotcha 7)
 * **Subscription** (`acc-system`, channel `alpha`, source `acc-catalog`)
 
 ### 6 — Verify
@@ -231,10 +243,11 @@ export OCP_TOKEN=sha256~…     # cluster-admin token
 The script is idempotent (re-running resumes mirrors, re-applies manifests) and
 prints each step with a timestamp so it doubles as the live runbook log.
 
-## Live-run status (2026-06-08)
+## Live-run status (2026-06-08) — PROVEN END TO END
 
-Proven end-to-end up to **operator visible in a READY private CatalogSource**:
-build → Quay (`:8443`) → OCP internal registry → CatalogSource READY → package
-`acc-operator` served. The running-operator final mile was deferred pending the
-build-defect fixes in the companion PR; re-run §1–§6 against a commit that
-includes them to land a Running operator pod.
+Full chain validated on the SNO sandbox: build on acc1 → push to Quay (`:8443`)
+→ mirror to OCP internal registry → reboot-free FBC CatalogSource `READY` →
+Subscription → InstallPlan `Complete` → CSV `acc-operator.v0.1.0` **Succeeded** →
+`acc-operator-controller-manager` pod **1/1 Running**. All seven gotchas above
+were hit and resolved during this run; the manifests/script here encode the
+working configuration.
