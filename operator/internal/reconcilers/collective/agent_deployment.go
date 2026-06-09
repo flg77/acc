@@ -158,7 +158,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 		return 0, 0, false, fmt.Errorf("build manifest delivery for %s: %w", deployName, err)
 	}
 
-	image := fmt.Sprintf("%s/acc-agent-core:%s", corpus.Spec.ImageRegistry, corpus.Spec.Version)
+	image := util.ComponentImage(corpus, "acc-agent-core", corpus.Spec.Version)
 
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -175,6 +175,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: objectLabels},
 				Spec: corev1.PodSpec{
+					ImagePullSecrets: util.ImagePullSecrets(corpus),
 					// OCP restricted SCC — run as non-root UID 1001.
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: ptr.To(true),

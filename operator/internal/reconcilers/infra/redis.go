@@ -73,9 +73,15 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Age
 	// -----------------------------------------------------------------------
 	// StatefulSet
 	// -----------------------------------------------------------------------
-	storageClass := ""
+	// nil => leave storageClassName unset so the cluster default StorageClass
+	// applies. Never emit the empty string, which disables dynamic provisioning.
+	var storageClass *string
+	if redisSpec.StorageClass != "" {
+		sc := redisSpec.StorageClass
+		storageClass = &sc
+	}
 	replicas := ptr.To(redisSpec.Replicas)
-	image := fmt.Sprintf("%s/redis:%s-alpine", corpus.Spec.ImageRegistry, redisSpec.Version)
+	image := util.ComponentImage(corpus, "redis", redisSpec.Version+"-alpine")
 
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -90,6 +96,7 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Age
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					ImagePullSecrets: util.ImagePullSecrets(corpus),
 					Containers: []corev1.Container{
 						{
 							Name:  "redis",
@@ -108,7 +115,7 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Age
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "data"},
 					Spec: corev1.PersistentVolumeClaimSpec{
-						StorageClassName: &storageClass,
+						StorageClassName: storageClass,
 						AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{

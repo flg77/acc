@@ -32,9 +32,26 @@ type AgentCorpusSpec struct {
 	Version string `json:"version"`
 
 	// ImageRegistry is the base registry for acc-agent-core and infrastructure images.
+	// Used when ImageRepository is empty: images render as
+	// <imageRegistry>/<component>:<tag>.
 	// +kubebuilder:default="registry.access.redhat.com"
 	// +optional
 	ImageRegistry string `json:"imageRegistry,omitempty"`
+
+	// ImageRepository, when set, addresses every component within a single
+	// container repository, distinguished by tag: images render as
+	// <imageRepository>:<component>-<tag> (e.g.
+	// quay.io/flg77/acc_images:acc-agent-core-0.1.0). Use this for registries
+	// that can only host one repository. When empty, ImageRegistry is used.
+	// +optional
+	ImageRepository string `json:"imageRepository,omitempty"`
+
+	// ImagePullSecrets is an optional list of Secret names used to pull the
+	// component images. When set, the operator adds them to the imagePullSecrets
+	// of every pod it renders (agents, NATS, Redis, bridges). Required when the
+	// target registry/repository is private.
+	// +optional
+	ImagePullSecrets []string `json:"imagePullSecrets,omitempty"`
 
 	// Collectives lists references to AgentCollective resources this corpus manages.
 	// Each collective gets its own set of agent Deployments and ScaledObjects.
@@ -173,6 +190,11 @@ type RedisSpec struct {
 	// +kubebuilder:validation:Maximum=6
 	// +kubebuilder:default=1
 	Replicas int32 `json:"replicas"`
+
+	// StorageClass for the Redis persistence PVC. When empty, storageClassName
+	// is left unset so the cluster's default StorageClass applies.
+	// +optional
+	StorageClass string `json:"storageClass,omitempty"`
 
 	// StorageSize for Redis persistence PVC.
 	// +kubebuilder:default="1Gi"

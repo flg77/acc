@@ -154,7 +154,7 @@ enforce: %t
 	}
 
 	// Deployment — single replica; the only privileged component.
-	image := fmt.Sprintf("%s/acc-runtime-evidence-bridge:%s", corpus.Spec.ImageRegistry, corpus.Spec.Version)
+	image := util.ComponentImage(corpus, "acc-runtime-evidence-bridge", corpus.Spec.Version)
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: ns, Labels: labels,
@@ -165,6 +165,7 @@ enforce: %t
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					ImagePullSecrets: util.ImagePullSecrets(corpus),
 					Containers: []corev1.Container{
 						{
 							Name:  "runtime-evidence-bridge",

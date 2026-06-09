@@ -247,10 +247,29 @@ spec:
                 - categoryB
                 - gatekeeperIntegration
                 type: object
+              imagePullSecrets:
+                description: |-
+                  ImagePullSecrets is an optional list of Secret names used to pull the
+                  component images. When set, the operator adds them to the imagePullSecrets
+                  of every pod it renders (agents, NATS, Redis, bridges). Required when the
+                  target registry/repository is private.
+                items:
+                  type: string
+                type: array
               imageRegistry:
                 default: registry.access.redhat.com
-                description: ImageRegistry is the base registry for acc-agent-core
-                  and infrastructure images.
+                description: |-
+                  ImageRegistry is the base registry for acc-agent-core and infrastructure images.
+                  Used when ImageRepository is empty: images render as
+                  <imageRegistry>/<component>:<tag>.
+                type: string
+              imageRepository:
+                description: |-
+                  ImageRepository, when set, addresses every component within a single
+                  container repository, distinguished by tag: images render as
+                  <imageRepository>:<component>-<tag> (e.g.
+                  quay.io/flg77/acc_images:acc-agent-core-0.1.0). Use this for registries
+                  that can only host one repository. When empty, ImageRegistry is used.
                 type: string
               infrastructure:
                 description: Infrastructure configures the shared backing services.
@@ -456,6 +475,11 @@ spec:
                               More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                             type: object
                         type: object
+                      storageClass:
+                        description: |-
+                          StorageClass for the Redis persistence PVC. When empty, storageClassName
+                          is left unset so the cluster's default StorageClass applies.
+                        type: string
                       storageSize:
                         default: 1Gi
                         description: StorageSize for Redis persistence PVC.
@@ -930,6 +954,26 @@ spec:
                         description: Endpoint is the OTLP gRPC/HTTP endpoint to export
                           telemetry to.
                         minLength: 1
+                        type: string
+                      mlflowEndpoint:
+                        description: |-
+                          MLflowEndpoint is an optional additional OTLP/HTTP endpoint to
+                          fan traces out to alongside the primary Endpoint.  When set, the
+                          operator-rendered Collector config gains an extra otlphttp/mlflow
+                          exporter on the traces pipeline.  Leave empty to skip the fan-out
+                          (operators who run a standalone Collector configure MLflow there).
+                        type: string
+                      protocol:
+                        default: grpc
+                        description: |-
+                          Protocol selects the OTLP transport agents use to reach Endpoint.
+                          Matches the upstream OTel spec env var OTEL_EXPORTER_OTLP_PROTOCOL.
+                          Default "grpc" preserves pre-Phase-3 behaviour (port :4317);
+                          "http/protobuf" targets HTTP collectors / MLflow /v1/traces on
+                          :4318 — see docs/observability/mlflow.md.
+                        enum:
+                        - grpc
+                        - http/protobuf
                         type: string
                       serviceName:
                         default: acc-agent
