@@ -191,6 +191,10 @@ class PromptScreen(Screen):
         Binding("ctrl+shift+plus", "select_workspace", "Workspace", priority=True),
         Binding("ctrl+plus", "select_workspace", "Workspace", priority=True),
         Binding("ctrl+l", "clear_transcript", "Clear"),
+        # #162 — Ctrl+D saves the session + exits cleanly (resume with
+        # `acc-tui --resume`). The transcript also autosaves continuously, so a
+        # crash is recoverable too.
+        Binding("ctrl+d", "detach", "Detach", priority=True),
         # PR-V4 — reasoning stream: Ctrl+O expand/collapse the one-liners;
         # Ctrl+R hide/show the reasoning stream entirely (default shown).
         Binding("ctrl+o", "toggle_reasoning", "Reasoning ±", priority=True),
@@ -304,6 +308,13 @@ class PromptScreen(Screen):
         # replaced by a shift+tab cycle + a tiny hint).  AUTO default;
         # role selection prefills it (on_select_changed).
         self._operating_mode: str = "AUTO"
+        # #162 — session save/detach/resume. Each Prompt screen owns a session
+        # id; the transcript autosaves after every history append so a crash or
+        # a dropped/again-detached TTY doesn't lose the conversation. main()
+        # --resume sets ACC_TUI_RESUME, which on_mount adopts + restores.
+        from acc.tui import session_store as _ss  # noqa: PLC0415
+        self._session_id: str = _ss.new_session_id()
+        self._session_resumed: bool = False
         # Task ids the screen has already cancelled (timeout path).
         # Cap at 256 entries so the set can't grow unboundedly under
         # a flood of timeouts; oldest entries fall off via FIFO eviction
@@ -445,6 +456,11 @@ class PromptScreen(Screen):
             self.set_interval(1.0, self._tick_activity)
         except Exception:
             logger.exception("prompt: activity ticker init failed")
+        # #162 — resume a prior session when main() set ACC_TUI_RESUME (once).
+        try:
+            self._maybe_resume_session()
+        except Exception:
+            logger.debug("prompt: resume check failed", exc_info=True)
 
     def on_unmount(self) -> None:
         """Cancel any in-flight workers so screen-switch is clean."""
@@ -1293,6 +1309,107 @@ class PromptScreen(Screen):
         except Exception:
             # Container not mounted yet (tests).  Render still happened.
             pass
+        # #162 — persist the transcript so the session survives exit/crash.
+        self._autosave_session()
+
+    # ------------------------------------------------------------------
+    # #162 — session save / detach / resume
+    # ------------------------------------------------------------------
+    def _current_target_role(self) -> str:
+        """Best-effort current value of the target-role Select (for save)."""
+        try:
+            from textual.widgets import Select  # noqa: PLC0415
+            v = self.query_one("#select-target-role", Select).value
+            return "" if (v is None or v is Select.BLANK) else str(v)
+        except Exception:
+            return ""
+
+    def _active_collective_id(self) -> str:
+        try:
+            ids = getattr(self.app, "_collective_ids", None)
+            idx = getattr(self.app, "_active_collective_idx", 0)
+            return str(ids[idx]) if ids else ""
+        except Exception:
+            return ""
+
+    def _autosave_session(self) -> None:
+        """Persist the transcript + context under this screen's session id.
+        Best-effort: never raises (persistence must not break the TUI)."""
+        try:
+            if not self.history:
+                return
+            from acc.tui import session_store as _ss  # noqa: PLC0415
+            _ss.save_session(self._session_id, {
+                "history": list(self.history),
+                "operating_mode": self._operating_mode,
+                "target_role": self._current_target_role(),
+                "workspace_project": self._workspace_project,
+                "collective_id": self._active_collective_id(),
+            })
+        except Exception:
+            logger.debug("prompt: session autosave failed", exc_info=True)
+
+    def restore_session(self, payload: dict) -> bool:
+        """Reload a saved session's transcript + context, adopting its id so
+        further autosaves continue the same file. Returns True if restored."""
+        try:
+            hist = payload.get("history") or []
+            if not isinstance(hist, list):
+                return False
+            sid = payload.get("session_id")
+            if sid:
+                self._session_id = str(sid)
+            self._operating_mode = str(payload.get("operating_mode") or "AUTO")
+            ws = payload.get("workspace_project")
+            self._workspace_project = ws if isinstance(ws, str) else None
+            self.history = hist[-_MAX_HISTORY:]
+            self._render_transcript()
+            tr = payload.get("target_role")
+            if tr:
+                try:
+                    from textual.widgets import Select  # noqa: PLC0415
+                    self.query_one("#select-target-role", Select).value = tr
+                except Exception:
+                    pass
+            self._session_resumed = True
+            return bool(hist)
+        except Exception:
+            logger.debug("prompt: session restore failed", exc_info=True)
+            return False
+
+    def _maybe_resume_session(self) -> None:
+        """When main() set ACC_TUI_RESUME, load that session (or 'latest') and
+        restore it — once (the env var is consumed)."""
+        import os as _os  # noqa: PLC0415
+        want = _os.environ.pop("ACC_TUI_RESUME", "").strip()
+        if not want:
+            return
+        from acc.tui import session_store as _ss  # noqa: PLC0415
+        payload = _ss.load_session(want)
+        if payload and self.restore_session(payload):
+            n = len(payload.get("history") or [])
+            self._append_history({
+                "role": "system",
+                "text": (
+                    f"↩ resumed session "
+                    f"{payload.get('session_id', want)} ({n} prior entries)."
+                ),
+                "ts": time.time(),
+            })
+
+    def action_detach(self) -> None:
+        """Ctrl+D — save the session, then exit cleanly so it can be resumed
+        with ``acc-tui --resume`` (#162)."""
+        self._autosave_session()
+        try:
+            self.app.exit(
+                message=(
+                    "Session saved. Resume with:  "
+                    f"acc-tui --resume {self._session_id}"
+                )
+            )
+        except Exception:
+            logger.debug("prompt: detach exit failed", exc_info=True)
 
     # ------------------------------------------------------------------
     # PR-F — structured trace widgets (progress bar + invocation waterfall)

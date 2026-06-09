@@ -685,6 +685,38 @@ def _configure_logging() -> None:
 
 def main() -> None:
     """Launch acc-tui."""
+    import argparse  # noqa: PLC0415
+
+    ap = argparse.ArgumentParser(prog="acc-tui", description="ACC operator TUI.")
+    ap.add_argument(
+        "--resume", nargs="?", const="latest", default=None, metavar="SESSION_ID",
+        help="resume a saved Prompt session (no value = latest). #162",
+    )
+    ap.add_argument(
+        "--list-sessions", action="store_true",
+        help="list saved sessions and exit.",
+    )
+    args = ap.parse_args()
+
+    if args.list_sessions:
+        import time as _t  # noqa: PLC0415
+
+        from acc.tui import session_store  # noqa: PLC0415
+        rows = session_store.list_sessions()
+        if not rows:
+            print(f"No saved sessions in {session_store.sessions_dir()}")
+            return
+        print(f"Saved sessions in {session_store.sessions_dir()} (newest first):")
+        for r in rows:
+            ts = _t.strftime("%Y-%m-%d %H:%M", _t.localtime(r.get("saved_at", 0)))
+            extra = f"  ·  {r['collective_id']}" if r.get("collective_id") else ""
+            print(f"  {r['session_id']}  ·  {ts}  ·  {r['entries']} entries{extra}")
+        return
+
+    if args.resume is not None:
+        # Consumed once by the Prompt screen's on_mount (#162).
+        os.environ["ACC_TUI_RESUME"] = args.resume
+
     _configure_logging()
     ACCTUIApp().run()
 
