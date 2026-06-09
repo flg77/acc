@@ -1,64 +1,52 @@
-# ACC Agent Core — Production UBI10 Python 3.12 (minimal)
+# ACC Agent Core — Production UBI10 Python 3.12 (multi-stage, CPU-only)
 #
-# Fixes vs beta/Containerfile.agent-core:
-#   - Layer caching: deps installed from pyproject.toml directly (no hardcoded list)
-#   - Correct pip pattern: deps layer → source layer (no --no-deps + manual list)
-#   - USER 1001 as the final user; no privilege-drop entrypoint needed.
-#     The compose file mounts lancedb-data with :U so Podman chowns the
-#     volume root to UID 1001 automatically.  The entrypoint only creates
-#     per-role subdirectories, then execs the agent.
-#   - HuggingFace download with 3-attempt retry for CI resilience
-#   - Config is NOT baked in (always provided via volume mount or ConfigMap)
-#   - gcc + python3-devel via RPM (build tools only); all Python deps via pip
-#     (RPM Python packages install to system path, invisible to S2I python)
-#   - .containerignore must exist alongside this file to keep context small
+# Size strategy (see openspec/changes/20260609-agent-core-image-slimming):
+#   - Multi-stage: a `builder` stage carries gcc + python3-devel to compile
+#     C-extensions (lancedb); the final `runtime` stage copies only the
+#     populated /opt/app-root site-packages — no compilers in the shipped image.
+#   - CPU-only PyTorch: torch is installed from the CPU wheel index FIRST, so
+#     sentence-transformers resolves against it and the ~2.7 GB nvidia/CUDA
+#     payload is never pulled. The agent only uses embeddings on CPU; all LLM
+#     inference is remote (in-cluster vLLM endpoint).
+#   - Embedding model (all-MiniLM-L6-v2, 384-dim) is still baked in so the agent
+#     starts with no network/egress dependency.
+#   - Config is NOT baked in (always provided via volume mount or ConfigMap).
 #
-# Compatible with OpenShift restricted SCC (non-root UID 1001, g=u permissions)
+# Compatible with OpenShift restricted SCC (non-root UID 1001, g=u permissions).
 #
 # Build:
 #   podman build -f container/production/Containerfile.agent-core \
 #     --build-arg ACC_VERSION=0.2.0 \
 #     -t localhost/acc-agent-core:0.2.0 .
-#
-# Runtime (requires acc-config.yaml volume mount or ACC_* env overrides):
-#   podman run --rm -e ACC_AGENT_ROLE=ingester -e ACC_NATS_URL=nats://nats:4222 \
-#     -v ./acc-config.yaml:/app/acc-config.yaml:ro \
-#     localhost/acc-agent-core:0.2.0
 
-FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+# ============================================================================
+# Stage 1 — builder: compile + install everything into /opt/app-root
+# ============================================================================
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest AS builder
 
-ARG ACC_VERSION=0.2.0
-
-LABEL org.opencontainers.image.title="acc-agent-core" \
-      org.opencontainers.image.description="Agentic Cell Corpus agent core (production UBI10)" \
-      org.opencontainers.image.version="${ACC_VERSION}" \
-      org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
-
-# Stay root for all install operations
 USER 0
 
-# ── Layer 1: OS-level build tools ────────────────────────────────────────────
-# gcc + python3-devel: required to build C-extension pip packages (e.g. lancedb).
-#
-# Note: python3-pyyaml and python3-cryptography are NOT installed via RPM.
-# UBI10 python-312-minimal is an S2I image; its application Python lives under
-# /opt/app-root/ with its own site-packages.  RPM packages install to the system
-# Python path (/usr/lib64/python3.12/) which is invisible to the S2I Python.
-# All Python deps — including pyyaml and cryptography — are pip-installed below
-# so they land in the same site-packages tree as every other ACC dependency.
+# OS-level build tools — needed only to build C-extension wheels (e.g. lancedb).
+# These live ONLY in this stage and never reach the runtime image.
 RUN microdnf install -y --nodocs \
         gcc \
         python3-devel \
     && microdnf clean all \
     && rm -rf /var/cache/dnf
 
-# ── Layer 2: Python dependency install (cache-friendly) ───────────────────────
-# Copy ONLY pyproject.toml first. This layer is rebuilt only when
-# pyproject.toml changes — not when acc/ source changes. The deps are
-# extracted via tomllib (Python 3.11+ stdlib) and installed in one pass.
-# pyyaml and cryptography are excluded because they were installed via RPM above.
 WORKDIR /app
+
+# ── CPU-only PyTorch FIRST ────────────────────────────────────────────────
+# Installing torch from the CPU wheel index up front satisfies the
+# sentence-transformers torch requirement without dragging in CUDA / nvidia-*
+# wheels. This is the single largest size reduction.
+RUN python3 -m pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch
+
+# ── Remaining Python dependencies (cache-friendly) ────────────────────────
+# Copy ONLY pyproject.toml first so this layer rebuilds only when deps change.
+# torch is already present (CPU), so sentence-transformers reuses it.
 COPY pyproject.toml /app/pyproject.toml
 RUN python3 -c "\
 import tomllib, subprocess, sys;\
@@ -70,10 +58,7 @@ print('Installing pip dependencies:', deps);\
 subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + deps, check=True)\
 "
 
-# ── Layer 3: Bake embedding model (avoids runtime internet dependency) ─────────
-# Uses all-MiniLM-L6-v2 (22MB, 384-dim). Retries 3 times for CI environments
-# where the first attempt may hit rate-limiting.
-# Override at runtime with ACC_EMBEDDING_MODEL env var + pre-mounted model cache.
+# ── Bake embedding model (offline startup) ────────────────────────────────
 ENV SENTENCE_TRANSFORMERS_HOME=/app/models \
     TRANSFORMERS_CACHE=/app/models
 RUN for attempt in 1 2 3; do \
@@ -85,28 +70,47 @@ SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-
         sleep 10; \
     done
 
-# ── Layer 4: Application source ──────────────────────────────────────────────
-# Copied last so source changes do not invalidate the dep or model layers.
-# Install the package itself without re-installing already-present deps.
+# ── Install the ACC package itself (no deps; they're already present) ──────
 COPY acc/ /app/acc/
-# Regulatory_layer carries operator-tunable policy artifacts the agent reads
-# at runtime — OWASP LLM01 injection patterns (v0.3.36), Cat-A/B/C governance
-# rules, framework catalogs.  Image-baked + read-only; operators that need
-# overrides can mount on top via compose (the acc-tui service already does).
-# Without this COPY, ``acc.guardrails.prompt_injection`` falls back to its
-# built-in defaults at every agent boot and emits a misleading WARNING line.
-# Followup #46.
 COPY regulatory_layer/ /app/regulatory_layer/
-RUN pip install --no-cache-dir --no-deps .
+RUN python3 -m pip install --no-cache-dir --no-deps .
 
-# ── Layer 5: Entrypoint, data dirs, passwd entry, permissions ─────────────────
-# Entrypoint is a simple shell script (no privilege-drop logic).
-# The final USER is 1001; the compose :U volume flag handles volume ownership.
-#
-# We add UID 1001 to /etc/passwd so tools that call getpwuid() (runuser, id -un,
-# Python's pwd module) work correctly. This is the standard OpenShift pattern;
-# GID 0 (root group) satisfies the restricted SCC without requiring real root.
+# ── Strip runtime-unnecessary weight before it reaches the runtime stage ───
+# __pycache__ bytecode (~300 MB; regenerated lazily at runtime if needed),
+# torch C++ headers and the bundled test suite — none used for CPU inference.
+RUN find /opt/app-root -depth -type d -name __pycache__ -exec rm -rf {} + \
+    && find /opt/app-root -type f -name '*.pyc' -delete \
+    && rm -rf /opt/app-root/lib*/python3.12/site-packages/torch/test \
+              /opt/app-root/lib*/python3.12/site-packages/torch/include
+
+# ============================================================================
+# Stage 2 — runtime: clean minimal base, no compilers
+# ============================================================================
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.2.0
+
+LABEL org.opencontainers.image.title="acc-agent-core" \
+      org.opencontainers.image.description="Agentic Cell Corpus agent core (production UBI10, CPU-only)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+USER 0
+
+# Copy the fully-populated S2I app-root (all pip deps incl. the ACC package and
+# CPU torch) and the baked embedding model from the builder. No gcc/devel here.
+COPY --from=builder /opt/app-root /opt/app-root
+COPY --from=builder /app/models /app/models
+
+# Application source at the image-baked runtime paths the agent expects.
+WORKDIR /app
+COPY acc/ /app/acc/
+COPY regulatory_layer/ /app/regulatory_layer/
 COPY container/production/entrypoint.sh /app/entrypoint.sh
+
+# UID 1001 /etc/passwd entry (OpenShift restricted-SCC pattern: GID 0), data
+# dirs, and group-writable perms.
 RUN echo "acc:x:1001:0:ACC Agent:/app:/bin/sh" >> /etc/passwd \
     && mkdir -p \
         /app/data/lancedb/ingester \
@@ -116,16 +120,15 @@ RUN echo "acc:x:1001:0:ACC Agent:/app:/bin/sh" >> /etc/passwd \
     && chmod -R g=u /app \
     && chmod 755 /app/entrypoint.sh
 
-ENV ACC_CONFIG_PATH=/app/acc-config.yaml \
+ENV SENTENCE_TRANSFORMERS_HOME=/app/models \
+    TRANSFORMERS_CACHE=/app/models \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    ACC_CONFIG_PATH=/app/acc-config.yaml \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-WORKDIR /app
-
-# Config must be provided via:
-#   - Volume mount: -v ./acc-config.yaml:/app/acc-config.yaml:ro
-#   - ConfigMap mount (OpenShift): mountPath: /app/acc-config.yaml
-#   - Environment variables: ACC_NATS_URL, ACC_REDIS_URL, etc.
+# Config must be provided at runtime (volume mount, ConfigMap, or ACC_* env).
 # No default config is baked in — intentional.
 
 USER 1001

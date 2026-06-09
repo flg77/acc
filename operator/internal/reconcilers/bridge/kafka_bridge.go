@@ -92,7 +92,7 @@ nats_url: "nats://%s-nats:4222"
 	// -----------------------------------------------------------------------
 	// Deployment
 	// -----------------------------------------------------------------------
-	image := fmt.Sprintf("%s/acc-kafka-bridge:%s", corpus.Spec.ImageRegistry, corpus.Spec.Version)
+	image := util.ComponentImage(corpus, "acc-kafka-bridge", corpus.Spec.Version)
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -105,6 +105,7 @@ nats_url: "nats://%s-nats:4222"
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					ImagePullSecrets: util.ImagePullSecrets(corpus),
 					Containers: []corev1.Container{
 						{
 							Name:  "kafka-bridge",

@@ -114,7 +114,13 @@ func (r *NATSReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agen
 	// 3. StatefulSet
 	// -----------------------------------------------------------------------
 	replicas := ptr.To(natsSpec.Replicas)
-	storageClass := "" // default StorageClass
+	// nil => leave storageClassName unset so the cluster default StorageClass
+	// applies. Never emit the empty string, which disables dynamic provisioning.
+	var storageClass *string
+	if natsSpec.StorageClass != "" {
+		sc := natsSpec.StorageClass
+		storageClass = &sc
+	}
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -128,10 +134,11 @@ func (r *NATSReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agen
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					ImagePullSecrets: util.ImagePullSecrets(corpus),
 					Containers: []corev1.Container{
 						{
 							Name:  "nats",
-							Image: fmt.Sprintf("%s/nats:%s-alpine", corpus.Spec.ImageRegistry, natsSpec.Version),
+							Image: util.ComponentImage(corpus, "nats", natsSpec.Version+"-alpine"),
 							Ports: []corev1.ContainerPort{
 								{Name: "client", ContainerPort: natsPort},
 								{Name: "cluster", ContainerPort: natsClusterPort},
@@ -164,7 +171,7 @@ func (r *NATSReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agen
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: "data"},
 					Spec: corev1.PersistentVolumeClaimSpec{
-						StorageClassName: &storageClass,
+						StorageClassName: storageClass,
 						AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
