@@ -100,6 +100,13 @@ class PerceptionSnapshot(BaseModel):
     # verbatim in that case).
     available_skills: list[dict[str, Any]] = Field(default_factory=list)
 
+    # Installable packages from the configured catalogs — packs NOT yet
+    # installed that the Assistant can acquire via [PROPOSE_INFUSE:...].
+    # Shape: ``[{"name": "@acc/workspace-roles", "version": "1.1.0"}, ...]``.
+    # Best-effort + TTL-cached (see _query_catalog_packages); empty when no
+    # catalog is configured/reachable. Surfaced only by the control profile.
+    available_packages: list[dict[str, Any]] = Field(default_factory=list)
+
     # Sub-collective registry (from CollectiveSpec.managed_sub_collectives).
     # Shape: ``{"sol-code": {"domain": "...", "description": "..."}, ...}``.
     sub_collectives: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -143,6 +150,59 @@ PERCEPTION_PROMPT_TOKEN_BUDGET = int(
 _DETAILED_ROLE_CAP = int(
     os.environ.get("ACC_PERCEPTION_DETAILED_ROLE_CAP", "40") or "40"
 )
+
+# OpenSpec follow-up (2026-06-09) — surface the installable-pack catalog so the
+# Assistant knows what it can ACQUIRE (not just what's installed) and proposes
+# [PROPOSE_INFUSE:...] instead of falling back to "we don't have that role."
+# Best-effort + in-process TTL-cached so the 100ms perception hot path never
+# refetches the index per task.
+_CATALOG_ENABLED = (os.environ.get("ACC_PERCEPTION_CATALOG", "1") or "1") != "0"
+_CATALOG_CAP = int(os.environ.get("ACC_PERCEPTION_CATALOG_CAP", "30") or "30")
+_CATALOG_TTL_S = float(os.environ.get("ACC_PERCEPTION_CATALOG_TTL_S", "300") or "300")
+_catalog_cache: tuple[float, list[dict[str, Any]]] | None = None
+
+
+def _ver_key(v: str) -> tuple[int, ...]:
+    """Loose numeric version key for picking the highest advertised version
+    (display-only; not a full semver comparator)."""
+    parts: list[int] = []
+    for chunk in str(v).replace("-", ".").split("."):
+        if chunk.isdigit():
+            parts.append(int(chunk))
+        else:
+            break
+    return tuple(parts)
+
+
+def _query_catalog_packages() -> list[dict[str, Any]]:
+    """Best-effort list of installable packs across the configured catalogs,
+    deduped by scoped name (highest advertised version). In-process TTL-cached
+    so the perception hot path never refetches per task. Returns [] on any
+    failure or when no catalog is configured/reachable — the Assistant's
+    seed_context still names the canonical packs, so this only *adds* live
+    awareness, never gates it.
+    """
+    global _catalog_cache
+    if not _CATALOG_ENABLED:
+        return []
+    now = time.time()
+    if _catalog_cache is not None and (now - _catalog_cache[0]) < _CATALOG_TTL_S:
+        return _catalog_cache[1]
+    out: list[dict[str, Any]] = []
+    try:
+        from acc.pkg.catalog import list_available  # noqa: PLC0415
+
+        best: dict[str, str] = {}
+        for _catalog, entry in list_available():
+            cur = best.get(entry.name)
+            if cur is None or _ver_key(entry.version) > _ver_key(cur):
+                best[entry.name] = entry.version
+        out = [{"name": n, "version": v} for n, v in sorted(best.items())]
+    except Exception as exc:  # noqa: BLE001 — best-effort; never break perception
+        logger.debug("perception: catalog query failed (%s)", exc)
+        out = []
+    _catalog_cache = (now, out)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +504,11 @@ async def _snapshot(
             # to be fresh; the renderer will mark this block "[fallback]".
             snap.stale_capability = True
 
+    # Installable-pack catalog (best-effort, TTL-cached) — lets the control
+    # profile show what the Assistant can [PROPOSE_INFUSE], not just what's
+    # installed. Cached so this does not refetch the index on every task.
+    snap.available_packages = _query_catalog_packages()
+
     snap.snapshot_ts = time.time()
     snap.stale = snap.stale_capability or snap.stale_roster
     return snap
@@ -570,6 +635,17 @@ def _render_control(snapshot: PerceptionSnapshot, role: Any = None) -> str:
                     + ", ".join(tail_names)
                 )
 
+    if snapshot.available_packages:
+        lines.append("")
+        lines.append(
+            "**Available to infuse** (catalog packs NOT installed yet — acquire "
+            "with `[PROPOSE_INFUSE:@scope/name@constraint:reason]`, then "
+            "`[PROPOSE_SPAWN:...]` the role it provides):"
+        )
+        for p in snapshot.available_packages[:_CATALOG_CAP]:
+            ver = p.get("version") or "?"
+            lines.append(f"- {p.get('name')}@{ver}")
+
     if snapshot.available_mcps:
         lines.append("")
         lines.append("**Available MCPs** (tool servers):")
@@ -588,8 +664,11 @@ def _render_control(snapshot: PerceptionSnapshot, role: Any = None) -> str:
 
     lines.append("")
     lines.append(
-        "**Important:** when you recommend or spawn a role, it MUST appear above. "
-        "Roles not in this list do not exist in this collective."
+        "**Important:** to SPAWN/ROUTE a role it must already be running or "
+        "installed above. If the capability you need isn't installed, do NOT "
+        "say it's impossible — check **Available to infuse** (or run "
+        "`python -m acc.pkg.cli list --available`) and propose "
+        "`[PROPOSE_INFUSE:@scope/name@constraint:reason]` to acquire it."
     )
 
     return "\n".join(lines)
