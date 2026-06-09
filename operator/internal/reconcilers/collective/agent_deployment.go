@@ -11,6 +11,7 @@ package collective
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -411,13 +412,7 @@ func (r *AgentDeploymentReconciler) buildManifestDelivery(
 			// the parent chain and may not have completed on first apply.
 			continue
 		}
-		items := make([]corev1.KeyToPath, 0, len(cm.Data))
-		for key := range cm.Data {
-			items = append(items, corev1.KeyToPath{
-				Key:  key,
-				Path: manifests.UnflattenKey(key),
-			})
-		}
+		items := ProjectManifestItems(cm.Data)
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      p.volumeName,
 			MountPath: p.mountPath,
@@ -435,4 +430,28 @@ func (r *AgentDeploymentReconciler) buildManifestDelivery(
 		envs = append(envs, corev1.EnvVar{Name: p.envVarName, Value: p.mountPath})
 	}
 	return mounts, volumes, envs, nil
+}
+
+// ProjectManifestItems builds the items[] projection for a manifest-delivery
+// Volume from a ConfigMap's Data, sorted by Key.
+//
+// The sort is load-bearing, not cosmetic. Go randomizes map iteration order,
+// so projecting `for key := range data` produces a differently-ordered slice on
+// every reconcile. That slice rides inside the agent Deployment's pod template;
+// because JSON arrays are order-significant, each reorder changes the
+// pod-template hash, the Deployment's generation bumps, and the Deployment
+// controller spins up a brand-new ReplicaSet every reconcile cycle — the
+// "endless collective ReplicaSets" symptom. Sorting by Key makes the pod
+// template byte-stable, so util.Upsert's MergeFrom yields an empty patch and the
+// Deployment stays put.
+func ProjectManifestItems(data map[string]string) []corev1.KeyToPath {
+	items := make([]corev1.KeyToPath, 0, len(data))
+	for key := range data {
+		items = append(items, corev1.KeyToPath{
+			Key:  key,
+			Path: manifests.UnflattenKey(key),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
+	return items
 }
