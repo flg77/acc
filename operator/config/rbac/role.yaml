@@ -46,6 +46,24 @@ rules:
 - apiGroups: ["coordination.k8s.io"]
   resources: ["leases"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# RHOAI detection (webhook defaults deployMode=rhoai when a DataScienceCluster
+# exists) + model discovery reads KServe InferenceServices (granted above).
+- apiGroups: ["datasciencecluster.opendatahub.io"]
+  resources: ["datascienceclusters"]
+  verbs: ["get", "list", "watch"]
+# AccCatalog + AccPackageInstall (Stage 1.6 CRDs) + the pkg-install exec path.
+- apiGroups: ["acc.redhat.io"]
+  resources: ["acccatalogs", "accpackageinstalls"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["acc.redhat.io"]
+  resources: ["acccatalogs/status", "accpackageinstalls/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["acc.redhat.io"]
+  resources: ["acccatalogs/finalizers", "accpackageinstalls/finalizers"]
+  verbs: ["update"]
+- apiGroups: [""]
+  resources: ["pods", "pods/exec"]
+  verbs: ["get", "list", "watch", "create"]
 # Network policy (proposal 014) — standard NetworkPolicy + the optional
 # FQDN/L7 backends (EgressFirewall on OVN-Kubernetes, CiliumNetworkPolicy).
 - apiGroups: ["networking.k8s.io"]

@@ -13,6 +13,7 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -32,6 +33,7 @@ var prometheusRuleGVK = schema.GroupVersionKind{
 // group is present. It is a no-op when Prometheus Operator is absent.
 type PrometheusRulesReconciler struct {
 	Client client.Client
+	Scheme *runtime.Scheme
 }
 
 // Name implements SubReconciler.
@@ -54,7 +56,7 @@ func (r *PrometheusRulesReconciler) Reconcile(ctx context.Context, corpus *accv1
 	}
 
 	rule := r.buildPrometheusRule(corpus)
-	if _, err := util.Upsert(ctx, r.Client, nil, corpus, rule, func(existing client.Object) error {
+	if _, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, rule, func(existing client.Object) error {
 		desiredU := rule.(*unstructured.Unstructured)
 		existingU := existing.(*unstructured.Unstructured)
 		spec, _, _ := unstructured.NestedMap(desiredU.Object, "spec")

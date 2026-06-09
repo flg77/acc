@@ -86,13 +86,23 @@ spec:
                   - standalone
                   - rhoai
                   - edge
-                default: standalone
                 description: |-
                   DeployMode selects the infrastructure profile.
                   "standalone" — local dev / CI / Podman Compose.
                   "edge" — MicroShift / K3s / production edge node; NATS runs as a leaf node
                             connecting to a datacenter hub when network is available.
                   "rhoai" — OpenShift datacenter with RHOAI GPU inference.
+
+                  PREREQUISITES: "rhoai" requires RHOAI / OpenShift AI installed (a
+                  DataScienceCluster) and a Milvus URI (infrastructure.milvus.uri). On a
+                  fresh AgentCorpus this field is auto-defaulted to "rhoai" when the operator
+                  detects RHOAI on the cluster, else "standalone".
+                  NOTE: NATS JetStream + Redis are always provisioned by the operator. In a
+                  shared RHOAI datacenter, confirm JetStream storage + NetworkPolicy fit your
+                  cluster — for large agent fleets prefer the Kafka audit bridge (see .kafka).
+                  No static default: the mutating webhook auto-detects RHOAI and sets
+                  "rhoai" (else "standalone"). +optional so an unset value reaches the
+                  defaulter instead of being rejected as required.
                 type: string
               edge:
                 description: |-
@@ -198,7 +208,12 @@ spec:
                     default: false
                     description: |-
                       GatekeeperIntegration enables syncing Category A rules as OPA Gatekeeper
-                      ConstraintTemplates (requires Gatekeeper to be installed cluster-wide).
+                      ConstraintTemplates for admission-time enforcement.
+                      PREREQUISITE (manual): install OPA Gatekeeper first — the operator does NOT
+                      install it, it only syncs rules when present. On OpenShift install the
+                      "Gatekeeper Operator" from OperatorHub (or upstream gatekeeper). Leave
+                      false until Gatekeeper is available, else the synced ConstraintTemplates
+                      have no controller to honour them.
                     type: boolean
                   runtimeEvidence:
                     description: |-
@@ -475,7 +490,12 @@ spec:
               kafka:
                 description: |-
                   Kafka configures the optional NATS-to-Kafka audit bridge.
-                  Kafka itself is NOT installed by the operator.
+                  RECOMMENDED FOR LARGE AGENT FLEETS: at scale, Kafka is the preferred audit
+                  transport (durable, high-throughput) over NATS-only. Kafka itself is NOT
+                  installed by the operator — install AMQ Streams / Strimzi first (OpenShift:
+                  the "AMQ Streams" / "Streams for Apache Kafka" Operator from OperatorHub),
+                  then set bootstrapServers here. See docs/observability + the operator
+                  description for the prerequisite link.
                 properties:
                   auditTopic:
                     default: acc.audit.all
@@ -913,13 +933,19 @@ spec:
                     - enum:
                       - log
                       - otel
-                    default: log
-                    description: Backend selects the telemetry backend.
+                    default: otel
+                    description: |-
+                      Backend selects the telemetry backend. Defaults to "otel": the operator
+                      deploys an OpenTelemetry Collector and the webhook points agents at it, so
+                      traces/metrics flow out of the box. Set "log" for the minimal (stdout)
+                      profile.
                     type: string
                   grafanaDashboard:
-                    default: false
-                    description: GrafanaDashboard enables creation of a ConfigMap-based
-                      Grafana dashboard.
+                    default: true
+                    description: |-
+                      GrafanaDashboard enables creation of a ConfigMap-based Grafana dashboard.
+                      Defaults to true so a dashboard ships out of the box (harmless if no
+                      Grafana operator is present — it is just a ConfigMap).
                     type: boolean
                   otelCollector:
                     description: |-
@@ -930,6 +956,26 @@ spec:
                         description: Endpoint is the OTLP gRPC/HTTP endpoint to export
                           telemetry to.
                         minLength: 1
+                        type: string
+                      mlflowEndpoint:
+                        description: |-
+                          MLflowEndpoint is an optional additional OTLP/HTTP endpoint to
+                          fan traces out to alongside the primary Endpoint.  When set, the
+                          operator-rendered Collector config gains an extra otlphttp/mlflow
+                          exporter on the traces pipeline.  Leave empty to skip the fan-out
+                          (operators who run a standalone Collector configure MLflow there).
+                        type: string
+                      protocol:
+                        default: grpc
+                        description: |-
+                          Protocol selects the OTLP transport agents use to reach Endpoint.
+                          Matches the upstream OTel spec env var OTEL_EXPORTER_OTLP_PROTOCOL.
+                          Default "grpc" preserves pre-Phase-3 behaviour (port :4317);
+                          "http/protobuf" targets HTTP collectors / MLflow /v1/traces on
+                          :4318 — see docs/observability/mlflow.md.
+                        enum:
+                        - grpc
+                        - http/protobuf
                         type: string
                       serviceName:
                         default: acc-agent
@@ -993,7 +1039,6 @@ spec:
                 type: string
             required:
             - collectives
-            - deployMode
             - governance
             - infrastructure
             - version
@@ -1002,6 +1047,32 @@ spec:
             description: AgentCorpusStatus reports the observed state of the full
               ACC deployment.
             properties:
+              availableRHOAIModels:
+                description: |-
+                  AvailableRHOAIModels lists READY RHOAI / KServe InferenceServices
+                  discovered on the cluster (name, namespace, in-cluster URL). Surfaced so an
+                  operator can wire an in-cluster model as an AgentCollective LLM backend
+                  instead of an external provider. Populated only when deployMode=rhoai.
+                items:
+                  description: |-
+                    RHOAIModelRef identifies a READY RHOAI / KServe InferenceService discovered
+                    on the cluster.
+                  properties:
+                    name:
+                      description: Name is the InferenceService name.
+                      type: string
+                    namespace:
+                      description: Namespace is the InferenceService namespace.
+                      type: string
+                    url:
+                      description: URL is the in-cluster predictor URL (.status.url
+                        of the InferenceService).
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
               collectiveStatuses:
                 additionalProperties:
                   description: CollectiveStatus reports per-collective operational

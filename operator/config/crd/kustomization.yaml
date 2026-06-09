@@ -1,3 +1,5 @@
 resources:
 - bases/acc.redhat.io_agentcorpora.yaml
 - bases/acc.redhat.io_agentcollectives.yaml
+- bases/acc.redhat.io_acccatalogs.yaml
+- bases/acc.redhat.io_accpackageinstalls.yaml

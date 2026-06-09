@@ -1,0 +1,63 @@
+# ACC end-to-end agentset for RHOAI (proposal 020 E2E).
+# A complete agentset = an AgentCorpus + its AgentCollective(s). The collective
+# is wired to an EXISTING RHOAI/KServe InferenceService (deploy: false) so the
+# operator consumes the in-cluster model rather than deploying its own.
+#
+# NOTE: redhataiqwen3-embedding-8b is an *embedding* model. For real agent
+# reasoning use a chat/generation model (e.g. a vLLM-served Llama/Mistral) as
+# the LLM backend and keep the embedding model for the vector store. This sample
+# exercises the operator → agentset → in-cluster-model wiring end to end.
+---
+# Cat-A WASM ConfigMap referenced by governance (placeholder for the E2E).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acc-cat-a-wasm
+  namespace: acc-system
+binaryData: {}
+data:
+  README: "placeholder for the Category-A governance WASM blob (category_a.wasm)"
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCorpus
+metadata:
+  name: acc-e2e
+  namespace: acc-system
+spec:
+  # deployMode omitted on purpose — the webhook auto-detects RHOAI (the
+  # DataScienceCluster) and defaults it to "rhoai".
+  collectives:
+    - name: acc-e2e-collective
+  infrastructure:
+    # rhoai mode requires a Milvus URI (external vector DB).
+    milvus:
+      uri: "milvus.acc-system.svc:19530"
+  governance:
+    categoryA:
+      wasmConfigMapRef: acc-cat-a-wasm
+  # observability omitted — webhook defaults backend=otel + grafanaDashboard,
+  # and auto-sets otelCollector.endpoint to acc-e2e-otel-collector:4317.
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCollective
+metadata:
+  name: acc-e2e-collective
+  namespace: acc-system
+spec:
+  collectiveId: acc-e2e-collective
+  corpusRef:
+    name: acc-e2e
+  llm:
+    backend: vllm
+    vllm:
+      # Consume the already-deployed RHOAI model (don't let the operator create one).
+      inferenceServiceRef: redhataiqwen3-embedding-8b
+      model: RedHatAI/Qwen3-Embedding-8B
+      deploy: false
+  agents:
+    - role: ingester
+      replicas: 1
+    - role: arbiter
+      replicas: 1
+    - role: observer
+      replicas: 1

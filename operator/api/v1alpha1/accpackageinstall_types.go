@@ -29,33 +29,39 @@ import (
 //
 // +kubebuilder:object:generate=true
 type AccPackageInstallSpec struct {
-	// Name is the scoped package name (@scope/name).
+	// Name is the scoped package to install, in @scope/name form (for example
+	// "@acc/capital-markets-roles"). Lowercase; the @scope prefix is
+	// mandatory. Resolved against the AccCatalog layers in this namespace
+	// (optionally pinned with catalogRef).
 	// +kubebuilder:validation:Pattern=`^@[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_-]*$`
 	Name string `json:"name"`
 
-	// Constraint is the semver range (`^1.2`, `~1.2.3`, `>=1.2 <2.0`,
-	// or an exact `1.2.3`).  The acc-pkg installer's _semver helper
-	// is the resolution authority; the operator does shape validation
-	// via the admission webhook (re.compile-style) and lets the
-	// installer reject mismatches with EXIT_DEPS.
+	// Constraint is the semver range to resolve: an exact version ("0.1.0"),
+	// a caret range ("^1.2"), a tilde range ("~1.2.3"), or a bounded range
+	// (">=1.2 <2.0"). The acc-pkg installer resolves the highest matching
+	// version from the catalog; a version with no match fails the install
+	// with EXIT_DEPS. The operator does shape validation via the admission
+	// webhook.
 	// +kubebuilder:validation:MinLength=1
 	Constraint string `json:"constraint"`
 
-	// CatalogRef optionally pins the AccCatalog whose entry this
-	// install must come from.  When empty the layered resolver picks
-	// the highest-priority catalog providing the package.
+	// CatalogRef optionally pins the catalogId of the AccCatalog this package
+	// must come from (for example "acc-canonical"). Leave empty to let the
+	// layered resolver pick the highest-priority catalog that provides the
+	// package.
 	// +optional
 	CatalogRef string `json:"catalogRef,omitempty"`
 
-	// TargetCorpus names the AgentCorpus whose pods receive the
-	// install.  When empty the controller targets every AgentCorpus
-	// in the namespace.
+	// TargetCorpus optionally names the AgentCorpus whose pods receive this
+	// install (for example "finance-demo"). Leave empty to install into every
+	// AgentCorpus in this namespace.
 	// +optional
 	TargetCorpus string `json:"targetCorpus,omitempty"`
 
-	// AllowUnsigned bypasses the cosign signing floor for this
-	// install.  Operator-explicit + audit-logged at the controller
-	// level (per brainstorm Q3b).
+	// AllowUnsigned bypasses the catalog's cosign signing floor for THIS
+	// install only. Operator-explicit and audit-logged — leave false (the
+	// default) in production; set true only for local or unsigned development
+	// packages.
 	// +optional
 	// +kubebuilder:default=false
 	AllowUnsigned bool `json:"allowUnsigned,omitempty"`

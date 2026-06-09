@@ -9,13 +9,16 @@
 package v1alpha1
 
 import (
+	"context"
 	"fmt"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -24,22 +27,39 @@ import (
 var agentcorpuslog = logf.Log.WithName("agentcorpus-resource")
 
 // SetupWebhookWithManager registers the webhook with the Manager.
+// Defaulting uses a client-backed CustomDefaulter so it can detect RHOAI on the
+// cluster; validation stays on the AgentCorpus type (webhook.Validator).
 func (r *AgentCorpus) SetupWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).
 		For(r).
+		WithDefaulter(&AgentCorpusCustomDefaulter{Client: mgr.GetClient()}).
 		Complete()
 }
 
 // +kubebuilder:webhook:path=/mutate-acc-redhat-io-v1alpha1-agentcorpus,mutating=true,failurePolicy=fail,sideEffects=None,groups=acc.redhat.io,resources=agentcorpora,verbs=create;update,versions=v1alpha1,name=magentcorpus.kb.io,admissionReviewVersions=v1
 
-var _ webhook.Defaulter = &AgentCorpus{}
+// AgentCorpusCustomDefaulter applies defaults to AgentCorpus resources. It holds
+// a client so it can probe the cluster — notably to detect RHOAI (a
+// DataScienceCluster) and default deployMode accordingly.
+type AgentCorpusCustomDefaulter struct {
+	Client client.Client
+}
 
-// Default implements webhook.Defaulter to set default values.
-func (r *AgentCorpus) Default() {
+var _ admission.CustomDefaulter = &AgentCorpusCustomDefaulter{}
+
+// Default implements admission.CustomDefaulter.
+func (d *AgentCorpusCustomDefaulter) Default(ctx context.Context, obj runtime.Object) error {
+	r, ok := obj.(*AgentCorpus)
+	if !ok {
+		return fmt.Errorf("expected an AgentCorpus object but got %T", obj)
+	}
 	agentcorpuslog.Info("default", "name", r.Name)
 
+	// deployMode: when unset, auto-detect — "rhoai" if the cluster runs RHOAI /
+	// OpenShift AI (a DataScienceCluster exists), else "standalone".
 	if r.Spec.DeployMode == "" {
-		r.Spec.DeployMode = DeployModeStandalone
+		r.Spec.DeployMode = d.detectDeployMode(ctx)
+		agentcorpuslog.Info("defaulted deployMode", "name", r.Name, "deployMode", r.Spec.DeployMode)
 	}
 	if r.Spec.Version == "" {
 		r.Spec.Version = "0.1.0"
@@ -75,7 +95,16 @@ func (r *AgentCorpus) Default() {
 		r.Spec.Governance.CategoryB.BundlePVCSize = "500Mi"
 	}
 	if r.Spec.Observability.Backend == "" {
-		r.Spec.Observability.Backend = MetricsBackendLog
+		r.Spec.Observability.Backend = MetricsBackendOTel
+	}
+	// When OTel is selected but no collector endpoint is given, point agents at
+	// the in-cluster Collector the operator deploys (<name>-otel-collector:4317),
+	// so observability.backend=otel works out of the box (and the validator,
+	// which requires otelCollector.endpoint for otel, passes).
+	if r.Spec.Observability.Backend == MetricsBackendOTel && r.Spec.Observability.OTelCollector == nil {
+		r.Spec.Observability.OTelCollector = &OTelCollectorSpec{
+			Endpoint: fmt.Sprintf("%s-otel-collector:4317", r.Name),
+		}
 	}
 	if r.Spec.UpgradePolicy.Mode == "" {
 		r.Spec.UpgradePolicy.Mode = UpgradeModeAuto
@@ -92,6 +121,31 @@ func (r *AgentCorpus) Default() {
 			mcp.Port = 8080
 		}
 	}
+	return nil
+}
+
+// detectDeployMode returns "rhoai" when a DataScienceCluster exists on the
+// cluster (RHOAI / OpenShift AI is installed), else "standalone". Detection
+// failures fall back to "standalone" so admission never blocks on a probe.
+func (d *AgentCorpusCustomDefaulter) detectDeployMode(ctx context.Context) DeployMode {
+	if d.Client == nil {
+		return DeployModeStandalone
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "datasciencecluster.opendatahub.io",
+		Version: "v1",
+		Kind:    "DataScienceClusterList",
+	})
+	if err := d.Client.List(ctx, list); err != nil {
+		agentcorpuslog.Info("RHOAI detection: DataScienceCluster list failed; defaulting standalone",
+			"error", err.Error())
+		return DeployModeStandalone
+	}
+	if len(list.Items) > 0 {
+		return DeployModeRHOAI
+	}
+	return DeployModeStandalone
 }
 
 // +kubebuilder:webhook:path=/validate-acc-redhat-io-v1alpha1-agentcorpus,mutating=false,failurePolicy=fail,sideEffects=None,groups=acc.redhat.io,resources=agentcorpora,verbs=create;update,versions=v1alpha1,name=vagentcorpus.kb.io,admissionReviewVersions=v1

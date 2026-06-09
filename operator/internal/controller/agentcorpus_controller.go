@@ -167,6 +167,10 @@ func (r *AgentCorpusReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	corpus.Status.Phase = statuspkg.ComputeCorpusPhase(phaseIn)
 	corpus.Status.CurrentVersion = corpus.Spec.Version
 
+	// 5b. RHOAI model discovery (proposal 020 item 5): surface READY KServe
+	// InferenceServices in status so an operator can wire one as an LLM backend.
+	r.scanRHOAIModels(ctx, corpus)
+
 	readyStatus := metav1.ConditionFalse
 	readyReason := string(corpus.Status.Phase)
 	if corpus.Status.Phase == accv1alpha1.CorpusPhaseReady {
@@ -186,6 +190,53 @@ func (r *AgentCorpusReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 	log.V(1).Info("reconcile complete", "phase", corpus.Status.Phase)
 	return ctrl.Result{}, nil
+}
+
+// scanRHOAIModels lists READY KServe InferenceServices and records them in
+// status.availableRHOAIModels (proposal 020 item 5) so operators can wire an
+// in-cluster RHOAI model as an LLM backend. Best-effort: probe failures are
+// logged and leave the list unchanged-empty. Only runs in deployMode=rhoai.
+func (r *AgentCorpusReconciler) scanRHOAIModels(ctx context.Context, corpus *accv1alpha1.AgentCorpus) {
+	if corpus.Spec.DeployMode != accv1alpha1.DeployModeRHOAI {
+		corpus.Status.AvailableRHOAIModels = nil
+		return
+	}
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "serving.kserve.io",
+		Version: "v1beta1",
+		Kind:    "InferenceServiceList",
+	})
+	if err := r.Client.List(ctx, list); err != nil {
+		logf.FromContext(ctx).V(1).Info("RHOAI model scan skipped", "error", err.Error())
+		return
+	}
+	var models []accv1alpha1.RHOAIModelRef
+	for i := range list.Items {
+		it := &list.Items[i]
+		url, _, _ := unstructured.NestedString(it.Object, "status", "url")
+		ready := false
+		conds, _, _ := unstructured.NestedSlice(it.Object, "status", "conditions")
+		for _, c := range conds {
+			cm, ok := c.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if cm["type"] == "Ready" && cm["status"] == "True" {
+				ready = true
+				break
+			}
+		}
+		if !ready {
+			continue
+		}
+		models = append(models, accv1alpha1.RHOAIModelRef{
+			Name:      it.GetName(),
+			Namespace: it.GetNamespace(),
+			URL:       url,
+		})
+	}
+	corpus.Status.AvailableRHOAIModels = models
 }
 
 // buildSubReconcilers returns the ordered list of sub-reconcilers.
@@ -209,7 +260,7 @@ func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconcile
 		// disabled or no backend is detected.
 		&bridge.RuntimeEvidenceBridgeReconciler{Client: r.Client, Scheme: r.Scheme},
 		&observability.OTelCollectorReconciler{Client: r.Client, Scheme: r.Scheme},
-		&observability.PrometheusRulesReconciler{Client: r.Client},
+		&observability.PrometheusRulesReconciler{Client: r.Client, Scheme: r.Scheme},
 		// NetworkPolicy slot (proposal 014): after prerequisites +
 		// infrastructure are known, before agent Deployments are
 		// created, so the policies exist as pods come up.

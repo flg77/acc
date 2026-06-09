@@ -23,36 +23,52 @@ import (
 //
 // +kubebuilder:object:generate=true
 type AccCatalogSpec struct {
-	// CatalogID is the human-readable identifier surfaced in the
-	// Compliance pane's "alternates" column.  Must be unique within
-	// the namespace.
+	// CatalogID is the unique, human-readable identifier for this catalog
+	// layer (for example "acc-canonical" or "acme-internal"). It is surfaced
+	// in the Compliance pane's package "alternates" column and in acc-pkg
+	// output. Must be unique within the namespace.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	CatalogID string `json:"catalogId"`
 
-	// Tier is the trust classification (per brainstorm Q3b).
+	// Tier is the trust classification that orders catalog layers during
+	// package resolution (a higher-trust tier wins ties). One of: "trusted"
+	// (ACC-curated, fully vetted), "tp" (verified third-party partner),
+	// "community" (self-attested community publisher), or "self" (your own
+	// private or local catalog). Higher tiers usually pin a stricter
+	// requiredSigner.
 	// +kubebuilder:validation:Enum=trusted;tp;community;self
 	Tier string `json:"tier"`
 
-	// Mode selects the index source.
+	// Mode selects where this catalog's index is read from: "https" fetches
+	// index.json from a remote URL (set the url field); "file" reads it from
+	// an on-disk directory (set the path field, typically a mounted PVC).
+	// Use https for the public ACC ecosystem catalog and file for air-gapped
+	// or self-hosted catalogs.
 	// +kubebuilder:validation:Enum=https;file
 	Mode string `json:"mode"`
 
-	// URL is the HTTPS endpoint (mode=https only).
+	// URL is the HTTPS endpoint serving this catalog's index.json (for
+	// example "https://flg77.github.io/acc-ecosystem"). Required when
+	// mode=https; ignored when mode=file.
 	// +optional
 	URL string `json:"url,omitempty"`
 
-	// Path is the on-disk directory (mode=file only); typically a
-	// PVC mount point in the ACC pod.
+	// Path is the on-disk directory holding this catalog's index (for example
+	// "/var/lib/acc/catalogs/acme"), typically a PVC mount inside the ACC
+	// pod. Required when mode=file; ignored when mode=https.
 	// +optional
 	Path string `json:"path,omitempty"`
 
-	// RequiredSigner pins the cosign identity catalog entries must
-	// match.  Drives the signing-floor check at install time.
+	// RequiredSigner pins the cosign signing identity that every package from
+	// this catalog must satisfy. It is the signing floor enforced at
+	// acc-pkg install time — packages whose signature does not match are
+	// rejected unless the AccPackageInstall explicitly sets allowUnsigned.
 	RequiredSigner CatalogRequiredSigner `json:"requiredSigner"`
 
-	// Priority breaks ties within a layer when two catalogs
-	// advertise the same @scope/name; higher wins.
+	// Priority breaks ties when two catalogs in the same tier advertise the
+	// same @scope/name package — the higher number wins. Defaults to 100;
+	// raise it to make this catalog override its peers.
 	// +kubebuilder:default=100
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=1000
@@ -63,18 +79,24 @@ type AccCatalogSpec struct {
 // CatalogRequiredSigner mirrors acc.pkg.catalog.RequiredSigner.
 // +kubebuilder:object:generate=true
 type CatalogRequiredSigner struct {
-	// Issuer is the OIDC issuer URL (keyless) or a free-form audit
-	// label (keypair mode).
+	// Issuer is the expected OIDC token issuer for keyless (Fulcio)
+	// signatures, for example "https://token.actions.githubusercontent.com"
+	// for GitHub Actions. In keypair mode it is a free-form audit label
+	// describing the key owner.
 	// +kubebuilder:validation:MinLength=1
 	Issuer string `json:"issuer"`
 
-	// SubjectPattern is the regex that the cert subject must match.
-	// Validated by the operator's admission webhook (re.compile-style).
+	// SubjectPattern is a regular expression the signing certificate's
+	// subject must match, for example
+	// "^https://github.com/flg77/acc-ecosystem/.*". Anchored, RE2/Python-re
+	// style; validated by the operator's admission webhook.
 	// +kubebuilder:validation:MinLength=1
 	SubjectPattern string `json:"subjectPattern"`
 
-	// KeyPath switches to keypair-mode verification — points at a
-	// cosign public-key PEM file on the pod's filesystem.
+	// KeyPath switches verification to keypair mode: an absolute path to a
+	// cosign public-key PEM file mounted in the ACC pod (for example
+	// "/etc/acc/keys/acme.pub"). Leave empty to use keyless (Fulcio/Rekor)
+	// verification via issuer + subjectPattern.
 	// +optional
 	KeyPath string `json:"keyPath,omitempty"`
 }

@@ -92,3 +92,8 @@ workspaces/*
 # .gitkeep is tracked so the bind-mount source exists on a clean clone.
 .acc-apply/*
 !.acc-apply/.gitkeep
+
+# Local on-demand KServe test-model CRs (ServingRuntime + InferenceService).
+# Scratch for ad-hoc GPU model deploys during testing — synced by hand to acc1,
+# never committed.
+operator/config/samples/local-models/

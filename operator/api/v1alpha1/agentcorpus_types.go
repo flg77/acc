@@ -21,9 +21,20 @@ type AgentCorpusSpec struct {
 	// "edge" — MicroShift / K3s / production edge node; NATS runs as a leaf node
 	//           connecting to a datacenter hub when network is available.
 	// "rhoai" — OpenShift datacenter with RHOAI GPU inference.
+	//
+	// PREREQUISITES: "rhoai" requires RHOAI / OpenShift AI installed (a
+	// DataScienceCluster) and a Milvus URI (infrastructure.milvus.uri). On a
+	// fresh AgentCorpus this field is auto-defaulted to "rhoai" when the operator
+	// detects RHOAI on the cluster, else "standalone".
+	// NOTE: NATS JetStream + Redis are always provisioned by the operator. In a
+	// shared RHOAI datacenter, confirm JetStream storage + NetworkPolicy fit your
+	// cluster — for large agent fleets prefer the Kafka audit bridge (see .kafka).
+	// No static default: the mutating webhook auto-detects RHOAI and sets
+	// "rhoai" (else "standalone"). +optional so an unset value reaches the
+	// defaulter instead of being rejected as required.
 	// +kubebuilder:validation:Enum=standalone;rhoai;edge
-	// +kubebuilder:default=standalone
-	DeployMode DeployMode `json:"deployMode"`
+	// +optional
+	DeployMode DeployMode `json:"deployMode,omitempty"`
 
 	// Version pins the acc-agent-core image tag to deploy.
 	// Must be a valid SemVer string.
@@ -66,7 +77,12 @@ type AgentCorpusSpec struct {
 	Governance GovernanceSpec `json:"governance"`
 
 	// Kafka configures the optional NATS-to-Kafka audit bridge.
-	// Kafka itself is NOT installed by the operator.
+	// RECOMMENDED FOR LARGE AGENT FLEETS: at scale, Kafka is the preferred audit
+	// transport (durable, high-throughput) over NATS-only. Kafka itself is NOT
+	// installed by the operator — install AMQ Streams / Strimzi first (OpenShift:
+	// the "AMQ Streams" / "Streams for Apache Kafka" Operator from OperatorHub),
+	// then set bootstrapServers here. See docs/observability + the operator
+	// description for the prerequisite link.
 	// +optional
 	Kafka *KafkaSpec `json:"kafka,omitempty"`
 
@@ -334,7 +350,12 @@ type GovernanceSpec struct {
 	CategoryC *CategoryCSpec `json:"categoryC,omitempty"`
 
 	// GatekeeperIntegration enables syncing Category A rules as OPA Gatekeeper
-	// ConstraintTemplates (requires Gatekeeper to be installed cluster-wide).
+	// ConstraintTemplates for admission-time enforcement.
+	// PREREQUISITE (manual): install OPA Gatekeeper first — the operator does NOT
+	// install it, it only syncs rules when present. On OpenShift install the
+	// "Gatekeeper Operator" from OperatorHub (or upstream gatekeeper). Leave
+	// false until Gatekeeper is available, else the synced ConstraintTemplates
+	// have no controller to honour them.
 	// +kubebuilder:default=false
 	GatekeeperIntegration bool `json:"gatekeeperIntegration"`
 
@@ -535,9 +556,12 @@ type MCPServerStatus struct {
 
 // ObservabilitySpec configures telemetry collection.
 type ObservabilitySpec struct {
-	// Backend selects the telemetry backend.
+	// Backend selects the telemetry backend. Defaults to "otel": the operator
+	// deploys an OpenTelemetry Collector and the webhook points agents at it, so
+	// traces/metrics flow out of the box. Set "log" for the minimal (stdout)
+	// profile.
 	// +kubebuilder:validation:Enum=log;otel
-	// +kubebuilder:default=log
+	// +kubebuilder:default=otel
 	Backend MetricsBackend `json:"backend"`
 
 	// OTelCollector configures the OpenTelemetry collector deployment.
@@ -551,7 +575,9 @@ type ObservabilitySpec struct {
 	PrometheusRules bool `json:"prometheusRules,omitempty"`
 
 	// GrafanaDashboard enables creation of a ConfigMap-based Grafana dashboard.
-	// +kubebuilder:default=false
+	// Defaults to true so a dashboard ships out of the box (harmless if no
+	// Grafana operator is present — it is just a ConfigMap).
+	// +kubebuilder:default=true
 	// +optional
 	GrafanaDashboard bool `json:"grafanaDashboard,omitempty"`
 }
@@ -675,6 +701,13 @@ type AgentCorpusStatus struct {
 	// +optional
 	RuntimeEvidence RuntimeEvidenceStatus `json:"runtimeEvidence,omitempty"`
 
+	// AvailableRHOAIModels lists READY RHOAI / KServe InferenceServices
+	// discovered on the cluster (name, namespace, in-cluster URL). Surfaced so an
+	// operator can wire an in-cluster model as an AgentCollective LLM backend
+	// instead of an external provider. Populated only when deployMode=rhoai.
+	// +optional
+	AvailableRHOAIModels []RHOAIModelRef `json:"availableRHOAIModels,omitempty"`
+
 	// CurrentVersion is the ACC version currently deployed.
 	// +optional
 	CurrentVersion string `json:"currentVersion,omitempty"`
@@ -683,6 +716,18 @@ type AgentCorpusStatus struct {
 	// version change is pending user approval.
 	// +optional
 	PendingUpgradeVersion string `json:"pendingUpgradeVersion,omitempty"`
+}
+
+// RHOAIModelRef identifies a READY RHOAI / KServe InferenceService discovered
+// on the cluster.
+type RHOAIModelRef struct {
+	// Name is the InferenceService name.
+	Name string `json:"name"`
+	// Namespace is the InferenceService namespace.
+	Namespace string `json:"namespace"`
+	// URL is the in-cluster predictor URL (.status.url of the InferenceService).
+	// +optional
+	URL string `json:"url,omitempty"`
 }
 
 // PrerequisiteStatus holds flat boolean flags for each optional cluster dependency.

@@ -87,6 +87,26 @@ spec:
       kind: AgentCollective
       name: agentcollectives.acc.redhat.io
       version: v1alpha1
+    - description: >-
+        AccCatalog declares one layer of the package catalog that ACC pods
+        resolve roles, skills, and MCPs from. Each catalog has a trust tier, an
+        index source (HTTPS URL or on-disk file), and a required cosign signer
+        that forms the install-time signing floor. The operator merges every
+        AccCatalog in the namespace into the acc-catalogs ConfigMap.
+      displayName: ACC Catalog
+      kind: AccCatalog
+      name: acccatalogs.acc.redhat.io
+      version: v1alpha1
+    - description: >-
+        AccPackageInstall requests installation of a single @scope/name role
+        package (at a semver constraint) into the ACC pods in this namespace. It
+        is the GitOps seam for package infusion: the operator resolves it
+        against the AccCatalog layers, verifies the signature, installs it onto
+        live pods, and records the resolved version and content hash in status.
+      displayName: ACC Package Install
+      kind: AccPackageInstall
+      name: accpackageinstalls.acc.redhat.io
+      version: v1alpha1
   description: |
     ## Overview
 
@@ -149,8 +169,23 @@ spec:
         - apiGroups: ["acc.redhat.io"]
           resources: ["agentcorpora/finalizers", "agentcollectives/finalizers"]
           verbs: ["update"]
+        - apiGroups: ["acc.redhat.io"]
+          resources: ["acccatalogs", "accpackageinstalls"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["acc.redhat.io"]
+          resources: ["acccatalogs/status", "accpackageinstalls/status"]
+          verbs: ["get", "update", "patch"]
+        - apiGroups: ["acc.redhat.io"]
+          resources: ["acccatalogs/finalizers", "accpackageinstalls/finalizers"]
+          verbs: ["update"]
+        - apiGroups: [""]
+          resources: ["pods"]
+          verbs: ["get", "list", "watch"]
+        - apiGroups: [""]
+          resources: ["pods/exec"]
+          verbs: ["create"]
         - apiGroups: ["apps"]
-          resources: ["deployments", "statefulsets"]
+          resources: ["deployments", "statefulsets", "daemonsets"]
           verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
         - apiGroups: [""]
           resources: ["services", "configmaps", "persistentvolumeclaims", "events"]
@@ -161,6 +196,9 @@ spec:
         - apiGroups: ["coordination.k8s.io"]
           resources: ["leases"]
           verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["datasciencecluster.opendatahub.io"]
+          resources: ["datascienceclusters"]
+          verbs: ["get", "list", "watch"]
         - apiGroups: ["templates.gatekeeper.sh"]
           resources: ["constrainttemplates"]
           verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
@@ -202,6 +240,7 @@ spec:
                 command:
                 - /manager
                 image: quay.io/redhat-ai-dev/acc-operator:0.1.0
+                imagePullPolicy: Always
                 livenessProbe:
                   httpGet:
                     path: /healthz
