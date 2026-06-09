@@ -216,6 +216,13 @@ role_definition:
   workspace_access: true
   max_parallel_tasks: 1
   plan_participant: false
+  # Proactive wakeup (operator decision 2026-06-09) — the Assistant no longer
+  # just sits idle waiting for a prompt: every ~5 min it self-checks for work
+  # (oversight queue, idle/failed agents, missing capabilities) and acts via
+  # mode-gated markers (auto-act under AUTO, else queue). Skipped while
+  # dormant (/sleep). Env override: ACC_WAKEUP_INTERVAL_S.
+  proactive_wakeup: true
+  wakeup_interval_s: 300
   # OpenSpec follow-up to `20260603-capability-pool` — operator-curated
   # skill set for the Assistant.  os_basics still auto-grants the 10
   # navigation primitives; this block names the extras the operator

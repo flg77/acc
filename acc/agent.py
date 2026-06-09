@@ -2721,6 +2721,96 @@ class Agent:
                 break
             await self._run_reflection_once()
 
+    # Proactive wakeup self-check prompt (operator decision 2026-06-09).
+    _WAKEUP_PROMPT = (
+        "Proactive self-check — you woke yourself on a timer; no operator is "
+        "waiting. Read the '## Currently available' snapshot and look for work "
+        "that needs attention: items in the oversight / Compliance queue, "
+        "failed or idle specialists, a capability the collective lacks for a "
+        "pending need. If something needs attention, take the SMALLEST useful "
+        "action by emitting the right marker AFTER your </reasoning> "
+        "(PROPOSE_ROUTE / PROPOSE_SPAWN / PROPOSE_INFUSE / PROPOSE_ROLE_UPDATE). "
+        "If nothing needs attention, reply exactly 'nothing pending' and emit "
+        "NO marker. Do not invent work — one concrete improvement, or none."
+    )
+
+    async def _proactive_wakeup_loop(self) -> None:
+        """Periodic self-check so an opted-in agent stays active instead of
+        only reacting to inbound tasks (operator decision 2026-06-09).
+
+        No-op unless the active role sets ``proactive_wakeup: true`` and a
+        CognitiveCore is present, so every other role is unaffected. Every
+        ``wakeup_interval_s`` (floor 60s; env override ``ACC_WAKEUP_INTERVAL_S``)
+        it injects a synthetic self-targeted TASK_ASSIGN that asks the agent to
+        scan for work. That task flows through the normal ``_task_loop``
+        pipeline, so any ``[PROPOSE_*]`` markers it emits are mode-gated by
+        ``decide_dispatch`` (auto-act under AUTO, else queue on Compliance).
+        Skipped while dormant — the reactive activator still wakes it on a
+        real trigger, and an explicit ``/sleep`` is respected. Sleeps on the
+        stop-event so shutdown is prompt.
+        """
+        role = self._active_role
+        if self._cognitive_core is None or role is None:
+            return
+        if not bool(getattr(role, "proactive_wakeup", False)):
+            return
+        try:
+            interval = float(
+                os.environ.get("ACC_WAKEUP_INTERVAL_S", "")
+                or getattr(role, "wakeup_interval_s", 300)
+            )
+        except (TypeError, ValueError):
+            interval = 300.0
+        interval = max(60.0, interval)  # floor: never hammer the LLM/budget
+        logger.info(
+            "proactive_wakeup: enabled interval=%.0fs role=%s agent_id=%s",
+            interval, self.config.agent.role, self.agent_id,
+        )
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+            if self._stop_event.is_set():
+                break
+            stress = getattr(self._cognitive_core, "stress", None)
+            if bool(getattr(stress, "dormant", False)):
+                logger.debug("proactive_wakeup: dormant — skipping self-check")
+                continue
+            try:
+                await self._run_wakeup_scan_once()
+            except Exception:
+                logger.exception("proactive_wakeup: self-check publish failed")
+
+    async def _run_wakeup_scan_once(self) -> None:
+        """Publish one synthetic self-targeted TASK_ASSIGN asking this agent to
+        scan for work. Reuses the normal task path (perception -> LLM ->
+        markers -> mode-gated dispatch); ``target_agent_id`` pins it to THIS
+        agent so peers ignore it. Fire-and-forget.
+        """
+        cid = self.config.agent.collective_id
+        mode = getattr(self._active_role, "default_operating_mode", "AUTO") or "AUTO"
+        payload = {
+            "signal_type": "TASK_ASSIGN",
+            "task_id": uuid.uuid4().hex,
+            "collective_id": cid,
+            "from_agent": self.agent_id,
+            "target_role": self.config.agent.role,
+            "target_agent_id": self.agent_id,
+            "task_type": "WAKEUP_SCAN",
+            "task_description": self._WAKEUP_PROMPT,
+            "operating_mode": mode,
+            "priority": "LOW",
+            "iteration_n": 0,
+            "max_iterations": 1,
+            "ts": time.time(),
+        }
+        await self.backends.signaling.publish(subject_task_assign(cid), payload)
+        logger.info(
+            "proactive_wakeup: published self-check (mode=%s) for %s",
+            mode, self.agent_id,
+        )
+
     async def _maybe_start_a2a_server(self):
         """Start the A2A inbound HTTP/JSON-RPC server (OpenSpec
         20260527-a2a-agent-interop, Phases 1b/2) when ``ACC_A2A_PORT`` is set.
@@ -2829,6 +2919,11 @@ class Agent:
                 # No-ops unless ACC_REFLECTION_INTERVAL_S > 0 + a
                 # CognitiveCore is present + the role opted in.
                 self._reflection_loop(),
+                # Proactive wakeup self-check (2026-06-09). No-ops unless the
+                # active role sets proactive_wakeup: true (only the Assistant
+                # does). Keeps an opted-in agent active instead of purely
+                # reactive; markers are mode-gated (auto-act under AUTO).
+                self._proactive_wakeup_loop(),
                 return_exceptions=True,
             )
         finally:

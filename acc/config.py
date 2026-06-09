@@ -155,6 +155,18 @@ class RoleDefinitionConfig(BaseModel):
     # only flips one boolean.
     workspace_access: bool = False
 
+    # Proactive wakeup (operator decision 2026-06-09) — when ``True`` the
+    # agent runs a periodic self-check loop (acc/agent.py::_proactive_wakeup_loop)
+    # in addition to the reactive activator: every ``wakeup_interval_s`` it
+    # injects a synthetic self-targeted TASK_ASSIGN ("scan for work") that flows
+    # through the normal cognitive pipeline, so any markers it emits are
+    # mode-gated by decide_dispatch (auto-act under AUTO, else queue). Default
+    # off — only roles that opt in (the Assistant) become proactive. Skipped
+    # while the agent is dormant (respects /sleep).
+    proactive_wakeup: bool = False
+    # Self-check cadence in seconds (default 5 min). Clamped to >= 60 at use.
+    wakeup_interval_s: int = 300
+
     # OpenSpec `20260603-capability-pool` Phase 1.4 — when ``True``,
     # the ``_grant_os_basics_skills`` validator auto-adds the twelve
     # OS-navigation primitives (ls_dir, stat_path, read_text_head,
