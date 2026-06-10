@@ -1341,6 +1341,9 @@ def build_llm_backend(config: ACCConfig) -> LLMBackend:
             # Universal base_url takes precedence over legacy vllm_inference_url
             inference_url=config.llm.base_url or config.llm.vllm_inference_url,
             model=config.llm.model or config.llm.ollama_model,
+            # Pass the baked local embedding model so episode-persist embedding
+            # loads offline instead of trying to fetch from huggingface.co.
+            embedding_model_path=config.llm.embedding_model_path,
         )
     if config.llm.backend == "openai_compat":
         from acc.backends.llm_openai_compat import OpenAICompatBackend

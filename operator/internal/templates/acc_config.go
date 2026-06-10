@@ -34,24 +34,24 @@ agent:
   corpus_name: {{ .CorpusName }}
   role: ${ACC_AGENT_ROLE}
   heartbeat_interval_s: {{ .HeartbeatIntervalSeconds }}
-{{ if .HubCollectiveID -}}
+{{- if .HubCollectiveID }}
   hub_collective_id: {{ .HubCollectiveID }}
   bridge_enabled: true
-{{ end -}}
+{{- end }}
 
 signaling:
   backend: nats
   nats_url: nats://{{ .NATSServiceName }}:4222
-{{ if .NATSHubUrl -}}
+{{- if .NATSHubUrl }}
   hub_url: {{ .NATSHubUrl }}
-{{ end -}}
+{{- end }}
 
 vector_db:
   backend: {{ .VectorBackend }}
-{{ if .MilvusURI -}}
+{{- if .MilvusURI }}
   milvus_uri: {{ .MilvusURI }}
   milvus_collection_prefix: {{ .MilvusPrefix }}
-{{ end -}}
+{{- end }}
 
 cache:
   backend: redis
@@ -59,21 +59,21 @@ cache:
 
 llm:
   backend: {{ .LLMBackend }}
-{{ if .OllamaBaseURL -}}
+{{- if .OllamaBaseURL }}
   ollama_base_url: {{ .OllamaBaseURL }}
   ollama_model: {{ .OllamaModel }}
-{{ end -}}
-{{ if .AnthropicModel -}}
+{{- end }}
+{{- if .AnthropicModel }}
   anthropic_model: {{ .AnthropicModel }}
-{{ end -}}
-{{ if .VLLMInferenceURL -}}
+{{- end }}
+{{- if .VLLMInferenceURL }}
   vllm_inference_url: {{ .VLLMInferenceURL }}
-  vllm_model: {{ .VLLMModel }}
-{{ end -}}
-{{ if .LlamaStackBaseURL -}}
+  model: {{ .VLLMModel }}
+{{- end }}
+{{- if .LlamaStackBaseURL }}
   llama_stack_url: {{ .LlamaStackBaseURL }}
   llama_stack_model_id: {{ .LlamaStackModelID }}
-{{ end -}}
+{{- end }}
   embedding_model: {{ .EmbeddingModel }}
 
 governance:
@@ -82,17 +82,17 @@ governance:
   category_b:
     bundle_server_url: http://{{ .OPABundleServiceName }}:8181
     poll_interval_s: {{ .BundlePollInterval }}
-{{ if .ConfidenceThreshold -}}
+{{- if .ConfidenceThreshold }}
   category_c:
     confidence_threshold: {{ .ConfidenceThreshold }}
-{{ end -}}
+{{- end }}
 
 metrics:
   backend: {{ .MetricsBackend }}
-{{ if .OTelEndpoint -}}
+{{- if .OTelEndpoint }}
   otel_endpoint: {{ .OTelEndpoint }}
   otel_service_name: {{ .OTelServiceName }}
-{{ end -}}
+{{- end }}
 `))
 
 // ACCConfigData holds all values needed to render acc-config.yaml.

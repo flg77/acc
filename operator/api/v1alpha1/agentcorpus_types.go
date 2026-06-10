@@ -570,9 +570,12 @@ type ObservabilitySpec struct {
 	OTelCollector *OTelCollectorSpec `json:"otelCollector,omitempty"`
 
 	// PrometheusRules enables creation of PrometheusRule CRs for ACC alerts.
+	// Not "omitempty": the field must serialize even when false, otherwise the
+	// defaulting webhook's re-marshal drops it and the +kubebuilder:default=true
+	// re-applies, making it impossible to disable via the CR.
 	// +kubebuilder:default=true
 	// +optional
-	PrometheusRules bool `json:"prometheusRules,omitempty"`
+	PrometheusRules bool `json:"prometheusRules"`
 
 	// GrafanaDashboard enables creation of a ConfigMap-based Grafana dashboard.
 	// Defaults to true so a dashboard ships out of the box (harmless if no

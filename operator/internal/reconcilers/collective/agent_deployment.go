@@ -11,6 +11,7 @@ package collective
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -412,8 +413,17 @@ func (r *AgentDeploymentReconciler) buildManifestDelivery(
 			// the parent chain and may not have completed on first apply.
 			continue
 		}
-		items := make([]corev1.KeyToPath, 0, len(cm.Data))
+		// Sort the keys so the projected items[] are emitted in a stable
+		// order. Iterating cm.Data directly yields Go's randomized map order,
+		// which makes the rendered pod template differ on every reconcile →
+		// the Deployment is patched each pass → perpetual pod churn.
+		keys := make([]string, 0, len(cm.Data))
 		for key := range cm.Data {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		items := make([]corev1.KeyToPath, 0, len(keys))
+		for _, key := range keys {
 			items = append(items, corev1.KeyToPath{
 				Key:  key,
 				Path: manifests.UnflattenKey(key),
