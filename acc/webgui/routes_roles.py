@@ -218,6 +218,50 @@ def _role_md_path(role_id: str) -> Path:
 
 
 @router.get(
+    "/roles",
+    summary="List authorable in-tree roles (role-editor picker source)",
+)
+def roles_list(_: bool = Depends(require_viewer)) -> list[dict]:
+    """Enumerate role dirs under ``ACC_ROLES_ROOT`` that carry a role.yaml.
+
+    Distinct from ``/roles/available`` (catalog *packages*): this lists the
+    locally-authorable roles the editor can open + edit + publish.
+    """
+    root = _roles_root()
+    if not root.is_dir():
+        return []
+    out: list[dict] = []
+    for child in sorted(root.iterdir()):
+        if not child.is_dir() or not _ROLE_ID_RE.match(child.name):
+            continue
+        if not (child / "role.yaml").is_file():
+            continue
+        out.append(
+            {
+                "role_id": child.name,
+                "has_md": (child / "role.md").is_file(),
+            }
+        )
+    return out
+
+
+@router.get(
+    "/roles/{role_id}/md",
+    summary="Read a role's role.md (for the editor)",
+)
+def role_md_get(
+    role_id: str = PathParam(...),
+    _: bool = Depends(require_viewer),
+) -> dict:
+    role_id = _safe_role_id(role_id)
+    path = _role_md_path(role_id)
+    # role.md is optional — return empty text rather than 404 so the editor
+    # can open a role that has only a role.yaml and start a narrative.
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    return {"role_id": role_id, "md_text": text}
+
+
+@router.get(
     "/roles/{role_id}/yaml",
     summary="Read a role's role.yaml (for the editor)",
 )

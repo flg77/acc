@@ -18,7 +18,20 @@ import {
   fetchModels,
   runGapScan,
   decideProposal,
+  fetchAvailableRoles,
+  installRole,
+  fetchCatalogs,
+  addCatalog,
+  removeCatalog,
+  setCatalogPriority,
+  listRoles,
+  getRoleYaml,
+  getRoleMd,
+  putRoleYaml,
+  putRoleMd,
+  createRole,
 } from "./api/client";
+import type { MarketRow, CatalogRow, RoleRow } from "./api/client";
 
 const obj = (v: unknown): Record<string, any> =>
   v && typeof v === "object" ? (v as Record<string, any>) : {};
@@ -425,6 +438,350 @@ export function Diagnostics() {
         rows={prompts}
       />
     </Card>
+  );
+}
+
+// 11 ── Marketplace — browse catalog packages + stage install (WS-C1) ──────
+//      Mirrors the acc-tui MarketplaceScreen. Read = viewer; install stages
+//      a PROPOSE_INFUSE marker for the Compliance pane (operator-gated).
+export function Marketplace() {
+  const [rows, setRows] = useState<MarketRow[]>([]);
+  const [filter, setFilter] = useState("");
+  const [err, setErr] = useState("");
+  const [status, setStatus] = useState("");
+
+  const load = (f = filter) => {
+    fetchAvailableRoles(f)
+      .then(setRows)
+      .catch((e) => setErr(String(e)));
+  };
+  useEffect(() => load(""), []);
+
+  const install = async (name: string) => {
+    setStatus(`staging ${name}…`);
+    try {
+      const r = await installRole(name);
+      setStatus(
+        `staged ${r.target_name}@${r.target_constraint} — approve it in Compliance`,
+      );
+    } catch (e) {
+      setStatus(`error: ${e}`);
+    }
+  };
+
+  return (
+    <Card title="Marketplace">
+      <div className="oversight-row">
+        <input
+          placeholder="filter by name…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && load()}
+        />
+        <button onClick={() => load()}>Search</button>
+      </div>
+      {err && <p className="status">{err}</p>}
+      {rows.length === 0 && !err && <Empty what="packages" />}
+      <table className="data">
+        <thead>
+          <tr>
+            <th>name</th>
+            <th>version</th>
+            <th>tier</th>
+            <th>catalog</th>
+            <th>signer</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={`${r.name}@${r.version}-${i}`}>
+              <td>{r.name}</td>
+              <td>{r.version}</td>
+              <td>
+                {r.tier_badge} {r.tier}
+              </td>
+              <td>
+                {r.catalog_id} ({r.catalog_mode})
+              </td>
+              <td>{r.signer}</td>
+              <td>
+                <button onClick={() => install(r.name)}>Install</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="status">{status}</p>
+    </Card>
+  );
+}
+
+// 12 ── Catalogs — layered catalog CRUD (WS-C1) ────────────────────────────
+//      Mirrors the acc-tui CatalogsScreen. Add / remove / re-prioritise the
+//      workspace-layer catalogs the Marketplace resolves against.
+export function Catalogs() {
+  const [cats, setCats] = useState<CatalogRow[]>([]);
+  const [msg, setMsg] = useState("");
+  const [form, setForm] = useState({
+    catalog_id: "",
+    tier: "community",
+    mode: "https",
+    url: "",
+    path: "",
+    issuer: "",
+    subject_pattern: "",
+    priority: 100,
+  });
+
+  const load = () => fetchCatalogs().then(setCats).catch((e) => setMsg(String(e)));
+  useEffect(() => {
+    load();
+  }, []);
+
+  const add = async () => {
+    setMsg("adding…");
+    try {
+      await addCatalog(form);
+      setMsg(`added ${form.catalog_id}`);
+      setForm({ ...form, catalog_id: "", url: "", path: "" });
+      load();
+    } catch (e) {
+      setMsg(`error: ${e}`);
+    }
+  };
+  const remove = async (id: string) => {
+    try {
+      await removeCatalog(id);
+      load();
+    } catch (e) {
+      setMsg(`error: ${e}`);
+    }
+  };
+  const reprioritise = async (id: string, priority: number) => {
+    try {
+      await setCatalogPriority(id, priority);
+      load();
+    } catch (e) {
+      setMsg(`error: ${e}`);
+    }
+  };
+
+  const set = (k: string, v: string | number) => setForm({ ...form, [k]: v });
+
+  return (
+    <>
+      <Card title="Configured catalogs">
+        {cats.length === 0 && <Empty what="catalogs" />}
+        {cats.map((c) => (
+          <div key={c.id} className="oversight-row">
+            <span>
+              <strong>{c.id}</strong> · {c.tier} · {c.mode}
+            </span>
+            <span>{c.url || c.path}</span>
+            <span>
+              signer: {c.required_signer.issuer || "—"} /{" "}
+              {c.required_signer.subject_pattern || "—"}
+            </span>
+            <input
+              type="number"
+              value={c.priority}
+              style={{ width: "5rem" }}
+              onChange={(e) =>
+                reprioritise(c.id, parseInt(e.target.value, 10) || c.priority)
+              }
+            />
+            <button onClick={() => remove(c.id)}>Remove</button>
+          </div>
+        ))}
+      </Card>
+      <Card title="Add a catalog">
+        <label>
+          Catalog id
+          <input
+            value={form.catalog_id}
+            onChange={(e) => set("catalog_id", e.target.value)}
+          />
+        </label>
+        <label>
+          Tier
+          <select value={form.tier} onChange={(e) => set("tier", e.target.value)}>
+            <option>community</option>
+            <option>standard</option>
+            <option>premium</option>
+          </select>
+        </label>
+        <label>
+          Mode
+          <select value={form.mode} onChange={(e) => set("mode", e.target.value)}>
+            <option>https</option>
+            <option>oci</option>
+            <option>local</option>
+          </select>
+        </label>
+        <label>
+          URL
+          <input value={form.url} onChange={(e) => set("url", e.target.value)} />
+        </label>
+        <label>
+          Path (local mode)
+          <input value={form.path} onChange={(e) => set("path", e.target.value)} />
+        </label>
+        <label>
+          Required signer — issuer
+          <input
+            value={form.issuer}
+            onChange={(e) => set("issuer", e.target.value)}
+          />
+        </label>
+        <label>
+          Required signer — subject pattern
+          <input
+            value={form.subject_pattern}
+            onChange={(e) => set("subject_pattern", e.target.value)}
+          />
+        </label>
+        <label>
+          Priority
+          <input
+            type="number"
+            value={form.priority}
+            onChange={(e) => set("priority", parseInt(e.target.value, 10) || 100)}
+          />
+        </label>
+        <button onClick={add} disabled={!form.catalog_id || !form.issuer}>
+          Add catalog
+        </button>
+        <p className="status">{msg}</p>
+      </Card>
+    </>
+  );
+}
+
+// 13 ── Role editor — author/edit in-tree roles (WS-C1 over WS-C2) ─────────
+//      Mirrors acc-tui role_writeback authoring. Open an existing role to
+//      edit its role.yaml + role.md, or create a new one. role.yaml is
+//      validated server-side; validation errors surface inline.
+export function RoleEditor() {
+  const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [selected, setSelected] = useState<string>("");
+  const [creating, setCreating] = useState(false);
+  const [newId, setNewId] = useState("");
+  const [yamlText, setYamlText] = useState("");
+  const [mdText, setMdText] = useState("");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const loadList = () => listRoles().then(setRoles).catch((e) => setStatus(String(e)));
+  useEffect(() => {
+    loadList();
+  }, []);
+
+  const open = async (roleId: string) => {
+    setCreating(false);
+    setSelected(roleId);
+    setStatus("loading…");
+    try {
+      const [y, m] = await Promise.all([getRoleYaml(roleId), getRoleMd(roleId)]);
+      setYamlText(y.yaml_text);
+      setMdText(m.md_text);
+      setStatus("");
+    } catch (e) {
+      setStatus(`error: ${e}`);
+    }
+  };
+
+  const startNew = () => {
+    setCreating(true);
+    setSelected("");
+    setNewId("");
+    setYamlText(
+      "purpose: \"\"\npersona: concise\nallowed_skills: []\ndefault_skills: []\n",
+    );
+    setMdText("");
+    setStatus("");
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setStatus("saving…");
+    try {
+      if (creating) {
+        const r = await createRole(newId, yamlText, mdText);
+        setStatus(`created ${r.role_id}`);
+        setCreating(false);
+        setSelected(r.role_id);
+        loadList();
+      } else {
+        await putRoleYaml(selected, yamlText);
+        await putRoleMd(selected, mdText);
+        setStatus(`saved ${selected}`);
+        loadList();
+      }
+    } catch (e) {
+      // backend 400 body is {detail:{message,errors}} — surfaced raw.
+      setStatus(`validation/error: ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const canSave =
+    !busy && yamlText.trim().length > 0 && (creating ? newId.trim().length > 0 : !!selected);
+
+  return (
+    <>
+      <Card title="Roles">
+        <div className="oversight-row">
+          <select
+            value={selected}
+            onChange={(e) => e.target.value && open(e.target.value)}
+          >
+            <option value="">— select a role to edit —</option>
+            {roles.map((r) => (
+              <option key={r.role_id} value={r.role_id}>
+                {r.role_id}
+                {r.has_md ? " ✎" : ""}
+              </option>
+            ))}
+          </select>
+          <button onClick={startNew}>New role</button>
+        </div>
+      </Card>
+
+      {(creating || selected) && (
+        <Card title={creating ? "Create role" : `Edit role: ${selected}`}>
+          {creating && (
+            <label>
+              New role id (lowercase + underscore)
+              <input value={newId} onChange={(e) => setNewId(e.target.value)} />
+            </label>
+          )}
+          <label>
+            role.yaml
+            <textarea
+              className="code"
+              rows={18}
+              value={yamlText}
+              onChange={(e) => setYamlText(e.target.value)}
+              spellCheck={false}
+            />
+          </label>
+          <label>
+            role.md (narrative — optional)
+            <textarea
+              rows={8}
+              value={mdText}
+              onChange={(e) => setMdText(e.target.value)}
+            />
+          </label>
+          <button onClick={save} disabled={!canSave}>
+            {creating ? "Create" : "Save"}
+          </button>
+          <p className="status">{status}</p>
+        </Card>
+      )}
+    </>
   );
 }
 

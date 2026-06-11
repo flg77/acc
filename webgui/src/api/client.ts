@@ -172,6 +172,146 @@ export const decideProposal = (
     { decision },
   );
 
+// --- marketplace / catalogs / role authoring (WS-C, proposal 020) ----------
+
+async function putJSON<T>(path: string, body: unknown): Promise<T> {
+  const resp = await fetch(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text();
+    throw new Error(`${resp.status}: ${detail}`);
+  }
+  return resp.json() as Promise<T>;
+}
+
+async function deleteJSON<T>(path: string): Promise<T> {
+  const resp = await fetch(path, {
+    method: "DELETE",
+    headers: { ...authHeaders() },
+  });
+  if (!resp.ok) {
+    const detail = await resp.text();
+    throw new Error(`${resp.status}: ${detail}`);
+  }
+  return resp.json() as Promise<T>;
+}
+
+async function patchJSON<T>(path: string, body: unknown): Promise<T> {
+  const resp = await fetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text();
+    throw new Error(`${resp.status}: ${detail}`);
+  }
+  return resp.json() as Promise<T>;
+}
+
+export type MarketRow = {
+  name: string;
+  version: string;
+  tier: string;
+  tier_badge: string;
+  catalog_id: string;
+  catalog_mode: string;
+  signer: string;
+  install_marker: string;
+};
+
+export const fetchAvailableRoles = (filter = "") =>
+  getJSON<MarketRow[]>(
+    `/api/roles/available${filter ? `?filter=${encodeURIComponent(filter)}` : ""}`,
+  );
+
+export const installRole = (name: string, constraint?: string) =>
+  postJSON<{
+    install_marker: string;
+    target_name: string;
+    target_constraint: string;
+  }>("/api/roles/install", { name, constraint: constraint ?? null });
+
+export type CatalogRow = {
+  id: string;
+  tier: string;
+  mode: string;
+  url: string;
+  path: string;
+  required_signer: { issuer: string; subject_pattern: string; key_path: string };
+  priority: number;
+};
+
+export const fetchCatalogs = () => getJSON<CatalogRow[]>("/api/catalogs");
+
+export const addCatalog = (body: {
+  catalog_id: string;
+  tier: string;
+  mode: string;
+  url?: string;
+  path?: string;
+  issuer: string;
+  subject_pattern: string;
+  key_path?: string;
+  priority?: number;
+}) => postJSON<{ action: string; catalog_id: string; path: string }>(
+  "/api/catalogs",
+  body,
+);
+
+export const removeCatalog = (catalogId: string) =>
+  deleteJSON<{ action: string; catalog_id: string; path: string }>(
+    `/api/catalogs/${encodeURIComponent(catalogId)}`,
+  );
+
+export const setCatalogPriority = (catalogId: string, priority: number) =>
+  patchJSON<{ action: string; catalog_id: string; priority: number }>(
+    `/api/catalogs/${encodeURIComponent(catalogId)}`,
+    { priority },
+  );
+
+// --- role authoring (WS-C1/C2) ---------------------------------------------
+
+export type RoleRow = { role_id: string; has_md: boolean };
+
+export const listRoles = () => getJSON<RoleRow[]>("/api/roles");
+
+export const getRoleYaml = (roleId: string) =>
+  getJSON<{ role_id: string; yaml_text: string }>(
+    `/api/roles/${encodeURIComponent(roleId)}/yaml`,
+  );
+
+export const getRoleMd = (roleId: string) =>
+  getJSON<{ role_id: string; md_text: string }>(
+    `/api/roles/${encodeURIComponent(roleId)}/md`,
+  );
+
+export const putRoleYaml = (roleId: string, yamlText: string) =>
+  putJSON<{ role_id: string; action: string }>(
+    `/api/roles/${encodeURIComponent(roleId)}/yaml`,
+    { yaml_text: yamlText },
+  );
+
+export const putRoleMd = (roleId: string, mdText: string) =>
+  putJSON<{ role_id: string; action: string }>(
+    `/api/roles/${encodeURIComponent(roleId)}/md`,
+    { md_text: mdText },
+  );
+
+export const createRole = (
+  roleId: string,
+  yamlText: string,
+  mdText = "",
+) =>
+  postJSON<{ role_id: string; action: string }>("/api/roles", {
+    role_id: roleId,
+    yaml_text: yamlText,
+    md_text: mdText,
+  });
+
 // --- live WebSocket --------------------------------------------------------
 
 // Opens /ws/{cid}; calls onSnapshot for every CollectiveSnapshot push.

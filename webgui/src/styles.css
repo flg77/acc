@@ -79,6 +79,12 @@ input, textarea, select {
   padding: 0.4rem;
 }
 textarea { min-height: 4rem; resize: vertical; }
+textarea.code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  white-space: pre;
+  tab-size: 2;
+}
 button {
   background: var(--accent);
   color: #04101f;
