@@ -93,6 +93,12 @@ mlflow = [
     # only operators who set OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
     # need this extra.
     "opentelemetry-exporter-otlp-proto-http>=1.25,<2.0",
+    # Proposal 020 WS-D — MLFlow experiments/runs logging (golden /
+    # eval / reasoning-bench runs → MLFlow comparison UI), separate from
+    # the OTel trace export above.  mlflow-skinny is the client-only
+    # package (no server/UI deps) — keeps the extra light.  Opt-in via
+    # ACC_MLFLOW_TRACKING_URI; acc.backends.mlflow_runs no-ops without it.
+    "mlflow-skinny>=2.14,<3.0",
 ]
 webgui = [
     # acc-webgui — the optional FastAPI + React web frontend.  The

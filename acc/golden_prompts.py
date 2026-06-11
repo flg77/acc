@@ -406,6 +406,18 @@ def persist_results(
     except OSError as exc:
         logger.warning("golden_prompts: history append failed: %s", exc)
 
+    # Proposal 020 WS-D — also log the suite execution as an MLFlow run
+    # when configured (ACC_MLFLOW_TRACKING_URI set + acc[mlflow] installed).
+    # Same ``run_meta`` keeps the JSONL history + MLFlow experiment in
+    # sync.  Best-effort + lazy: a no-op when MLFlow isn't configured, and
+    # a tracking-server outage never fails the run (mirrors the JSONL
+    # write posture above).
+    try:
+        from acc.backends.mlflow_runs import log_golden_results  # noqa: PLC0415
+        log_golden_results(results, run_meta=meta)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("golden_prompts: mlflow run-log skipped (%s)", exc)
+
 
 # ---------------------------------------------------------------------------
 # PR-Y-2 — writable store, multi-root load, markdown import, capture
