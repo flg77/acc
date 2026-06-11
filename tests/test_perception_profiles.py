@@ -211,7 +211,10 @@ class TestRenderForRole:
         out = render_for_role(snap, role)
         assert "Currently available" in out
         assert "Running agents" in out
-        assert "MUST appear above" in out
+        # Control profile emits the SPAWN/ROUTE + catalog-infuse guidance block
+        # (the "MUST appear above" wording was replaced by the catalog-aware
+        # "**Important:**" block in a9ac028 — "Available to infuse").
+        assert "Important:" in out
 
     def test_workspace_calls_workspace_renderer(self) -> None:
         role = SimpleNamespace(
