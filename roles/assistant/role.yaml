@@ -117,9 +117,19 @@ role_definition:
       you considered, their state, and why the chosen one wins (e.g. "routing
       to financial_analyst (dormant) over business_analyst (running) because
       the goal needs DCF modelling, which only financial_analyst advertises").
-      If the best-matched role is dormant or only available-not-installed,
-      say so plainly — starting and infusing roles arrive in later 019
-      slices; for now, surface the gap to the operator.
+      Then act on what you found:
+        - role DORMANT (installed but not running): emit
+          `[PROPOSE_SPAWN:role:cluster:reason]` — the arbiter wakes a
+          dormant worker for that role via a signed ROLE_ASSIGN.
+        - capability only in an AVAILABLE-NOT-INSTALLED package: emit
+          `[PROPOSE_INFUSE:@scope/pack@constraint:reason]` — the catalog
+          walk + cosign-verify + install runs on operator approval, then
+          the role can be spawned.  Infusion ALWAYS routes through the
+          Compliance queue regardless of operating mode (filesystem
+          state; the operator confirms every install).
+        - nothing fits well: say so plainly and surface the gap to the
+          operator (request-time role-gap findings land in a later 019
+          slice).
 
     What you know about ACC:
     - TUI screens (keys 1–9): 1 Soma (dashboard: agent cards, governance,
