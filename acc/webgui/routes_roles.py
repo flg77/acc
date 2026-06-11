@@ -20,6 +20,8 @@ acc/webgui/auth.py role gating).
 from __future__ import annotations
 
 import logging
+import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -33,6 +35,29 @@ from acc.webgui.auth import require_operator, require_viewer
 logger = logging.getLogger("acc.webgui.routes_roles")
 
 router = APIRouter(prefix="/api", tags=["roles"])
+
+# Role ids are directory names under roles/ — restrict to a safe charset
+# so a path like ``../../etc`` can never reach the filesystem helpers.
+_ROLE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]*$")
+
+
+def _roles_root() -> Path:
+    """Resolve the writable in-tree roles/ directory.
+
+    Mirrors the CapabilityIndex / acc-tui ``ACC_ROLES_ROOT`` contract;
+    the WebGUI container mounts this writable (agent pods mount it
+    read-only).  Defaults to the in-image ``/app/roles`` layout.
+    """
+    return Path(os.environ.get("ACC_ROLES_ROOT", "/app/roles"))
+
+
+def _safe_role_id(role_id: str) -> str:
+    if not _ROLE_ID_RE.match(role_id or ""):
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid role id {role_id!r} (lowercase + underscore only)",
+        )
+    return role_id
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +183,138 @@ def roles_install(
         target_name=body.name,
         target_constraint=constraint,
     )
+
+
+# ---------------------------------------------------------------------------
+# Role authoring — create / edit role.yaml + role.md (proposal 020 WS-C)
+#
+# WebGUI parity with the TUI Ecosystem pane's inline role editor.  Reuses
+# acc.tui.role_writeback (validate + atomic write) so the WebGUI and TUI
+# share one validation + write path.  Publish-to-catalog is WS-C3 (gated
+# on the signing-identity decision) and lands separately.
+# ---------------------------------------------------------------------------
+
+
+class _RoleYamlIn(BaseModel):
+    yaml_text: str = Field(..., min_length=1, description="full role.yaml contents")
+
+
+class _RoleMdIn(BaseModel):
+    md_text: str = Field("", description="full role.md contents (free-form)")
+
+
+class _RoleCreateIn(BaseModel):
+    role_id: str = Field(..., description="new role dir name (lowercase + _)")
+    yaml_text: str = Field(..., min_length=1)
+    md_text: str = Field("", description="optional role.md")
+
+
+def _role_yaml_path(role_id: str) -> Path:
+    return _roles_root() / role_id / "role.yaml"
+
+
+def _role_md_path(role_id: str) -> Path:
+    return _roles_root() / role_id / "role.md"
+
+
+@router.get(
+    "/roles/{role_id}/yaml",
+    summary="Read a role's role.yaml (for the editor)",
+)
+def role_yaml_get(
+    role_id: str = PathParam(...),
+    _: bool = Depends(require_viewer),
+) -> dict:
+    role_id = _safe_role_id(role_id)
+    path = _role_yaml_path(role_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"role {role_id!r} has no role.yaml")
+    return {"role_id": role_id, "yaml_text": path.read_text(encoding="utf-8")}
+
+
+@router.put(
+    "/roles/{role_id}/yaml",
+    summary="Validate + write a role's role.yaml (atomic)",
+)
+def role_yaml_put(
+    body: _RoleYamlIn,
+    role_id: str = PathParam(...),
+    _: bool = Depends(require_operator),
+) -> dict:
+    role_id = _safe_role_id(role_id)
+    path = _role_yaml_path(role_id)
+    if not path.parent.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail=f"role {role_id!r} does not exist; POST /api/roles to create it",
+        )
+    from acc.tui.role_writeback import RoleValidationError, upsert_role_yaml  # noqa: PLC0415
+    try:
+        upsert_role_yaml(path, body.yaml_text, role_name=role_id,
+                         roles_root=_roles_root(), validate=True)
+    except RoleValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "errors": exc.errors},
+        ) from exc
+    logger.info("role_yaml_put: wrote role.yaml for %s by operator", role_id)
+    return {"role_id": role_id, "action": "updated"}
+
+
+@router.put(
+    "/roles/{role_id}/md",
+    summary="Write a role's role.md (free-form narrative)",
+)
+def role_md_put(
+    body: _RoleMdIn,
+    role_id: str = PathParam(...),
+    _: bool = Depends(require_operator),
+) -> dict:
+    role_id = _safe_role_id(role_id)
+    path = _role_md_path(role_id)
+    if not path.parent.is_dir():
+        raise HTTPException(status_code=404, detail=f"role {role_id!r} does not exist")
+    from acc.tui.role_writeback import upsert_role_md  # noqa: PLC0415
+    upsert_role_md(path, body.md_text)
+    return {"role_id": role_id, "action": "updated"}
+
+
+@router.post(
+    "/roles",
+    summary="Create a new role (role.yaml + optional role.md)",
+)
+def role_create(
+    body: _RoleCreateIn,
+    _: bool = Depends(require_operator),
+) -> dict:
+    role_id = _safe_role_id(body.role_id)
+    role_dir = _roles_root() / role_id
+    if (role_dir / "role.yaml").is_file():
+        raise HTTPException(status_code=409, detail=f"role {role_id!r} already exists")
+    from acc.tui.role_writeback import (  # noqa: PLC0415
+        RoleValidationError, upsert_role_md, upsert_role_yaml,
+    )
+    try:
+        role_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"cannot create role dir: {exc}") from exc
+    try:
+        upsert_role_yaml(role_dir / "role.yaml", body.yaml_text,
+                         role_name=role_id, roles_root=_roles_root(), validate=True)
+    except RoleValidationError as exc:
+        # roll back the empty dir so a failed create leaves no trace
+        try:
+            (role_dir).rmdir()
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=400,
+            detail={"message": str(exc), "errors": exc.errors},
+        ) from exc
+    if body.md_text:
+        upsert_role_md(role_dir / "role.md", body.md_text)
+    logger.info("role_create: created role %s by operator", role_id)
+    return {"role_id": role_id, "action": "created"}
 
 
 # ---------------------------------------------------------------------------
