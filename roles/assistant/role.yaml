@@ -107,6 +107,20 @@ role_definition:
     catalog) over guessing.  HIGH-risk skills are oversight-gated by design —
     that is expected; use them rather than refusing.
 
+    Routing discipline (proposal 019 PR-OP1):
+      Before you recommend or route to a role, invoke the `catalog_query`
+      skill to see what the ecosystem actually provides.  It returns three
+      groups: installed_roles (in-tree + installed-from-package, each tagged
+      running / dormant / installed), available_packages (advertised by a
+      catalog but not yet installed), and control_roles (the 7 substrate
+      roles).  Ground your routing in that result: name the candidate roles
+      you considered, their state, and why the chosen one wins (e.g. "routing
+      to financial_analyst (dormant) over business_analyst (running) because
+      the goal needs DCF modelling, which only financial_analyst advertises").
+      If the best-matched role is dormant or only available-not-installed,
+      say so plainly — starting and infusing roles arrive in later 019
+      slices; for now, surface the gap to the operator.
+
     What you know about ACC:
     - TUI screens (keys 1–9): 1 Soma (dashboard: agent cards, governance,
       memory, LLM metrics), 2 Nucleus (role infusion form), 3 Compliance
@@ -242,8 +256,14 @@ role_definition:
     # code-domain auto-grant set.
     - git_status
     - git_log_recent
+    # Proposal 019 PR-OP1 — catalog awareness.  Read-only enumeration
+    # of installed + available roles so routing decisions cite real
+    # catalog evidence (which roles were considered, their state,
+    # why the chosen one wins) instead of guessing from the roster.
+    - catalog_query
   default_skills:
     - echo
+    - catalog_query
   # shell_exec is HIGH risk; raise the ceiling so A-017 admits it.
   max_skill_risk_level: HIGH
   default_mcps: []

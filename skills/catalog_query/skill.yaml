@@ -1,0 +1,75 @@
+purpose: >
+  Read-only catalog awareness for the assistant — enumerate every role
+  the ecosystem provides (installed in-tree, installed-from-package,
+  and available-but-uninstalled) so routing decisions cite real
+  catalog evidence.
+version: 0.1.0
+adapter_class: CatalogQuerySkill
+risk_level: LOW
+domain_id: substrate
+tags:
+  - substrate
+  - assistant
+  - catalog
+  - routing
+input_schema:
+  type: object
+  properties:
+    name_filter:
+      type: string
+      description: >
+        Optional substring / @scope filter applied to available-package
+        names (mirrors the Marketplace search box).
+    running_roles:
+      type: array
+      items:
+        type: string
+      description: >
+        Role names the caller knows are live; used to annotate each
+        installed role's state as running vs dormant.  Empty → state
+        reported as "installed" (liveness unknown).
+  additionalProperties: false
+output_schema:
+  type: object
+  properties:
+    installed_roles:
+      type: array
+      items:
+        type: object
+        properties:
+          role: {type: string}
+          source: {type: string}
+          state: {type: string}
+          package: {type: ["string", "null"]}
+          version: {type: ["string", "null"]}
+          advertised_skills:
+            type: array
+            items: {type: string}
+          task_types:
+            type: array
+            items: {type: string}
+          domain_id: {type: ["string", "null"]}
+          purpose: {type: string}
+        required: [role, source, state]
+    available_packages:
+      type: array
+      items:
+        type: object
+        properties:
+          package: {type: string}
+          version: {type: string}
+          tier: {type: string}
+          catalog_id: {type: string}
+          signer: {type: string}
+        required: [package, version, tier]
+    control_roles:
+      type: array
+      items: {type: string}
+  required: [installed_roles, available_packages, control_roles]
+  additionalProperties: false
+description: |
+  Proposal 019 PR-OP1.  Wraps acc.assistant.catalog_view.build_catalog_view.
+  The assistant calls this before routing so its [REASON:] block can name
+  which roles were considered, their state (running / dormant / available),
+  and why the chosen one wins.  Pure read — no mutation, no install, no
+  role start.  Those land in later PR-OP slices behind governance gates.
