@@ -424,7 +424,31 @@ func TestRenderOTelConfig_MLflowFanOut(t *testing.T) {
 		t.Error("expected MLflow endpoint string in rendered config")
 	}
 	// Both exporters appear on the traces pipeline.
-	if !strings.Contains(conf, "exporters: [otlp, otlphttp/mlflow, logging]") {
+	if !strings.Contains(conf, "exporters: [otlp, otlphttp/mlflow, debug]") {
 		t.Errorf("expected traces pipeline to include both otlp + otlphttp/mlflow\n\n%s", conf)
+	}
+}
+
+// The removed-upstream `logging` exporter must never reappear — modern
+// collector-contrib builds reject it at config validation and CrashLoop
+// (RHOAI test 11.6 finding 4).
+func TestRenderOTelConfig_NoRemovedLoggingExporter(t *testing.T) {
+	corpus := makeTestCorpus()
+	corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{
+		Backend: accv1alpha1.MetricsBackendOTel,
+		OTelCollector: &accv1alpha1.OTelCollectorSpec{
+			Endpoint: "https://otel:4317",
+		},
+	}
+
+	conf, err := templates.RenderOTelConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderOTelConfig error: %v", err)
+	}
+	if strings.Contains(conf, "logging:") || strings.Contains(conf, ", logging]") {
+		t.Errorf("rendered config references the removed `logging` exporter\n\n%s", conf)
+	}
+	if !strings.Contains(conf, "debug:") {
+		t.Errorf("expected the `debug` exporter\n\n%s", conf)
 	}
 }

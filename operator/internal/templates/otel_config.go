@@ -64,7 +64,9 @@ exporters:
   {{- end }}
   prometheus:
     endpoint: "0.0.0.0:8888"
-  logging:
+  # NOTE: must stay `debug` — the old `logging` exporter was removed from
+  # collector-contrib and fails config validation (instant CrashLoop).
+  debug:
     verbosity: normal
 
 service:
@@ -72,11 +74,11 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch, resource]
-      exporters: [{{ if .RemoteEndpoint }}otlp, {{ end }}{{ if .MLflowEndpoint }}otlphttp/mlflow, {{ end }}logging]
+      exporters: [{{ if .RemoteEndpoint }}otlp, {{ end }}{{ if .MLflowEndpoint }}otlphttp/mlflow, {{ end }}debug]
     metrics:
       receivers: [otlp, prometheus]
       processors: [memory_limiter, batch, resource]
-      exporters: [{{ if .RemoteEndpoint }}otlp, {{ end }}prometheus, logging]
+      exporters: [{{ if .RemoteEndpoint }}otlp, {{ end }}prometheus, debug]
 `))
 
 type otelConfigData struct {

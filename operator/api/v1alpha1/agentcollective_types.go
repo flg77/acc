@@ -253,6 +253,7 @@ type AnthropicSpec struct {
 }
 
 // VLLMSpec configures a KServe InferenceService as the LLM backend.
+// +kubebuilder:validation:XValidation:rule="!self.deploy || (has(self.modelStoragePVC) && self.modelStoragePVC != '')",message="deploy=true requires modelStoragePVC (the PVC holding the model weights); without it the created InferenceService fails. On RHOAI prefer deploy=false + inferenceServiceRef to consume an existing model deployment."
 type VLLMSpec struct {
 	// InferenceServiceRef names the KServe InferenceService to consume.
 	// The operator reads the model endpoint URL from the InferenceService
