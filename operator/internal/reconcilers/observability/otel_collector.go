@@ -30,6 +30,12 @@ const (
 	otelGRPCPort       = 4317
 	otelHTTPPort       = 4318
 	otelMetricsPort    = 8888
+
+	// defaultOTelCollectorImage is a pinned contrib build mirrored into the
+	// ACC image repository (build chain: skopeo copy from
+	// docker.io/otel/opentelemetry-collector-contrib). Keep the tag in sync
+	// with the exporter set used in templates/otel_config.go.
+	defaultOTelCollectorImage = "quay.io/flg77/acc_images:otel-collector-contrib-0.116.0"
 )
 
 // OTelCollectorReconciler manages an OpenTelemetry Collector Deployment
@@ -113,6 +119,15 @@ func (r *OTelCollectorReconciler) Reconcile(ctx context.Context, corpus *accv1al
 	// -----------------------------------------------------------------------
 	// Deployment
 	// -----------------------------------------------------------------------
+	// Pinned by default: ":latest" contrib builds reject the rendered config
+	// (the `logging` exporter was removed upstream) and crash-loop. The
+	// default is mirrored into the ACC image repository so RHOAI clusters
+	// don't pull from docker.io; spec.observability.otelCollector.image
+	// overrides for disconnected clusters.
+	image := corpus.Spec.Observability.OTelCollector.Image
+	if image == "" {
+		image = defaultOTelCollectorImage
+	}
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -125,10 +140,11 @@ func (r *OTelCollectorReconciler) Reconcile(ctx context.Context, corpus *accv1al
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
+					ImagePullSecrets: util.ImagePullSecrets(corpus),
 					Containers: []corev1.Container{
 						{
 							Name:  "otel-collector",
-							Image: "otel/opentelemetry-collector-contrib:latest",
+							Image: image,
 							Args:  []string{"--config=/conf/otel-collector.yaml"},
 							Ports: []corev1.ContainerPort{
 								{Name: "grpc", ContainerPort: otelGRPCPort},

@@ -728,6 +728,13 @@ spec:
                     - inferenceServiceRef
                     - model
                     type: object
+                    x-kubernetes-validations:
+                    - message: deploy=true requires modelStoragePVC (the PVC holding
+                        the model weights); without it the created InferenceService
+                        fails. On RHOAI prefer deploy=false + inferenceServiceRef
+                        to consume an existing model deployment.
+                      rule: '!self.deploy || (has(self.modelStoragePVC) && self.modelStoragePVC
+                        != '''')'
                 required:
                 - backend
                 type: object

@@ -42,25 +42,33 @@ type AgentCorpusSpec struct {
 	// +kubebuilder:default="0.1.0"
 	Version string `json:"version"`
 
-	// ImageRegistry is the base registry for acc-agent-core and infrastructure images.
-	// Used when ImageRepository is empty: images render as
-	// <imageRegistry>/<component>:<tag>.
+	// ImageRegistry is the LEGACY base registry for acc-agent-core and
+	// infrastructure images, used only when ImageRepository is explicitly
+	// set to "": images render as <imageRegistry>/<component>:<tag>.
+	// Most clusters should leave this untouched and use ImageRepository.
 	// +kubebuilder:default="registry.access.redhat.com"
 	// +optional
 	ImageRegistry string `json:"imageRegistry,omitempty"`
 
-	// ImageRepository, when set, addresses every component within a single
-	// container repository, distinguished by tag: images render as
+	// ImageRepository addresses every component within a single container
+	// repository, distinguished by tag: images render as
 	// <imageRepository>:<component>-<tag> (e.g.
-	// quay.io/flg77/acc_images:acc-agent-core-0.1.0). Use this for registries
-	// that can only host one repository. When empty, ImageRegistry is used.
+	// quay.io/flg77/acc_images:acc-agent-core-0.1.0). The default is where
+	// the ACC images are published; it is a PRIVATE repository — make sure
+	// the Secret named in imagePullSecrets exists in this namespace. Set
+	// explicitly to "" to fall back to the legacy ImageRegistry layout.
+	// +kubebuilder:default="quay.io/flg77/acc_images"
 	// +optional
 	ImageRepository string `json:"imageRepository,omitempty"`
 
-	// ImagePullSecrets is an optional list of Secret names used to pull the
-	// component images. When set, the operator adds them to the imagePullSecrets
-	// of every pod it renders (agents, NATS, Redis, bridges). Required when the
-	// target registry/repository is private.
+	// ImagePullSecrets is a list of Secret names used to pull the component
+	// images. The operator adds them to the imagePullSecrets of every pod it
+	// renders (agents, NATS, Redis, bridges, otel-collector). The default
+	// matches the runbook's pull-secret name for the default ImageRepository
+	// (a dangling reference is harmless — kubelet ignores missing secrets):
+	//   oc -n <ns> create secret docker-registry acc-images-pull \
+	//     --docker-server=quay.io --docker-username=<robot> --docker-password=<token>
+	// +kubebuilder:default={"acc-images-pull"}
 	// +optional
 	ImagePullSecrets []string `json:"imagePullSecrets,omitempty"`
 
@@ -77,12 +85,14 @@ type AgentCorpusSpec struct {
 	Governance GovernanceSpec `json:"governance"`
 
 	// Kafka configures the optional NATS-to-Kafka audit bridge.
-	// RECOMMENDED FOR LARGE AGENT FLEETS: at scale, Kafka is the preferred audit
-	// transport (durable, high-throughput) over NATS-only. Kafka itself is NOT
-	// installed by the operator — install AMQ Streams / Strimzi first (OpenShift:
-	// the "AMQ Streams" / "Streams for Apache Kafka" Operator from OperatorHub),
-	// then set bootstrapServers here. See docs/observability + the operator
-	// description for the prerequisite link.
+	// LEAVE THIS SECTION EMPTY while NATS is the active transport (the
+	// default) — expanding it makes bootstrapServers required and, with no
+	// Kafka installed, the bridge is skipped with a warning. RECOMMENDED FOR
+	// LARGE AGENT FLEETS: at scale, Kafka is the preferred audit transport
+	// (durable, high-throughput) over NATS-only. Kafka itself is NOT
+	// installed by the operator — install AMQ Streams / Strimzi first
+	// (OpenShift: the "Streams for Apache Kafka" Operator from OperatorHub),
+	// then set bootstrapServers here.
 	// +optional
 	Kafka *KafkaSpec `json:"kafka,omitempty"`
 
@@ -632,8 +642,20 @@ type ObservabilitySpec struct {
 // OTelCollectorSpec configures the OTel collector deployment.
 type OTelCollectorSpec struct {
 	// Endpoint is the OTLP gRPC/HTTP endpoint to export telemetry to.
+	// PREREQUISITE: an OTLP backend must be reachable at this address —
+	// nothing on a fresh cluster provides one. Sandbox-friendly option:
+	// the Tempo operator + a TempoMonolithic instance (PVC-backed, no S3),
+	// e.g. tempo-acc-tempo.acc-observability.svc.cluster.local:4317.
+	// If you do not need traces, set observability.backend to "log" instead.
 	// +kubebuilder:validation:MinLength=1
 	Endpoint string `json:"endpoint"`
+
+	// Image overrides the OpenTelemetry Collector container image. Leave
+	// empty for the operator's pinned default (mirrored into the ACC image
+	// repository). Set this on disconnected clusters or to use your own
+	// mirror of opentelemetry-collector-contrib.
+	// +optional
+	Image string `json:"image,omitempty"`
 
 	// Protocol selects the OTLP transport agents use to reach Endpoint.
 	// Matches the upstream OTel spec env var OTEL_EXPORTER_OTLP_PROTOCOL.
