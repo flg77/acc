@@ -40,10 +40,11 @@ type AccPackageInstallSpec struct {
 	// a caret range ("^1.2"), a tilde range ("~1.2.3"), or a bounded range
 	// (">=1.2 <2.0"). The acc-pkg installer resolves the highest matching
 	// version from the catalog; a version with no match fails the install
-	// with EXIT_DEPS. The operator does shape validation via the admission
-	// webhook.
-	// +kubebuilder:validation:MinLength=1
-	Constraint string `json:"constraint"`
+	// with EXIT_DEPS. LEAVE EMPTY to install the latest published version
+	// (the resolver picks the highest version from the highest-priority
+	// catalog). Pin a constraint in production for reproducible installs.
+	// +optional
+	Constraint string `json:"constraint,omitempty"`
 
 	// CatalogRef optionally pins the catalogId of the AccCatalog this package
 	// must come from (for example "acc-canonical"). Leave empty to let the

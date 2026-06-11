@@ -350,7 +350,12 @@ type NetworkPolicySpec struct {
 	// AllowedExternalLLM overrides the built-in set of external LLM
 	// provider FQDNs used to scope Tier 2 egress.  When empty a
 	// sensible default set (Anthropic + common OpenAI-compatible
-	// hosts) is used.
+	// hosts) is used. On RHOAI, prefer models ALREADY SERVED IN-CLUSTER
+	// (list them: `oc get inferenceservice -A`) and reference them via
+	// the AgentCollective's llm.vllm.inferenceServiceRef — in-cluster
+	// traffic needs no entry here. Add FQDNs only for genuinely external
+	// providers; do not carry over endpoints wired for standalone/edge
+	// environments.
 	// +optional
 	AllowedExternalLLM []string `json:"allowedExternalLLM,omitempty"`
 }
@@ -369,11 +374,14 @@ type GovernanceSpec struct {
 
 	// GatekeeperIntegration enables syncing Category A rules as OPA Gatekeeper
 	// ConstraintTemplates for admission-time enforcement.
-	// PREREQUISITE (manual): install OPA Gatekeeper first — the operator does NOT
-	// install it, it only syncs rules when present. On OpenShift install the
-	// "Gatekeeper Operator" from OperatorHub (or upstream gatekeeper). Leave
-	// false until Gatekeeper is available, else the synced ConstraintTemplates
-	// have no controller to honour them.
+	// RECOMMENDED ON for RHOAI/OpenShift deployments: it extends Cat-A from
+	// agent-runtime checks to cluster admission time. PREREQUISITE (manual):
+	// install the "Gatekeeper Operator" from OperatorHub first (search
+	// "Gatekeeper"; operator catalog: gatekeeper-operator-product) — the ACC
+	// operator does NOT install it, it only syncs rules when present. Reasons
+	// to leave it off: Gatekeeper not installed yet (synced templates would
+	// have no controller), a cluster-wide admission-latency budget, or another
+	// policy engine (Kyverno/ACS) already owns admission.
 	// +kubebuilder:default=false
 	GatekeeperIntegration bool `json:"gatekeeperIntegration"`
 
@@ -381,6 +389,11 @@ type GovernanceSpec struct {
 	// kernel-event evidence layer for Category-A governance (proposal
 	// 015, security roadmap Phase 3).  When nil or disabled the
 	// operator emits nothing and Cat-A stays metadata-only.
+	// RECOMMENDED ON for RHOAI/datacenter deployments — Cat-A is the
+	// constitutional floor and runtime evidence is what makes it
+	// verifiable rather than declared. Deactivate only on hosts without
+	// a runtime-security backend (RHACS/Falco/Tetragon/NetObserv) or in
+	// resource-constrained edge profiles.
 	// +optional
 	RuntimeEvidence *RuntimeEvidenceSpec `json:"runtimeEvidence,omitempty"`
 }
@@ -426,8 +439,17 @@ type RuntimeEvidenceSpec struct {
 // CategoryASpec configures Category A (immutable) rule enforcement.
 type CategoryASpec struct {
 	// WASMConfigMapRef names the ConfigMap holding the compiled
-	// category_a.wasm blob to mount into each agent pod.
+	// category_a.wasm blob to mount into each agent pod. WHAT THIS MEANS:
+	// Cat-A is ACC's immutable constitutional layer — rules compiled from
+	// Rego to WASM so every agent evaluates them in-process and cannot
+	// mutate them at runtime. The default "acc-cat-a-wasm" expects the
+	// ConfigMap the operator's governance assets publish; provide your own
+	// ConfigMap to ship a customer constitution. Changing the blob requires
+	// a pod roll (the mount is read-only by design). Pair with
+	// gatekeeperIntegration for admission-time and runtimeEvidence for
+	// kernel-event verification of the same tier.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:default="acc-cat-a-wasm"
 	WASMConfigMapRef string `json:"wasmConfigMapRef"`
 }
 
@@ -454,8 +476,12 @@ type CategoryBSpec struct {
 // CategoryCSpec configures arbiter-signed adaptive rule generation.
 type CategoryCSpec struct {
 	// ConfidenceThreshold is the minimum ICL confidence an arbiter must have
-	// before signing a Category C rule. Expressed as a decimal string, e.g. "0.80".
+	// before signing a Category C rule. Expressed as a decimal string. The
+	// default 0.80 is a production-safe floor: lower values let the arbiter
+	// adopt adaptive rules more eagerly, higher values keep Cat-C nearly
+	// static.
 	// +kubebuilder:validation:Pattern=`^0\.[0-9]+$|^1\.0+$`
+	// +kubebuilder:default="0.80"
 	// +optional
 	ConfidenceThreshold string `json:"confidenceThreshold,omitempty"`
 
