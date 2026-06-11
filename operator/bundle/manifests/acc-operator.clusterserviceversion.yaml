@@ -95,8 +95,9 @@ metadata:
       ]
     capabilities: Seamless Upgrades
     categories: AI/Machine Learning, Integration & Delivery
-    containerImage: quay.io/redhat-ai-dev/acc-operator:0.1.2
+    containerImage: quay.io/redhat-ai-dev/acc-operator:0.1.3
     createdAt: "2026-04-15T00:00:00Z"
+    operatorframework.io/suggested-namespace: acc-system
     description: >-
       **Community operator — NOT a Red Hat product. It is not provided,
       supported, certified, or endorsed by Red Hat.** The Agentic Cell Corpus
@@ -107,7 +108,7 @@ metadata:
     operators.operatorframework.io/builder: operator-sdk-v1.34.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     support: Community (best-effort; no SLA) — NOT supported by Red Hat
-  name: acc-operator.v0.1.2
+  name: acc-operator.v0.1.3
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -281,7 +282,7 @@ spec:
                 - --metrics-bind-address=:8080
                 command:
                 - /manager
-                image: quay.io/redhat-ai-dev/acc-operator:0.1.2
+                image: quay.io/redhat-ai-dev/acc-operator:0.1.3
                 imagePullPolicy: Always
                 livenessProbe:
                   httpGet:
@@ -318,15 +319,20 @@ spec:
               serviceAccountName: acc-operator-controller-manager
               terminationGracePeriodSeconds: 10
     strategy: deployment
+  # Cluster-wide install is the DEFAULT (the console preselects
+  # "All namespaces" when supported): one install serves every RHOAI Data
+  # Science Project. The manager already watches cluster-wide (no namespace
+  # scoping in cmd/main.go; RBAC is clusterPermissions-only) - namespace-
+  # scoped install remains the supported OPTIONAL mode for isolation.
   installModes:
+  - supported: true
+    type: AllNamespaces
   - supported: true
     type: OwnNamespace
   - supported: true
     type: SingleNamespace
   - supported: false
     type: MultiNamespace
-  - supported: false
-    type: AllNamespaces
   keywords:
   - ai
   - agents
@@ -347,10 +353,10 @@ spec:
     name: Agentic Cell Corpus (Community)
     url: https://github.com/flg77/acc
   relatedImages:
-  - image: quay.io/redhat-ai-dev/acc-operator:0.1.2
+  - image: quay.io/redhat-ai-dev/acc-operator:0.1.3
     name: manager
-  version: 0.1.2
-  replaces: acc-operator.v0.1.1
+  version: 0.1.3
+  replaces: acc-operator.v0.1.2
   webhookdefinitions:
   - admissionReviewVersions:
     - v1
