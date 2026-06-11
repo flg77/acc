@@ -155,9 +155,18 @@ spec:
                       enforcement.
                     properties:
                       wasmConfigMapRef:
+                        default: acc-cat-a-wasm
                         description: |-
                           WASMConfigMapRef names the ConfigMap holding the compiled
-                          category_a.wasm blob to mount into each agent pod.
+                          category_a.wasm blob to mount into each agent pod. WHAT THIS MEANS:
+                          Cat-A is ACC's immutable constitutional layer — rules compiled from
+                          Rego to WASM so every agent evaluates them in-process and cannot
+                          mutate them at runtime. The default "acc-cat-a-wasm" expects the
+                          ConfigMap the operator's governance assets publish; provide your own
+                          ConfigMap to ship a customer constitution. Changing the blob requires
+                          a pod roll (the mount is read-only by design). Pair with
+                          gatekeeperIntegration for admission-time and runtimeEvidence for
+                          kernel-event verification of the same tier.
                         minLength: 1
                         type: string
                     required:
@@ -190,9 +199,13 @@ spec:
                       the arbiter.
                     properties:
                       confidenceThreshold:
+                        default: "0.80"
                         description: |-
                           ConfidenceThreshold is the minimum ICL confidence an arbiter must have
-                          before signing a Category C rule. Expressed as a decimal string, e.g. "0.80".
+                          before signing a Category C rule. Expressed as a decimal string. The
+                          default 0.80 is a production-safe floor: lower values let the arbiter
+                          adopt adaptive rules more eagerly, higher values keep Cat-C nearly
+                          static.
                         pattern: ^0\.[0-9]+$|^1\.0+$
                         type: string
                       maxRulesPerCollective:
@@ -209,11 +222,14 @@ spec:
                     description: |-
                       GatekeeperIntegration enables syncing Category A rules as OPA Gatekeeper
                       ConstraintTemplates for admission-time enforcement.
-                      PREREQUISITE (manual): install OPA Gatekeeper first — the operator does NOT
-                      install it, it only syncs rules when present. On OpenShift install the
-                      "Gatekeeper Operator" from OperatorHub (or upstream gatekeeper). Leave
-                      false until Gatekeeper is available, else the synced ConstraintTemplates
-                      have no controller to honour them.
+                      RECOMMENDED ON for RHOAI/OpenShift deployments: it extends Cat-A from
+                      agent-runtime checks to cluster admission time. PREREQUISITE (manual):
+                      install the "Gatekeeper Operator" from OperatorHub first (search
+                      "Gatekeeper"; operator catalog: gatekeeper-operator-product) — the ACC
+                      operator does NOT install it, it only syncs rules when present. Reasons
+                      to leave it off: Gatekeeper not installed yet (synced templates would
+                      have no controller), a cluster-wide admission-latency budget, or another
+                      policy engine (Kyverno/ACS) already owns admission.
                     type: boolean
                   runtimeEvidence:
                     description: |-
@@ -221,6 +237,11 @@ spec:
                       kernel-event evidence layer for Category-A governance (proposal
                       015, security roadmap Phase 3).  When nil or disabled the
                       operator emits nothing and Cat-A stays metadata-only.
+                      RECOMMENDED ON for RHOAI/datacenter deployments — Cat-A is the
+                      constitutional floor and runtime evidence is what makes it
+                      verifiable rather than declared. Deactivate only on hosts without
+                      a runtime-security backend (RHACS/Falco/Tetragon/NetObserv) or in
+                      resource-constrained edge profiles.
                     properties:
                       enabled:
                         default: false
@@ -263,28 +284,37 @@ spec:
                 - gatekeeperIntegration
                 type: object
               imagePullSecrets:
+                default:
+                - acc-images-pull
                 description: |-
-                  ImagePullSecrets is an optional list of Secret names used to pull the
-                  component images. When set, the operator adds them to the imagePullSecrets
-                  of every pod it renders (agents, NATS, Redis, bridges). Required when the
-                  target registry/repository is private.
+                  ImagePullSecrets is a list of Secret names used to pull the component
+                  images. The operator adds them to the imagePullSecrets of every pod it
+                  renders (agents, NATS, Redis, bridges, otel-collector). The default
+                  matches the runbook's pull-secret name for the default ImageRepository
+                  (a dangling reference is harmless — kubelet ignores missing secrets):
+                    oc -n <ns> create secret docker-registry acc-images-pull \
+                      --docker-server=quay.io --docker-username=<robot> --docker-password=<token>
                 items:
                   type: string
                 type: array
               imageRegistry:
                 default: registry.access.redhat.com
                 description: |-
-                  ImageRegistry is the base registry for acc-agent-core and infrastructure images.
-                  Used when ImageRepository is empty: images render as
-                  <imageRegistry>/<component>:<tag>.
+                  ImageRegistry is the LEGACY base registry for acc-agent-core and
+                  infrastructure images, used only when ImageRepository is explicitly
+                  set to "": images render as <imageRegistry>/<component>:<tag>.
+                  Most clusters should leave this untouched and use ImageRepository.
                 type: string
               imageRepository:
+                default: quay.io/flg77/acc_images
                 description: |-
-                  ImageRepository, when set, addresses every component within a single
-                  container repository, distinguished by tag: images render as
+                  ImageRepository addresses every component within a single container
+                  repository, distinguished by tag: images render as
                   <imageRepository>:<component>-<tag> (e.g.
-                  quay.io/flg77/acc_images:acc-agent-core-0.1.0). Use this for registries
-                  that can only host one repository. When empty, ImageRegistry is used.
+                  quay.io/flg77/acc_images:acc-agent-core-0.1.0). The default is where
+                  the ACC images are published; it is a PRIVATE repository — make sure
+                  the Secret named in imagePullSecrets exists in this namespace. Set
+                  explicitly to "" to fall back to the legacy ImageRegistry layout.
                 type: string
               infrastructure:
                 description: Infrastructure configures the shared backing services.
@@ -323,6 +353,17 @@ spec:
                   nats:
                     description: NATS configures the JetStream StatefulSet.
                     properties:
+                      image:
+                        description: |-
+                          Image, when set, is the FULL NATS container image reference and
+                          overrides the registry/repository-derived default from
+                          util.ComponentImage (i.e. "<imageRepository>:nats-<version>-alpine" or
+                          "<imageRegistry>/nats:<version>-alpine"). Use this when neither the
+                          single ImageRepository nor ImageRegistry hosts a usable nats image — a
+                          fresh RHOAI cluster with imageRegistry=registry.access.redhat.com hits
+                          ImagePullBackOff "name unknown: Repo not found" (observed on the c26sx
+                          sandbox 2026-06-10). Set e.g. docker.io/library/nats:2.10-alpine.
+                        type: string
                       nkeyAuth:
                         description: |-
                           NKeyAuth enables per-role NATS NKey authentication (proposal
@@ -424,6 +465,13 @@ spec:
                   redis:
                     description: Redis configures the working memory store.
                     properties:
+                      image:
+                        description: |-
+                          Image, when set, is the FULL Redis container image reference and
+                          overrides the util.ComponentImage-derived default. Same rationale as
+                          NATSSpec.Image — set e.g. docker.io/library/redis:7-alpine when neither
+                          imageRepository nor imageRegistry hosts a usable redis image.
+                        type: string
                       replicas:
                         default: 1
                         description: Replicas (1 = standalone, 3 = Sentinel mode).
@@ -514,12 +562,14 @@ spec:
               kafka:
                 description: |-
                   Kafka configures the optional NATS-to-Kafka audit bridge.
-                  RECOMMENDED FOR LARGE AGENT FLEETS: at scale, Kafka is the preferred audit
-                  transport (durable, high-throughput) over NATS-only. Kafka itself is NOT
-                  installed by the operator — install AMQ Streams / Strimzi first (OpenShift:
-                  the "AMQ Streams" / "Streams for Apache Kafka" Operator from OperatorHub),
-                  then set bootstrapServers here. See docs/observability + the operator
-                  description for the prerequisite link.
+                  LEAVE THIS SECTION EMPTY while NATS is the active transport (the
+                  default) — expanding it makes bootstrapServers required and, with no
+                  Kafka installed, the bridge is skipped with a warning. RECOMMENDED FOR
+                  LARGE AGENT FLEETS: at scale, Kafka is the preferred audit transport
+                  (durable, high-throughput) over NATS-only. Kafka itself is NOT
+                  installed by the operator — install AMQ Streams / Strimzi first
+                  (OpenShift: the "Streams for Apache Kafka" Operator from OperatorHub),
+                  then set bootstrapServers here.
                 properties:
                   auditTopic:
                     default: acc.audit.all
@@ -885,7 +935,12 @@ spec:
                       AllowedExternalLLM overrides the built-in set of external LLM
                       provider FQDNs used to scope Tier 2 egress.  When empty a
                       sensible default set (Anthropic + common OpenAI-compatible
-                      hosts) is used.
+                      hosts) is used. On RHOAI, prefer models ALREADY SERVED IN-CLUSTER
+                      (list them: `oc get inferenceservice -A`) and reference them via
+                      the AgentCollective's llm.vllm.inferenceServiceRef — in-cluster
+                      traffic needs no entry here. Add FQDNs only for genuinely external
+                      providers; do not carry over endpoints wired for standalone/edge
+                      environments.
                     items:
                       type: string
                     type: array
@@ -977,9 +1032,21 @@ spec:
                       Required when backend=otel.
                     properties:
                       endpoint:
-                        description: Endpoint is the OTLP gRPC/HTTP endpoint to export
-                          telemetry to.
+                        description: |-
+                          Endpoint is the OTLP gRPC/HTTP endpoint to export telemetry to.
+                          PREREQUISITE: an OTLP backend must be reachable at this address —
+                          nothing on a fresh cluster provides one. Sandbox-friendly option:
+                          the Tempo operator + a TempoMonolithic instance (PVC-backed, no S3),
+                          e.g. tempo-acc-tempo.acc-observability.svc.cluster.local:4317.
+                          If you do not need traces, set observability.backend to "log" instead.
                         minLength: 1
+                        type: string
+                      image:
+                        description: |-
+                          Image overrides the OpenTelemetry Collector container image. Leave
+                          empty for the operator's pinned default (mirrored into the ACC image
+                          repository). Set this on disconnected clusters or to use your own
+                          mirror of opentelemetry-collector-contrib.
                         type: string
                       mlflowEndpoint:
                         description: |-
@@ -1017,8 +1084,11 @@ spec:
                     type: object
                   prometheusRules:
                     default: true
-                    description: PrometheusRules enables creation of PrometheusRule
-                      CRs for ACC alerts.
+                    description: |-
+                      PrometheusRules enables creation of PrometheusRule CRs for ACC alerts.
+                      Not "omitempty": the field must serialize even when false, otherwise the
+                      defaulting webhook's re-marshal drops it and the +kubebuilder:default=true
+                      re-applies, making it impossible to disable via the CR.
                     type: boolean
                 required:
                 - backend
