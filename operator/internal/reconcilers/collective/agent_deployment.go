@@ -46,11 +46,14 @@ type AgentDeploymentReconciler struct {
 // ReconcileCollective reconciles all role Deployments for one collective.
 // roleConfigMapName is the name of the acc-role-{collectiveId} ConfigMap
 // created by CollectiveReconciler.reconcileRoleConfigMap (ACC-6a REQ-OP-003).
+// inferenceURL is the model endpoint resolved by KServeReconciler from the
+// referenced InferenceService status (empty when not yet published).
 func (r *AgentDeploymentReconciler) ReconcileCollective(
 	ctx context.Context,
 	corpus *accv1alpha1.AgentCorpus,
 	collective *accv1alpha1.AgentCollective,
 	roleConfigMapName string,
+	inferenceURL string,
 ) (AgentDeploymentResult, error) {
 	ns := corpus.Namespace
 	result := AgentDeploymentResult{
@@ -112,7 +115,7 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 	// One Deployment per agent role.
 	// -----------------------------------------------------------------------
 	for _, roleSpec := range collective.Spec.Agents {
-		ready, desired, progressing, err := r.reconcileRoleDeployment(ctx, corpus, collective, roleSpec, configMapName, roleConfigMapName, ns)
+		ready, desired, progressing, err := r.reconcileRoleDeployment(ctx, corpus, collective, roleSpec, configMapName, roleConfigMapName, ns, inferenceURL)
 		if err != nil {
 			return result, err
 		}
@@ -133,6 +136,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	collective *accv1alpha1.AgentCollective,
 	roleSpec accv1alpha1.AgentRoleSpec,
 	configMapName, roleConfigMapName, ns string,
+	inferenceURL string,
 ) (ready, desired int32, progressing bool, err error) {
 	role := roleSpec.Role
 	labels := util.AgentLabels(corpus.Name, collective.Spec.CollectiveID, role, corpus.Spec.Version)
@@ -146,7 +150,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	deployName := fmt.Sprintf("%s-%s", collective.Name, string(role))
 
 	// Resolve Anthropic API key env var if needed.
-	extraEnv := buildExtraEnv(corpus, collective, roleSpec)
+	extraEnv := buildExtraEnv(corpus, collective, roleSpec, inferenceURL)
 
 	// Manifest delivery (PR-51): build the three roles/skills/mcps volumes
 	// and items[] projections from the corpus-scoped ConfigMaps emitted by
@@ -297,11 +301,15 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 }
 
 // buildExtraEnv appends the role-specific ExtraEnv and injects the Anthropic
-// API key reference when the LLM backend is anthropic.
+// API key reference when the LLM backend is anthropic. inferenceURL is the
+// vLLM model endpoint resolved from the referenced InferenceService status;
+// the rendered acc-config.yaml carries the ${ACC_VLLM_INFERENCE_URL}
+// placeholder that this env var satisfies.
 func buildExtraEnv(
 	corpus *accv1alpha1.AgentCorpus,
 	collective *accv1alpha1.AgentCollective,
 	roleSpec accv1alpha1.AgentRoleSpec,
+	inferenceURL string,
 ) []corev1.EnvVar {
 	var envs []corev1.EnvVar
 
@@ -315,6 +323,15 @@ func buildExtraEnv(
 				},
 			})
 		}
+	}
+
+	// Inject the resolved vLLM endpoint so the agent's config placeholder
+	// resolves (env overrides config: ACC_VLLM_INFERENCE_URL → llm.vllm_inference_url).
+	if collective.Spec.LLM.Backend == accv1alpha1.LLMBackendVLLM && inferenceURL != "" {
+		envs = append(envs, corev1.EnvVar{
+			Name:  "ACC_VLLM_INFERENCE_URL",
+			Value: inferenceURL,
+		})
 	}
 
 	// Kafka credentials if configured.

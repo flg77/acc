@@ -71,8 +71,16 @@ func (r *CollectiveReconciler) Reconcile(ctx context.Context, corpus *accv1alpha
 
 		cs := corpus.Status.CollectiveStatuses[ref.Name]
 
+		// KServe InferenceService (skipped if KServe absent or not
+		// vllm/llama_stack). Runs before the agent Deployments so the
+		// resolved model endpoint URL can be injected into agent pods.
+		kserveRes, err := kserveRec.ReconcileCollective(ctx, corpus, collective)
+		if err != nil {
+			return reconcilers.SubResult{}, fmt.Errorf("collective %s kserve: %w", ref.Name, err)
+		}
+
 		// Agent Deployments.
-		agentRes, err := agentRec.ReconcileCollective(ctx, corpus, collective, roleConfigMapName)
+		agentRes, err := agentRec.ReconcileCollective(ctx, corpus, collective, roleConfigMapName, kserveRes.InferenceURL)
 		if err != nil {
 			return reconcilers.SubResult{}, fmt.Errorf("collective %s agent deployments: %w", ref.Name, err)
 		}
@@ -81,12 +89,6 @@ func (r *CollectiveReconciler) Reconcile(ctx context.Context, corpus *accv1alpha
 		_, err = kedaRec.ReconcileCollective(ctx, corpus, collective)
 		if err != nil {
 			return reconcilers.SubResult{}, fmt.Errorf("collective %s keda: %w", ref.Name, err)
-		}
-
-		// KServe InferenceService (skipped if KServe absent or not vllm/llama_stack).
-		kserveRes, err := kserveRec.ReconcileCollective(ctx, corpus, collective)
-		if err != nil {
-			return reconcilers.SubResult{}, fmt.Errorf("collective %s kserve: %w", ref.Name, err)
 		}
 
 		// SPIFFE ClusterSPIFFEID (skipped if spiffe disabled or SPIRE

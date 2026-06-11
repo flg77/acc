@@ -51,7 +51,13 @@ spec:
     backend: vllm
     vllm:
       # Consume the already-deployed RHOAI model (don't let the operator create one).
+      # The operator resolves the endpoint from the InferenceService status and
+      # injects it into every agent pod as ACC_VLLM_INFERENCE_URL.
       inferenceServiceRef: redhataiqwen3-embedding-8b
+      # When the model is served from ANOTHER Data Science Project (workspace),
+      # name its namespace here — and ensure a NetworkPolicy lets this namespace
+      # reach the model's predictor Service:
+      # inferenceServiceNamespace: my-first-model
       model: RedHatAI/Qwen3-Embedding-8B
       deploy: false
   agents:
