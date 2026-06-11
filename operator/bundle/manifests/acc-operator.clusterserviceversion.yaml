@@ -8,23 +8,28 @@ metadata:
           "apiVersion": "acc.redhat.io/v1alpha1",
           "kind": "AgentCorpus",
           "metadata": {
-            "name": "sol-corpus",
+            "name": "rhoai-corpus",
             "namespace": "acc-system"
           },
           "spec": {
-            "deployMode": "standalone",
+            "deployMode": "rhoai",
             "version": "0.1.0",
-            "collectives": [{"name": "sol-01"}],
+            "imageRepository": "quay.io/flg77/acc_images",
+            "imagePullSecrets": ["acc-images-pull"],
+            "collectives": [{"name": "rhoai-collective-01"}],
             "infrastructure": {
               "nats": {"version": "2.10", "replicas": 1, "storageSize": "2Gi"},
-              "redis": {"version": "6", "replicas": 1, "storageSize": "1Gi"}
+              "redis": {"version": "6", "replicas": 1, "storageSize": "1Gi"},
+              "milvus": {"uri": "milvus-service.milvus.svc.cluster.local:19530"}
             },
             "governance": {
               "categoryA": {"wasmConfigMapRef": "acc-cat-a-wasm"},
               "categoryB": {"pollIntervalSeconds": 30},
-              "gatekeeperIntegration": false
+              "categoryC": {"confidenceThreshold": "0.80"},
+              "gatekeeperIntegration": true,
+              "runtimeEvidence": {"enabled": true}
             },
-            "observability": {"backend": "log", "prometheusRules": true},
+            "observability": {"backend": "otel", "prometheusRules": true},
             "upgradePolicy": {"mode": "auto"}
           }
         },
@@ -32,40 +37,77 @@ metadata:
           "apiVersion": "acc.redhat.io/v1alpha1",
           "kind": "AgentCollective",
           "metadata": {
-            "name": "sol-01",
+            "name": "rhoai-collective-01",
             "namespace": "acc-system"
           },
           "spec": {
-            "collectiveId": "sol-01",
-            "corpusRef": {"name": "sol-corpus"},
+            "collectiveId": "rhoai-01",
+            "corpusRef": {"name": "rhoai-corpus"},
             "agents": [
-              {"role": "ingester", "replicas": 2},
-              {"role": "analyst", "replicas": 2},
+              {"role": "assistant", "replicas": 1},
+              {"role": "ingester", "replicas": 1},
+              {"role": "analyst", "replicas": 1},
               {"role": "synthesizer", "replicas": 1},
               {"role": "arbiter", "replicas": 1},
               {"role": "observer", "replicas": 1}
             ],
             "llm": {
-              "backend": "ollama",
-              "ollama": {"baseUrl": "http://ollama:11434", "model": "llama3.2:3b"}
+              "backend": "vllm",
+              "vllm": {
+                "deploy": false,
+                "inferenceServiceRef": "llama-31-8b-instruct",
+                "model": "llama-31-8b-instruct"
+              }
             }
+          }
+        },
+        {
+          "apiVersion": "acc.redhat.io/v1alpha1",
+          "kind": "AccCatalog",
+          "metadata": {
+            "name": "acc-canonical",
+            "namespace": "acc-system"
+          },
+          "spec": {
+            "catalogId": "acc-canonical",
+            "tier": "trusted",
+            "mode": "https",
+            "url": "https://flg77.github.io/acc-ecosystem",
+            "priority": 100,
+            "requiredSigner": {
+              "issuer": "https://token.actions.githubusercontent.com",
+              "subjectPattern": "^https://github.com/flg77/acc-ecosystem/.*"
+            }
+          }
+        },
+        {
+          "apiVersion": "acc.redhat.io/v1alpha1",
+          "kind": "AccPackageInstall",
+          "metadata": {
+            "name": "workspace-roles",
+            "namespace": "acc-system"
+          },
+          "spec": {
+            "name": "@acc/workspace-roles",
+            "catalogRef": "acc-canonical"
           }
         }
       ]
     capabilities: Seamless Upgrades
     categories: AI/Machine Learning, Integration & Delivery
-    containerImage: quay.io/redhat-ai-dev/acc-operator:0.1.0
+    containerImage: quay.io/redhat-ai-dev/acc-operator:0.1.1
     createdAt: "2026-04-15T00:00:00Z"
     description: >-
-      The Agentic Cell Corpus (ACC) Operator installs and manages the ACC
-      multi-agent governance framework on OpenShift 4.14+ and Kubernetes 1.27+.
-      Inspired by biological cell architecture, ACC provides a homeostatic
-      three-tier governance system (WASM, OPA bundle, ICL-signed) for
-      coordinated AI agent collectives.
+      **Community operator — NOT a Red Hat product. It is not provided,
+      supported, certified, or endorsed by Red Hat.** The Agentic Cell Corpus
+      (ACC) Operator installs and manages the ACC multi-agent governance
+      framework on OpenShift 4.14+ and Kubernetes 1.27+. Inspired by biological
+      cell architecture, ACC provides a homeostatic three-tier governance system
+      (WASM, OPA bundle, ICL-signed) for coordinated AI agent collectives.
     operators.operatorframework.io/builder: operator-sdk-v1.34.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
-    support: Red Hat AI Dev
-  name: acc-operator.v0.1.0
+    support: Community (best-effort; no SLA) — NOT supported by Red Hat
+  name: acc-operator.v0.1.1
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -239,7 +281,7 @@ spec:
                 - --metrics-bind-address=:8080
                 command:
                 - /manager
-                image: quay.io/redhat-ai-dev/acc-operator:0.1.0
+                image: quay.io/redhat-ai-dev/acc-operator:0.1.1
                 imagePullPolicy: Always
                 livenessProbe:
                   httpGet:
@@ -290,19 +332,20 @@ spec:
   - nats
   links:
   - name: ACC Operator Documentation
-    url: https://github.com/redhat-ai-dev/agentic-cell-corpus
+    url: https://github.com/flg77/acc
   maintainers:
-  - email: acc-dev@redhat.com
-    name: Red Hat AI Dev
+  - email: flg@nomiras.com
+    name: ACC maintainers (community)
   maturity: alpha
   minKubeVersion: 1.27.0
   provider:
-    name: Red Hat
-    url: https://www.redhat.com
+    name: Agentic Cell Corpus (Community)
+    url: https://github.com/flg77/acc
   relatedImages:
-  - image: quay.io/redhat-ai-dev/acc-operator:0.1.0
+  - image: quay.io/redhat-ai-dev/acc-operator:0.1.1
     name: manager
-  version: 0.1.0
+  version: 0.1.1
+  replaces: acc-operator.v0.1.0
   webhookdefinitions:
   - admissionReviewVersions:
     - v1

@@ -80,18 +80,24 @@ type AccCatalogSpec struct {
 // +kubebuilder:object:generate=true
 type CatalogRequiredSigner struct {
 	// Issuer is the expected OIDC token issuer for keyless (Fulcio)
-	// signatures, for example "https://token.actions.githubusercontent.com"
-	// for GitHub Actions. In keypair mode it is a free-form audit label
-	// describing the key owner.
-	// +kubebuilder:validation:MinLength=1
-	Issuer string `json:"issuer"`
+	// signatures. The default matches the public ACC ecosystem catalog,
+	// whose packages are signed by its GitHub Actions release workflow —
+	// keep it unless you run your own catalog. In keypair mode it is a
+	// free-form audit label describing the key owner.
+	// +kubebuilder:default="https://token.actions.githubusercontent.com"
+	// +optional
+	Issuer string `json:"issuer,omitempty"`
 
 	// SubjectPattern is a regular expression the signing certificate's
-	// subject must match, for example
-	// "^https://github.com/flg77/acc-ecosystem/.*". Anchored, RE2/Python-re
-	// style; validated by the operator's admission webhook.
-	// +kubebuilder:validation:MinLength=1
-	SubjectPattern string `json:"subjectPattern"`
+	// subject must match. The default pins the public ACC ecosystem
+	// repository's release identity — change it when pointing at your own
+	// catalog. Anchored, RE2/Python-re style; validated by the operator's
+	// admission webhook. To install unsigned or self-signed development
+	// packages instead, set allowUnsigned on the AccPackageInstall
+	// (operator-explicit, audit-logged, at your own risk).
+	// +kubebuilder:default="^https://github.com/flg77/acc-ecosystem/.*"
+	// +optional
+	SubjectPattern string `json:"subjectPattern,omitempty"`
 
 	// KeyPath switches verification to keypair mode: an absolute path to a
 	// cosign public-key PEM file mounted in the ACC pod (for example

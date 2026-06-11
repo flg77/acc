@@ -413,22 +413,7 @@ func (r *AgentDeploymentReconciler) buildManifestDelivery(
 			// the parent chain and may not have completed on first apply.
 			continue
 		}
-		// Sort the keys so the projected items[] are emitted in a stable
-		// order. Iterating cm.Data directly yields Go's randomized map order,
-		// which makes the rendered pod template differ on every reconcile →
-		// the Deployment is patched each pass → perpetual pod churn.
-		keys := make([]string, 0, len(cm.Data))
-		for key := range cm.Data {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		items := make([]corev1.KeyToPath, 0, len(keys))
-		for _, key := range keys {
-			items = append(items, corev1.KeyToPath{
-				Key:  key,
-				Path: manifests.UnflattenKey(key),
-			})
-		}
+		items := ProjectManifestItems(cm.Data)
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      p.volumeName,
 			MountPath: p.mountPath,
@@ -446,4 +431,21 @@ func (r *AgentDeploymentReconciler) buildManifestDelivery(
 		envs = append(envs, corev1.EnvVar{Name: p.envVarName, Value: p.mountPath})
 	}
 	return mounts, volumes, envs, nil
+}
+
+// ProjectManifestItems renders a manifest ConfigMap's data into the volume
+// projection items, sorted by Key. Iterating the map directly yields Go's
+// randomized order, which makes the rendered pod template differ on every
+// reconcile → the Deployment is patched each pass → perpetual ReplicaSet
+// churn. Exported so the determinism regression test can pin the contract.
+func ProjectManifestItems(data map[string]string) []corev1.KeyToPath {
+	items := make([]corev1.KeyToPath, 0, len(data))
+	for key := range data {
+		items = append(items, corev1.KeyToPath{
+			Key:  key,
+			Path: manifests.UnflattenKey(key),
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
+	return items
 }

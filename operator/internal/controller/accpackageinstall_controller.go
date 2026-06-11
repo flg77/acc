@@ -108,10 +108,16 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Set Installing phase while we exec.
 	r.setPhase(ctx, cr, PhaseInstalling, "Exec", fmt.Sprintf("exec into %s", pod.Name))
 
-	// Build the acc-cli command.
+	// Build the acc-cli command. An empty constraint means "latest": pass the
+	// bare @scope/name so the resolver picks the highest published version
+	// ("name@" would be malformed).
+	pkgRef := cr.Spec.Name
+	if cr.Spec.Constraint != "" {
+		pkgRef = fmt.Sprintf("%s@%s", cr.Spec.Name, cr.Spec.Constraint)
+	}
 	args := []string{
 		"acc-cli", "collective", "pkg-install-direct",
-		fmt.Sprintf("%s@%s", cr.Spec.Name, cr.Spec.Constraint),
+		pkgRef,
 		"--json",
 	}
 	if cr.Spec.AllowUnsigned {
