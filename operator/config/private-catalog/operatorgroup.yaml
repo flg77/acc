@@ -1,13 +1,15 @@
 ---
-# OperatorGroup for the install namespace. The ACC operator's CSV supports
-# only OwnNamespace/SingleNamespace install modes (NOT AllNamespaces), so the
-# group MUST target a single namespace — an empty spec (AllNamespaces) makes
-# the CSV fail with "AllNamespaces InstallModeType not supported".
+# DEFAULT: cluster-wide install (operator >= 0.1.3 supports AllNamespaces and
+# the manager watches every namespace) — one install serves every RHOAI Data
+# Science Project. An OperatorGroup with an EMPTY spec selects all namespaces.
 apiVersion: operators.coreos.com/v1
 kind: OperatorGroup
 metadata:
   name: acc-og
   namespace: acc-system
-spec:
-  targetNamespaces:
-    - acc-system
+spec: {}
+# OPTIONAL namespace-scoped install (isolation / multi-tenant clusters where
+# each team runs its own operator): replace spec with —
+#   spec:
+#     targetNamespaces:
+#       - acc-system
