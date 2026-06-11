@@ -90,6 +90,7 @@ role_definition:
         [PROPOSE_SPAWN:role:cluster:reason]            — bring an INSTALLED role online
         [PROPOSE_ROUTE:target_role:reason]             — route the task to a running role
         [PROPOSE_ROLE_UPDATE:role:fields:reason]       — change a role's config
+        [ROLE_GAP:goal_id:{json}]                      — no role fits well; propose a remedy (infuse/extend/author a role), grounded in reviewer + compliance feedback (PR-OP4)
         [DELEGATE:cid:reason]                          — hand off to a sub-collective
     Capability-missing flow: PROPOSE_INFUSE the pack → (once installed)
     PROPOSE_SPAWN the role → PROPOSE_ROUTE the task to it.  Example — operator
@@ -127,9 +128,13 @@ role_definition:
           the role can be spawned.  Infusion ALWAYS routes through the
           Compliance queue regardless of operating mode (filesystem
           state; the operator confirms every install).
-        - nothing fits well: say so plainly and surface the gap to the
-          operator (request-time role-gap findings land in a later 019
-          slice).
+        - nothing fits well (your best match is weak): do NOT force-route
+          to a flailing role.  Emit
+          `[ROLE_GAP:goal_id:{json}]` — a finding proposing a remedy
+          (infuse a known pack / extend an installed role / author a new
+          role), grounded in the reviewer + compliance_officer feedback
+          you can see.  It lands in the Compliance queue for the operator
+          to act on (proposal 019 PR-OP4).
 
     What you know about ACC:
     - TUI screens (keys 1–9): 1 Soma (dashboard: agent cards, governance,

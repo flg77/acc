@@ -72,9 +72,11 @@ PROPOSAL_SPAWN = "spawn"
 PROPOSAL_ROLE_UPDATE = "role_update"
 PROPOSAL_ROUTE = "route"
 PROPOSAL_INFUSE = "infuse"  # Stage 1.4 — install an @scope/name@constraint pkg
+PROPOSAL_ROLE_GAP = "role_gap"  # Proposal 019 PR-OP4 — a finding, not a mutation
 
 PROPOSAL_KINDS: frozenset[str] = frozenset({
     PROPOSAL_SPAWN, PROPOSAL_ROLE_UPDATE, PROPOSAL_ROUTE, PROPOSAL_INFUSE,
+    PROPOSAL_ROLE_GAP,
 })
 
 
@@ -86,6 +88,7 @@ DEFAULT_RISK_LEVEL: dict[str, str] = {
     PROPOSAL_ROLE_UPDATE: "HIGH",    # changes role definition system-wide
     PROPOSAL_ROUTE: "LOW",           # reversible by next prompt
     PROPOSAL_INFUSE: "HIGH",         # filesystem state; reversible only by uninstall
+    PROPOSAL_ROLE_GAP: "LOW",        # informational finding; no mutation on its own
 }
 
 
@@ -178,7 +181,7 @@ _ACCEPT_EDITS_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_ROUTE})
 # is reversible only by uninstall; per the Stage 1 proposal's open
 # decision Q2 the operator chose "always Compliance pane" over "AUTO
 # may infuse autonomously".
-_NEVER_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_INFUSE})
+_NEVER_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_INFUSE, PROPOSAL_ROLE_GAP})
 
 
 def decide_dispatch(operating_mode: str, kind: str) -> str:
@@ -342,6 +345,31 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
             summary=f"Install {name}@{constraint}",
             rationale=reason.strip(),
         ))
+    # Proposal 019 PR-OP4 — ROLE_GAP findings.  Delegate the marker parse
+    # to acc.assistant.gap_analysis (which owns the balanced-brace JSON
+    # extraction) and wrap each finding as a role_gap proposal so it
+    # flows through the same queue → Compliance surface as the others.
+    # A finding is informational: _NEVER_AUTOEXEC keeps it queued for
+    # operator acknowledgement; its dispatch is an audit no-op (authoring
+    # the actual role/extension is a separate, human-driven step).
+    try:
+        from acc.assistant.gap_analysis import (  # noqa: PLC0415
+            parse_role_gap_markers,
+        )
+        for finding in parse_role_gap_markers(text):
+            kind_label = finding.gap_kind.replace("_", " ")
+            best = finding.best_match_role or "no match"
+            out.append(AssistantProposal(
+                kind=PROPOSAL_ROLE_GAP,
+                params=finding.to_dict(),
+                summary=(
+                    f"Role gap ({kind_label}): best match {best} "
+                    f"@ {finding.best_match_confidence:.2f}"
+                ),
+                rationale=finding.goal_summary,
+            ))
+    except Exception:  # noqa: BLE001
+        logger.warning("assistant_proposal: ROLE_GAP parse failed", exc_info=True)
     return out
 
 
@@ -384,6 +412,8 @@ async def dispatch_approved_proposal(
             return await _dispatch_route(signaling, cid, proposal)
         if proposal.kind == PROPOSAL_INFUSE:
             return await _dispatch_infuse(signaling, cid, proposal)
+        if proposal.kind == PROPOSAL_ROLE_GAP:
+            return await _dispatch_role_gap(signaling, cid, proposal)
     except Exception:
         logger.exception(
             "assistant_proposal: dispatch failed for kind=%s id=%s",
@@ -437,6 +467,40 @@ async def _dispatch_role_update(signaling, cid: str, p: AssistantProposal) -> bo
     logger.info(
         "assistant_proposal: role_update dispatched — role=%r fields=%s",
         payload["role"], list(payload["fields"].keys()),
+    )
+    return True
+
+
+async def _dispatch_role_gap(signaling, cid: str, p: AssistantProposal) -> bool:
+    """Proposal 019 PR-OP4 — acknowledge an approved role-gap finding.
+
+    A role-gap finding is informational: there is no mutation to apply
+    on its own.  Operator "approval" means *the gap is acknowledged* —
+    authoring the new role / extension is a separate, human-driven step
+    (it goes through the normal role-package publish flow), deliberately
+    out of scope here.  We publish a thin acknowledgement on the bus so
+    a future autonomous-loop perceptor (proposal 016 Step 5) can
+    aggregate acknowledged gaps, then return True.
+    """
+    from acc.signals import subject_assistant_proposal  # noqa: PLC0415
+    payload = {
+        "trigger": "role_gap_acknowledged",
+        "proposal_id": p.proposal_id,
+        "gap_kind": (p.params or {}).get("gap_kind", ""),
+        "goal_id": (p.params or {}).get("goal_id", ""),
+        "ts": time.time(),
+    }
+    try:
+        await signaling.publish(subject_assistant_proposal(cid), payload)
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "assistant_proposal: role_gap ack publish failed for %s",
+            p.proposal_id,
+        )
+        return False
+    logger.info(
+        "assistant_proposal: role_gap acknowledged id=%s kind=%s",
+        p.proposal_id, payload["gap_kind"],
     )
     return True
 
