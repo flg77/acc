@@ -42,6 +42,16 @@ rules:
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["get", "list", "watch", "create"]
+# RHOAI project association + dashboard tile/quickstarts (operator 0.1.4).
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "patch"]
+- apiGroups: ["dashboard.opendatahub.io"]
+  resources: ["odhapplications"]
+  verbs: ["get", "list", "create", "update"]
+- apiGroups: ["console.openshift.io"]
+  resources: ["odhquickstarts"]
+  verbs: ["get", "list", "create", "update"]
 # Leader election (controller-runtime --leader-elect uses a Lease).
 - apiGroups: ["coordination.k8s.io"]
   resources: ["leases"]

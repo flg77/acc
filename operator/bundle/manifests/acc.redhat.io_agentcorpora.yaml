@@ -56,6 +56,19 @@ spec:
           spec:
             description: AgentCorpusSpec defines the desired state of an ACC deployment.
             properties:
+              bootstrapDefaultCatalog:
+                default: true
+                description: |-
+                  BootstrapDefaultCatalog creates the canonical signed AccCatalog
+                  (acc-canonical, the published ecosystem catalog) in this namespace
+                  when NO AccCatalog exists there yet — so a fresh corpus is
+                  package-ready out of the box (the Core+Assistant roles ship in the
+                  agent image; the catalog enables role-package infusions on top).
+                  CREATE-IF-ABSENT ONLY: the operator never updates an existing
+                  catalog and never recreates one the user modified or deleted while
+                  any other AccCatalog exists. Set false to manage catalogs entirely
+                  yourself (e.g. GitOps).
+                type: boolean
               collectives:
                 description: |-
                   Collectives lists references to AgentCollective resources this corpus manages.
@@ -1093,6 +1106,31 @@ spec:
                 required:
                 - backend
                 type: object
+              rhoai:
+                description: |-
+                  RHOAI configures RHOAI-specific behaviour. Ignored unless deployMode
+                  is rhoai. Leaving it empty applies the defaults (the namespace is
+                  registered as a Data Science Project).
+                properties:
+                  projectDisplayName:
+                    description: |-
+                      ProjectDisplayName, when set, becomes the namespace's
+                      openshift.io/display-name annotation (the name RHOAI shows for the
+                      project). Leave empty to keep whatever display name the namespace
+                      already has.
+                    maxLength: 128
+                    type: string
+                  registerNamespaceAsProject:
+                    default: true
+                    description: |-
+                      RegisterNamespaceAsProject labels this corpus's namespace with
+                      opendatahub.io/dashboard=true so it automatically appears in RHOAI
+                      as a Data Science Project — models, pipelines, and workbenches then
+                      wire into the same project naturally. ADDITIVE-ONLY: the operator
+                      never removes the label (on corpus deletion or when this is later
+                      set to false) because other RHOAI assets may live in the namespace.
+                    type: boolean
+                type: object
               upgradePolicy:
                 description: UpgradePolicy controls how the operator handles ACC version
                   upgrades.
@@ -1322,6 +1360,12 @@ spec:
               currentVersion:
                 description: CurrentVersion is the ACC version currently deployed.
                 type: string
+              defaultCatalogBootstrapped:
+                description: |-
+                  DefaultCatalogBootstrapped is true once the operator created the
+                  acc-canonical AccCatalog in this namespace (or found catalogs
+                  already present).
+                type: boolean
               infrastructure:
                 description: Infrastructure reports the state of operator-managed
                   shared components.
@@ -1504,6 +1548,12 @@ spec:
                       cilium.io group (that would collide with CiliumInstalled).
                     type: boolean
                 type: object
+              rhoaiProjectRegistered:
+                description: |-
+                  RHOAIProjectRegistered is true once the corpus namespace carries the
+                  opendatahub.io/dashboard label (visible as an RHOAI Data Science
+                  Project).
+                type: boolean
               runtimeEvidence:
                 description: |-
                   RuntimeEvidence reports the kernel-event evidence layer state

@@ -9,7 +9,16 @@ metadata:
 spec:
   deployMode: rhoai
   version: "0.1.0"
-  imageRegistry: registry.access.redhat.com
+
+  # The corpus namespace automatically becomes an RHOAI Data Science Project
+  # (additive-only — the label is never removed). Optional display name.
+  rhoai:
+    registerNamespaceAsProject: true
+    projectDisplayName: "ACC Corpus"
+
+  # A fresh namespace gets the canonical signed package catalog bootstrapped
+  # (create-if-absent only; set false to manage catalogs via GitOps).
+  bootstrapDefaultCatalog: true
 
   collectives:
     - name: rhoai-collective-01

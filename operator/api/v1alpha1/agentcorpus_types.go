@@ -109,6 +109,25 @@ type AgentCorpusSpec struct {
 	// +optional
 	Edge *EdgeSpec `json:"edge,omitempty"`
 
+	// RHOAI configures RHOAI-specific behaviour. Ignored unless deployMode
+	// is rhoai. Leaving it empty applies the defaults (the namespace is
+	// registered as a Data Science Project).
+	// +optional
+	RHOAI *RHOAISpec `json:"rhoai,omitempty"`
+
+	// BootstrapDefaultCatalog creates the canonical signed AccCatalog
+	// (acc-canonical, the published ecosystem catalog) in this namespace
+	// when NO AccCatalog exists there yet — so a fresh corpus is
+	// package-ready out of the box (the Core+Assistant roles ship in the
+	// agent image; the catalog enables role-package infusions on top).
+	// CREATE-IF-ABSENT ONLY: the operator never updates an existing
+	// catalog and never recreates one the user modified or deleted while
+	// any other AccCatalog exists. Set false to manage catalogs entirely
+	// yourself (e.g. GitOps).
+	// +kubebuilder:default=true
+	// +optional
+	BootstrapDefaultCatalog *bool `json:"bootstrapDefaultCatalog,omitempty"`
+
 	// NetworkPolicy configures the optional capability-tiered network
 	// isolation layer for agent and infrastructure pods (proposal 014,
 	// security roadmap Phase 1).  When nil or disabled the operator
@@ -137,6 +156,27 @@ type AgentCorpusSpec struct {
 	// +kubebuilder:default=all
 	// +optional
 	ManifestDelivery string `json:"manifestDelivery,omitempty"`
+}
+
+// RHOAISpec configures how the corpus integrates with RHOAI (OpenShift AI).
+type RHOAISpec struct {
+	// RegisterNamespaceAsProject labels this corpus's namespace with
+	// opendatahub.io/dashboard=true so it automatically appears in RHOAI
+	// as a Data Science Project — models, pipelines, and workbenches then
+	// wire into the same project naturally. ADDITIVE-ONLY: the operator
+	// never removes the label (on corpus deletion or when this is later
+	// set to false) because other RHOAI assets may live in the namespace.
+	// +kubebuilder:default=true
+	// +optional
+	RegisterNamespaceAsProject *bool `json:"registerNamespaceAsProject,omitempty"`
+
+	// ProjectDisplayName, when set, becomes the namespace's
+	// openshift.io/display-name annotation (the name RHOAI shows for the
+	// project). Leave empty to keep whatever display name the namespace
+	// already has.
+	// +kubebuilder:validation:MaxLength=128
+	// +optional
+	ProjectDisplayName string `json:"projectDisplayName,omitempty"`
 }
 
 // CollectiveRef references an AgentCollective resource in the same namespace.
@@ -757,6 +797,18 @@ type AgentCorpusStatus struct {
 	// reconciler that ships in PR-50.
 	// +optional
 	ManifestDeliveryReady bool `json:"manifestDeliveryReady,omitempty"`
+
+	// RHOAIProjectRegistered is true once the corpus namespace carries the
+	// opendatahub.io/dashboard label (visible as an RHOAI Data Science
+	// Project).
+	// +optional
+	RHOAIProjectRegistered bool `json:"rhoaiProjectRegistered,omitempty"`
+
+	// DefaultCatalogBootstrapped is true once the operator created the
+	// acc-canonical AccCatalog in this namespace (or found catalogs
+	// already present).
+	// +optional
+	DefaultCatalogBootstrapped bool `json:"defaultCatalogBootstrapped,omitempty"`
 
 	// NetworkPolicy reports what the NetworkPolicyReconciler emitted
 	// (proposal 014).  The companion NetworkPolicyReady condition

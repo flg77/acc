@@ -25,6 +25,9 @@ const (
 	APIGroupGatekeeper  = "templates.gatekeeper.sh"
 	APIVersionGatekeeper = "templates.gatekeeper.sh/v1"
 	APIGroupRHOAI       = "datasciencecluster.opendatahub.io"
+	// The ODH/RHOAI dashboard registers OdhApplication (tiles) under this
+	// group; OdhQuickStart ships with the same dashboard component.
+	APIGroupOdhDashboard = "dashboard.opendatahub.io"
 	APIGroupKServe      = "serving.kserve.io"
 	APIVersionKServe    = "serving.kserve.io/v1beta1"
 	APIGroupMonitoring  = "monitoring.coreos.com"

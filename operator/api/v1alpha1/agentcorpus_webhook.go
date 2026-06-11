@@ -41,6 +41,11 @@ func (r *AgentCorpus) SetupWebhookWithManager(mgr ctrl.Manager) error {
 // AgentCorpusCustomDefaulter applies defaults to AgentCorpus resources. It holds
 // a client so it can probe the cluster — notably to detect RHOAI (a
 // DataScienceCluster) and default deployMode accordingly.
+//
+// +kubebuilder:object:generate=false
+// (Not an API type — the client.Client field is not deep-copyable. Without
+// this marker controller-gen's object generator fails on the package, which
+// in turn silently dropped the rbac markers of every package importing it.)
 type AgentCorpusCustomDefaulter struct {
 	Client client.Client
 }
@@ -60,6 +65,14 @@ func (d *AgentCorpusCustomDefaulter) Default(ctx context.Context, obj runtime.Ob
 	if r.Spec.DeployMode == "" {
 		r.Spec.DeployMode = d.detectDeployMode(ctx)
 		agentcorpuslog.Info("defaulted deployMode", "name", r.Name, "deployMode", r.Spec.DeployMode)
+	}
+
+	// rhoai: materialize the block in rhoai mode so the API server fills
+	// its structural defaults (registerNamespaceAsProject=true) and users
+	// see the effective behaviour in `get -o yaml`. The controller treats
+	// a nil block as enabled regardless (corpora created before 0.1.4).
+	if r.Spec.DeployMode == DeployModeRHOAI && r.Spec.RHOAI == nil {
+		r.Spec.RHOAI = &RHOAISpec{}
 	}
 	if r.Spec.Version == "" {
 		r.Spec.Version = "0.1.0"
