@@ -1,0 +1,46 @@
+# tui_screenshots scenario — proposal 019 (Assistant as system operator) +
+# the demo collectives.  Headless renders (Textual run_test) show wiring +
+# layout; data screens (compliance, diagnostics) render their empty state
+# without a live stack — captioned as such in the walkthrough.
+#
+# Render (spearhead venv, from acc-dev-harness/tools), with the family packs
+# installed so the Ecosystem role library + Prompt dropdown surface the
+# packaged specialists:
+#
+#   ACC_PACKAGES_ROOT=$HOME/.acc/packages \
+#   python -m tui_screenshots \
+#     --scenario ../../agentic-cell-corpus/docs/proposal-019-screens/scenario.yaml \
+#     --out ../../agentic-cell-corpus/docs/proposal-019-screens
+
+name: proposal_019_sysop
+size: [150, 46]
+
+shots:
+  # 1. Prompt pane — the operator sends a financial task to the assistant.
+  #    With proposal-019 catalog awareness, the assistant routes to the
+  #    best-matched specialist (financial_analyst) rather than answering.
+  - file: 01_prompt_financial.svg
+    screen: prompt
+    steps:
+      - set_select: {id: select-target-role, value: assistant}
+      - set_text: {id: prompt-textarea, text: "Build a 4-quarter cash-runway forecast: $1.2M cash, $150K/mo burn, revenue growing $40K→$90K/mo."}
+
+  # 2. Ecosystem — the assistant role.yaml now carries catalog_query in
+  #    allowed_skills + the PROPOSE_INFUSE / ROLE_GAP markers in seed_context.
+  - file: 02_ecosystem_assistant.svg
+    screen: ecosystem
+    steps:
+      - select_role: assistant
+      - scroll_text_to: {id: role-yaml-editor, contains: "catalog_query", pad: 6}
+
+  # 3. Compliance — where role-gap findings + assistant-initiated infusion
+  #    proposals land for operator approval (empty-state layout headless).
+  - file: 03_compliance.svg
+    screen: compliance
+    steps: []
+
+  # 4. Diagnostics — the golden-prompt runner; the demo golden prompts
+  #    (incl. the MOTD regression guard) appear here once a collective is up.
+  - file: 04_diagnostics.svg
+    screen: diagnostics
+    steps: []

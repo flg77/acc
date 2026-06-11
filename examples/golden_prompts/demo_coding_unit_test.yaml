@@ -1,0 +1,16 @@
+name: demo_coding_unit_test
+description: |
+  Demo (proposal 018) — coding specialist writes a unit test.  Targets
+  coding_agent (from @acc/workspace-roles).  Stable capability benchmark
+  for the coding demo after a role-prompt or model change.
+prompt: |
+  Write a pytest unit test for a function `add(a, b)` that returns a + b.
+  Cover the happy path plus an edge case (adding zero).
+target_role: coding_agent
+timeout_s: 90.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_contains:
+    - "def test"
+    - "assert"

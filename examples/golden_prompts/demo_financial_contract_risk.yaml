@@ -1,0 +1,18 @@
+name: demo_financial_contract_risk
+description: |
+  Demo (proposal 018) — legal/risk specialist drafts a contract-risk
+  memo.  Targets contract_analyst (from @acc/business-roles).  Stable
+  benchmark for the financial demo's legal cluster.
+prompt: |
+  Review this MSA clause and flag the risk: "Customer may terminate for
+  convenience on 7 days' notice with no early-termination fee; Provider
+  is liable for all consequential damages without cap."  Write a short
+  risk memo with a severity rating and a suggested redline.
+target_role: contract_analyst
+timeout_s: 90.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_contains:
+    - "risk"
+    - "liab"

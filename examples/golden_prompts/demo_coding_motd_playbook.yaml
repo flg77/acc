@@ -1,0 +1,23 @@
+name: demo_coding_motd_playbook
+description: |
+  Demo (proposal 018) — the MOTD scenario that opened the autonomy
+  investigation.  Targets devops_engineer directly (from
+  @acc/devops-roles) with the operator's original prompt so we have a
+  stable benchmark to re-run after a role-prompt or model change.
+
+  Asserts the reply produces an Ansible playbook.  Richer assertions
+  (uses dnf not pip on a RHEL host; no "if you're on a different OS"
+  hedge) need the proposal-016 perception layer + a negative-match
+  expects field — tracked there, not asserted here.
+prompt: |
+  Write an Ansible playbook to distribute a MOTD to systems on my
+  network.  The MOTD should have the headline ACC in ASCII art and
+  below it some stats: system name, time, uptime, load, free memory, IP.
+target_role: devops_engineer
+timeout_s: 90.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_contains:
+    - "ansible"
+    - "motd"

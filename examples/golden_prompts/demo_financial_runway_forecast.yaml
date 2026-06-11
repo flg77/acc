@@ -1,0 +1,19 @@
+name: demo_financial_runway_forecast
+description: |
+  Demo (proposal 018) — the financial-specialist demo the operator asked
+  for.  Targets financial_analyst (from @acc/business-roles) with a
+  cash-runway forecast task.  Stable benchmark for the financial demo
+  after a role-prompt or model change.
+prompt: |
+  We have $1.2M cash, burn $150K/month, and expect revenue to grow from
+  $40K/month to $90K/month linearly over the next 4 quarters.  Build a
+  quarter-by-quarter cash-runway forecast and state the month we run out
+  of cash (or that we reach breakeven first).
+target_role: financial_analyst
+timeout_s: 90.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_contains:
+    - "runway"
+    - "quarter"
