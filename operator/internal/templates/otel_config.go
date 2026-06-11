@@ -64,7 +64,7 @@ exporters:
   {{- end }}
   prometheus:
     endpoint: "0.0.0.0:8888"
-  # NOTE: must stay `debug` — the old `logging` exporter was removed from
+  # NOTE: must stay "debug" — the old "logging" exporter was removed from
   # collector-contrib and fails config validation (instant CrashLoop).
   debug:
     verbosity: normal
