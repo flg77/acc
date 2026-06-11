@@ -1,0 +1,61 @@
+# examples/collectives/demo-financial.yaml
+# =============================================================================
+# Demo collective — financial specialists (proposal 018 PR-DEMO1).
+#
+# Showcases the assistant → orchestrator → financial-business-role →
+# reviewer flow for financial tasks (forecast, contract risk, sales
+# pipeline, P&L summary).  Consumes the @acc/business-roles family pack.
+#
+# This is the demo the operator asked for: "call our ecosystem financial
+# specialists when asking the assistant for a financial task."  With the
+# proposal-019 catalog awareness, the assistant routes to financial_analyst
+# / fpa_analyst on capability — not just whichever role happens to be up.
+#
+# Run:
+#   acc-pkg install @acc/business-roles@^1.0
+#   ./acc-deploy.sh apply examples/collectives/demo-financial.yaml
+# =============================================================================
+
+collective_id: demo-financial
+
+required_packages:
+  - "@acc/business-roles@^1.0"
+
+agents:
+  # --- control plane (in-tree CONTROL roles) ---
+  - role: assistant
+    cluster_id: ctl
+    model: claude-haiku
+  - role: orchestrator
+    cluster_id: ctl
+    model: claude-haiku
+  - role: reviewer
+    cluster_id: ctl
+    model: claude-sonnet
+  - role: compliance_officer
+    cluster_id: ctl
+    model: claude-haiku
+
+  # --- finance specialists (from @acc/business-roles) ---
+  - role: financial_analyst
+    cluster_id: finance
+    model: claude-sonnet
+  - role: fpa_analyst
+    cluster_id: finance
+    model: claude-sonnet
+
+  # --- legal / risk ---
+  - role: contract_analyst
+    cluster_id: legal
+    model: claude-sonnet
+  - role: risk_compliance_analyst
+    cluster_id: legal
+    model: claude-sonnet
+
+  # --- go-to-market ---
+  - role: account_executive
+    cluster_id: sales
+    model: claude-haiku
+  - role: business_analyst
+    cluster_id: sales
+    model: claude-haiku
