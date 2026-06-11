@@ -31,6 +31,12 @@ var inferenceServiceGVK = schema.GroupVersionKind{
 // KServeResult carries KServe readiness back to CollectiveReconciler.
 type KServeResult struct {
 	KServeReady bool
+
+	// InferenceURL is the model endpoint read from the InferenceService
+	// status (cluster-local address preferred). Empty until the
+	// InferenceService publishes one. Injected into agent pods as
+	// ACC_VLLM_INFERENCE_URL.
+	InferenceURL string
 }
 
 // KServeReconciler creates a KServe InferenceService when the collective's
@@ -61,13 +67,20 @@ func (r *KServeReconciler) ReconcileCollective(
 	vllm := llm.VLLM
 
 	// If deploy=false, user manages the InferenceService themselves.
-	// We just check its readiness.
+	// We just check its readiness and read the endpoint URL. The
+	// InferenceService may live in another namespace (e.g. a different
+	// RHOAI Data Science Project) via inferenceServiceNamespace.
 	if !vllm.Deploy {
-		ready, err := r.checkInferenceServiceReady(ctx, corpus.Namespace, vllm.InferenceServiceRef)
+		refNS := vllm.InferenceServiceNamespace
+		if refNS == "" {
+			refNS = corpus.Namespace
+		}
+		ready, url, err := r.readInferenceService(ctx, refNS, vllm.InferenceServiceRef)
 		if err != nil {
 			return result, err
 		}
 		result.KServeReady = ready
+		result.InferenceURL = url
 		return result, nil
 	}
 
@@ -91,11 +104,12 @@ func (r *KServeReconciler) ReconcileCollective(
 		return result, fmt.Errorf("upsert InferenceService %s: %w", isName, err)
 	}
 
-	ready, err := r.checkInferenceServiceReady(ctx, corpus.Namespace, isName)
+	ready, url, err := r.readInferenceService(ctx, corpus.Namespace, isName)
 	if err != nil {
 		return result, err
 	}
 	result.KServeReady = ready
+	result.InferenceURL = url
 	return result, nil
 }
 
@@ -150,13 +164,21 @@ func (r *KServeReconciler) buildInferenceService(
 	return u
 }
 
-// checkInferenceServiceReady reads the InferenceService and checks its
-// Ready condition. Returns (false, nil) when the resource doesn't exist yet.
-func (r *KServeReconciler) checkInferenceServiceReady(ctx context.Context, ns, name string) (bool, error) {
+// readInferenceService reads the InferenceService, checks its Ready
+// condition, and extracts the model endpoint URL. Returns
+// (false, "", nil) when the resource doesn't exist yet.
+func (r *KServeReconciler) readInferenceService(ctx context.Context, ns, name string) (bool, string, error) {
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(inferenceServiceGVK)
 	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, u); err != nil {
-		return false, client.IgnoreNotFound(err)
+		return false, "", client.IgnoreNotFound(err)
+	}
+
+	// Prefer the cluster-local address KServe publishes at
+	// status.address.url; fall back to the external status.url.
+	url, _, _ := unstructured.NestedString(u.Object, "status", "address", "url")
+	if url == "" {
+		url, _, _ = unstructured.NestedString(u.Object, "status", "url")
 	}
 
 	// KServe sets status.conditions[type=Ready].status=True when ready.
@@ -167,8 +189,8 @@ func (r *KServeReconciler) checkInferenceServiceReady(ctx context.Context, ns, n
 			continue
 		}
 		if cond["type"] == "Ready" && cond["status"] == "True" {
-			return true, nil
+			return true, url, nil
 		}
 	}
-	return false, nil
+	return false, url, nil
 }

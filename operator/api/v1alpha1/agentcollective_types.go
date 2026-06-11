@@ -254,9 +254,22 @@ type AnthropicSpec struct {
 
 // VLLMSpec configures a KServe InferenceService as the LLM backend.
 type VLLMSpec struct {
-	// InferenceServiceRef names the KServe InferenceService in the same namespace.
-	// The operator reads the InferenceService URL from its status.
+	// InferenceServiceRef names the KServe InferenceService to consume.
+	// The operator reads the model endpoint URL from the InferenceService
+	// status and injects it into every agent pod as ACC_VLLM_INFERENCE_URL.
+	// List candidates with: oc get inferenceservice -A
 	InferenceServiceRef string `json:"inferenceServiceRef"`
+
+	// InferenceServiceNamespace is the namespace of the referenced
+	// InferenceService when it lives outside this corpus's namespace —
+	// for example a model served from a different RHOAI Data Science
+	// Project (workspace). Leave empty when the model runs in the same
+	// namespace. Only meaningful with deploy=false. NOTE: cross-namespace
+	// traffic may additionally require a NetworkPolicy (or service-mesh
+	// membership) that lets this namespace reach the model's predictor
+	// Service.
+	// +optional
+	InferenceServiceNamespace string `json:"inferenceServiceNamespace,omitempty"`
 
 	// Model is the vLLM model identifier.
 	Model string `json:"model"`

@@ -199,6 +199,37 @@ In the validated run the operator created, from the single agentset:
 `rhoai`.
 📸 *Topology/Workloads view in acc-system showing nats/redis/opa/otel + the 3 agents.*
 
+### 4b. Consuming a model from another Data Science Project (cross-workspace)
+
+A model often already runs in a *different* RHOAI workspace (namespace) than
+the agentset. Point the collective at it with `inferenceServiceNamespace`:
+
+```yaml
+llm:
+  backend: vllm
+  vllm:
+    inferenceServiceRef: llama-31-8b-instruct
+    inferenceServiceNamespace: my-first-model   # the model's workspace
+    model: llama-31-8b-instruct
+    deploy: false
+```
+
+The operator reads the endpoint from the InferenceService status
+(`status.address.url`, falling back to `status.url`) and injects it into every
+agent pod as `ACC_VLLM_INFERENCE_URL`, which the runtime maps onto
+`llm.vllm_inference_url`. Verify:
+
+```bash
+# the resolved endpoint as the agents see it:
+oc -n acc-system get deploy acc-e2e-collective-observer \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="ACC_VLLM_INFERENCE_URL")].value}{"\n"}'
+```
+
+**Network caveat:** RHOAI/OpenShift namespaces may carry NetworkPolicies (or
+service-mesh membership) that block cross-namespace traffic. If agents can't
+reach the model even though the env var is set, allow ingress from the
+agentset namespace to the model's predictor Service in the model's workspace.
+
 ---
 
 ## 5. Teardown
