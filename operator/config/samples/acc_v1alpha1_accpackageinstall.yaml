@@ -1,0 +1,21 @@
+---
+# Sample AccPackageInstall — GitOps seam for Stage 1.5.3 pkg-install.
+# ArgoCD/Flux drops this object; the operator reconciles it onto live
+# ACC pods via `acc-cli collective pkg-install`.  Doubles as the CSV
+# alm-examples entry.
+apiVersion: acc.redhat.io/v1alpha1
+kind: AccPackageInstall
+metadata:
+  name: install-coding-roles
+  namespace: acc-system
+spec:
+  name: "@acc/coding-roles"
+  constraint: "^1.0"
+  # Pin to the catalog above; omit to let the layered resolver pick the
+  # highest-priority catalog advertising the package.
+  catalogRef: acc-community-hub
+  # Target a single AgentCorpus; omit to target every corpus in the ns.
+  targetCorpus: sol-corpus
+  # The cosign signing floor stays enforced (operator-explicit override
+  # only; audit-logged by the controller).
+  allowUnsigned: false

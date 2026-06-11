@@ -1,0 +1,19 @@
+---
+# Sample AccCatalog — the canonical ACC community hub (https index).
+# Renders into /etc/acc/catalogs.yaml inside ACC pods; mirrors
+# acc/pkg/catalog.py's Catalog model so the emitted YAML validates
+# against the Python loader.  Doubles as the CSV alm-examples entry.
+apiVersion: acc.redhat.io/v1alpha1
+kind: AccCatalog
+metadata:
+  name: acc-community-hub
+  namespace: acc-system
+spec:
+  catalogId: acc-community
+  tier: community
+  mode: https
+  url: https://acc-roles.dev/index.json
+  requiredSigner:
+    issuer: https://token.actions.githubusercontent.com
+    subjectPattern: ^https://github\.com/flg77/acc-ecosystem/.+$
+  priority: 100

@@ -2,3 +2,5 @@ resources:
 - acc_v1alpha1_agentcorpus_standalone.yaml
 - acc_v1alpha1_agentcorpus_networkpolicy.yaml
 - acc_v1alpha1_agentcorpus_runtimeevidence.yaml
+- acc_v1alpha1_acccatalog.yaml
+- acc_v1alpha1_accpackageinstall.yaml
