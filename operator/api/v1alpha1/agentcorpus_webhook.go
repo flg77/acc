@@ -61,6 +61,14 @@ func (d *AgentCorpusCustomDefaulter) Default(ctx context.Context, obj runtime.Ob
 		r.Spec.DeployMode = d.detectDeployMode(ctx)
 		agentcorpuslog.Info("defaulted deployMode", "name", r.Name, "deployMode", r.Spec.DeployMode)
 	}
+
+	// rhoai: materialize the block in rhoai mode so the API server fills
+	// its structural defaults (registerNamespaceAsProject=true) and users
+	// see the effective behaviour in `get -o yaml`. The controller treats
+	// a nil block as enabled regardless (corpora created before 0.1.4).
+	if r.Spec.DeployMode == DeployModeRHOAI && r.Spec.RHOAI == nil {
+		r.Spec.RHOAI = &RHOAISpec{}
+	}
 	if r.Spec.Version == "" {
 		r.Spec.Version = "0.1.0"
 	}

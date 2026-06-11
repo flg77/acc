@@ -34,8 +34,10 @@ import (
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/infra"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/manifests"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/observability"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/rhoai"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/security"
 	statuspkg "github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/status"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/util"
 )
 
 const (
@@ -70,11 +72,17 @@ var (
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8s.ovn.org,resources=egressfirewalls,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cilium.io,resources=ciliumnetworkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;patch
+// +kubebuilder:rbac:groups=dashboard.opendatahub.io,resources=odhapplications,verbs=get;list;create;update
+// +kubebuilder:rbac:groups=console.openshift.io,resources=odhquickstarts,verbs=get;list;create;update
 type AgentCorpusReconciler struct {
 	Client    client.Client
 	Scheme    *runtime.Scheme
 	Discovery discovery.DiscoveryInterface
 	Recorder  record.EventRecorder
+	// APIReader is an uncached reader for one-shot lookups (namespace
+	// labeling) that must not start cluster-wide informers.
+	APIReader client.Reader
 }
 
 // SetupWithManager registers this reconciler with the controller-runtime Manager.
@@ -88,6 +96,9 @@ func (r *AgentCorpusReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	if r.Recorder == nil {
 		r.Recorder = mgr.GetEventRecorderFor("agentcorpus-controller")
+	}
+	if r.APIReader == nil {
+		r.APIReader = mgr.GetAPIReader()
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
@@ -243,7 +254,14 @@ func (r *AgentCorpusReconciler) scanRHOAIModels(ctx context.Context, corpus *acc
 func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconciler {
 	return []reconcilers.SubReconciler{
 		&reconcilers.PrerequisiteReconciler{Client: r.Client, Discovery: r.Discovery},
-		// ManifestDelivery slot 2: emits the corpus-scoped acc-roles /
+		// RHOAI project association + default catalog + dashboard tile
+		// (proposal 022). Right after prerequisites: they consume
+		// Prerequisites.RHOAIInstalled from the same pass, and the Data
+		// Science Project should be visible before infrastructure rolls.
+		&rhoai.ProjectReconciler{Client: r.Client, Reader: r.APIReader},
+		&rhoai.DefaultCatalogReconciler{Client: r.Client},
+		&rhoai.DashboardReconciler{Client: r.Client, Checker: util.NewAPIGroupChecker(r.Discovery)},
+		// ManifestDelivery slot: emits the corpus-scoped acc-roles /
 		// acc-skills / acc-mcps ConfigMaps that every collective's agent
 		// Deployment mounts. Must run before UpgradeReconciler so the CMs
 		// exist before upgrade pods reference them.
