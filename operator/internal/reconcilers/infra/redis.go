@@ -81,7 +81,13 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Age
 		storageClass = &sc
 	}
 	replicas := ptr.To(redisSpec.Replicas)
-	image := util.ComponentImage(corpus, "redis", redisSpec.Version+"-alpine")
+	// Honor an explicit full-ref override; else derive via ComponentImage
+	// (fails when neither imageRepository nor imageRegistry hosts a `redis`
+	// image — see RedisSpec.Image).
+	image := redisSpec.Image
+	if image == "" {
+		image = util.ComponentImage(corpus, "redis", redisSpec.Version+"-alpine")
+	}
 
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{

@@ -121,6 +121,13 @@ func (r *NATSReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agen
 		sc := natsSpec.StorageClass
 		storageClass = &sc
 	}
+	// Image: honor an explicit full-ref override; else derive via ComponentImage
+	// (imageRepository/imageRegistry). The derived ref fails when neither hosts a
+	// `nats` image — see NATSSpec.Image.
+	natsImage := natsSpec.Image
+	if natsImage == "" {
+		natsImage = util.ComponentImage(corpus, "nats", natsSpec.Version+"-alpine")
+	}
 	sts := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -138,7 +145,7 @@ func (r *NATSReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agen
 					Containers: []corev1.Container{
 						{
 							Name:  "nats",
-							Image: util.ComponentImage(corpus, "nats", natsSpec.Version+"-alpine"),
+							Image: natsImage,
 							Ports: []corev1.ContainerPort{
 								{Name: "client", ContainerPort: natsPort},
 								{Name: "cluster", ContainerPort: natsClusterPort},

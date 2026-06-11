@@ -158,6 +158,17 @@ type NATSSpec struct {
 	// +kubebuilder:default="2.10"
 	Version string `json:"version"`
 
+	// Image, when set, is the FULL NATS container image reference and
+	// overrides the registry/repository-derived default from
+	// util.ComponentImage (i.e. "<imageRepository>:nats-<version>-alpine" or
+	// "<imageRegistry>/nats:<version>-alpine"). Use this when neither the
+	// single ImageRepository nor ImageRegistry hosts a usable nats image — a
+	// fresh RHOAI cluster with imageRegistry=registry.access.redhat.com hits
+	// ImagePullBackOff "name unknown: Repo not found" (observed on the c26sx
+	// sandbox 2026-06-10). Set e.g. docker.io/library/nats:2.10-alpine.
+	// +optional
+	Image string `json:"image,omitempty"`
+
 	// Replicas sets the NATS cluster size (1 = single-node, 3 = clustered).
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=5
@@ -200,6 +211,13 @@ type RedisSpec struct {
 	// Version selects the UBI Redis image tag.
 	// +kubebuilder:default="6"
 	Version string `json:"version"`
+
+	// Image, when set, is the FULL Redis container image reference and
+	// overrides the util.ComponentImage-derived default. Same rationale as
+	// NATSSpec.Image — set e.g. docker.io/library/redis:7-alpine when neither
+	// imageRepository nor imageRegistry hosts a usable redis image.
+	// +optional
+	Image string `json:"image,omitempty"`
 
 	// Replicas (1 = standalone, 3 = Sentinel mode).
 	// +kubebuilder:validation:Minimum=1
