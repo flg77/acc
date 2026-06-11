@@ -177,6 +177,14 @@ type RHOAISpec struct {
 	// +kubebuilder:validation:MaxLength=128
 	// +optional
 	ProjectDisplayName string `json:"projectDisplayName,omitempty"`
+
+	// DashboardNamespace is where the RHOAI dashboard reads OdhApplication
+	// tiles and OdhQuickStart guides from (the CRDs are namespaced).
+	// Defaults to "redhat-ods-applications" (RHOAI); set "opendatahub" on
+	// upstream ODH installs.
+	// +kubebuilder:default="redhat-ods-applications"
+	// +optional
+	DashboardNamespace string `json:"dashboardNamespace,omitempty"`
 }
 
 // CollectiveRef references an AgentCollective resource in the same namespace.

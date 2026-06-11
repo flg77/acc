@@ -342,21 +342,21 @@ func dashboardClient(t *testing.T) client.Client {
 
 func TestDashboard_NoopWhenDashboardAbsent(t *testing.T) {
 	c := dashboardClient(t)
-	r := &rhoai.DashboardReconciler{Client: c, Checker: stubChecker{has: false}}
+	r := &rhoai.DashboardReconciler{Client: c, Checker: stubChecker{has: false}, Reader: c}
 	if _, err := r.Reconcile(context.Background(),
 		rhoaiCorpus(accv1alpha1.DeployModeRHOAI, true, nil)); err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	app := &unstructured.Unstructured{}
 	app.SetGroupVersionKind(odhAppGVK)
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "agentic-cell-corpus"}, app); err == nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: rhoai.DefaultDashboardNamespace, Name: "agentic-cell-corpus"}, app); err == nil {
 		t.Error("tile must not be created when the dashboard group is absent")
 	}
 }
 
 func TestDashboard_CreatesTileAndQuickStarts(t *testing.T) {
 	c := dashboardClient(t)
-	r := &rhoai.DashboardReconciler{Client: c, Checker: stubChecker{has: true}}
+	r := &rhoai.DashboardReconciler{Client: c, Checker: stubChecker{has: true}, Reader: c}
 	if _, err := r.Reconcile(context.Background(),
 		rhoaiCorpus(accv1alpha1.DeployModeRHOAI, true, nil)); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -364,7 +364,7 @@ func TestDashboard_CreatesTileAndQuickStarts(t *testing.T) {
 
 	app := &unstructured.Unstructured{}
 	app.SetGroupVersionKind(odhAppGVK)
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "agentic-cell-corpus"}, app); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: rhoai.DefaultDashboardNamespace, Name: "agentic-cell-corpus"}, app); err != nil {
 		t.Fatalf("expected OdhApplication tile: %v", err)
 	}
 	spec, _ := app.Object["spec"].(map[string]interface{})
@@ -375,7 +375,7 @@ func TestDashboard_CreatesTileAndQuickStarts(t *testing.T) {
 	for _, name := range []string{"acc-create-project", "acc-wire-models", "acc-install-packages", "acc-traces"} {
 		qs := &unstructured.Unstructured{}
 		qs.SetGroupVersionKind(odhQSGVK)
-		if err := c.Get(context.Background(), types.NamespacedName{Name: name}, qs); err != nil {
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: rhoai.DefaultDashboardNamespace, Name: name}, qs); err != nil {
 			t.Errorf("expected quickstart %s: %v", name, err)
 		}
 	}
@@ -388,7 +388,7 @@ func TestDashboard_CreatesTileAndQuickStarts(t *testing.T) {
 	}
 	app2 := &unstructured.Unstructured{}
 	app2.SetGroupVersionKind(odhAppGVK)
-	if err := c.Get(context.Background(), types.NamespacedName{Name: "agentic-cell-corpus"}, app2); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: rhoai.DefaultDashboardNamespace, Name: "agentic-cell-corpus"}, app2); err != nil {
 		t.Fatalf("re-get tile: %v", err)
 	}
 	if app2.GetResourceVersion() != rvBefore {
