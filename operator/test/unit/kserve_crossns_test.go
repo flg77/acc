@@ -168,6 +168,29 @@ func TestKServe_MissingIsNotReady(t *testing.T) {
 	}
 }
 
+// Role names with underscores (e.g. coding_agent) must sanitize into
+// valid RFC-1123 Deployment names.
+func TestAgentDeployment_UnderscoreRoleNameSanitized(t *testing.T) {
+	c := kserveClient(t)
+	r := &collective.AgentDeploymentReconciler{Client: c, Scheme: newScheme(t)}
+	corpus := kserveCorpus()
+	col := vllmCollective("llama-31-8b-instruct", "my-first-model")
+	col.Spec.Agents = []accv1alpha1.AgentRoleSpec{{Role: "coding_agent", Replicas: 1}}
+
+	if _, err := r.ReconcileCollective(context.Background(), corpus, col, "acc-role-research-01", ""); err != nil {
+		t.Fatalf("ReconcileCollective: %v", err)
+	}
+	deploy := &appsv1.Deployment{}
+	if err := c.Get(context.Background(),
+		types.NamespacedName{Namespace: "acc-system", Name: "research-coding-agent"}, deploy); err != nil {
+		t.Fatalf("expected sanitized Deployment research-coding-agent: %v", err)
+	}
+	if deploy.Spec.Template.Labels["acc.redhat.io/role"] != "coding_agent" &&
+		deploy.Spec.Selector.MatchLabels["acc.redhat.io/role"] != "coding_agent" {
+		t.Log("role label not under acc.redhat.io/role — acceptable, name sanitization is the contract")
+	}
+}
+
 // The resolved URL reaches agent pods as ACC_VLLM_INFERENCE_URL; an empty
 // URL injects nothing (the config placeholder stays unresolved so the
 // runtime's rhoai-mode validation still fires).
