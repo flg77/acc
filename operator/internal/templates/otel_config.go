@@ -63,7 +63,7 @@ exporters:
       insecure: {{ .TLSInsecure }}
   {{- end }}
   prometheus:
-    endpoint: "0.0.0.0:8888"
+    endpoint: "0.0.0.0:8889"
   # NOTE: must stay "debug" — the old "logging" exporter was removed from
   # collector-contrib and fails config validation (instant CrashLoop).
   debug:

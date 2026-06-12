@@ -29,7 +29,7 @@ const (
 	otelComponentName  = "otel-collector"
 	otelGRPCPort       = 4317
 	otelHTTPPort       = 4318
-	otelMetricsPort    = 8888
+	otelMetricsPort    = 8889 // 8889: the collector's OWN telemetry binds :8888 since ~v0.118
 
 	// defaultOTelCollectorImage is a pinned contrib build mirrored into the
 	// ACC image repository (build chain: skopeo copy from

@@ -11,6 +11,7 @@ package collective
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -63,7 +64,8 @@ func (r *KEDAScaledObjectReconciler) ReconcileCollective(
 
 	for _, roleSpec := range collective.Spec.Agents {
 		role := roleSpec.Role
-		deployName := fmt.Sprintf("%s-%s", collective.Name, string(role))
+		// Sanitize underscores out of the name (matches agent_deployment.go).
+		deployName := fmt.Sprintf("%s-%s", collective.Name, strings.ReplaceAll(string(role), "_", "-"))
 
 		// Look up per-role scaling config; fall back to defaults.
 		rsc, ok := scalingMap[role]
