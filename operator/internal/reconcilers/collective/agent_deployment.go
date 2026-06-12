@@ -185,10 +185,13 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 				ObjectMeta: metav1.ObjectMeta{Labels: objectLabels},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets: util.ImagePullSecrets(corpus),
-					// OCP restricted SCC — run as non-root UID 1001.
+					// No pinned UID: OpenShift's restricted-v2 SCC REJECTS
+					// any runAsUser outside the namespace's assigned range
+					// (live c26sx failure) and assigns a range UID itself
+					// when unset; plain k8s falls back to the image USER.
+					// The UBI-based agent image is group-0 tolerant.
 					SecurityContext: &corev1.PodSecurityContext{
 						RunAsNonRoot: ptr.To(true),
-						RunAsUser:    ptr.To(int64(1001)),
 					},
 					Containers: []corev1.Container{
 						{
