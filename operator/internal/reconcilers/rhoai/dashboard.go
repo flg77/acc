@@ -41,16 +41,26 @@ type GroupChecker interface {
 	HasAPIGroup(group string) (bool, error)
 }
 
+// DefaultDashboardNamespace is where RHOAI's dashboard reads its
+// (namespaced!) OdhApplication and OdhQuickStart CRs.
+const DefaultDashboardNamespace = "redhat-ods-applications"
+
 // DashboardReconciler surfaces ACC inside the RHOAI dashboard: one
 // OdhApplication tile (Applications -> Explore) and the quickstart guides
 // (Learning resources) that walk a user from "create an ACC project" to a
-// package-infused, model-wired agentset. The objects are cluster-scoped
-// operator-owned singletons keyed by name — independent of any one corpus —
-// and the whole reconciler is a silent no-op when the RHOAI dashboard CRDs
-// are not installed (version drift across RHOAI releases included).
+// package-infused, model-wired agentset. The CRDs are NAMESPACED — the
+// objects land in the dashboard's namespace (default
+// redhat-ods-applications, override via spec.rhoai.dashboardNamespace) as
+// operator-owned singletons keyed by name, independent of any one corpus.
+// The whole reconciler is a silent no-op when the RHOAI dashboard CRDs are
+// not installed (version drift across RHOAI releases included).
 type DashboardReconciler struct {
 	Client  client.Client
 	Checker GroupChecker
+	// Reader is an uncached reader for the singleton Gets so the manager
+	// never starts informers on the dashboard CRDs (which would also
+	// require a watch RBAC verb). Falls back to Client when nil.
+	Reader client.Reader
 }
 
 // Name implements SubReconciler.
@@ -69,11 +79,17 @@ func (r *DashboardReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1
 		return reconcilers.SubResult{}, nil // dashboard absent or discovery flaky — never block
 	}
 
+	ns := DefaultDashboardNamespace
+	if corpus.Spec.RHOAI != nil && corpus.Spec.RHOAI.DashboardNamespace != "" {
+		ns = corpus.Spec.RHOAI.DashboardNamespace
+	}
+
 	log := logf.FromContext(ctx)
-	for _, obj := range dashboardObjects() {
+	for _, obj := range dashboardObjects(ns) {
 		if err := r.upsert(ctx, obj); err != nil {
 			if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
-				// CRD kind not registered on this RHOAI version — skip quietly.
+				// CRD kind (or the dashboard namespace) not present on this
+				// RHOAI version — skip quietly.
 				log.V(1).Info("RHOAI dashboard kind unavailable; skipping",
 					"kind", obj.GetKind(), "name", obj.GetName())
 				continue
@@ -86,9 +102,13 @@ func (r *DashboardReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1
 
 // upsert creates the object or updates only its spec when drifted.
 func (r *DashboardReconciler) upsert(ctx context.Context, desired *unstructured.Unstructured) error {
+	reader := r.Reader
+	if reader == nil {
+		reader = r.Client
+	}
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(desired.GroupVersionKind())
-	err := r.Client.Get(ctx, types.NamespacedName{Name: desired.GetName()}, existing)
+	err := reader.Get(ctx, types.NamespacedName{Namespace: desired.GetNamespace(), Name: desired.GetName()}, existing)
 	if apierrors.IsNotFound(err) {
 		return r.Client.Create(ctx, desired)
 	}
@@ -104,11 +124,15 @@ func (r *DashboardReconciler) upsert(ctx context.Context, desired *unstructured.
 	return r.Client.Update(ctx, existing)
 }
 
-// dashboardObjects returns the tile + quickstarts. All cluster-scoped.
-func dashboardObjects() []*unstructured.Unstructured {
+// dashboardObjects returns the tile + quickstarts, namespaced into the
+// dashboard's namespace.
+func dashboardObjects(ns string) []*unstructured.Unstructured {
 	objs := []*unstructured.Unstructured{tile()}
 	for _, qs := range quickStarts() {
 		objs = append(objs, qs)
+	}
+	for _, o := range objs {
+		o.SetNamespace(ns)
 	}
 	return objs
 }

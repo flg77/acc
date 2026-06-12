@@ -33,9 +33,11 @@ const (
 
 	// defaultOTelCollectorImage is a pinned contrib build mirrored into the
 	// ACC image repository (build chain: skopeo copy from
-	// docker.io/otel/opentelemetry-collector-contrib). Keep the tag in sync
+	// docker.io/otel/opentelemetry-collector-contrib,
+	// pushed --format v2s2 --compression-format gzip — the 0.116.0 mirror
+	// shipped via plain podman push was corrupt at the exec layer). Keep the tag in sync
 	// with the exporter set used in templates/otel_config.go.
-	defaultOTelCollectorImage = "quay.io/flg77/acc_images:otel-collector-contrib-0.116.0"
+	defaultOTelCollectorImage = "quay.io/flg77/acc_images:otel-collector-contrib-0.119.0"
 )
 
 // OTelCollectorReconciler manages an OpenTelemetry Collector Deployment

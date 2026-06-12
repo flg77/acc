@@ -1112,6 +1112,14 @@ spec:
                   is rhoai. Leaving it empty applies the defaults (the namespace is
                   registered as a Data Science Project).
                 properties:
+                  dashboardNamespace:
+                    default: redhat-ods-applications
+                    description: |-
+                      DashboardNamespace is where the RHOAI dashboard reads OdhApplication
+                      tiles and OdhQuickStart guides from (the CRDs are namespaced).
+                      Defaults to "redhat-ods-applications" (RHOAI); set "opendatahub" on
+                      upstream ODH installs.
+                    type: string
                   projectDisplayName:
                     description: |-
                       ProjectDisplayName, when set, becomes the namespace's

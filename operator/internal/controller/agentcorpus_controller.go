@@ -260,7 +260,7 @@ func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconcile
 		// Science Project should be visible before infrastructure rolls.
 		&rhoai.ProjectReconciler{Client: r.Client, Reader: r.APIReader},
 		&rhoai.DefaultCatalogReconciler{Client: r.Client},
-		&rhoai.DashboardReconciler{Client: r.Client, Checker: util.NewAPIGroupChecker(r.Discovery)},
+		&rhoai.DashboardReconciler{Client: r.Client, Checker: util.NewAPIGroupChecker(r.Discovery), Reader: r.APIReader},
 		// ManifestDelivery slot: emits the corpus-scoped acc-roles /
 		// acc-skills / acc-mcps ConfigMaps that every collective's agent
 		// Deployment mounts. Must run before UpgradeReconciler so the CMs
