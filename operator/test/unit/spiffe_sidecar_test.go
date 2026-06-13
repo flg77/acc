@@ -132,7 +132,7 @@ func TestApplySpiffeSidecar_DisabledIsNoop(t *testing.T) {
 		beforeVols := len(d.Spec.Template.Spec.Volumes)
 
 		col := sidecarCollective(spiffe)
-		collective.ApplySpiffeSidecar(d, col, collective.SpiffeHelperConfigMapName(col))
+		collective.ApplySpiffeSidecar(&d.Spec.Template, col, collective.SpiffeHelperConfigMapName(col))
 
 		if len(d.Spec.Template.Spec.Containers) != before {
 			t.Errorf("disabled spiffe added containers: %v", containerNames(d))
@@ -157,7 +157,7 @@ func TestApplySpiffeSidecar_EnabledInjectsSidecar(t *testing.T) {
 		Enabled:     true,
 		TrustDomain: "acc-prod.example.com",
 	})
-	collective.ApplySpiffeSidecar(d, col, collective.SpiffeHelperConfigMapName(col))
+	collective.ApplySpiffeSidecar(&d.Spec.Template, col, collective.SpiffeHelperConfigMapName(col))
 
 	// The spiffe-helper sidecar is appended.
 	if !contains(containerNames(d), "spiffe-helper") {
@@ -219,7 +219,7 @@ func TestApplySpiffeSidecar_EnabledInjectsSidecar(t *testing.T) {
 func TestApplySpiffeSidecar_HelperContainerShape(t *testing.T) {
 	d := minimalAgentDeployment()
 	col := sidecarCollective(&accv1alpha1.SpiffeSpec{Enabled: true})
-	collective.ApplySpiffeSidecar(d, col, collective.SpiffeHelperConfigMapName(col))
+	collective.ApplySpiffeSidecar(&d.Spec.Template, col, collective.SpiffeHelperConfigMapName(col))
 
 	var helper *corev1.Container
 	for i := range d.Spec.Template.Spec.Containers {
