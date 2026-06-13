@@ -13,6 +13,7 @@ No if/else branching for deploy_mode exists outside this module.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,7 +64,7 @@ PerceptionProfile = Literal[
 ]
 LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack", "openai_compat"]
 MetricsBackendChoice = Literal["log", "otel"]
-VectorBackendChoice = Literal["lancedb", "milvus"]
+VectorBackendChoice = Literal["lancedb", "milvus", "turbovec"]
 SignalingBackendChoice = Literal["nats"]
 
 
@@ -154,6 +155,19 @@ class RoleDefinitionConfig(BaseModel):
     # ceiling to HIGH (fs_write is a HIGH-risk skill), so the operator
     # only flips one boolean.
     workspace_access: bool = False
+
+    # Proposal 024 P3 — governed RAG document store.  When True the role
+    # may ingest documents into and retrieve from the collective-scoped
+    # document store (via the ``doc_ingest`` / ``doc_retrieve`` skills).
+    # The ``_grant_document_store_skills`` validator auto-adds both to
+    # allowed+default skills so the operator flips one boolean — same
+    # pattern as ``workspace_access``.  Default False: every role carries
+    # the option, deactivated until explicitly enabled.  The
+    # ``@acc/rag-roles`` pack (librarian, document_curator) ships it True.
+    # Retrieval is scoped to the agent's collective and — on the TurboVec
+    # backend — enforced inside the search kernel (proposal 024 G3); other
+    # backends post-filter.  See acc/docstore.py.
+    document_store: bool = False
 
     # Proactive wakeup (operator decision 2026-06-09) — when ``True`` the
     # agent runs a periodic self-check loop (acc/agent.py::_proactive_wakeup_loop)
@@ -374,6 +388,7 @@ class RoleDefinitionConfig(BaseModel):
     needing to touch this config schema."""
 
     _WORKSPACE_SKILLS = ("fs_read", "fs_write")
+    _DOC_STORE_SKILLS = ("doc_ingest", "doc_retrieve")
     _RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
     # OpenSpec `20260603-capability-pool` Phase 1 — the universal
@@ -416,6 +431,24 @@ class RoleDefinitionConfig(BaseModel):
                 self.default_skills.append(sid)
         if self._RISK_ORDER.get(self.max_skill_risk_level, 1) < self._RISK_ORDER["HIGH"]:
             self.max_skill_risk_level = "HIGH"
+        return self
+
+    @model_validator(mode="after")
+    def _grant_document_store_skills(self) -> "RoleDefinitionConfig":
+        """Proposal 024 P3 — when ``document_store`` is True, auto-grant
+        the ``doc_ingest`` + ``doc_retrieve`` skills so a RAG role only
+        flips one boolean.  Both are <= MEDIUM risk (vector-store I/O, not
+        filesystem), so no risk-ceiling bump is needed.  No-op when False.
+
+        Idempotent + composes with the other granters (disjoint skill
+        sets)."""
+        if not getattr(self, "document_store", False):
+            return self
+        for sid in self._DOC_STORE_SKILLS:
+            if sid not in self.allowed_skills:
+                self.allowed_skills.append(sid)
+            if sid not in self.default_skills:
+                self.default_skills.append(sid)
         return self
 
     @model_validator(mode="after")
@@ -531,6 +564,17 @@ class VectorConfig(BaseModel):
     lancedb_path: str = "/app/data/lancedb"
     milvus_uri: str = ""
     milvus_collection_prefix: str = "acc_"
+    # Proposal 024 — TurboVec embedded quantized backend (TurboQuant).
+    # Zero-infrastructure recall: the index lives in the agent pod next to
+    # a SQLite record store.  In rhoai mode this is the DEFAULT when no
+    # milvus_uri is configured (operator decision 2026-06-12) — Milvus
+    # remains the choice for shared multi-writer stores and can be used
+    # in addition; see docs/howto-vector-backends.md for the trade-offs.
+    turbovec_path: str = "/app/data/turbovec"
+    # TurboQuant bit width (2 or 4).  4 = effectively lossless recall at
+    # k>=4 per upstream benchmarks; 2 halves memory again at a small
+    # recall cost.  Leave at 4 unless memory-starved at the edge.
+    turbovec_bit_width: int = 4
 
 
 class LLMConfig(BaseModel):
@@ -1067,8 +1111,22 @@ class ACCConfig(BaseModel):
     @model_validator(mode="after")
     def _validate_deploy_mode_fields(self) -> "ACCConfig":
         if self.deploy_mode == "rhoai":
-            if not self.vector_db.milvus_uri:
-                raise ValueError("vector_db.milvus_uri is required in rhoai deploy_mode")
+            # Proposal 024 (operator decision 2026-06-12): a corpus must come
+            # up with working vector recall out of the box.  When the operator
+            # neither picked a backend nor pointed at a Milvus, default to the
+            # embedded TurboVec store instead of failing validation.  Explicit
+            # choices are honoured unchanged — and an explicit milvus backend
+            # still requires its URI.
+            if (
+                "backend" not in self.vector_db.model_fields_set
+                and not self.vector_db.milvus_uri
+            ):
+                self.vector_db.backend = "turbovec"
+            if self.vector_db.backend == "milvus" and not self.vector_db.milvus_uri:
+                raise ValueError(
+                    "vector_db.milvus_uri is required when vector_db.backend is "
+                    "'milvus' in rhoai deploy_mode"
+                )
             if not self.llm.vllm_inference_url and not self.llm.llama_stack_url:
                 raise ValueError(
                     "llm.vllm_inference_url or llm.llama_stack_url is required in rhoai deploy_mode"
@@ -1172,9 +1230,13 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_COLLECTIVE_ID":            ("agent", "collective_id"),
     "ACC_NATS_URL":                 ("signaling", "nats_url"),
     "ACC_NATS_HUB_URL":            ("signaling", "hub_url"),
+    "ACC_VECTOR_BACKEND":           ("vector_db", "backend"),
     "ACC_LANCEDB_PATH":             ("vector_db", "lancedb_path"),
     "ACC_MILVUS_URI":               ("vector_db", "milvus_uri"),
     "ACC_MILVUS_COLLECTION_PREFIX": ("vector_db", "milvus_collection_prefix"),
+    # Proposal 024 — TurboVec embedded quantized backend
+    "ACC_TURBOVEC_PATH":            ("vector_db", "turbovec_path"),
+    "ACC_TURBOVEC_BIT_WIDTH":       ("vector_db", "turbovec_bit_width"),
     "ACC_LLM_BACKEND":              ("llm", "backend"),
     "ACC_OLLAMA_BASE_URL":          ("llm", "ollama_base_url"),
     "ACC_OLLAMA_MODEL":             ("llm", "ollama_model"),
@@ -1404,6 +1466,27 @@ def build_backends(config: ACCConfig) -> BackendBundle:
             uri=config.vector_db.milvus_uri,
             collection_prefix=config.vector_db.milvus_collection_prefix,
         )
+    elif config.vector_db.backend == "turbovec":
+        # Proposal 024 — embedded quantized index + SQLite record store.
+        # The `turbovec` extra is optional (pinned wheel); fall back to
+        # LanceDB with a loud warning rather than crash-looping the agent
+        # when the wheel is absent (e.g. unsupported arch).  SQLite/.tvim
+        # data is left untouched for when the dependency returns.
+        try:
+            from acc.backends.vector_turbovec import TurboVecBackend
+            vector = TurboVecBackend(
+                config.vector_db.turbovec_path,
+                bit_width=config.vector_db.turbovec_bit_width,
+            )
+        except ImportError as e:
+            logging.getLogger("acc.config").warning(
+                "vector_db.backend=turbovec but the turbovec package is not "
+                "installed (%s) — falling back to LanceDB at %s. "
+                "Install with: pip install 'agentic-cell-corpus[turbovec]'",
+                e, config.vector_db.lancedb_path,
+            )
+            from acc.backends.vector_lancedb import LanceDBBackend
+            vector = LanceDBBackend(config.vector_db.lancedb_path)
     else:
         raise ValueError(f"Unknown vector backend: {config.vector_db.backend}")
 

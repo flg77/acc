@@ -107,6 +107,12 @@ CORE_BASELINE_SKILLS: frozenset[str] = frozenset(
         "disk_free",
         "shell_exec",
         "ssh_exec",
+        # Proposal 024 P3 — governed RAG document store.  Granted by the
+        # built-in ``document_store`` role flag (any pack's role may set
+        # it), so the skills ship in the image like fs_read, never in a
+        # pack.  acc/docstore.py + skills/doc_{ingest,retrieve}/.
+        "doc_ingest",
+        "doc_retrieve",
     }
 )
 

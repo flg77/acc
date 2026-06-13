@@ -180,10 +180,11 @@ func TestAgentDeployment_UnderscoreRoleNameSanitized(t *testing.T) {
 	if _, err := r.ReconcileCollective(context.Background(), corpus, col, "acc-role-research-01", ""); err != nil {
 		t.Fatalf("ReconcileCollective: %v", err)
 	}
-	deploy := &appsv1.Deployment{}
+	// Proposal 024 — agents are StatefulSets (per-replica PVC).
+	deploy := &appsv1.StatefulSet{}
 	if err := c.Get(context.Background(),
 		types.NamespacedName{Namespace: "acc-system", Name: "research-coding-agent"}, deploy); err != nil {
-		t.Fatalf("expected sanitized Deployment research-coding-agent: %v", err)
+		t.Fatalf("expected sanitized StatefulSet research-coding-agent: %v", err)
 	}
 	if deploy.Spec.Template.Labels["acc.redhat.io/role"] != "coding_agent" &&
 		deploy.Spec.Selector.MatchLabels["acc.redhat.io/role"] != "coding_agent" {
@@ -213,10 +214,10 @@ func TestAgentDeployment_InjectsInferenceURL(t *testing.T) {
 				t.Fatalf("ReconcileCollective: %v", err)
 			}
 
-			deploy := &appsv1.Deployment{}
+			deploy := &appsv1.StatefulSet{}
 			if err := c.Get(context.Background(),
 				types.NamespacedName{Namespace: "acc-system", Name: "research-observer"}, deploy); err != nil {
-				t.Fatalf("get Deployment: %v", err)
+				t.Fatalf("get StatefulSet: %v", err)
 			}
 			found := ""
 			for _, ctr := range deploy.Spec.Template.Spec.Containers {

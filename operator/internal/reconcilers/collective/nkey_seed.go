@@ -11,7 +11,6 @@ package collective
 import (
 	"fmt"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 
@@ -43,8 +42,10 @@ func nkeySecretName(corpusName string) string {
 
 // ApplyNKeySeed projects the agent's role NKey seed into the pod and
 // sets the ACC_NKEY_* env vars.  No-op when NKey auth is disabled.
+// tmpl is the agent pod template (&workload.Spec.Template) — proposal 024
+// switched agents to StatefulSet, so this takes the pod template directly.
 func ApplyNKeySeed(
-	deploy *appsv1.Deployment,
+	tmpl *corev1.PodTemplateSpec,
 	corpus *accv1alpha1.AgentCorpus,
 	role accv1alpha1.AgentRole,
 ) {
@@ -52,7 +53,7 @@ func ApplyNKeySeed(
 	if nkeyAuth == nil || !nkeyAuth.Enabled {
 		return
 	}
-	podSpec := &deploy.Spec.Template.Spec
+	podSpec := &tmpl.Spec
 	if len(podSpec.Containers) == 0 {
 		return
 	}

@@ -48,6 +48,9 @@ signaling:
 
 vector_db:
   backend: {{ .VectorBackend }}
+{{- if .TurboVecPath }}
+  turbovec_path: {{ .TurboVecPath }}
+{{- end }}
 {{- if .MilvusURI }}
   milvus_uri: {{ .MilvusURI }}
   milvus_collection_prefix: {{ .MilvusPrefix }}
@@ -111,6 +114,7 @@ type ACCConfigData struct {
 
 	// Vector DB
 	VectorBackend string
+	TurboVecPath  string
 	MilvusURI     string
 	MilvusPrefix  string
 
@@ -189,20 +193,38 @@ func RenderACCConfig(corpus *accv1alpha1.AgentCorpus, collective *accv1alpha1.Ag
 		}
 	}
 
-	// Vector DB backend.
-	// edge uses LanceDB on local NVMe (same as standalone).
-	switch corpus.Spec.DeployMode {
-	case accv1alpha1.DeployModeRHOAI:
-		data.VectorBackend = "milvus"
-		if milvus := corpus.Spec.Infrastructure.Milvus; milvus != nil {
+	// Vector DB backend (proposal 024).
+	//
+	// Resolution: an explicit infrastructure.vectorBackend wins.  Otherwise
+	// default per deployMode — rhoai picks turbovec (embedded, zero extra
+	// infra) UNLESS a Milvus URI is configured, in which case milvus; every
+	// other mode picks lancedb.  turbovec persists to a PVC-backed dir;
+	// milvus needs a URI (CEL-guarded on the CRD).
+	const turboVecPath = "/app/data/turbovec"
+	milvus := corpus.Spec.Infrastructure.Milvus
+	backend := corpus.Spec.Infrastructure.VectorBackend
+	if backend == "" {
+		if corpus.Spec.DeployMode == accv1alpha1.DeployModeRHOAI &&
+			milvus != nil && milvus.URI != "" {
+			backend = "milvus"
+		} else if corpus.Spec.DeployMode == accv1alpha1.DeployModeRHOAI {
+			backend = "turbovec"
+		} else { // standalone, edge
+			backend = "lancedb"
+		}
+	}
+	data.VectorBackend = backend
+	switch backend {
+	case "milvus":
+		if milvus != nil {
 			data.MilvusURI = milvus.URI
 			data.MilvusPrefix = milvus.CollectionPrefix
 			if data.MilvusPrefix == "" {
 				data.MilvusPrefix = "acc_"
 			}
 		}
-	default: // standalone, edge
-		data.VectorBackend = "lancedb"
+	case "turbovec":
+		data.TurboVecPath = turboVecPath
 	}
 
 	// LLM backend: apply edge defaults when the collective spec uses ollama

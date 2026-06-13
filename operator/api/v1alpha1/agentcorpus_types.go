@@ -203,10 +203,28 @@ type InfrastructureSpec struct {
 	// Redis configures the working memory store.
 	Redis RedisSpec `json:"redis"`
 
-	// Milvus configures the datacenter vector DB (rhoai mode only).
-	// Required when deployMode=rhoai; ignored in standalone mode.
+	// Milvus configures the datacenter vector DB.
+	// Only consulted when vectorBackend is "milvus" (and required then in
+	// rhoai mode); ignored otherwise.  The operator does NOT install Milvus.
 	// +optional
 	Milvus *MilvusSpec `json:"milvus,omitempty"`
+
+	// VectorBackend selects the agent vector store (proposal 024).
+	//
+	//   - "turbovec" (default in rhoai when no Milvus URI is set):
+	//     embedded quantized index + SQLite record store inside the agent
+	//     pod, persisted to a PVC.  Zero extra infrastructure; the corpus
+	//     has working recall out of the box.
+	//   - "lancedb": embedded full-record store (default standalone/edge).
+	//   - "milvus": shared datacenter vector service; requires
+	//     infrastructure.milvus.uri.  Milvus remains the right choice for
+	//     large shared multi-writer corpora and can be used in addition.
+	//
+	// Empty = operator default per deployMode (rhoai→turbovec unless a
+	// Milvus URI is configured, then milvus; standalone/edge→lancedb).
+	// +kubebuilder:validation:Enum=turbovec;lancedb;milvus
+	// +optional
+	VectorBackend string `json:"vectorBackend,omitempty"`
 }
 
 // NATSSpec configures the internal NATS JetStream deployment.

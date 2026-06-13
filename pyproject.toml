@@ -100,6 +100,15 @@ mlflow = [
     # ACC_MLFLOW_TRACKING_URI; acc.backends.mlflow_runs no-ops without it.
     "mlflow-skinny>=2.14,<3.0",
 ]
+turbovec = [
+    # Proposal 024 — TurboVec embedded quantized vector backend
+    # (vector_db.backend: turbovec; the rhoai default when no Milvus is
+    # configured).  EXACT pin, operator policy "pin and bump": the library
+    # is young (first release 2026-05) — bumps go through the backend
+    # parity suite (tests/test_vector_backend_parity.py) deliberately,
+    # never via a range.  abi3 wheels: linux x86_64/aarch64, win, macos.
+    "turbovec==0.8.0",
+]
 webgui = [
     # acc-webgui — the optional FastAPI + React web frontend.  The
     # React build is a separate Node toolchain (webgui/ tree); only

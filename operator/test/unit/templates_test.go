@@ -142,6 +142,73 @@ func TestRenderACCConfig_OTelBackend(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Vector backend resolution (proposal 024)
+// ---------------------------------------------------------------------------
+
+func TestRenderACCConfig_RHOAIDefaultsTurboVec(t *testing.T) {
+	// rhoai with neither an explicit backend nor a Milvus URI → turbovec,
+	// so a corpus has working recall out of the box (operator decision Q1).
+	corpus := makeTestCorpus()
+	corpus.Spec.DeployMode = accv1alpha1.DeployModeRHOAI
+	collective := makeTestCollective()
+
+	yaml, err := templates.RenderACCConfig(corpus, collective)
+	if err != nil {
+		t.Fatalf("RenderACCConfig error: %v", err)
+	}
+	if !strings.Contains(yaml, "backend: turbovec") {
+		t.Errorf("expected turbovec backend\n\nFull output:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "turbovec_path: /app/data/turbovec") {
+		t.Errorf("expected turbovec_path\n\nFull output:\n%s", yaml)
+	}
+	if strings.Contains(yaml, "milvus_uri") {
+		t.Error("turbovec config should not contain milvus_uri")
+	}
+}
+
+func TestRenderACCConfig_RHOAIWithMilvusURI(t *testing.T) {
+	// A configured Milvus URI in rhoai mode keeps milvus as the backend.
+	corpus := makeTestCorpus()
+	corpus.Spec.DeployMode = accv1alpha1.DeployModeRHOAI
+	corpus.Spec.Infrastructure.Milvus = &accv1alpha1.MilvusSpec{URI: "milvus.acc:19530"}
+	collective := makeTestCollective()
+
+	yaml, err := templates.RenderACCConfig(corpus, collective)
+	if err != nil {
+		t.Fatalf("RenderACCConfig error: %v", err)
+	}
+	if !strings.Contains(yaml, "backend: milvus") {
+		t.Errorf("expected milvus backend\n\nFull output:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "milvus_uri: milvus.acc:19530") {
+		t.Errorf("expected milvus_uri\n\nFull output:\n%s", yaml)
+	}
+	if strings.Contains(yaml, "turbovec_path") {
+		t.Error("milvus config should not contain turbovec_path")
+	}
+}
+
+func TestRenderACCConfig_ExplicitVectorBackendWins(t *testing.T) {
+	// An explicit vectorBackend overrides the per-mode default — turbovec
+	// requested on a standalone corpus.
+	corpus := makeTestCorpus()
+	corpus.Spec.Infrastructure.VectorBackend = "turbovec"
+	collective := makeTestCollective()
+
+	yaml, err := templates.RenderACCConfig(corpus, collective)
+	if err != nil {
+		t.Fatalf("RenderACCConfig error: %v", err)
+	}
+	if !strings.Contains(yaml, "backend: turbovec") {
+		t.Errorf("expected explicit turbovec backend\n\nFull output:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "turbovec_path: /app/data/turbovec") {
+		t.Errorf("expected turbovec_path\n\nFull output:\n%s", yaml)
+	}
+}
+
 func TestRenderNATSConfig_SingleNode(t *testing.T) {
 	corpus := makeTestCorpus()
 	conf, err := templates.RenderNATSConfig(corpus, nil)

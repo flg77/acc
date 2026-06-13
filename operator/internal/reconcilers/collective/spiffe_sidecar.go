@@ -9,7 +9,6 @@
 package collective
 
 import (
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
@@ -121,8 +120,11 @@ jwt_bundle_file_name = "` + spiffeJWTBundleFile + `"
 // helperConfigMapName is the name of the ConfigMap carrying the
 // rendered helper.conf (created by AgentDeploymentReconciler before
 // this is called).
+// tmpl is the agent pod template (&workload.Spec.Template); proposal 024
+// switched agents from Deployment to StatefulSet, so this takes the pod
+// template directly to stay workload-kind agnostic.
 func ApplySpiffeSidecar(
-	deploy *appsv1.Deployment,
+	tmpl *corev1.PodTemplateSpec,
 	collective *accv1alpha1.AgentCollective,
 	helperConfigMapName string,
 ) {
@@ -130,13 +132,13 @@ func ApplySpiffeSidecar(
 		return
 	}
 
-	podSpec := &deploy.Spec.Template.Spec
+	podSpec := &tmpl.Spec
 
 	// 1. Pod annotation — spire-controller-manager's webhook keys on it.
-	if deploy.Spec.Template.ObjectMeta.Annotations == nil {
-		deploy.Spec.Template.ObjectMeta.Annotations = map[string]string{}
+	if tmpl.ObjectMeta.Annotations == nil {
+		tmpl.ObjectMeta.Annotations = map[string]string{}
 	}
-	deploy.Spec.Template.ObjectMeta.Annotations[spirePodAnnotationKey] = spirePodAnnotationValue
+	tmpl.ObjectMeta.Annotations[spirePodAnnotationKey] = spirePodAnnotationValue
 
 	// 2. Volumes: the shared SVID emptyDir, the CSI Workload-API
 	//    volume, and the helper.conf ConfigMap.

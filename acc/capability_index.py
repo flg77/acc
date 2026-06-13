@@ -38,16 +38,74 @@ quietly succeed.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import signal
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("acc.capability_index")
+
+
+# ---------------------------------------------------------------------------
+# Proposal 024 Phase 2 (UC3) — semantic capability routing, flag-gated.
+#
+# When ACC_SEMANTIC_ROUTING is truthy, role queries that carry a ``domain``
+# filter rank roles by cosine similarity between the query text and each
+# role's ``purpose`` (embedded at rebuild time) instead of requiring a
+# substring hit — "analyse SEC filings" then resolves to a capital-markets
+# purpose it shares no literal token with.  Freshly infused packs are
+# picked up by the same rebuild that scans them, so they are routable in
+# the same cycle (TurboQuant-style no-training applies conceptually here
+# too: embeddings are computed per purpose on the spot, no fitting pass).
+#
+# Default OFF for one release: with the flag unset, query behaviour is
+# byte-identical to the pre-024 substring filter.
+# ---------------------------------------------------------------------------
+
+_SEMANTIC_ROUTING_ENV = "ACC_SEMANTIC_ROUTING"
+
+
+def _semantic_routing_enabled() -> bool:
+    return os.environ.get(_SEMANTIC_ROUTING_ENV, "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _default_embed_fn() -> Callable[[str], list[float]] | None:
+    """Lazy local SentenceTransformer, loaded only when semantic routing is
+    actually on (the orchestrator pays ~one model load at boot; nothing is
+    imported otherwise).  Uses the same baked model path contract as the
+    LLM backends (``ACC_EMBEDDING_MODEL_PATH``, default all-MiniLM-L6-v2)."""
+    try:
+        from sentence_transformers import SentenceTransformer  # noqa: PLC0415
+    except Exception as exc:  # pragma: no cover — slim images
+        logger.warning("semantic routing: sentence-transformers unavailable: %s", exc)
+        return None
+    model_path = os.environ.get(
+        "ACC_EMBEDDING_MODEL_PATH", "/app/models/all-MiniLM-L6-v2"
+    )
+    try:
+        model = SentenceTransformer(model_path)
+    except Exception:
+        # Dev workstations without the baked path: fall back to the hub name.
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+    return lambda text: model.encode(text).tolist()
+
+
+def _unit(vec: list[float]) -> list[float] | None:
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm == 0.0 or not math.isfinite(norm):
+        return None
+    return [x / norm for x in vec]
+
+
+def _dot(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +179,7 @@ class CapabilityIndex:
         roles_root: str | os.PathLike = _DEFAULT_ROLES_ROOT,
         mcps_root: str | os.PathLike = _DEFAULT_MCPS_ROOT,
         skill_registry: Any = None,
+        embed_fn: Callable[[str], list[float]] | None = None,
     ) -> None:
         self.cid = cid
         self.roles_root = Path(roles_root)
@@ -129,6 +188,12 @@ class CapabilityIndex:
         self._roles: dict[str, dict[str, Any]] = {}
         self._mcps: dict[str, dict[str, Any]] = {}
         self._revision = 0
+        # Proposal 024 Phase 2 — injected for tests; self-provisioned
+        # lazily (one local SentenceTransformer) when ACC_SEMANTIC_ROUTING
+        # is on and nothing was injected.
+        self._embed_fn = embed_fn
+        self._embed_fn_resolved = embed_fn is not None
+        self._purpose_vecs: dict[str, list[float]] = {}
         self.rebuild()
         self._maybe_install_sighup()
 
@@ -148,12 +213,14 @@ class CapabilityIndex:
         mcps = self._scan_mcps(self.mcps_root)
         self._roles = roles
         self._mcps = mcps
+        self._refresh_purpose_vectors()
         self._revision += 1
         logger.info(
-            "capability_index: rebuilt revision=%d roles=%d mcps=%d",
+            "capability_index: rebuilt revision=%d roles=%d mcps=%d semantic=%d",
             self._revision,
             len(roles),
             len(mcps),
+            len(self._purpose_vecs),
         )
 
     def query(self, q: CapabilityQuery) -> CapabilityReply:
@@ -258,9 +325,84 @@ class CapabilityIndex:
             }
         return out
 
+    # ---- semantic routing (proposal 024 Phase 2 / UC3) -------------------
+
+    def _refresh_purpose_vectors(self) -> None:
+        """Embed every scanned role purpose so domain queries can rank
+        semantically.  Runs inside ``rebuild()`` — a freshly infused pack
+        is therefore routable in the same cycle that discovers it.  Pure
+        no-op (and zero imports) when ACC_SEMANTIC_ROUTING is off."""
+        self._purpose_vecs = {}
+        if not _semantic_routing_enabled():
+            return
+        if not self._embed_fn_resolved:
+            self._embed_fn = _default_embed_fn()
+            self._embed_fn_resolved = True
+        if self._embed_fn is None:
+            return
+        for name, meta in self._roles.items():
+            purpose = (meta.get("purpose") or "").strip()
+            if not purpose:
+                continue
+            try:
+                unit = _unit(self._embed_fn(purpose))
+            except Exception as exc:  # noqa: BLE001 — embedding is best-effort
+                logger.warning("semantic routing: embed failed for %s: %s", name, exc)
+                continue
+            if unit is not None:
+                self._purpose_vecs[name] = unit
+
+    def _semantic_role_ranking(self, q: CapabilityQuery) -> list[CapabilityMatch] | None:
+        """Rank roles by cosine(query domain text, role purpose).  Returns
+        None when the semantic path cannot serve this query (flag off, no
+        embeddings, no domain text, or the query embed fails) — the caller
+        then falls back to the substring filter unchanged."""
+        if not q.domain or not self._purpose_vecs or not _semantic_routing_enabled():
+            return None
+        if self._embed_fn is None:
+            return None
+        try:
+            qvec = _unit(self._embed_fn(q.domain))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("semantic routing: query embed failed: %s", exc)
+            return None
+        if qvec is None:
+            return None
+        scored: list[tuple[float, str]] = []
+        for name, meta in self._roles.items():
+            if q.name and q.name != name:
+                continue
+            if q.task_type and q.task_type not in meta["task_types"]:
+                continue
+            vec = self._purpose_vecs.get(name)
+            if vec is None:
+                continue
+            scored.append((_dot(qvec, vec), name))
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        out: list[CapabilityMatch] = []
+        for score, name in scored:
+            meta = self._roles[name]
+            out.append(
+                CapabilityMatch(
+                    kind="role",
+                    name=name,
+                    summary=meta["purpose"][:140] or f"role {name}",
+                    metadata={
+                        "persona": meta["persona"],
+                        "task_types": meta["task_types"],
+                        "version": meta["version"],
+                        "similarity": round(score, 4),
+                    },
+                )
+            )
+        return out
+
     # ---- filters --------------------------------------------------------
 
     def _filter_roles(self, q: CapabilityQuery) -> list[CapabilityMatch]:
+        semantic = self._semantic_role_ranking(q)
+        if semantic is not None:
+            return semantic
         out: list[CapabilityMatch] = []
         for name, meta in self._roles.items():
             if q.name and q.name != name:

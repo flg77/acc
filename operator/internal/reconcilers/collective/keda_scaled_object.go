@@ -111,8 +111,11 @@ func (r *KEDAScaledObjectReconciler) buildScaledObject(
 
 	spec := map[string]interface{}{
 		"scaleTargetRef": map[string]interface{}{
+			// Proposal 024 — agents are StatefulSets (per-replica PVC for
+			// the embedded vector store).  KEDA scales a StatefulSet the
+			// same way it scales a Deployment.
 			"apiVersion": "apps/v1",
-			"kind":       "Deployment",
+			"kind":       "StatefulSet",
 			"name":       deployName,
 		},
 		"minReplicaCount": int64(rsc.MinReplicas),

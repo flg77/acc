@@ -643,6 +643,36 @@ class Agent:
         except Exception as exc:
             logger.warning("capability_index: build failed: %s", exc)
 
+    def _maybe_register_document_store(self) -> None:
+        """Proposal 024 P3 — register the process-wide governed document
+        store when this agent's role sets ``document_store: true``.
+
+        The ``doc_ingest`` / ``doc_retrieve`` skill adapters are argless
+        (the registry instantiates them so) and resolve the store via
+        ``acc.docstore.active_document_store``; this is where the store is
+        constructed with the agent's real vector backend, embedding fn,
+        and collective_id (the scope every retrieval is bound to).  Best-
+        effort: a failure logs but never aborts boot (heartbeats keep
+        flowing per the AoA-P1 invariant)."""
+        try:
+            role_def = getattr(self.config, "role_definition", None)
+            if role_def is None or not getattr(role_def, "document_store", False):
+                return
+            from acc.docstore import DocumentStore, set_active_document_store  # noqa: PLC0415
+            store = DocumentStore(
+                vector=self.backends.vector,
+                embed_fn=self.backends.llm.embed,
+                collective_id=self.config.agent.collective_id,
+            )
+            set_active_document_store(store)
+            logger.info(
+                "docstore: registered for role=%s collective=%s",
+                self.config.agent.role,
+                self.config.agent.collective_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — never abort boot
+            logger.warning("docstore: registration failed: %s", exc)
+
     async def _maybe_start_reward_harness(self) -> None:
         """Construct + subscribe the policy-layer reward harness when
         ``ACC_POLICY_LAYER_ENABLED`` is set.
@@ -2890,6 +2920,11 @@ class Agent:
             # capability.query NATS subject (wired in _task_loop).  Cheap
             # for non-orchestrator roles (early-return on role check).
             self._maybe_build_capability_index()
+            # Proposal 024 P3 — register the governed RAG document store
+            # when this role opts in (document_store: true).  No-op for
+            # every other role; needs a vector backend + an embedding-
+            # capable LLM backend (both already built).
+            self._maybe_register_document_store()
             # Run heartbeat, task, role-update, bridge-result, centroid,
             # (arbiter only) oversight-decision and plan-orchestration
             # loops concurrently.  Non-arbiter agents' plan / oversight

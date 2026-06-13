@@ -86,6 +86,30 @@ _SCHEMAS: dict[str, pa.Schema] = {
         pa.field("confidence", pa.float32()),
         pa.field("embedding", pa.list_(pa.float32(), 384)),
     ]),
+    # Proposal 024 P3 — governed RAG document store.  Two tables: a row
+    # store of ingested documents (no vector) and the per-chunk index
+    # (384-dim embedding).  Both stamped with collective_id for scoped
+    # retrieval (acc/docstore.py).
+    "documents": pa.schema([
+        pa.field("id", pa.utf8()),
+        pa.field("collective_id", pa.utf8()),
+        pa.field("title", pa.utf8()),
+        pa.field("source", pa.utf8()),
+        pa.field("tags_json", pa.utf8()),
+        pa.field("chunk_count", pa.int64()),
+        pa.field("created_at", pa.float64()),
+    ]),
+    "doc_chunks": pa.schema([
+        pa.field("id", pa.utf8()),
+        pa.field("doc_id", pa.utf8()),
+        pa.field("collective_id", pa.utf8()),
+        pa.field("seq", pa.int64()),
+        pa.field("text", pa.utf8()),
+        pa.field("title", pa.utf8()),    # denormalized for citation
+        pa.field("source", pa.utf8()),   # denormalized for citation
+        pa.field("created_at", pa.float64()),
+        pa.field("embedding", pa.list_(pa.float32(), 384)),
+    ]),
 }
 
 _STANDARD_TABLES = list(_SCHEMAS.keys())

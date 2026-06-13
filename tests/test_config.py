@@ -35,13 +35,47 @@ class TestACCConfigValidation:
         assert config.agent.role == "ingester"
         assert config.signaling.nats_url == "nats://localhost:4222"
 
-    def test_rhoai_requires_milvus_uri(self):
+    def test_rhoai_defaults_to_turbovec_without_milvus(self):
+        """Proposal 024 (operator decision 2026-06-12): rhoai with neither an
+        explicit backend nor a Milvus URI comes up on the embedded TurboVec
+        store instead of failing validation — a corpus always has working
+        vector recall out of the box."""
+        config = ACCConfig.model_validate({
+            "deploy_mode": "rhoai",
+            "vector_db": {"milvus_uri": ""},
+            "llm": {"vllm_inference_url": "http://vllm:8000"},
+        })
+        assert config.vector_db.backend == "turbovec"
+
+    def test_rhoai_explicit_milvus_requires_uri(self):
+        """An explicit milvus backend still demands its URI (the pre-024
+        guard, now scoped to the explicit choice)."""
         with pytest.raises(ValidationError, match="milvus_uri"):
             ACCConfig.model_validate({
                 "deploy_mode": "rhoai",
-                "vector_db": {"milvus_uri": ""},
+                "vector_db": {"backend": "milvus", "milvus_uri": ""},
                 "llm": {"vllm_inference_url": "http://vllm:8000"},
             })
+
+    def test_rhoai_explicit_backend_not_overridden(self):
+        """An explicit non-milvus choice is honoured — the turbovec default
+        only fills the unset case."""
+        config = ACCConfig.model_validate({
+            "deploy_mode": "rhoai",
+            "vector_db": {"backend": "lancedb"},
+            "llm": {"vllm_inference_url": "http://vllm:8000"},
+        })
+        assert config.vector_db.backend == "lancedb"
+
+    def test_rhoai_milvus_uri_alone_keeps_default_backend(self):
+        """A configured Milvus URI without an explicit backend keeps the
+        pre-024 behaviour (no silent backend flip either way)."""
+        config = ACCConfig.model_validate({
+            "deploy_mode": "rhoai",
+            "vector_db": {"milvus_uri": "http://milvus:19530"},
+            "llm": {"vllm_inference_url": "http://vllm:8000"},
+        })
+        assert config.vector_db.backend == "lancedb"
 
     def test_rhoai_requires_llm_url(self):
         with pytest.raises(ValidationError, match="vllm_inference_url.*llama_stack_url"):

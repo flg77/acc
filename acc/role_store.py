@@ -180,13 +180,28 @@ class RoleStore:
         if self._vector is None:
             return None
         try:
-            tbl = self._vector._db.open_table("role_definitions")
-            rows = (
-                tbl.search()
-                .where(f"agent_id = '{self._agent_id}'")
-                .limit(1)
-                .to_list()
-            )
+            # Proposal 024 — backend-agnostic structured read.  The
+            # historical LanceDB private-handle path stays first; backends
+            # without that shape (TurboVec's _db is sqlite3) duck-type
+            # ``get_records`` instead.
+            db = getattr(self._vector, "_db", None)
+            open_table = getattr(db, "open_table", None)
+            if callable(open_table):
+                tbl = open_table("role_definitions")
+                rows = (
+                    tbl.search()
+                    .where(f"agent_id = '{self._agent_id}'")
+                    .limit(1)
+                    .to_list()
+                )
+            else:
+                get_records = getattr(self._vector, "get_records", None)
+                if not callable(get_records):
+                    return None
+                rows = get_records(
+                    "role_definitions",
+                    field="agent_id", value=self._agent_id, limit=1,
+                )
             if not rows:
                 return None
             row = rows[0]

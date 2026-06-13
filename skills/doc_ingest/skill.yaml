@@ -1,0 +1,50 @@
+# skills/doc_ingest/skill.yaml — governed RAG ingestion (proposal 024 P3).
+#
+# Chunks, embeds, and stores a document into the collective-scoped
+# document store.  Every chunk is stamped with the agent's own
+# collective_id so retrieval scoping (doc_retrieve) is enforceable.
+# risk_level MEDIUM: writes to the vector store (not the filesystem, not
+# the network).
+
+purpose:        "Ingest a document into the collective's RAG store (chunk + embed + store)."
+version:        "0.1.0"
+adapter_class:  "DocIngestSkill"
+risk_level:     "MEDIUM"
+domain_id:      "document_store"
+tags:           ["rag", "ingestion", "document_store", "write"]
+
+input_schema:
+  type: object
+  properties:
+    title:
+      type: string
+      description: "Human-readable document title (used in citations)."
+    text:
+      type: string
+      description: "Full document text; chunked paragraph-wise before embedding."
+    source:
+      type: string
+      description: "Optional provenance (URL, path, ticket id)."
+    tags:
+      type: array
+      items: {type: string}
+      description: "Optional free-form tags stored with the document."
+  required: ["title", "text"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    doc_id:  {type: string}
+    chunks:  {type: integer, minimum: 0}
+    title:   {type: string}
+  required: [doc_id, chunks, title]
+  additionalProperties: false
+
+description: |
+  Governed RAG ingestion (proposal 024 P3).  Splits the document into
+  ~1200-char paragraph-respecting chunks, embeds each (384-dim MiniLM by
+  default), and stores them in the collective-scoped document store with
+  the agent's collective_id stamped on every chunk.  Returns the new
+  doc_id and chunk count.  Granted automatically to roles with
+  ``document_store: true`` (e.g. the @acc/rag-roles document_curator).

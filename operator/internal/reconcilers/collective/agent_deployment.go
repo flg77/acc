@@ -16,6 +16,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -27,6 +28,26 @@ import (
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/templates"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/util"
 )
+
+// Proposal 024 — agent StatefulSet persistence.
+const (
+	// dataVolumeName is the per-pod PVC (VolumeClaimTemplate) mounted at
+	// /app/data: the embedded vector store + SQLite records live here.
+	dataVolumeName = "acc-data"
+	// agentDataVolumeSize is the default per-agent PVC request.  Sized for
+	// a quantized turbovec corpus (~192 B/vector at 4-bit) plus the SQLite
+	// record store + LanceDB fallback; ample for demo/edge workloads.
+	agentDataVolumeSize = "2Gi"
+)
+
+// agentHeadlessServiceName is the governing (headless) Service every agent
+// StatefulSet in a collective references via spec.serviceName.  One per
+// collective; created by ReconcileCollective.  Agents are NATS clients
+// (outbound), so stable inbound DNS is nominal — the Service exists to
+// satisfy the StatefulSet contract and give pods stable identities.
+func agentHeadlessServiceName(collective *accv1alpha1.AgentCollective) string {
+	return fmt.Sprintf("%s-agents", collective.Name)
+}
 
 // AgentDeploymentResult carries per-role ready/desired counts back to the
 // parent CollectiveReconciler so it can compute the collective phase.
@@ -85,6 +106,34 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 		return nil
 	}); err != nil {
 		return result, fmt.Errorf("upsert acc-config ConfigMap: %w", err)
+	}
+
+	// -----------------------------------------------------------------------
+	// Headless governing Service for the agent StatefulSets (proposal 024).
+	// One per collective; selects every agent pod by collective id.  Agents
+	// talk OUT to NATS, so this is for StatefulSet pod identity, not inbound
+	// traffic — hence ClusterIP None + publishNotReadyAddresses.
+	// -----------------------------------------------------------------------
+	headlessName := agentHeadlessServiceName(collective)
+	headlessLabels := util.CollectiveLabels(corpus.Name, collective.Spec.CollectiveID, "agents", corpus.Spec.Version)
+	headlessSvc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      headlessName,
+			Namespace: ns,
+			Labels:    headlessLabels,
+		},
+		Spec: corev1.ServiceSpec{
+			ClusterIP:                corev1.ClusterIPNone,
+			PublishNotReadyAddresses: true,
+			Selector:                 map[string]string{accv1alpha1.LabelCollectiveID: collective.Spec.CollectiveID},
+		},
+	}
+	if _, err := util.Upsert(ctx, r.Client, r.Scheme, collective, headlessSvc, func(existing client.Object) error {
+		// ClusterIP is immutable; only re-assert selector + labels.
+		existing.(*corev1.Service).Spec.Selector = headlessSvc.Spec.Selector
+		return nil
+	}); err != nil {
+		return result, fmt.Errorf("upsert agent headless Service: %w", err)
 	}
 
 	// -----------------------------------------------------------------------
@@ -169,18 +218,39 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 
 	image := util.ComponentImage(corpus, "acc-agent-core", corpus.Spec.Version)
 
-	deploy := &appsv1.Deployment{
+	// Proposal 024 — agents are StatefulSets so each replica gets its own
+	// PVC (VolumeClaimTemplates) for the embedded vector store + records.
+	// turbovec is single-writer (one index per pod), so a shared RWO PVC
+	// would deadlock replica #2; per-replica volumes are the correct shape
+	// and also give LanceDB durable persistence (it writes /app/data too).
+	// The headless governing Service is created once per collective in
+	// ReconcileCollective.
+	deploy := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deployName,
 			Namespace: ns,
 			Labels:    objectLabels,
 		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr.To(roleSpec.Replicas),
+		Spec: appsv1.StatefulSetSpec{
+			Replicas:    ptr.To(roleSpec.Replicas),
+			ServiceName: agentHeadlessServiceName(collective),
 			// Selector labels are immutable — keep the canonical agent set
 			// only; objectLabels (which may include kagenti.io/type=agent)
 			// ride on the metadata + pod template instead.
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: dataVolumeName},
+					Spec: corev1.PersistentVolumeClaimSpec{
+						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+						Resources: corev1.VolumeResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceStorage: resource.MustParse(agentDataVolumeSize),
+							},
+						},
+					},
+				},
+			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: objectLabels},
 				Spec: corev1.PodSpec{
@@ -232,6 +302,14 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 									SubPath:   "acc-role.yaml",
 									ReadOnly:  true,
 								},
+								// Proposal 024 — durable agent data dir.  The
+								// embedded vector store lives here (turbovec
+								// .tvim + records.db, or lancedb); backed by the
+								// per-pod PVC from VolumeClaimTemplates below so
+								// episodic memory + the RAG corpus survive
+								// restarts.  Milvus-backed agents simply leave it
+								// near-empty.
+								{Name: dataVolumeName, MountPath: "/app/data"},
 							}, manifestMounts...),
 						},
 					},
@@ -266,8 +344,8 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 							},
 						},
 					}, manifestVolumes...),
-					// Append any role-specific VolumeClaimTemplates as emptyDir for Deployments
-					// (StatefulSets would handle this differently; Deployments use PVC directly).
+					// Per-replica /app/data PVC is the StatefulSet's
+					// VolumeClaimTemplate above — no extra Volume entry here.
 				},
 			},
 		},
@@ -275,27 +353,31 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 
 	// Proposal 011 PR-3 — inject the spiffe-helper sidecar + supporting
 	// volumes/mounts/env when the collective has SPIFFE enabled.  No-op
-	// otherwise.  Applied after the base Deployment is built so the
+	// otherwise.  Applied after the base pod template is built so the
 	// agent container is already at index 0.
-	ApplySpiffeSidecar(deploy, collective, SpiffeHelperConfigMapName(collective))
+	ApplySpiffeSidecar(&deploy.Spec.Template, collective, SpiffeHelperConfigMapName(collective))
 
 	// Proposal 013 PR-4 — project this role's NATS NKey seed from the
 	// operator-generated Secret + set the ACC_NKEY_* env vars.  No-op
 	// when spec.infrastructure.nats.nkeyAuth is disabled.
-	ApplyNKeySeed(deploy, corpus, role)
+	ApplyNKeySeed(&deploy.Spec.Template, corpus, role)
 
+	// Upsert: Replicas + Template are mutable on a StatefulSet;
+	// VolumeClaimTemplates + ServiceName are immutable post-create, so the
+	// reconcile closure deliberately does NOT touch them (a forbidden-field
+	// patch would otherwise fail the update).
 	upsertResult, err := util.Upsert(ctx, r.Client, r.Scheme, collective, deploy, func(existing client.Object) error {
-		existingDeploy := existing.(*appsv1.Deployment)
-		existingDeploy.Spec.Replicas = deploy.Spec.Replicas
-		existingDeploy.Spec.Template = deploy.Spec.Template
+		existingSts := existing.(*appsv1.StatefulSet)
+		existingSts.Spec.Replicas = deploy.Spec.Replicas
+		existingSts.Spec.Template = deploy.Spec.Template
 		return nil
 	})
 	if err != nil {
-		return 0, 0, false, fmt.Errorf("upsert Deployment %s: %w", deployName, err)
+		return 0, 0, false, fmt.Errorf("upsert StatefulSet %s: %w", deployName, err)
 	}
 
-	// Read the live Deployment to get ready replicas.
-	liveDeploy := &appsv1.Deployment{}
+	// Read the live StatefulSet to get ready replicas.
+	liveDeploy := &appsv1.StatefulSet{}
 	if err := r.Client.Get(ctx, types.NamespacedName{Namespace: ns, Name: deployName}, liveDeploy); err != nil {
 		return 0, roleSpec.Replicas, true, nil
 	}
