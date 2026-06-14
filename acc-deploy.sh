@@ -11,15 +11,17 @@
 #   setup     Scaffold ./.env from ./.env.example if absent.  No-op when
 #             ./.env is already present.  Run this once after the first
 #             clone; or use ./env/use.sh to pick a backend preset.
-#   apply [SPEC] [--dry-run] [--prune]
+#   apply [SPEC] [--dry-run] [--prune] [--recreate]
 #             Declarative agentset.  Reads collective.yaml (or SPEC) and
 #             synthesizes a podman-compose overlay; brings up any agent
 #             declared in the spec that's not already running.  SPEC may be a
 #             path OR a bare preset name resolved under collectives/ — e.g.
 #             `apply coding-split` -> collectives/collective.coding-split.yaml.
-#             --dry-run prints the reconcile diff without acting.  --prune
-#             opts into orphan removal (reconcile-down); OFF by default so the
-#             operator's attached acc-tui is never removed.  PR-B.
+#             Additive + non-disruptive by default (--no-recreate): the attached
+#             acc-tui + baseline are left running in place.  --dry-run prints the
+#             reconcile diff without acting.  --prune opts into orphan removal
+#             (reconcile-down).  --recreate applies config changes to existing
+#             agents (force-recreate — WILL restart matched services).  PR-B.
 #   pkg <verb> [args]
 #             Load + inspect ecosystem role packs from the deploy host.  Verbs
 #             mirror the native acc-pkg CLI; `add` is the catalog-fetch helper:
@@ -526,10 +528,12 @@ case "$COMMAND" in
         SPEC=""
         DRY_RUN=false
         PRUNE=false
+        RECREATE=false
         for _a in "$@"; do
             case "$_a" in
                 --dry-run)              DRY_RUN=true ;;
                 --prune|--remove-orphans) PRUNE=true ;;
+                --recreate|--force-recreate) RECREATE=true ;;
                 -*) echo "apply: unknown flag '$_a'" >&2; exit 1 ;;
                 *)  [[ -z "$SPEC" ]] && SPEC="$_a" ;;
             esac
@@ -608,7 +612,20 @@ case "$COMMAND" in
         # declared agents without touching the baseline, so the default no
         # longer prunes anything.  Even under --prune the TUI is safe because
         # BASE_CMD makes the tui profile part of the active config.
+        #
+        # `--no-recreate` keeps apply purely ADDITIVE: already-running services
+        # (acc-tui + the baseline) are left in place — only not-yet-running
+        # agents are created.  Without it, `up -d` reconciles + RECREATES the
+        # whole config (the stack is often started by systemd with a different
+        # config-hash), which restarts the operator's attached acc-tui out from
+        # under them.  Pass `--recreate` to opt into applying config changes to
+        # existing agents (this WILL restart matched services).
         APPLY_CMD=("${BASE_CMD[@]}" -f "$OVERLAY_PATH" up -d)
+        if [[ "$RECREATE" == "true" ]]; then
+            APPLY_CMD+=(--force-recreate)
+        else
+            APPLY_CMD+=(--no-recreate)
+        fi
         if [[ "$PRUNE" == "true" ]]; then
             APPLY_CMD+=(--remove-orphans)
         fi
