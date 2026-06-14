@@ -108,15 +108,21 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Set Installing phase while we exec.
 	r.setPhase(ctx, cr, PhaseInstalling, "Exec", fmt.Sprintf("exec into %s", pod.Name))
 
-	// Build the acc-cli command. An empty constraint means "latest": pass the
-	// bare @scope/name so the resolver picks the highest published version
+	// Build the acc CLI command. Invoke via `python3 -m acc.cli` rather than the
+	// bare `acc-cli` entry-point script: the console script lands in the venv
+	// bin, which is NOT on a non-login `kubectl exec` $PATH in the agent pod
+	// (observed live: "executable file `acc-cli` not found in $PATH"). The agent
+	// image (ubi10/python-312-minimal, CMD `python3 -m acc.agent`) always has
+	// python3, and acc/cli/__main__.py makes `python3 -m acc.cli` equivalent to
+	// the entry point. An empty constraint means "latest": pass the bare
+	// @scope/name so the resolver picks the highest published version
 	// ("name@" would be malformed).
 	pkgRef := cr.Spec.Name
 	if cr.Spec.Constraint != "" {
 		pkgRef = fmt.Sprintf("%s@%s", cr.Spec.Name, cr.Spec.Constraint)
 	}
 	args := []string{
-		"acc-cli", "collective", "pkg-install-direct",
+		"python3", "-m", "acc.cli", "collective", "pkg-install-direct",
 		pkgRef,
 		"--json",
 	}
