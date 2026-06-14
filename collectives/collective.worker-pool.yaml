@@ -5,8 +5,12 @@
 # pre-spawn a pool of DORMANT workers and let the arbiter's reconcile
 # loop assign roles to them at runtime via signed ROLE_ASSIGN.
 #
+# The coding_agent subroles are served by @acc/workspace-roles; `apply`
+# installs it from the catalog at boot via required_packages (or pre-install
+# with `./acc-deploy.sh pkg add @acc/workspace-roles`).
+#
 # Apply with:
-#   ./acc-deploy.sh apply collective.worker-pool.yaml
+#   ./acc-deploy.sh apply worker-pool
 # then trigger the assignment:
 #   acc-cli nats pub acc.sol-01.collective.reconcile '{}'
 #
@@ -21,6 +25,9 @@
 # headroom if you expect to infuse more roles at runtime via the TUI.
 
 collective_id: sol-01
+
+required_packages:
+  - "@acc/workspace-roles@^1.0"
 
 # Desired roles — the coding_agent micro-cycle subroles.
 agents:

@@ -103,7 +103,7 @@ EOF
 ./acc-deploy.sh up
 
 # 3. Apply the worker-pool overlay → adds acc-worker-1..N dormant.
-./acc-deploy.sh apply collective.worker-pool.yaml
+./acc-deploy.sh apply worker-pool
 
 # 4. Confirm the pool is up.
 podman ps --format '{{.Names}}\t{{.Status}}' | grep -E 'acc-worker|acc-agent'

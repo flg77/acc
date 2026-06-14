@@ -1,4 +1,4 @@
-# examples/collectives/demo-multi.yaml
+# collectives/demo-multi.yaml
 # =============================================================================
 # Demo parent collective (proposal 018 PR-DEMO1).
 #
@@ -9,8 +9,8 @@
 # / demo-financial.yaml).
 #
 # Run:
-#   acc-pkg install @acc/workspace-roles@^1.0 @acc/devops-roles@^1.0 @acc/business-roles@^1.0
-#   ./acc-deploy.sh apply examples/collectives/demo-multi.yaml
+#   ./acc-deploy.sh pkg add @acc/workspace-roles @acc/devops-roles @acc/business-roles
+#   ./acc-deploy.sh apply demo-multi
 # =============================================================================
 
 collective_id: demo-multi

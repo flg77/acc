@@ -10,10 +10,18 @@
 # model_id values reference models.yaml (acc.models registry); edit
 # them to match the models you have configured.
 #
+# The `coding_agent_*` worker subroles are served by @acc/workspace-roles;
+# `reviewer` is a CONTROL/substrate role (always present).  `apply` installs
+# the pack from the catalog at boot via required_packages — or pre-install:
+#   ./acc-deploy.sh pkg add @acc/workspace-roles
+#
 # Apply:
-#   ./acc-deploy.sh apply collective.reviewer.yaml
+#   ./acc-deploy.sh apply reviewer
 
 collective_id: sol-01
+
+required_packages:
+  - "@acc/workspace-roles@^1.0"
 
 agents:
   # ── Cheap/fast workers ───────────────────────────────────────────────

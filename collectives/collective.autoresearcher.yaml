@@ -5,13 +5,22 @@
 # distinct cluster_id so the arbiter's PlanExecutor can fan out
 # per-phase tasks without crossing wires.
 #
-# Apply:
-#   ./acc-deploy.sh apply collective.autoresearcher.yaml
-# Mirrors what the legacy `AUTORESEARCHER=true ./acc-deploy.sh up`
-# brought up, but from this declarative YAML — env-var path is
-# deprecated and removed in PR-E.
+# The six research_* roles are served by the @acc/research-roles family pack
+# (no longer in-tree).  `required_packages` makes `apply` fetch + verify +
+# install it from the catalog at boot — or pre-install it:
+#   ./acc-pkg install @acc/research-roles@^1.0
+#   ./acc-deploy.sh pkg add @acc/research-roles
+#
+# Apply (the declarative replacement for `AUTORESEARCHER=true ./acc-deploy.sh up`):
+#   ./acc-deploy.sh apply autoresearcher
+#   ./acc-deploy.sh apply --dry-run autoresearcher
+# The real research MCP servers still need `AUTORESEARCHER=true` on `up`
+# (web_search_brave / web_fetch / web_browser_harness) + BRAVE_API_KEY.
 
 collective_id: sol-01
+
+required_packages:
+  - "@acc/research-roles@^1.0"
 
 agents:
   - role: research_planner

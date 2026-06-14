@@ -1,0 +1,76 @@
+# ACC collective preset — capital-markets desk.
+# =============================================================================
+# A complete capital-markets research + portfolio desk, consuming the signed
+# @acc/capital-markets-roles family pack (published on the Pages catalog,
+# tag v1.2.1 — sha 49f43fcb…, bundles 6 behavior + 5 safety + curated evals).
+#
+# Control plane (assistant → orchestrator → specialist → reviewer) routes a
+# prompt to the right desk role on capability; investment_compliance_officer
+# enforces the suitability / no-guaranteed-returns guardrails the pack's
+# safety evals pin.
+#
+# Install + run:
+#   ./acc-deploy.sh pkg add @acc/capital-markets-roles    # or: acc-pkg install @acc/capital-markets-roles@^0.1
+#   ./acc-deploy.sh apply capital-markets
+#   ./acc-deploy.sh apply --dry-run capital-markets       # preview the reconcile diff
+#
+# `apply` also auto-installs the pack from the catalog at boot via
+# required_packages.  Per-agent model ids reference models.yaml; swap the
+# claude-* ids for local ids (ollama-qwen25-14b / vllm-local) for an offline
+# desk — the topology is model-agnostic.
+# =============================================================================
+
+collective_id: capital-markets
+
+required_packages:
+  - "@acc/capital-markets-roles@^0.1"
+
+agents:
+  # --- control plane (in-tree CONTROL roles) ---
+  - role: assistant
+    cluster_id: ctl
+    model: claude-haiku
+  - role: orchestrator
+    cluster_id: ctl
+    model: claude-haiku
+  - role: reviewer
+    cluster_id: ctl
+    model: claude-sonnet        # critic loop on the stronger model (PR-MM3)
+
+  # --- research desk (from @acc/capital-markets-roles) ---
+  - role: equity_analyst
+    cluster_id: research
+    model: claude-sonnet
+  - role: fixed_income_analyst
+    cluster_id: research
+    model: claude-sonnet
+  - role: macro_strategist
+    cluster_id: research
+    model: claude-sonnet
+  - role: quant_researcher
+    cluster_id: research
+    model: claude-sonnet
+
+  # --- markets / signals ---
+  - role: technical_analyst
+    cluster_id: markets
+    model: claude-haiku
+  - role: options_strategist
+    cluster_id: markets
+    model: claude-sonnet
+  - role: news_sentiment_analyst
+    cluster_id: markets
+    model: claude-haiku
+
+  # --- portfolio + advisory ---
+  - role: portfolio_manager
+    cluster_id: portfolio
+    model: claude-sonnet
+  - role: wealth_advisor
+    cluster_id: portfolio
+    model: claude-sonnet
+
+  # --- governance (suitability / no-guaranteed-returns guardrails) ---
+  - role: investment_compliance_officer
+    cluster_id: governance
+    model: claude-sonnet

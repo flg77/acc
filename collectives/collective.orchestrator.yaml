@@ -12,10 +12,18 @@
 # the models + keys you have configured (keyed gateways need their api_key_env
 # value set in .env; see docs/multimodel_reviewer.md).
 #
+# `orchestrator` is a CONTROL/substrate role (always present).  The workers
+# `coding_agent` + `analyst` are served by the @acc/workspace-roles family
+# pack — `apply` installs it from the catalog at boot via required_packages,
+# or pre-install it: `./acc-deploy.sh pkg add @acc/workspace-roles`.
+#
 # Apply:
-#   ./acc-deploy.sh apply collective.orchestrator.yaml
+#   ./acc-deploy.sh apply orchestrator
 
 collective_id: sol-01
+
+required_packages:
+  - "@acc/workspace-roles@^1.0"
 
 agents:
   # ── Router (single-instance, capable model) ──────────────────────────

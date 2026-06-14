@@ -373,6 +373,9 @@ class EcosystemScreen(Screen):
         # quick shortcut for when the role table has focus.
         ("i", "infuse", "Schedule infusion"),
         ("f2", "infuse", "Infuse → Nucleus"),
+        # Load a role pack from the catalog into the ecosystem, then its roles
+        # appear here to infuse.  `g` = "get pack".
+        ("g", "get_pack", "Get pack"),
         # Commit-4 — operator-requested two-step selection:
         #   Space = preview (load role.md + role.yaml into the right
         #           pane WITHOUT arming buttons or pinning selection)
@@ -404,6 +407,73 @@ class EcosystemScreen(Screen):
             self._handle_schedule_infusion()
         except Exception:
             logger.exception("ecosystem: action_infuse failed")
+
+    def action_get_pack(self) -> None:
+        """Open the catalog pack-install modal; on confirm, fetch+install."""
+        try:
+            from acc.tui.widgets.pack_install_modal import PackInstallModal  # noqa: PLC0415
+        except Exception:
+            logger.exception("ecosystem: pack-install modal unavailable")
+            return
+
+        def _on_pick(result: object) -> None:
+            if not result:
+                return
+            spec = result.get("spec") if isinstance(result, dict) else None
+            if not spec:
+                return
+            catalog = result.get("catalog") if isinstance(result, dict) else None
+            self.run_worker(
+                self._install_pack(spec, catalog),
+                exclusive=True, group="ecosystem-pkg-install",
+            )
+
+        self.app.push_screen(PackInstallModal(), _on_pick)
+
+    async def _install_pack(self, spec: str, catalog: str | None) -> None:
+        """Fetch+verify+install a catalog pack, then refresh the roster.
+
+        Runs the blocking install off the UI thread.  Uses the same
+        ``fetch_and_install_closure`` path as ``acc-deploy.sh pkg add`` /
+        ``acc-pkg install`` so the TUI and CLI install identically.
+        """
+        import asyncio  # noqa: PLC0415
+
+        try:
+            self.notify(f"Installing {spec} …", timeout=4.0)
+        except Exception:
+            pass
+        try:
+            from acc.collective import parse_required_package  # noqa: PLC0415
+            from acc.pkg.fetch import (  # noqa: PLC0415
+                FetchError,
+                fetch_and_install_closure,
+            )
+        except ImportError as exc:
+            self.notify(f"acc.pkg unavailable: {exc}", severity="error", timeout=8.0)
+            return
+
+        try:
+            name, constraint = parse_required_package(spec)
+            res = await asyncio.to_thread(
+                fetch_and_install_closure, name, constraint,
+            )
+        except (ValueError, FetchError) as exc:
+            self.notify(f"Install failed: {exc}", severity="error", timeout=10.0)
+            return
+        except Exception as exc:  # noqa: BLE001
+            self.notify(f"Install error: {type(exc).__name__}: {exc}",
+                        severity="error", timeout=10.0)
+            return
+
+        installed = f"{res.install.entry.name}@{res.install.entry.version}"
+        self.notify(f"Installed {installed} — roles added to the genome browser.",
+                    severity="information", timeout=8.0)
+        # Surface the new roles immediately.
+        try:
+            self._load_roles()
+        except Exception:
+            logger.exception("ecosystem: role refresh after install failed")
 
     def action_preview_cursor_role(self) -> None:
         """Space-bar — commit the row under the cursor as the active selection.
@@ -1563,7 +1633,18 @@ class EcosystemScreen(Screen):
         empty pane.
         """
         root = _roles_root()
-        self._role_names = list_roles(root)
+        # Dual-source roster: in-tree roles/ + roles served by installed family
+        # packs (under ACC_PACKAGES_ROOT).  Without the installed half, a pack
+        # loaded via `acc-deploy.sh pkg add` / the catalog-install action would
+        # not appear here to be infused.  RoleLoader.load() resolves either
+        # source transparently.
+        names = set(list_roles(root))
+        try:
+            from acc.pkg.role_resolution import list_installed_roles  # noqa: PLC0415
+            names |= set(list_installed_roles().keys())
+        except Exception:  # pragma: no cover - acc.pkg optional at import time
+            logger.debug("ecosystem: installed-roles enumeration unavailable")
+        self._role_names = sorted(names)
         self._all_role_rows = []
 
         for role_name in self._role_names:
