@@ -1139,6 +1139,29 @@ spec:
                       set to false) because other RHOAI assets may live in the namespace.
                     type: boolean
                 type: object
+              tui:
+                description: |-
+                  TUI deploys the acc-tui interaction surface (proposal 023 / ADR 025
+                  interaction plane) — the power-user/ops terminal, reachable via
+                  `oc rsh deploy/<corpus>-tui acc-tui`. Nil = not deployed. Secondary
+                  to the webgui (the primary surface); the pod idles so the operator
+                  can attach and run the TUI in the rsh TTY.
+                properties:
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled deploys the tui pod. Default true within the block; a nil
+                      TUI block = not deployed.
+                    type: boolean
+                  replicas:
+                    default: 1
+                    description: |-
+                      Replicas of the tui Deployment (usually 1 — it is an attach target,
+                      not a scaled service).
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
               upgradePolicy:
                 description: UpgradePolicy controls how the operator handles ACC version
                   upgrades.
@@ -1177,6 +1200,78 @@ spec:
                   Must be a valid SemVer string.
                 pattern: ^v?[0-9]+\.[0-9]+\.[0-9]+.*$
                 type: string
+              webgui:
+                description: |-
+                  WebGUI deploys the acc-webgui interaction surface (proposal 023 / ADR
+                  025 interaction plane) behind a Keycloak-OIDC oauth2-proxy sidecar.
+                  Nil = not deployed. The webhook materializes it (enabled) in rhoai
+                  mode. An enabled WebGUI without a Keycloak block is NOT deployed —
+                  the operator refuses to stand up an unauthenticated network surface
+                  (ADR 025 §5); it sets a WebGUIBlocked status condition instead.
+                properties:
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled deploys the webgui. Default true (the webhook materializes
+                      this block enabled in rhoai mode). A nil block = not deployed.
+                    type: boolean
+                  groupMappings:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      GroupMappings maps an ACC tier to the Keycloak group/role names that
+                      grant it (rendered into ACC_WEBGUI_GROUP_MAPPINGS). Keys: "operator",
+                      "publisher" (everything else is viewer). The canonical names live in
+                      lab-gitops group_vars/rbac.yml (backlog 006). Example:
+                      {"operator": "acc-operators", "publisher": "acc-publishers"}.
+                    type: object
+                  keycloak:
+                    description: |-
+                      Keycloak configures the OIDC login (via the oauth2-proxy sidecar).
+                      REQUIRED for the webgui to actually deploy — without it the operator
+                      refuses to stand up an unauthenticated surface (ADR 025 §5).
+                    properties:
+                      clientID:
+                        description: |-
+                          ClientID is the Keycloak confidential client for the webgui. It is
+                          also the OIDC audience the webgui validates (aud/azp).
+                        type: string
+                      clientSecretName:
+                        description: |-
+                          ClientSecretName names a Secret in the corpus namespace holding the
+                          Keycloak client secret under key "client-secret" and a cookie-signing
+                          secret under key "cookie-secret".
+                        type: string
+                      groupsClaim:
+                        default: groups
+                        description: GroupsClaim is the OIDC token claim carrying
+                          group names.
+                        type: string
+                      issuerURL:
+                        description: |-
+                          IssuerURL is the Keycloak realm issuer, e.g.
+                          https://keycloak.example.com/realms/acc.
+                        pattern: ^https://.+/realms/.+
+                        type: string
+                    required:
+                    - clientID
+                    - clientSecretName
+                    - issuerURL
+                    type: object
+                  replicas:
+                    default: 1
+                    description: Replicas of the webgui Deployment.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  route:
+                    default: true
+                    description: |-
+                      Route exposes the webgui (the oauth2-proxy front) via an OpenShift
+                      Route with edge TLS. Default true. Created only when the
+                      route.openshift.io API is present (discovery-gated).
+                    type: boolean
+                type: object
             required:
             - collectives
             - governance
@@ -1616,6 +1711,19 @@ spec:
                       "none" or "netobserv".
                     type: string
                 type: object
+              tuiDeployed:
+                description: |-
+                  TUIDeployed is true once the acc-tui attach pod is reconciled
+                  (proposal 023). False when spec.tui is unset or disabled.
+                type: boolean
+              webguiDeployed:
+                description: |-
+                  WebGUIDeployed is true once the acc-webgui Deployment + Service (and,
+                  when route.openshift.io is present, Route) are reconciled behind the
+                  Keycloak oauth2-proxy (proposal 023). False when spec.webgui is unset,
+                  disabled, or its Keycloak config is incomplete (the operator refuses
+                  to expose an unauthenticated surface).
+                type: boolean
             type: object
         type: object
     served: true

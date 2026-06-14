@@ -115,6 +115,23 @@ type AgentCorpusSpec struct {
 	// +optional
 	RHOAI *RHOAISpec `json:"rhoai,omitempty"`
 
+	// TUI deploys the acc-tui interaction surface (proposal 023 / ADR 025
+	// interaction plane) — the power-user/ops terminal, reachable via
+	// `oc rsh deploy/<corpus>-tui acc-tui`. Nil = not deployed. Secondary
+	// to the webgui (the primary surface); the pod idles so the operator
+	// can attach and run the TUI in the rsh TTY.
+	// +optional
+	TUI *TUISpec `json:"tui,omitempty"`
+
+	// WebGUI deploys the acc-webgui interaction surface (proposal 023 / ADR
+	// 025 interaction plane) behind a Keycloak-OIDC oauth2-proxy sidecar.
+	// Nil = not deployed. The webhook materializes it (enabled) in rhoai
+	// mode. An enabled WebGUI without a Keycloak block is NOT deployed —
+	// the operator refuses to stand up an unauthenticated network surface
+	// (ADR 025 §5); it sets a WebGUIBlocked status condition instead.
+	// +optional
+	WebGUI *WebGUISpec `json:"webgui,omitempty"`
+
 	// BootstrapDefaultCatalog creates the canonical signed AccCatalog
 	// (acc-canonical, the published ecosystem catalog) in this namespace
 	// when NO AccCatalog exists there yet — so a fresh corpus is
@@ -185,6 +202,89 @@ type RHOAISpec struct {
 	// +kubebuilder:default="redhat-ods-applications"
 	// +optional
 	DashboardNamespace string `json:"dashboardNamespace,omitempty"`
+}
+
+// TUISpec configures the acc-tui interaction surface (proposal 023 / ADR
+// 025). The deployed pod idles (the TUI needs a TTY); attach with
+// `oc rsh deploy/<corpus>-tui acc-tui`. The web-terminal variant (ttyd +
+// oauth-proxy + Route) is a deliberate follow-up (proposal 023 §8 Q1).
+type TUISpec struct {
+	// Enabled deploys the tui pod. Default true within the block; a nil
+	// TUI block = not deployed.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Replicas of the tui Deployment (usually 1 — it is an attach target,
+	// not a scaled service).
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Replicas int32 `json:"replicas,omitempty"`
+}
+
+// WebGUISpec configures the acc-webgui interaction surface (proposal 023 /
+// ADR 025). The webgui is deployed behind an oauth2-proxy sidecar that runs
+// the Keycloak OIDC auth-code flow; the webgui itself trusts the proxy's
+// forwarded identity + groups and maps them to viewer/operator/publisher
+// tiers. The webgui pod port is never exposed — only the proxy is.
+type WebGUISpec struct {
+	// Enabled deploys the webgui. Default true (the webhook materializes
+	// this block enabled in rhoai mode). A nil block = not deployed.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Replicas of the webgui Deployment.
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Replicas int32 `json:"replicas,omitempty"`
+
+	// Keycloak configures the OIDC login (via the oauth2-proxy sidecar).
+	// REQUIRED for the webgui to actually deploy — without it the operator
+	// refuses to stand up an unauthenticated surface (ADR 025 §5).
+	// +optional
+	Keycloak *WebGUIKeycloakSpec `json:"keycloak,omitempty"`
+
+	// GroupMappings maps an ACC tier to the Keycloak group/role names that
+	// grant it (rendered into ACC_WEBGUI_GROUP_MAPPINGS). Keys: "operator",
+	// "publisher" (everything else is viewer). The canonical names live in
+	// lab-gitops group_vars/rbac.yml (backlog 006). Example:
+	// {"operator": "acc-operators", "publisher": "acc-publishers"}.
+	// +optional
+	GroupMappings map[string]string `json:"groupMappings,omitempty"`
+
+	// Route exposes the webgui (the oauth2-proxy front) via an OpenShift
+	// Route with edge TLS. Default true. Created only when the
+	// route.openshift.io API is present (discovery-gated).
+	// +kubebuilder:default=true
+	// +optional
+	Route *bool `json:"route,omitempty"`
+}
+
+// WebGUIKeycloakSpec is the Keycloak OIDC client config for the oauth2-proxy
+// sidecar. The client secret + cookie secret are never inline — they come
+// from a Secret in the corpus namespace.
+type WebGUIKeycloakSpec struct {
+	// IssuerURL is the Keycloak realm issuer, e.g.
+	// https://keycloak.example.com/realms/acc.
+	// +kubebuilder:validation:Pattern=`^https://.+/realms/.+`
+	IssuerURL string `json:"issuerURL"`
+
+	// ClientID is the Keycloak confidential client for the webgui. It is
+	// also the OIDC audience the webgui validates (aud/azp).
+	ClientID string `json:"clientID"`
+
+	// ClientSecretName names a Secret in the corpus namespace holding the
+	// Keycloak client secret under key "client-secret" and a cookie-signing
+	// secret under key "cookie-secret".
+	ClientSecretName string `json:"clientSecretName"`
+
+	// GroupsClaim is the OIDC token claim carrying group names.
+	// +kubebuilder:default="groups"
+	// +optional
+	GroupsClaim string `json:"groupsClaim,omitempty"`
 }
 
 // CollectiveRef references an AgentCollective resource in the same namespace.
@@ -811,6 +911,19 @@ type AgentCorpusStatus struct {
 	// Project).
 	// +optional
 	RHOAIProjectRegistered bool `json:"rhoaiProjectRegistered,omitempty"`
+
+	// WebGUIDeployed is true once the acc-webgui Deployment + Service (and,
+	// when route.openshift.io is present, Route) are reconciled behind the
+	// Keycloak oauth2-proxy (proposal 023). False when spec.webgui is unset,
+	// disabled, or its Keycloak config is incomplete (the operator refuses
+	// to expose an unauthenticated surface).
+	// +optional
+	WebGUIDeployed bool `json:"webguiDeployed,omitempty"`
+
+	// TUIDeployed is true once the acc-tui attach pod is reconciled
+	// (proposal 023). False when spec.tui is unset or disabled.
+	// +optional
+	TUIDeployed bool `json:"tuiDeployed,omitempty"`
 
 	// DefaultCatalogBootstrapped is true once the operator created the
 	// acc-canonical AccCatalog in this namespace (or found catalogs

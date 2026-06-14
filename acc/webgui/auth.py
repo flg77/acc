@@ -40,6 +40,19 @@ logger = logging.getLogger("acc.webgui.auth")
 
 ROLE_VIEWER = "viewer"
 ROLE_OPERATOR = "operator"
+ROLE_PUBLISHER = "publisher"  # 023/027 — author + publish signed packs
+
+# Tier ladder: a higher rank satisfies every lower gate (publisher ⊇ operator
+# ⊇ viewer).  Group→tier mapping picks the HIGHEST tier a principal's groups
+# match.  Whether a platform-admin group ALSO publishes is purely a config
+# choice (add it to the publisher mapping) — the code keeps a linear ladder.
+_ROLE_RANK = {ROLE_VIEWER: 0, ROLE_OPERATOR: 1, ROLE_PUBLISHER: 2}
+
+
+def _role_satisfies(have: str, need: str) -> bool:
+    """True when the *have* tier is at least the *need* tier on the ladder."""
+    return _ROLE_RANK.get(have, -1) >= _ROLE_RANK.get(need, 99)
+
 
 MODE_OAUTH_PROXY = "oauth-proxy"
 MODE_OIDC = "oidc"
@@ -66,6 +79,15 @@ class AuthConfig:
     viewer_token: str = ""
     operator_users: tuple[str, ...] = ()
     oidc_issuer: str = ""
+    # OIDC / Keycloak — audience (the Keycloak client_id) is validated when set;
+    # groups_claim names the token claim carrying group/role names; the
+    # group→tier map drives RBAC from Keycloak realm roles + groups (023/027).
+    oidc_audience: str = ""
+    oidc_groups_claim: str = "groups"
+    # tier -> frozenset of group/role names that grant it. The highest tier
+    # whose set intersects the principal's groups wins; empty map => fall back
+    # to the operator_users static list (role_for).
+    group_mappings: Mapping[str, frozenset[str]] = dataclasses.field(default_factory=dict)
     # htpasswd mode
     htpasswd_path: str = ""
     session_secret: str = ""
@@ -73,6 +95,34 @@ class AuthConfig:
     # mtls mode
     mtls_header: str = "x-client-cert-subject"
     mtls_verify_header: str = "x-client-cert-verify"
+
+
+def _parse_group_mappings(raw: str) -> dict[str, frozenset[str]]:
+    """Parse ``ACC_WEBGUI_GROUP_MAPPINGS`` into ``{tier: {groups}}``.
+
+    Format (semicolon-separated tiers, comma-separated groups)::
+
+        operator=acc-operators;publisher=acc-publishers,acc-release
+
+    Only the known tiers (viewer/operator/publisher) are kept; unknown
+    tier names are skipped with a warning.  Empty/blank → ``{}`` (the
+    operator_users static list then governs roles, preserving pre-023
+    behaviour).
+    """
+    out: dict[str, frozenset[str]] = {}
+    for clause in raw.split(";"):
+        clause = clause.strip()
+        if not clause or "=" not in clause:
+            continue
+        tier, _, groups = clause.partition("=")
+        tier = tier.strip().lower()
+        if tier not in _ROLE_RANK:
+            logger.warning("webgui: unknown tier %r in ACC_WEBGUI_GROUP_MAPPINGS — skipped", tier)
+            continue
+        names = frozenset(g.strip() for g in groups.split(",") if g.strip())
+        if names:
+            out[tier] = names
+    return out
 
 
 def resolve_auth_config() -> AuthConfig:
@@ -136,6 +186,9 @@ def resolve_auth_config() -> AuthConfig:
         viewer_token=os.environ.get("ACC_WEBGUI_VIEWER_TOKEN", ""),
         operator_users=operator_users,
         oidc_issuer=os.environ.get("ACC_WEBGUI_OIDC_ISSUER", ""),
+        oidc_audience=os.environ.get("ACC_WEBGUI_OIDC_AUDIENCE", "").strip(),
+        oidc_groups_claim=os.environ.get("ACC_WEBGUI_OIDC_GROUPS_CLAIM", "groups").strip() or "groups",
+        group_mappings=_parse_group_mappings(os.environ.get("ACC_WEBGUI_GROUP_MAPPINGS", "")),
         htpasswd_path=os.environ.get("ACC_WEBGUI_HTPASSWD_PATH", "").strip(),
         session_secret=session_secret,
         session_ttl=session_ttl,
@@ -255,6 +308,51 @@ def role_for(user: str, cfg: AuthConfig) -> str:
     return ROLE_OPERATOR if user in cfg.operator_users else ROLE_VIEWER
 
 
+def _extract_groups(claims: Mapping, cfg: AuthConfig) -> set[str]:
+    """Collect group/role names from an OIDC token's claims.
+
+    Handles Keycloak's three shapes at once: the configured groups claim
+    (a "groups" mapper — paths like ``/acc-operators`` are normalised by
+    stripping the leading slash), ``realm_access.roles`` (realm roles),
+    and ``resource_access.<client>.roles`` (client roles for our
+    audience).  Works for any standard OIDC ``groups`` claim too.
+    """
+    groups: set[str] = set()
+    raw = claims.get(cfg.oidc_groups_claim)
+    if isinstance(raw, list):
+        groups.update(str(g).lstrip("/") for g in raw)
+    elif isinstance(raw, str) and raw:
+        groups.add(raw.lstrip("/"))
+    realm = claims.get("realm_access")
+    if isinstance(realm, dict) and isinstance(realm.get("roles"), list):
+        groups.update(str(r) for r in realm["roles"])
+    res = claims.get("resource_access")
+    if isinstance(res, dict) and cfg.oidc_audience:
+        client = res.get(cfg.oidc_audience)
+        if isinstance(client, dict) and isinstance(client.get("roles"), list):
+            groups.update(str(r) for r in client["roles"])
+    return groups
+
+
+def role_from_claims(claims: Mapping, user: str, cfg: AuthConfig) -> str:
+    """Resolve a tier from an OIDC principal's group/role claims.
+
+    When a group→tier map is configured (Keycloak/OIDC, 023/027), the
+    HIGHEST tier whose group set the principal belongs to wins; no match
+    → viewer.  When no map is configured, fall back to the
+    ``operator_users`` static list (`role_for`) so pre-023 deployments
+    are unchanged.
+    """
+    if not cfg.group_mappings:
+        return role_for(user, cfg)
+    groups = _extract_groups(claims, cfg)
+    best = ROLE_VIEWER
+    for tier, names in cfg.group_mappings.items():
+        if names & groups and _ROLE_RANK.get(tier, -1) > _ROLE_RANK.get(best, -1):
+            best = tier
+    return best
+
+
 # ---------------------------------------------------------------------------
 # htpasswd — signed session JWT (HS256)
 # ---------------------------------------------------------------------------
@@ -324,11 +422,19 @@ def _principal(
 
     if cfg.mode == MODE_OAUTH_PROXY:
         # The oauth-proxy sidecar has already authenticated the user and
-        # injects identity headers; acc-webgui trusts them.
+        # injects identity headers; acc-webgui trusts them.  When the proxy
+        # is configured to pass groups (`--pass-groups`, e.g. from a
+        # Keycloak-backed OpenShift OAuth IdP) and a group→tier map exists,
+        # derive the tier from those groups; else the operator_users list.
         user = (headers.get("X-Forwarded-Email")
                 or headers.get("X-Forwarded-User") or "")
         if not user:
             return None
+        fwd_groups = headers.get("X-Forwarded-Groups", "").strip()
+        if fwd_groups and cfg.group_mappings:
+            claims = {cfg.oidc_groups_claim:
+                      [g.strip() for g in fwd_groups.split(",") if g.strip()]}
+            return Principal(user=user, role=role_from_claims(claims, user, cfg))
         return Principal(user=user, role=role_for(user, cfg))
 
     if cfg.mode == MODE_TOKEN:
@@ -346,8 +452,10 @@ def _principal(
         claims = _verify_oidc(token, cfg)
         if claims is None:
             return None
-        user = claims.get("email") or claims.get("sub") or "oidc:unknown"
-        return Principal(user=user, role=role_for(user, cfg))
+        # Keycloak commonly carries the human id in preferred_username.
+        user = (claims.get("email") or claims.get("preferred_username")
+                or claims.get("sub") or "oidc:unknown")
+        return Principal(user=user, role=role_from_claims(claims, user, cfg))
 
     if cfg.mode == MODE_HTPASSWD:
         # The bearer token is a session JWT minted by POST /api/login.
@@ -373,6 +481,15 @@ def _principal(
     return None
 
 
+def _audience_ok(claims: Mapping, audience: str) -> bool:
+    """True when *audience* (the Keycloak client_id) appears in the token's
+    ``aud`` (list or string — ID tokens) or equals ``azp`` (access tokens).
+    """
+    aud = claims.get("aud")
+    auds = aud if isinstance(aud, list) else ([aud] if aud else [])
+    return audience in auds or audience == claims.get("azp")
+
+
 def _verify_oidc(token: str, cfg: AuthConfig) -> dict | None:
     """Validate an OIDC bearer JWT against the configured issuer's JWKS.
 
@@ -390,7 +507,16 @@ def _verify_oidc(token: str, cfg: AuthConfig) -> dict | None:
         ).json()
         jwks = httpx.get(disco["jwks_uri"], timeout=5.0).json()
         claims = JsonWebToken(["RS256", "ES256"]).decode(token, jwks)
-        claims.validate()
+        claims.validate()  # enforces exp/nbf/iat
+        # Audience check (when a Keycloak client_id is configured): Keycloak
+        # carries the client in `aud` for ID tokens and in `azp` for access
+        # tokens, so accept either — but require one to match.  Without this,
+        # a valid token for ANY client of the same realm would be accepted.
+        if cfg.oidc_audience and not _audience_ok(claims, cfg.oidc_audience):
+            logger.warning(
+                "webgui: OIDC token audience mismatch (aud=%s azp=%s, want %s)",
+                claims.get("aud"), claims.get("azp"), cfg.oidc_audience)
+            return None
         return dict(claims)
     except Exception as exc:
         logger.warning("webgui: OIDC token validation failed: %s", exc)
@@ -416,11 +542,22 @@ def require_viewer(request: Request) -> Principal:
 
 
 def require_operator(request: Request) -> Principal:
-    """Dependency — an authenticated principal with the operator role."""
+    """Dependency — a principal at the operator tier or above (publisher
+    satisfies it on the ladder)."""
     principal = require_viewer(request)
-    if principal.role != ROLE_OPERATOR:
+    if not _role_satisfies(principal.role, ROLE_OPERATOR):
         raise HTTPException(status_code=403,
                             detail="operator role required for this action")
+    return principal
+
+
+def require_publisher(request: Request) -> Principal:
+    """Dependency — a principal at the publisher tier (the top of the
+    ladder).  Gates publishing signed packs to a catalog (020 WS-C3)."""
+    principal = require_viewer(request)
+    if not _role_satisfies(principal.role, ROLE_PUBLISHER):
+        raise HTTPException(status_code=403,
+                            detail="publisher role required to publish")
     return principal
 
 
