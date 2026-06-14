@@ -131,6 +131,42 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 	return result, nil
 }
 
+// AgentPodSecurityContext returns the pod-level SecurityContext for
+// operator-rendered agent pods.
+//
+// It is deliberately OpenShift restricted-v2 SCC compatible: it does NOT pin
+// runAsUser (nor runAsGroup / fsGroup). On OpenShift the namespace's
+// openshift.io/sa.scc.uid-range annotation supplies a per-namespace UID and
+// the SCC admission plugin injects it; hardcoding runAsUser: 1001 makes
+// restricted-v2 reject every pod ("must be in the ranges: [1000920000, ...]")
+// and zero agent pods are created (live RHOAI 3.4 finding).
+//
+// The acc-agent-core image (UBI10, USER 1001, GID 0, `chmod -R g=u /app`)
+// tolerates an arbitrary high UID because all app dirs are group-0 writable
+// and OpenShift always runs with GID 0 under restricted-v2. On vanilla
+// Kubernetes (no UID injection) the container falls back to the image's own
+// USER 1001 — also fine. Keeping runAsNonRoot: true preserves the non-root
+// guarantee on both platforms without conflicting with the SCC.
+func AgentPodSecurityContext() *corev1.PodSecurityContext {
+	return &corev1.PodSecurityContext{
+		RunAsNonRoot:   ptr.To(true),
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+}
+
+// AgentContainerSecurityContext returns the container-level SecurityContext for
+// operator-rendered agent containers. It drops ALL capabilities and disallows
+// privilege escalation, satisfying restricted-v2 while — crucially — NOT
+// pinning runAsUser, so the SCC-injected namespace UID is honored.
+func AgentContainerSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		RunAsNonRoot:             ptr.To(true),
+		AllowPrivilegeEscalation: ptr.To(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+}
+
 func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	ctx context.Context,
 	corpus *accv1alpha1.AgentCorpus,
@@ -185,15 +221,15 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 				ObjectMeta: metav1.ObjectMeta{Labels: objectLabels},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets: util.ImagePullSecrets(corpus),
-					// OCP restricted SCC — run as non-root UID 1001.
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: ptr.To(true),
-						RunAsUser:    ptr.To(int64(1001)),
-					},
+					// OpenShift restricted-v2 SCC compatible: no hardcoded
+					// runAsUser — the namespace UID range is injected by the
+					// SCC admission plugin. See AgentPodSecurityContext.
+					SecurityContext: AgentPodSecurityContext(),
 					Containers: []corev1.Container{
 						{
-							Name:  "agent",
-							Image: image,
+							Name:            "agent",
+							Image:           image,
+							SecurityContext: AgentContainerSecurityContext(),
 							Env: append(append([]corev1.EnvVar{
 								{Name: "ACC_AGENT_ROLE", Value: string(role)},
 								{Name: "ACC_COLLECTIVE_ID", Value: collective.Spec.CollectiveID},
