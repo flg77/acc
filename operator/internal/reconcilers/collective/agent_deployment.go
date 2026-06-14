@@ -216,7 +216,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 			// Selector labels are immutable — keep the canonical agent set
 			// only; objectLabels (which may include kagenti.io/type=agent)
 			// ride on the metadata + pod template instead.
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Selector: &metav1.LabelSelector{MatchLabels: util.SelectorLabels(labels)},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: objectLabels},
 				Spec: corev1.PodSpec{

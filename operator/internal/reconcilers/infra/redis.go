@@ -57,7 +57,7 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Age
 			Labels:    labels,
 		},
 		Spec: corev1.ServiceSpec{
-			Selector: labels,
+			Selector: util.SelectorLabels(labels),
 			Ports: []corev1.ServicePort{
 				{Name: "redis", Port: redisPort},
 			},
@@ -98,7 +98,7 @@ func (r *RedisReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Age
 		Spec: appsv1.StatefulSetSpec{
 			ServiceName: name,
 			Replicas:    replicas,
-			Selector:    &metav1.LabelSelector{MatchLabels: labels},
+			Selector:    &metav1.LabelSelector{MatchLabels: util.SelectorLabels(labels)},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{

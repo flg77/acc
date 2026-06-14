@@ -23,6 +23,27 @@ func CommonLabels(corpusName, component, version string) map[string]string {
 	}
 }
 
+// SelectorLabels returns the subset of labels safe to use in an immutable
+// Pod/Service selector: the version label is stripped.  A Deployment's or
+// StatefulSet's spec.selector is immutable, so leaving the version label in the
+// selector means a version bump (which patches the pod-template labels to the
+// new version) diverges the template labels from the frozen selector — the API
+// server then rejects the update with "`selector` does not match template
+// `labels`" and the whole reconcile chain aborts at the first such workload.
+// The version stays in the object + pod-template labels (via CommonLabels); only
+// the selector drops it, giving a stable identity that survives upgrades.
+// Accepts any label map (CommonLabels / CollectiveLabels / AgentLabels).
+func SelectorLabels(labels map[string]string) map[string]string {
+	out := make(map[string]string, len(labels))
+	for k, v := range labels {
+		if k == accv1alpha1.LabelVersion {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 // CollectiveLabels returns labels for resources that belong to a specific
 // AgentCollective within a corpus.
 func CollectiveLabels(corpusName, collectiveID, component, version string) map[string]string {
