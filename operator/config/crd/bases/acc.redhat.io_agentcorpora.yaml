@@ -1298,6 +1298,33 @@ spec:
                       type: object
                     scaledObjectsActive:
                       type: boolean
+                    sharedModel:
+                      description: |-
+                        SharedModel surfaces the KServe model this collective consumes and
+                        whether it is shared in from another namespace (e.g. the acc-system
+                        shared vLLM — proposal 026 G1), so the oversight plane can show
+                        "model: shared from <ns>". Nil for non-KServe backends
+                        (anthropic/ollama/llama_stack).
+                      properties:
+                        inferenceService:
+                          description: InferenceService is the consumed KServe InferenceService
+                            name.
+                          type: string
+                        namespace:
+                          description: Namespace is where that InferenceService lives.
+                          type: string
+                        shared:
+                          description: |-
+                            Shared is true when Namespace differs from the collective's own
+                            namespace — the model is shared in from another Data Science Project
+                            (e.g. acc-system) rather than served locally.
+                          type: boolean
+                        url:
+                          description: |-
+                            URL is the resolved model endpoint (empty until the InferenceService
+                            publishes one).
+                          type: string
+                      type: object
                   type: object
                 description: CollectiveStatuses maps collective name → its operational
                   status.

@@ -106,6 +106,19 @@ func (r *CollectiveReconciler) Reconcile(ctx context.Context, corpus *accv1alpha
 		cs.ReadyAgents = agentRes.ReadyAgents
 		cs.DesiredAgents = agentRes.DesiredAgents
 		cs.KServeReady = kserveRes.KServeReady
+		// Surface the consumed model + whether it's shared in from another
+		// namespace (proposal 026 G1) for the oversight plane. Nil for
+		// non-KServe backends (kserveRes carries no model identity).
+		if kserveRes.ModelName != "" {
+			cs.SharedModel = &accv1alpha1.SharedModelStatus{
+				InferenceService: kserveRes.ModelName,
+				Namespace:        kserveRes.ModelNamespace,
+				Shared:           kserveRes.ModelShared,
+				URL:              kserveRes.InferenceURL,
+			}
+		} else {
+			cs.SharedModel = nil
+		}
 
 		totalReady := int32(0)
 		totalDesired := int32(0)

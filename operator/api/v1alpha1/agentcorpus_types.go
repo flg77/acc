@@ -985,6 +985,37 @@ type CollectiveStatus struct {
 	ScaledObjectsActive bool               `json:"scaledObjectsActive,omitempty"`
 	KServeReady         bool               `json:"kserveReady,omitempty"`
 	Conditions          []metav1.Condition `json:"conditions,omitempty"`
+
+	// SharedModel surfaces the KServe model this collective consumes and
+	// whether it is shared in from another namespace (e.g. the acc-system
+	// shared vLLM — proposal 026 G1), so the oversight plane can show
+	// "model: shared from <ns>". Nil for non-KServe backends
+	// (anthropic/ollama/llama_stack).
+	// +optional
+	SharedModel *SharedModelStatus `json:"sharedModel,omitempty"`
+}
+
+// SharedModelStatus describes the KServe model a collective consumes and
+// whether it is consumed cross-namespace (shared). Proposal 026 G1.
+type SharedModelStatus struct {
+	// InferenceService is the consumed KServe InferenceService name.
+	// +optional
+	InferenceService string `json:"inferenceService,omitempty"`
+
+	// Namespace is where that InferenceService lives.
+	// +optional
+	Namespace string `json:"namespace,omitempty"`
+
+	// Shared is true when Namespace differs from the collective's own
+	// namespace — the model is shared in from another Data Science Project
+	// (e.g. acc-system) rather than served locally.
+	// +optional
+	Shared bool `json:"shared,omitempty"`
+
+	// URL is the resolved model endpoint (empty until the InferenceService
+	// publishes one).
+	// +optional
+	URL string `json:"url,omitempty"`
 }
 
 // -----------------------------------------------------------------------
