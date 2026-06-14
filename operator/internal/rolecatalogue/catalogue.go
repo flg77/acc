@@ -103,6 +103,39 @@ func Suggest(role string, n int) []string {
 	return out
 }
 
+// NearestWithin returns the catalogue (built-in) roles within edit distance
+// maxDist of role, closest first (ties broken alphabetically). The
+// AgentCollective webhook uses this to tell a typo of a built-in role — which
+// lands a small number of edits from a real role and is a hard error — apart
+// from a genuinely distinct, package-provided role name, which does not and is
+// allowed with an admission warning. maxDist < 0 yields nil.
+func NearestWithin(role string, maxDist int) []string {
+	if maxDist < 0 {
+		return nil
+	}
+	type scored struct {
+		name string
+		dist int
+	}
+	var hits []scored
+	for r := range knownRoles {
+		if d := levenshtein(role, r); d <= maxDist {
+			hits = append(hits, scored{name: r, dist: d})
+		}
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].dist != hits[j].dist {
+			return hits[i].dist < hits[j].dist
+		}
+		return hits[i].name < hits[j].name
+	})
+	out := make([]string, len(hits))
+	for i, h := range hits {
+		out[i] = h.name
+	}
+	return out
+}
+
 // levenshtein computes edit distance between a and b. Two-row dynamic
 // programming — O(len(a)*len(b)) time, O(min) space.
 func levenshtein(a, b string) int {

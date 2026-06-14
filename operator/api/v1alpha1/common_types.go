@@ -64,6 +64,11 @@ const (
 	RoleResearchCompetitor  AgentRole = "research_competitor"
 	RoleResearchSynthesizer AgentRole = "research_synthesizer"
 	RoleResearchCritic      AgentRole = "research_critic"
+
+	// Control-plane persona that always ships in core (never moved to a
+	// pack): the concierge / gatekeeper injected into every collective by
+	// default — see AgentCollective.Default() and proposal 023.
+	RoleAssistant AgentRole = "assistant"
 )
 
 // LLMBackend selects the language model implementation.

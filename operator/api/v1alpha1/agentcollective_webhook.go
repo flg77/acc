@@ -44,6 +44,15 @@ func (r *AgentCollective) Default() {
 	if r.Spec.HeartbeatIntervalSeconds == 0 {
 		r.Spec.HeartbeatIntervalSeconds = 30
 	}
+	// Every collective ships an `assistant` concierge by default (proposal
+	// 023 §4b / 021 C3): a governed entry point for onboarding, catalogue
+	// queries and PROPOSE_INFUSE routing. Inject it first (so it leads the
+	// roster) when the collective hasn't declared one and hasn't opted out
+	// via DisableAssistant. An explicitly-declared assistant — including one
+	// parked at replicas:0 — is left untouched.
+	if (r.Spec.DisableAssistant == nil || !*r.Spec.DisableAssistant) && !r.hasAgent(RoleAssistant) {
+		r.Spec.Agents = append([]AgentRoleSpec{{Role: RoleAssistant, Replicas: 1}}, r.Spec.Agents...)
+	}
 	for i := range r.Spec.Agents {
 		if r.Spec.Agents[i].Replicas == 0 {
 			r.Spec.Agents[i].Replicas = 1
@@ -54,6 +63,16 @@ func (r *AgentCollective) Default() {
 	}
 }
 
+// hasAgent reports whether spec.agents already declares the given role.
+func (r *AgentCollective) hasAgent(role AgentRole) bool {
+	for _, a := range r.Spec.Agents {
+		if a.Role == role {
+			return true
+		}
+	}
+	return false
+}
+
 // +kubebuilder:webhook:path=/validate-acc-redhat-io-v1alpha1-agentcollective,mutating=false,failurePolicy=fail,sideEffects=None,groups=acc.redhat.io,resources=agentcollectives,verbs=create;update,versions=v1alpha1,name=vagentcollective.kb.io,admissionReviewVersions=v1
 
 var _ webhook.Validator = &AgentCollective{}
@@ -61,13 +80,13 @@ var _ webhook.Validator = &AgentCollective{}
 // ValidateCreate implements webhook.Validator.
 func (r *AgentCollective) ValidateCreate() (admission.Warnings, error) {
 	agentcollectivelog.Info("validate create", "name", r.Name)
-	return nil, r.validateAgentCollective()
+	return r.validateAgentCollective()
 }
 
 // ValidateUpdate implements webhook.Validator.
 func (r *AgentCollective) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	agentcollectivelog.Info("validate update", "name", r.Name)
-	return nil, r.validateAgentCollective()
+	return r.validateAgentCollective()
 }
 
 // ValidateDelete implements webhook.Validator.
@@ -75,41 +94,53 @@ func (r *AgentCollective) ValidateDelete() (admission.Warnings, error) {
 	return nil, nil
 }
 
-// validateAgentCollective enforces semantic rules that the CRD schema can't
-// express: role names must be present in the operator's compiled-in
-// catalogue (see internal/rolecatalogue), per-role replica counts in
-// scaling overrides must reference declared agents, etc.
-func (r *AgentCollective) validateAgentCollective() error {
-	var allErrs field.ErrorList
+// roleTypoMaxDist is the edit-distance threshold below which an unknown role
+// is treated as a typo of a built-in (hard error) rather than a distinct,
+// package-provided role (admission warning). Built-in role names are
+// distinctive words, so genuine pack roles sit well beyond this.
+const roleTypoMaxDist = 2
 
-	// Roles in spec.agents[*] must be in the catalogue.
+// validateAgentCollective enforces semantic rules that the CRD schema can't
+// express. Role validation is HYBRID (post ecosystem-split): the operator's
+// compiled-in catalogue (see internal/rolecatalogue) holds only the built-in
+// core roles, since most roles now install dynamically from packs and aren't
+// knowable at admission time. A role in spec.agents is therefore accepted
+// silently if it's a built-in, hard-rejected if it's a near-typo of a built-in,
+// and allowed with an admission warning otherwise (plausibly package-provided).
+func (r *AgentCollective) validateAgentCollective() (admission.Warnings, error) {
+	var allErrs field.ErrorList
+	var warnings admission.Warnings
+
 	declaredRoles := map[string]bool{}
 	for i, a := range r.Spec.Agents {
 		role := string(a.Role)
 		declaredRoles[role] = true
-		if !rolecatalogue.IsKnown(role) {
+		if rolecatalogue.IsKnown(role) {
+			continue
+		}
+		if near := rolecatalogue.NearestWithin(role, roleTypoMaxDist); len(near) > 0 {
+			// A few edits from a real built-in → almost certainly a typo.
 			allErrs = append(allErrs, field.Invalid(
 				field.NewPath("spec", "agents").Index(i).Child("role"),
 				role,
 				unknownRoleMessage(role),
 			))
+			continue
 		}
+		// Distinct name → likely provided by an installed package. Allow it
+		// (the operator can't know the installed pack set here) but flag it.
+		warnings = append(warnings, fmt.Sprintf(
+			"spec.agents[%d].role %q is not a built-in ACC role; ensure an installed "+
+				"package (AccCatalog/AccPackageInstall) provides it, or the agent will fail to start",
+			i, role))
 	}
 
-	// Roles referenced in spec.scaling.roleScaling[*] must (a) be in the
-	// catalogue, AND (b) appear in spec.agents — otherwise the scaling
-	// override is dead config.
+	// A scaling override must target a role declared in spec.agents. The
+	// role's catalogue membership is already handled in the agents loop above,
+	// so don't re-check it here — that would re-reject package-provided roles.
 	if r.Spec.Scaling != nil {
 		for i, rs := range r.Spec.Scaling.RoleScaling {
 			role := string(rs.Role)
-			if !rolecatalogue.IsKnown(role) {
-				allErrs = append(allErrs, field.Invalid(
-					field.NewPath("spec", "scaling", "roleScaling").Index(i).Child("role"),
-					role,
-					unknownRoleMessage(role),
-				))
-				continue
-			}
 			if !declaredRoles[role] {
 				allErrs = append(allErrs, field.Invalid(
 					field.NewPath("spec", "scaling", "roleScaling").Index(i).Child("role"),
@@ -162,9 +193,9 @@ func (r *AgentCollective) validateAgentCollective() error {
 	}
 
 	if len(allErrs) == 0 {
-		return nil
+		return warnings, nil
 	}
-	return apierrors.NewInvalid(
+	return warnings, apierrors.NewInvalid(
 		schema.GroupKind{Group: "acc.redhat.io", Kind: "AgentCollective"},
 		r.Name, allErrs,
 	)
