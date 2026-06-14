@@ -31,12 +31,37 @@ Three things make your pack consumable by an ACC operator:
    `acc-pkg publish` attaches the result to the package as an
    `eval_pass` attestation the operator's EC policy can check.
 
-## Prerequisites
+## Prerequisites — install the `acc-pkg` toolchain
+
+Pick **one** of two paths. The container path needs no Python at all and
+ships `cosign` baked in; the Python path is the classic editable install.
+
+### Path A — container (recommended; zero Python setup)
+
+The toolchain ships as a one-shot image with a thin host wrapper. Drop the
+`acc-pkg` wrapper from the repo root onto your `PATH` and every `acc-pkg …`
+runs in a throwaway container with your CWD bind-mounted at `/work`:
+
+```bash
+# from a checkout of the runtime repo:
+install -m755 acc-pkg ~/.local/bin/acc-pkg      # or: curl … -o ~/.local/bin/acc-pkg
+
+acc-pkg --help                                  # pulls quay.io/flg77/acc_images:acc-pkg-<ver>
+acc-pkg build .                                 # operates on $PWD (mounted at /work)
+acc-pkg eval @acc/capital-markets-roles
+```
+
+`cosign` is **inside** the image — no separate install. Keyless-OIDC
+`verify`/`install` need network: run `ACC_PKG_NETWORK=host acc-pkg install …`.
+Override the tag with `ACC_VERSION=…` or the full ref with `ACC_PKG_IMAGE=…`.
+See `container/production/Containerfile.acc-pkg`.
+
+### Path B — Python (editable install)
 
 | Tool | Where |
 |---|---|
 | `python 3.12+` | distro |
-| `acc-pkg` | `pip install acc` |
+| `acc-pkg` | `pip install acc` (or `uv pip install -e .` from a runtime checkout) |
 | `cosign` | <https://docs.sigstore.dev/cosign/installation/> |
 | `gh` (optional) | <https://cli.github.com/> |
 
