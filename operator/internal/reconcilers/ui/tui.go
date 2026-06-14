@@ -59,7 +59,7 @@ func (r *TUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agent
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: corpus.Namespace, Labels: labels},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To(replicas),
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Selector: &metav1.LabelSelector{MatchLabels: util.SelectorLabels(labels)},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
