@@ -17,7 +17,7 @@ from acc.collective import load_collective
 from acc.pkg.role_resolution import CONTROL_ROLES, list_installed_roles
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_DEMO_DIR = _REPO_ROOT / "examples" / "collectives"
+_DEMO_DIR = _REPO_ROOT / "collectives"
 
 
 @pytest.fixture

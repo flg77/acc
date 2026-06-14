@@ -5,14 +5,16 @@
 # preset spins the Assistant up alongside the always-on baseline when you want
 # onboarding help or to work on the system, then you swap it back out:
 #
-#   ./acc-deploy.sh apply --dry-run collective.assistant.yaml   # preview
-#   ./acc-deploy.sh apply collective.assistant.yaml             # activate
+#   ./acc-deploy.sh apply --dry-run assistant   # preview
+#   ./acc-deploy.sh apply assistant             # activate
 #   # … use it on the Prompt screen (target role: assistant) or via Slack …
-#   ./acc-deploy.sh apply collective.yaml                       # deactivate (swap out)
+#   ./acc-deploy.sh apply collective.yaml       # deactivate (swap back to the baseline)
 #
-# Guidance quality is model-bound — pair the Assistant with a capable model for
-# best results (any model is permitted).  model_id values reference models.yaml;
-# omit `model` to use the collective default.  See docs/howto-agentsets.md.
+# `assistant` is a CONTROL/substrate role (always available) so this preset
+# needs no required_packages.  Guidance quality is model-bound — pair the
+# Assistant with a capable model for best results (any model is permitted).
+# model_id values reference models.yaml; omit `model` to use the collective
+# default.  See docs/howto-agentsets.md.
 
 collective_id: sol-01
 

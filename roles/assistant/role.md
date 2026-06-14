@@ -31,7 +31,7 @@ The Assistant is **not** part of the edge/baseline agentset — edge and factory
 deployments stay minimal. Activate it on demand for maintenance:
 
 ```bash
-./acc-deploy.sh apply collective.assistant.yaml   # spin it up
+./acc-deploy.sh apply assistant   # spin it up
 # … use it via the Prompt screen (target role: assistant) or Slack …
 ./acc-deploy.sh apply collective.yaml             # swap it back out
 ```

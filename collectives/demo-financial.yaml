@@ -1,4 +1,4 @@
-# examples/collectives/demo-financial.yaml
+# collectives/demo-financial.yaml
 # =============================================================================
 # Demo collective — financial specialists (proposal 018 PR-DEMO1).
 #
@@ -12,8 +12,8 @@
 # / fpa_analyst on capability — not just whichever role happens to be up.
 #
 # Run:
-#   acc-pkg install @acc/business-roles@^1.0
-#   ./acc-deploy.sh apply examples/collectives/demo-financial.yaml
+#   ./acc-deploy.sh pkg add @acc/business-roles    # or: acc-pkg install @acc/business-roles@^1.0
+#   ./acc-deploy.sh apply demo-financial           # (apply also auto-installs via required_packages)
 # =============================================================================
 
 collective_id: demo-financial

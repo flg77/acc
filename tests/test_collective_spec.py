@@ -336,7 +336,7 @@ class TestWorkerPool:
         from pathlib import Path
         from acc.collective import load_collective, recommended_pool_size
         repo_root = Path(__file__).resolve().parent.parent
-        preset = repo_root / "collective.worker-pool.yaml"
+        preset = repo_root / "collectives" / "collective.worker-pool.yaml"
         spec = load_collective(preset)
         assert spec.worker_pool == 4
         assert recommended_pool_size(spec) == 4  # 2 + 1 + 1
@@ -405,13 +405,18 @@ class TestShippedPresets:
         # tests/ is one level below the repo root.
         return Path(__file__).resolve().parent.parent
 
+    @pytest.fixture
+    def presets_dir(self, repo_root: Path) -> Path:
+        # Named presets live under collectives/; the live default stays at root.
+        return repo_root / "collectives"
+
     def test_default_collective_yaml_parses(self, repo_root: Path):
         spec = load_collective(repo_root / "collective.yaml")
         assert spec.collective_id == "sol-01"
         assert spec.agents == []  # shipped empty by design
 
-    def test_coding_split_preset_parses(self, repo_root: Path):
-        spec = load_collective(repo_root / "collective.coding-split.yaml")
+    def test_coding_split_preset_parses(self, presets_dir: Path):
+        spec = load_collective(presets_dir / "collective.coding-split.yaml")
         assert spec.collective_id == "sol-01"
         # 3 coding_agents, cluster backend.
         coding = [a for a in spec.agents if a.role == "coding_agent"]
@@ -423,8 +428,8 @@ class TestShippedPresets:
         assert names == ["acc-cell-coding-1", "acc-cell-coding-2",
                           "acc-cell-coding-3"]
 
-    def test_autoresearcher_preset_parses(self, repo_root: Path):
-        spec = load_collective(repo_root / "collective.autoresearcher.yaml")
+    def test_autoresearcher_preset_parses(self, presets_dir: Path):
+        spec = load_collective(presets_dir / "collective.autoresearcher.yaml")
         roles = [a.role for a in spec.agents]
         # 6 research roles per expected_topology.md.
         assert set(roles) == {

@@ -59,7 +59,19 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     inf.add_argument("collective_id", nargs="?", default=None,
                      help="Collective id (default: $ACC_COLLECTIVE_ID).")
-    inf.add_argument("name", help="Role to infuse (must exist under roles/).")
+    inf.add_argument("name", help="Role to infuse — in-tree (roles/) OR served "
+                                  "by an installed family pack.")
+    inf.add_argument(
+        "--from-pkg", "--install", dest="from_pkg", default=None, metavar="@scope/name[@constraint]",
+        help="Fetch+verify+install this family pack from the catalog FIRST, "
+             "then infuse <name> from it (one-step load).  Aligns with "
+             "`acc-pkg install` / `acc-deploy.sh pkg add`.",
+    )
+    inf.add_argument(
+        "--allow-unsigned", action="store_true",
+        help="With --from-pkg: bypass the signing floor for unsigned dev packs "
+             "(audit-logged).",
+    )
     inf.add_argument(
         "--approver-id",
         default="cli:operator",
@@ -171,9 +183,38 @@ async def _cmd_infuse(args: argparse.Namespace) -> int:
     from acc.signals import subject_role_update  # noqa: PLC0415
 
     cid = args.collective_id or default_collective()
+
+    # Optional one-step load: install the family pack from the catalog, then
+    # infuse a role it provides.  The dual-source RoleLoader below resolves the
+    # freshly-installed packaged role transparently.
+    if getattr(args, "from_pkg", None):
+        try:
+            from acc.collective import parse_required_package  # noqa: PLC0415
+            from acc.pkg.fetch import (  # noqa: PLC0415
+                FetchError,
+                fetch_and_install_closure,
+            )
+        except ImportError as exc:
+            print(f"role infuse --from-pkg: acc.pkg unavailable ({exc})", file=sys.stderr)
+            return 1
+        try:
+            pkg_name, constraint = parse_required_package(args.from_pkg)
+            res = fetch_and_install_closure(
+                pkg_name, constraint, allow_unsigned=args.allow_unsigned,
+            )
+        except (ValueError, FetchError) as exc:
+            print(f"role infuse --from-pkg {args.from_pkg!r}: {exc}", file=sys.stderr)
+            return 1
+        print(f"installed {res.install.entry.name}@{res.install.entry.version} "
+              f"-> {res.install.install_path}")
+
     role_def = RoleLoader(roles_root(), args.name).load()
     if role_def is None:
-        print(f"role {args.name!r} not found", file=sys.stderr)
+        hint = "" if not getattr(args, "from_pkg", None) else (
+            f" (pack {args.from_pkg} installed, but it does not provide a role "
+            f"named {args.name!r})"
+        )
+        print(f"role {args.name!r} not found{hint}", file=sys.stderr)
         return 1
 
     payload: dict[str, Any] = {

@@ -1,0 +1,29 @@
+# ACC collective preset — coding-split agentset.
+#
+# Three peer `coding_agent` workers in cluster `backend` — the declarative
+# replacement for the legacy `CODING_SPLIT=true ./acc-deploy.sh up` env-var
+# profile.
+#
+# The `coding_agent` role is served by the @acc/workspace-roles family pack
+# (it is no longer in-tree).  `required_packages` makes `apply` resolve +
+# fetch + verify + install it from the catalog at boot — or install it ahead
+# of time with the containerized toolchain:
+#   ./acc-pkg install @acc/workspace-roles@^1.0
+#   ./acc-deploy.sh pkg add @acc/workspace-roles        # same thing, via the deploy wrapper
+#
+# Apply (a bare preset name resolves under collectives/):
+#   ./acc-deploy.sh apply coding-split
+#   ./acc-deploy.sh apply --dry-run coding-split        # preview the reconcile diff
+# The synthesized services are named `acc-cell-coding-1/2/3`.
+
+collective_id: sol-01
+
+required_packages:
+  - "@acc/workspace-roles@^1.0"
+
+agents:
+  - role: coding_agent
+    replicas: 3
+    cluster_id: backend
+    purpose: "Implement the planner's decomposed coding tasks in parallel."
+    agent_id_prefix: coding

@@ -58,21 +58,26 @@ Omit `model` and the agent uses the collective default (`acc-config.yaml` /
 
 ## 3. Lifecycle — spawn, inspect, swap, tear down
 
+Presets live in `collectives/` and apply by **bare name** (a path also works):
+
 ```bash
 # Preview what an agentset would create (no changes):
-./acc-deploy.sh apply --dry-run collective.coding-split.yaml
+./acc-deploy.sh apply --dry-run coding-split
 
-# Spawn it (adds the agents; baseline + memory untouched):
-./acc-deploy.sh apply collective.coding-split.yaml
+# Spawn it (ADDS the agents; baseline, memory, and your attached TUI untouched):
+./acc-deploy.sh apply coding-split
 
 # See the synthesized agents:
 podman ps --filter label=acc.synthesized=true
 
-# SWAP to a different agentset — re-apply another spec.  apply runs with
-# --remove-orphans, so the previous agentset's agents are removed and the new
-# one's come up; the baseline stays put.  (Agent memory in the shared LanceDB /
-# Redis / NATS volumes survives the swap.)
-./acc-deploy.sh apply collective.autoresearcher.yaml
+# ADD a second agentset — apply does not remove the first by default, it only
+# adds what the new spec declares (agent memory in the shared LanceDB / Redis /
+# NATS volumes is always preserved):
+./acc-deploy.sh apply autoresearcher
+
+# RECONCILE-DOWN — to remove agents dropped from a spec (true swap), opt into
+# orphan removal with --prune.  This is TUI-safe: acc-tui is never removed.
+./acc-deploy.sh apply --prune coding-split
 
 # Edit collective.yaml by hand OR via the TUI (Ecosystem → Agentset tab:
 # add agents, pick a Model from the dropdown, Save → Apply), then re-apply.
@@ -81,9 +86,10 @@ podman ps --filter label=acc.synthesized=true
 ./acc-deploy.sh down
 ```
 
-> **Heads-up:** `apply` uses `--remove-orphans`. Applying a *broken* spec that
-> fails to merge can remove agents before erroring — always `--dry-run` first
-> on an unfamiliar spec, and keep the baseline recoverable with `up`.
+> **Note:** by default `apply` only *adds* declared agents — it does **not**
+> pass `--remove-orphans`, so it never removes the operator's attached `acc-tui`
+> or other running services. Use `apply --prune` when you explicitly want
+> reconcile-down (removing agents no longer in the spec).
 
 ---
 
@@ -121,24 +127,50 @@ Design rules of thumb:
 - **One `cluster_id` per team** — clusters are how the arbiter's `PlanExecutor`
   fans a task out and aggregates results, and how the TUI groups them.
 - **Mixed models** — cheap workers + a strong planner/reviewer is the high-ROI
-  pattern (see `collective.reviewer.yaml`).
+  pattern (see `reviewer`).
 - **Single-instance the reviewer/orchestrator** — multiple fragment the verdict.
-- The role must exist under `roles/<id>/role.yaml` (`acc-tui` Ecosystem lists
-  them; author new ones per [`docs/role-authoring.md`](role-authoring.md)).
+- The role must be available — either in-tree (`roles/<id>/role.yaml`, the 7
+  CONTROL roles) **or** served by an installed family pack (declare it in the
+  spec's `required_packages`; see §5.1). `acc-tui` Ecosystem lists both; author
+  new ones per [`docs/role-authoring.md`](role-authoring.md).
 
 ---
 
 ## 5. The shipped presets
 
-| Preset | Team | Use for |
-|---|---|---|
-| `collective.coding-split.yaml` | 3 `coding_agent`s in cluster `backend` | parallel coding |
-| `collective.reviewer.yaml` | cheap implementer/tester workers + 1 strong `reviewer` | quality via the critic loop |
-| `collective.autoresearcher.yaml` | 6 research roles (planner / economist / competitor / strategist / synthesizer / critic) | multi-perspective research → report |
-| `collective.orchestrator.yaml` | `orchestrator` router + `coding_agent` + `analyst` workers | route mixed tasks to the right role |
-| `collective.worker-pool.yaml` | dormant `worker_pool` slots | arbiter-activated elastic capacity |
+Presets live in **`collectives/`** (see [`collectives/README.md`](../collectives/README.md)).
+Apply any by bare name: `./acc-deploy.sh apply <name>`.
 
-Apply any with `./acc-deploy.sh apply <preset>`.
+| Preset (`apply <name>`) | Team | Family pack |
+|---|---|---|
+| `coding-split` | 3 `coding_agent`s in cluster `backend` | `@acc/workspace-roles` |
+| `reviewer` | cheap implementer/tester workers + 1 strong `reviewer` | `@acc/workspace-roles` |
+| `autoresearcher` | 6 research roles (planner / economist / competitor / strategist / synthesizer / critic) | `@acc/research-roles` |
+| `orchestrator` | `orchestrator` router + `coding_agent` + `analyst` workers | `@acc/workspace-roles` |
+| `worker-pool` | dormant `worker_pool` slots | `@acc/workspace-roles` |
+| `capital-markets` | equity / fixed-income / macro / quant / options / portfolio desk | `@acc/capital-markets-roles` |
+| `assistant` | on-demand concierge | _(CONTROL — none)_ |
+| `demo-coding` / `demo-financial` / `demo-multi` | proposal-018 demos | workspace+devops / business / all |
+
+### 5.1 Loading role packs
+
+Most worker roles ship in signed `@acc/*` family packs, not in-tree. A preset
+declares them in `required_packages:`, and `apply` fetches + verifies + installs
+them from the catalog at boot. Load one yourself any time:
+
+```bash
+./acc-deploy.sh pkg add @acc/workspace-roles        # fetch+install from the catalog
+./acc-deploy.sh pkg add @acc/business-roles@^1.0 acc-canonical   # pin a catalog id
+./acc-deploy.sh pkg list                            # installed packs
+./acc-pkg install @acc/workspace-roles@^1.0         # equivalent, native acc-pkg flags
+```
+
+In the TUI: **Ecosystem → `g` (get pack)** installs a catalog pack; its roles
+then appear in the genome browser to infuse. Or one-step from the CLI:
+`acc-cli role infuse <role> --from-pkg @acc/<pack>`.
+
+Keep presets aligned with the rest of ACC (roles, models, packs) with the
+**`/acc-collectives`** skill — `python tools/check_collectives.py`.
 
 ---
 
@@ -170,7 +202,7 @@ work in concert:
 ## 7. User stories — teams working a problem together
 
 ### Story A — "Ship a feature" (coding cell)
-Apply `collective.coding-split.yaml` (or the §4 dedicated cell). Send the
+Apply `coding-split` (or the §4 dedicated cell). Send the
 architect a feature request via the Prompt screen. The **architect** decomposes
 it into a PLAN; **implementers** build the pieces in parallel (cluster
 `backend`); the **tester** writes/runs tests; the **reviewer** (strong model)
@@ -178,13 +210,13 @@ critiques and the critic loop re-issues weak steps until it passes. You watch
 each agent's reasoning collapse-line in the transcript.
 
 ### Story B — "Research a market" (autoresearcher)
-Swap to `collective.autoresearcher.yaml`. The **planner** frames the question;
+Swap to `autoresearcher`. The **planner** frames the question;
 the **economist / competitor / strategist** investigate in parallel from
 different angles; the **synthesizer** merges their findings into a report; the
 **critic** challenges gaps. One prompt → a multi-perspective brief.
 
 ### Story C — "Mixed inbox" (orchestrator-routed)
-Apply `collective.orchestrator.yaml` with the `orchestrator` on a capable model.
+Apply `orchestrator` with the `orchestrator` on a capable model.
 Send tasks of mixed kinds to the `orchestrator`; it routes each to the right
 worker — *"…requires code generation → coding_agent"*, *"…pattern recognition →
 analyst"* — and the worker answers. The routing decision is visible, so the
@@ -192,7 +224,7 @@ operator sees **why** each task went where.
 
 ### Story D — "Pivot the team mid-session" (swap)
 Run Story A's coding cell during a build sprint. When a strategy question comes
-up, `./acc-deploy.sh apply collective.autoresearcher.yaml` — the coding cell is
+up, `./acc-deploy.sh apply autoresearcher` — the coding cell is
 swapped out, the research team spun up, the baseline + all episodic memory
 intact. Swap back when you return to code. One stack, many specialised teams.
 
@@ -215,14 +247,14 @@ ACC-9 bridge — two purpose-built agentsets collaborating across collectives.
 #    (models.yaml + LITELLM_API_KEY / ACC_ANTHROPIC_API_KEY in .env)
 
 # 3. Spawn a team
-./acc-deploy.sh apply --dry-run collective.orchestrator.yaml   # preview
-./acc-deploy.sh apply collective.orchestrator.yaml             # spawn
+./acc-deploy.sh apply --dry-run orchestrator   # preview
+./acc-deploy.sh apply orchestrator             # spawn
 
 # 4. Drive it from the TUI Prompt screen (target the orchestrator / architect),
 #    watch the reasoning stream + PLAN fan-out + reviewer verdicts.
 
 # 5. Pivot
-./acc-deploy.sh apply collective.coding-split.yaml             # swap teams
+./acc-deploy.sh apply coding-split             # swap teams
 ```
 
 ## 9. Gotchas
