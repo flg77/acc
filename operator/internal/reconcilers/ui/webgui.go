@@ -91,7 +91,7 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 	svc := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Labels: labels},
 		Spec: corev1.ServiceSpec{
-			Selector: labels,
+			Selector: util.SelectorLabels(labels),
 			Ports:    []corev1.ServicePort{{Name: "http", Port: proxyPort, TargetPort: intstr.FromInt(proxyPort)}},
 		},
 	}
@@ -151,7 +151,7 @@ func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: corpus.Namespace, Labels: labels},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptr.To(replicas),
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			Selector: &metav1.LabelSelector{MatchLabels: util.SelectorLabels(labels)},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{
