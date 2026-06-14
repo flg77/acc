@@ -28,7 +28,14 @@ from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBac
 # ---------------------------------------------------------------------------
 
 DeployMode = Literal["standalone", "rhoai", "edge"]
-AgentRole = Literal["ingester", "analyst", "synthesizer", "arbiter", "observer", "coding_agent", "orchestrator", "assistant", "compliance_officer"]
+# AgentRole is a free string, not a closed Literal: built-in roles ship
+# in-tree, but PACK roles (@acc/* families, post ecosystem-split) are equally
+# valid role names resolved by the dual-source RoleLoader at runtime. A closed
+# Literal rejected every pack/persona role (e.g. coding_agent_reviewer,
+# equity_analyst) at config-parse time, before the loader could fetch them.
+# Known built-ins: ingester, analyst, synthesizer, arbiter, observer,
+# coding_agent, orchestrator, assistant, compliance_officer, reviewer, dormant.
+AgentRole = str
 
 # Proposal `20260531-role-perception-profiles` Phase 1 — typed
 # per-role perception profile.  Selects which live-state slice gets
