@@ -188,6 +188,12 @@ class CatalogIndexEntry(BaseModel):
     tarball_path: str = ""            # file mode
     signature_url: str = ""           # https mode (relative or absolute)
     signature_path: str = ""          # file mode
+    # Sigstore bundle (cosign --bundle): an alternative to the detached
+    # signature that the publisher (acc-pkg publish) emits alongside it.
+    # Accepted + carried so a newer catalog index parses; verification
+    # still uses the detached signature today (acc-spearhead#92).
+    bundle_url: str = ""              # https mode
+    bundle_path: str = ""             # file mode
 
 
 class ResolvedPackage(BaseModel):
