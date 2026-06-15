@@ -69,6 +69,20 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 		return result, fmt.Errorf("render acc-config: %w", err)
 	}
 
+	// Deliver the namespace's AccCatalogs (rendered into the acc-catalogs
+	// ConfigMap by AccCatalogReconciler) as /etc/acc/catalogs.yaml via the SAME
+	// acc-config mount the agent already reads. Merging into acc-config avoids a
+	// nested subPath file mount into the /etc/acc ConfigMap volume, which does
+	// NOT materialize reliably (the file is absent in-pod even though the mount
+	// renders in the Deployment) — proposal 032 §11 catalog delivery.
+	cmData := map[string]string{"acc-config.yaml": accConfigYAML}
+	catCM := &corev1.ConfigMap{}
+	if getErr := r.Client.Get(ctx, types.NamespacedName{Namespace: ns, Name: "acc-catalogs"}, catCM); getErr == nil {
+		if cy := catCM.Data["catalogs.yaml"]; cy != "" {
+			cmData["catalogs.yaml"] = cy
+		}
+	}
+
 	configMapName := fmt.Sprintf("%s-acc-config", collective.Name)
 	configMapLabels := util.CollectiveLabels(corpus.Name, collective.Spec.CollectiveID, "acc-config", corpus.Spec.Version)
 	cm := &corev1.ConfigMap{
@@ -77,7 +91,7 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 			Namespace: ns,
 			Labels:    configMapLabels,
 		},
-		Data: map[string]string{"acc-config.yaml": accConfigYAML},
+		Data: cmData,
 	}
 	if _, err := util.Upsert(ctx, r.Client, r.Scheme, collective, cm, func(existing client.Object) error {
 		existing.(*corev1.ConfigMap).Data = cm.Data
@@ -257,18 +271,6 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 							VolumeMounts: append([]corev1.VolumeMount{
 								{Name: "acc-config", MountPath: "/etc/acc"},
 								{Name: "wasm-governance", MountPath: "/etc/acc/governance"},
-								// AccCatalog delivery (Stage 1.6 / proposal 032 §11): the
-								// operator renders the namespace's AccCatalogs into the
-								// acc-catalogs ConfigMap; mount its catalogs.yaml at the
-								// resolver's system path so `acc-cli pkg-install` finds the
-								// catalogs (else "no catalogs are configured"). Nested file
-								// mount mirrors wasm-governance above.
-								{
-									Name:      "acc-catalogs",
-									MountPath: "/etc/acc/catalogs.yaml",
-									SubPath:   "catalogs.yaml",
-									ReadOnly:  true,
-								},
 								// ACC-6a: role definition mounted read-only at /app/acc-role.yaml
 								{
 									Name:      "acc-role",
@@ -280,19 +282,6 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 						},
 					},
 					Volumes: append([]corev1.Volume{
-						{
-							// AccCatalog delivery: per-namespace acc-catalogs ConfigMap
-							// (AccCatalogReconciler). Optional so a catalog-less namespace
-							// still schedules — the resolver reports "no catalogs configured"
-							// instead of the pod failing to mount.
-							Name: "acc-catalogs",
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{Name: "acc-catalogs"},
-									Optional:             ptr.To(true),
-								},
-							},
-						},
 						{
 							Name: "acc-config",
 							VolumeSource: corev1.VolumeSource{
