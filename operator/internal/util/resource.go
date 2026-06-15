@@ -70,10 +70,21 @@ func Upsert(
 		return UpsertResultNoop, fmt.Errorf("Get %T %s: %w", existing, key, err)
 	}
 
-	// Resource exists — apply mutations, then patch.
+	// Resource exists — apply mutations, then patch ONLY if something changed.
+	// Returning Updated unconditionally made every reconciler's
+	// `Progressing: result != Noop` signal always-true (the merge patch is "{}"
+	// when nothing changed), which pinned the corpus in Progressing forever and
+	// prevented it from ever reaching Ready (proposal 032 §11, Finding B-2).
 	patch := client.MergeFrom(existing.DeepCopyObject().(client.Object))
 	if err := mutateFn(existing); err != nil {
 		return UpsertResultNoop, fmt.Errorf("mutateFn: %w", err)
+	}
+	data, err := patch.Data(existing)
+	if err != nil {
+		return UpsertResultNoop, fmt.Errorf("patch data %T %s: %w", existing, key, err)
+	}
+	if string(data) == "{}" {
+		return UpsertResultNoop, nil
 	}
 	if err := c.Patch(ctx, existing, patch); err != nil {
 		return UpsertResultNoop, fmt.Errorf("Patch %T %s: %w", existing, key, err)
@@ -106,6 +117,13 @@ func ClusterUpsert(
 	patch := client.MergeFrom(existing.DeepCopyObject().(client.Object))
 	if err := mutateFn(existing); err != nil {
 		return UpsertResultNoop, fmt.Errorf("mutateFn: %w", err)
+	}
+	data, err := patch.Data(existing)
+	if err != nil {
+		return UpsertResultNoop, fmt.Errorf("patch data %T %s: %w", existing, key, err)
+	}
+	if string(data) == "{}" {
+		return UpsertResultNoop, nil
 	}
 	if err := c.Patch(ctx, existing, patch); err != nil {
 		return UpsertResultNoop, fmt.Errorf("Patch %T %s: %w", existing, key, err)
