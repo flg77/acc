@@ -12,7 +12,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -184,10 +183,10 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	// Default off → objectLabels == labels and existing collectives are
 	// unchanged.  See kagenti.go.
 	objectLabels := AgentObjectLabels(collective, labels)
-	// Role names may contain underscores (e.g. coding_agent) which are
-	// invalid in RFC-1123 object names — sanitize for the Deployment name
-	// (labels keep the raw role; '_' is legal in label values).
-	deployName := fmt.Sprintf("%s-%s", collective.Name, strings.ReplaceAll(string(role), "_", "-"))
+	// Deployment name sanitizes underscores → hyphens (RFC-1123). Use the
+	// shared helper so the AgentCollective status controller resolves the
+	// EXACT same name (proposal 032 Finding A) — labels keep the raw role.
+	deployName := util.AgentDeploymentName(collective.Name, string(role))
 
 	// Resolve Anthropic API key env var if needed.
 	extraEnv := buildExtraEnv(corpus, collective, roleSpec, inferenceURL)

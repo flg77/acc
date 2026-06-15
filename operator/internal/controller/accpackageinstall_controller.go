@@ -40,6 +40,14 @@ const (
 	PhaseFailed     = "Failed"
 )
 
+// accVenvPython is the ABSOLUTE path to the agent image's S2I virtualenv
+// interpreter. acc is pip-installed into /opt/app-root
+// (Containerfile.agent-core); `kubectl exec` does not run the image entrypoint
+// nor activate the venv, so the pkg-install exec must invoke this interpreter
+// directly. A bare `python3` resolves to /usr/bin/python3 (system, no acc).
+// Proposal 032 Finding C.
+const accVenvPython = "/opt/app-root/bin/python3"
+
 // AccPackageInstallReconciler reconciles an AccPackageInstall by
 // exec'ing `acc-cli collective pkg-install` against an ACC pod
 // matching the target AgentCorpus.
@@ -108,13 +116,16 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Set Installing phase while we exec.
 	r.setPhase(ctx, cr, PhaseInstalling, "Exec", fmt.Sprintf("exec into %s", pod.Name))
 
-	// Build the acc CLI command. Invoke via `python3 -m acc.cli` rather than the
-	// bare `acc-cli` entry-point script: the console script lands in the venv
-	// bin, which is NOT on a non-login `kubectl exec` $PATH in the agent pod
-	// (observed live: "executable file `acc-cli` not found in $PATH"). The agent
-	// image (ubi10/python-312-minimal, CMD `python3 -m acc.agent`) always has
-	// python3, and acc/cli/__main__.py makes `python3 -m acc.cli` equivalent to
-	// the entry point. An empty constraint means "latest": pass the bare
+	// Build the acc CLI command. Invoke the ACC package through the venv's
+	// interpreter BY ABSOLUTE PATH (`/opt/app-root/bin/python3 -m acc.cli`), not
+	// a bare `python3`/`acc-cli`. The agent image installs acc into the S2I
+	// virtualenv at /opt/app-root (Containerfile.agent-core), and a non-login
+	// `kubectl exec` does NOT run the image entrypoint nor inherit the venv on
+	// $PATH: bare `python3` resolves to /usr/bin/python3 (system, no acc) and
+	// `acc-cli` is "not found in $PATH" — both observed live (proposal 032
+	// Finding C: "ModuleNotFoundError: No module named 'acc'"). The absolute
+	// venv interpreter always has acc + its deps, independent of $PATH or which
+	// pod the exec lands on. An empty constraint means "latest": pass the bare
 	// @scope/name so the resolver picks the highest published version
 	// ("name@" would be malformed).
 	pkgRef := cr.Spec.Name
@@ -122,7 +133,7 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		pkgRef = fmt.Sprintf("%s@%s", cr.Spec.Name, cr.Spec.Constraint)
 	}
 	args := []string{
-		"python3", "-m", "acc.cli", "collective", "pkg-install-direct",
+		accVenvPython, "-m", "acc.cli", "collective", "pkg-install-direct",
 		pkgRef,
 		"--json",
 	}

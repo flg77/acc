@@ -272,6 +272,12 @@ func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconcile
 		&infra.NATSReconciler{Client: r.Client, Scheme: r.Scheme},
 		&infra.RedisReconciler{Client: r.Client, Scheme: r.Scheme},
 		&infra.MilvusReconciler{},
+		// Aggregate infra health into the InfrastructureReady condition that
+		// ComputeCorpusPhase gates the corpus Ready phase on (proposal 032 G1).
+		// Runs right after the NATS/Redis/Milvus slots so their StatefulSets
+		// exist this pass. Without it the condition is never set and no corpus
+		// can ever reach Ready.
+		&infra.ReadyReconciler{Client: r.Client},
 		&governance.OPABundleServerReconciler{Client: r.Client, Scheme: r.Scheme},
 		&governance.GatekeeperReconciler{Client: r.Client},
 		&bridge.KafkaBridgeReconciler{Client: r.Client, Scheme: r.Scheme},
