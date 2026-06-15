@@ -114,14 +114,16 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 		return reconcilers.SubResult{}, fmt.Errorf("upsert webgui Deployment: %w", err)
 	}
 
-	// Route — discovery-gated: create when route.openshift.io is served,
-	// tolerate its absence (non-OpenShift clusters) without failing.
+	// Route — discovery-gated + best-effort (proposal 031 §11 #3): a Route
+	// failure (route.openshift.io absent on non-OpenShift, or an RBAC/transient
+	// API error) must NOT abort the whole corpus reconcile — the Service is
+	// still reachable (expose it yourself / via GitOps). Log and continue.
 	if spec.Route == nil || *spec.Route {
 		if err := r.upsertRoute(ctx, corpus, name, labels); err != nil {
 			if apimeta.IsNoMatchError(err) {
 				log.Info("route.openshift.io not present — skipping webgui Route (expose the Service yourself)")
 			} else {
-				return reconcilers.SubResult{}, fmt.Errorf("upsert webgui Route: %w", err)
+				log.Error(err, "webgui Route upsert failed; continuing without an operator-managed Route (expose the Service yourself)")
 			}
 		}
 	}

@@ -264,6 +264,9 @@ spec:
         - apiGroups: ["monitoring.coreos.com"]
           resources: ["prometheusrules"]
           verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["route.openshift.io"]
+          resources: ["routes"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
         serviceAccountName: acc-operator-controller-manager
       deployments:
       - label:
