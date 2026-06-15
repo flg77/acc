@@ -55,7 +55,11 @@
 #   ./acc-deploy.sh apply e2e-demo
 # =============================================================================
 
-collective_id: e2e-demo
+# collective_id is sol-01 (the baseline stack's namespace) so these agents
+# join the running collective the baseline arbiter coordinates — PLANs to
+# sol-01 dispatch to them, and the reviewer critic loop applies.  (The preset
+# is still applied by its file name: `apply e2e-demo`.)
+collective_id: sol-01
 
 required_packages:
   - "@acc/workspace-roles@^1.0"

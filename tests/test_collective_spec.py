@@ -213,6 +213,36 @@ class TestRolesToCompose:
         assert svc["labels"]["acc.collective_id"] == "sol-01"
         assert svc["labels"]["acc.role"] == "coding_agent"
 
+    def test_synthesized_agents_mount_packages_volume(self):
+        """Synthesized cells must mount the shared acc-packages volume +
+        declare it top-level, or pack-served roles never resolve and the
+        cell boots dormant (regression: cells only had roles/ bind-mount)."""
+        overlay = roles_to_compose(
+            CollectiveSpec(
+                collective_id="sol-01",
+                required_packages=["@acc/workspace-roles@^1.0"],
+                agents=[AgentSpec(role="coding_agent_architect", replicas=1)],
+            )
+        )
+        svc = next(iter(overlay["services"].values()))
+        assert "acc-packages:/var/lib/acc/packages:U,z" in svc["volumes"]
+        # Top-level decl (bare/null) so -f base -f overlay merges into the
+        # one project-prefixed acc-packages volume the base agents use.
+        assert "acc-packages" in overlay["volumes"]
+        assert overlay["volumes"]["acc-packages"] is None
+
+    def test_worker_pool_agents_mount_packages_volume(self):
+        overlay = roles_to_compose(
+            CollectiveSpec(
+                collective_id="sol-01",
+                worker_pool=2,
+                agents=[AgentSpec(role="coding_agent_implementer", replicas=1)],
+            )
+        )
+        svc = next(iter(overlay["services"].values()))
+        assert "acc-packages:/var/lib/acc/packages:U,z" in svc["volumes"]
+        assert overlay["volumes"].get("acc-packages", "MISSING") is None
+
     def test_purpose_threaded_as_env_var(self):
         spec = CollectiveSpec(
             collective_id="sol-01",

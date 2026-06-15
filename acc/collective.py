@@ -531,6 +531,9 @@ def _dormant_service(
         "environment": env,
         "volumes": [
             "lancedb-data:/app/data/lancedb:U,z",
+            # Shared packages volume so synthesized agents resolve roles
+            # served by installed family packs (mirrors the base agents).
+            "acc-packages:/var/lib/acc/packages:U,z",
             "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
             "../../roles:/app/roles:ro,z",
         ],
@@ -598,7 +601,7 @@ def roles_to_compose(
             "networks": {
                 "acc-net": {"driver": "bridge"},  # match the base's bare bridge decl (not external+hardcoded-project-name) so -f base -f overlay merges into ONE shared project network
             },
-            "volumes": {"lancedb-data": None},  # null (not external) — matches the base's bare decl so podman-compose can merge -f base -f overlay, and shares the same project-prefixed volume
+            "volumes": {"lancedb-data": None, "acc-packages": None},  # bare decls (null, not external) so -f base -f overlay merges; shares the project-prefixed lancedb-data + acc-packages so synthesized cells see installed packs
         }
 
     for agent in spec.agents:
@@ -640,6 +643,9 @@ def roles_to_compose(
                 "environment": env,
                 "volumes": [
                     "lancedb-data:/app/data/lancedb:U,z",
+                    # Shared packages volume so synthesized agents resolve
+                    # pack-served roles (mirrors the base agent template).
+                    "acc-packages:/var/lib/acc/packages:U,z",
                     "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
                     "../../roles:/app/roles:ro,z",
                 ],
@@ -655,7 +661,7 @@ def roles_to_compose(
     return {
         "services": services,
         "networks": {"acc-net": {"driver": "bridge"}},  # match base's bare bridge decl (not external+hardcoded project name) so -f base -f overlay merges into ONE shared project network
-        "volumes": {"lancedb-data": None},  # null (not external) — matches the base's bare decl so podman-compose can merge -f base -f overlay, and shares the same project-prefixed volume
+        "volumes": {"lancedb-data": None, "acc-packages": None},  # bare decls (null, not external) so -f base -f overlay merges; shares the project-prefixed lancedb-data + acc-packages so synthesized cells see installed packs
     }
 
 
