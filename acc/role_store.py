@@ -79,6 +79,13 @@ class RoleStore:
             roles_root=roles_root,
             role_name=config.agent.role,
         )
+        # Pack-role boot-and-wait: set True by load_at_startup when NO real
+        # source (package / in-tree / file / redis / lancedb) provided this
+        # role and it fell back to the generic in-config default.  The agent
+        # reads this to boot DORMANT instead of masquerading as the role with
+        # default behaviour, then re-polls real sources (try_resolve_real_role)
+        # to self-promote once the role's package is installed.
+        self.loaded_from_default: bool = False
 
     # ------------------------------------------------------------------
     # Startup load
@@ -147,8 +154,32 @@ class RoleStore:
             role.version,
         )
         self._current = role
+        self.loaded_from_default = True
         self._append_audit("loaded", "", role.version, "source=config_default", "")
         return role
+
+    def try_resolve_real_role(self) -> Optional[RoleDefinitionConfig]:
+        """Re-resolve this agent's role from a *real* source only.
+
+        Same source order as :meth:`load_at_startup` but WITHOUT the in-config
+        default fallback — returns ``None`` when only the generic default would
+        apply.  Used by the pack-role boot-and-wait poll: a DORMANT agent calls
+        this each heartbeat and promotes the moment its role's package lands
+        (an installed package's role.yaml resolves through the dual-source
+        RoleLoader).  Does not append audit — the promotion logs once.
+        """
+        for loader in (
+            self._role_loader.load,
+            self._try_load_from_file,
+            self._try_load_from_redis,
+            self._try_load_from_lancedb,
+        ):
+            role = loader()
+            if role is not None:
+                self._current = role
+                self.loaded_from_default = False
+                return role
+        return None
 
     def _try_load_from_file(self) -> Optional[RoleDefinitionConfig]:
         path = os.environ.get("ACC_ROLE_CONFIG_PATH", "/app/acc-role.yaml")
