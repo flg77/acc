@@ -369,7 +369,7 @@ spec:
   - image: quay.io/redhat-ai-dev/acc-operator:0.2.3
     name: manager
   version: 0.2.3
-  replaces: acc-operator.v0.2.2
+  replaces: acc-operator.v0.2.1
   webhookdefinitions:
   - admissionReviewVersions:
     - v1
