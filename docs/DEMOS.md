@@ -9,10 +9,17 @@ catalog awareness), plus a parent that hosts both as sub-collectives.
 | Coding + devops | `collectives/demo-coding.yaml` | coding_agent (+ architect/reviewer), devops_engineer, ml_engineer |
 | Financial | `collectives/demo-financial.yaml` | financial_analyst, fpa_analyst, contract_analyst, risk_compliance_analyst, account_executive, business_analyst |
 | Multi (parent) | `collectives/demo-multi.yaml` | hub assistant routes to the two demos as sub-collectives |
+| Coding + finance, end-to-end (**external MaaS**) | `collectives/collective.e2e-demo.yaml` | architect + implementers + tester + reviewer + devops, on a MaaS gateway → see [`howto-demo-coding-finance-e2e.md`](howto-demo-coding-finance-e2e.md) |
 
 Every demo carries the control plane — `assistant` (router),
 `orchestrator`, `reviewer` (critic loop on the stronger model), and
 `compliance_officer` — from the in-tree CONTROL roles.
+
+> The **coding + finance end-to-end** demo
+> ([`howto-demo-coding-finance-e2e.md`](howto-demo-coding-finance-e2e.md)) is the
+> worked example for package install / role **infusion** (auto-mode assistant vs.
+> manual), running on **external MaaS** models, with the coding plan **reviewed**
+> before an RHOAI deploy — plus the prompt techniques that get the best results.
 
 ## Prerequisites
 
