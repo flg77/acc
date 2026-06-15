@@ -366,7 +366,7 @@ spec:
   - image: quay.io/flg77/acc_images:acc-operator-0.2.0
     name: manager
   version: 0.2.0
-  replaces: acc-operator.v0.1.7
+  replaces: acc-operator.v0.1.6
   webhookdefinitions:
   - admissionReviewVersions:
     - v1
