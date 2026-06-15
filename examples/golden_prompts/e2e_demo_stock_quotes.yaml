@@ -1,0 +1,29 @@
+name: e2e_demo_stock_quotes
+description: |
+  End-to-end demo benchmark for collectives/collective.e2e-demo.yaml.
+  Drives the coding entrypoint to produce a reviewable implementation plan
+  for a Keycloak-secured stock-quotes web app (React + FastAPI, CMS-style)
+  deployed to a Podman/Kubernetes RHOAI test cluster.  Re-run from the
+  Diagnostics pane after a role-prompt or model change.
+prompt: |
+  Produce an implementation plan for a web application, then outline the
+  code structure.  Requirements:
+    - Frontend: React, CMS-style content layout.
+    - Backend: FastAPI exposing the stock-quote API.
+    - Auth: Keycloak (OIDC) integrated end to end.
+    - Purpose: fetch stock-market quotes from Yahoo Finance.
+    - Target: Podman / Kubernetes (RHOAI test cluster); include the
+      deployment manifests and the Keycloak client config.
+  Present the plan as numbered steps (architecture, components, API surface,
+  auth flow, deployment) so a reviewer can review it before implementation.
+target_role: coding_agent
+operating_mode: AUTO
+timeout_s: 120.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_contains:
+    - FastAPI
+    - React
+    - Keycloak
+  output_matches_regex: "(?i)(yahoo|yfinance|finance)"

@@ -67,3 +67,19 @@ models:
     base_url: "https://litellm-prod.apps.maas.redhatworkshops.io/v1"
     api_key_env: "LITELLM_API_KEY"
     label: "RHDP LiteLLM DeepSeek-R1-Distill-Qwen 14B"
+  # RHDP MaaS gateway — ONE LiteLLM endpoint + ONE key, two models — used by
+  # the end-to-end demo collective (collectives/collective.e2e-demo.yaml).
+  # Keyed → openai_compat + api_key_env.  Put the key in .env (NOT here):
+  #   MAAS_API_KEY=sk-...     # the "click-show-key-to-reveal" LiteLLM key
+  - model_id: maas-qwen3-14b
+    backend: openai_compat
+    model: "qwen3-14b"
+    base_url: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1"
+    api_key_env: "MAAS_API_KEY"
+    label: "RHDP MaaS Qwen3 14B (powerful — reviewer)"
+  - model_id: maas-llama-scout-17b
+    backend: openai_compat
+    model: "llama-scout-17b"
+    base_url: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1"
+    api_key_env: "MAAS_API_KEY"
+    label: "RHDP MaaS Llama Scout 17B (coding agents)"
