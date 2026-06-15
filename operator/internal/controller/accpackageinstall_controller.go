@@ -41,11 +41,11 @@ const (
 )
 
 // accVenvPython is the ABSOLUTE path to the agent image's S2I virtualenv
-// interpreter. acc is pip-installed into /opt/app-root
-// (Containerfile.agent-core); `kubectl exec` does not run the image entrypoint
-// nor activate the venv, so the pkg-install exec must invoke this interpreter
-// directly. A bare `python3` resolves to /usr/bin/python3 (system, no acc).
-// Proposal 032 Finding C.
+// interpreter, which carries acc's runtime DEPENDENCIES. acc itself is not in
+// the venv site-packages — it ships as the source tree at /app/acc, so the
+// pkg-install exec also sets PYTHONPATH=/app (see the exec args). A bare
+// `python3` under `kubectl exec` resolves to /usr/bin/python3 (no deps).
+// Proposal 032 §11 Finding C.
 const accVenvPython = "/opt/app-root/bin/python3"
 
 // AccPackageInstallReconciler reconciles an AccPackageInstall by
@@ -116,24 +116,25 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Set Installing phase while we exec.
 	r.setPhase(ctx, cr, PhaseInstalling, "Exec", fmt.Sprintf("exec into %s", pod.Name))
 
-	// Build the acc CLI command. Invoke the ACC package through the venv's
-	// interpreter BY ABSOLUTE PATH (`/opt/app-root/bin/python3 -m acc.cli`), not
-	// a bare `python3`/`acc-cli`. The agent image installs acc into the S2I
-	// virtualenv at /opt/app-root (Containerfile.agent-core), and a non-login
-	// `kubectl exec` does NOT run the image entrypoint nor inherit the venv on
-	// $PATH: bare `python3` resolves to /usr/bin/python3 (system, no acc) and
-	// `acc-cli` is "not found in $PATH" — both observed live (proposal 032
-	// Finding C: "ModuleNotFoundError: No module named 'acc'"). The absolute
-	// venv interpreter always has acc + its deps, independent of $PATH or which
-	// pod the exec lands on. An empty constraint means "latest": pass the bare
-	// @scope/name so the resolver picks the highest published version
-	// ("name@" would be malformed).
+	// Build the acc CLI command. Two pieces both matter (proposal 032 §11
+	// Finding C, observed live):
+	//   1. interpreter: the venv python by ABSOLUTE PATH
+	//      (/opt/app-root/bin/python3) — it carries acc's deps. A bare `python3`
+	//      under a non-login `kubectl exec` resolves to /usr/bin/python3 (no deps).
+	//   2. PYTHONPATH=/app: acc itself is NOT importable from the venv
+	//      site-packages — it ships as the source tree at /app/acc (exactly what
+	//      the agent's own CMD `python3 -m acc.agent` imports via WORKDIR /app).
+	//      The exec does not run from /app, so without PYTHONPATH=/app the import
+	//      fails ("No module named 'acc'"). `env PYTHONPATH=/app` puts the source
+	//      on sys.path regardless of the exec's working directory.
+	// An empty constraint means "latest": pass the bare @scope/name so the
+	// resolver picks the highest published version ("name@" would be malformed).
 	pkgRef := cr.Spec.Name
 	if cr.Spec.Constraint != "" {
 		pkgRef = fmt.Sprintf("%s@%s", cr.Spec.Name, cr.Spec.Constraint)
 	}
 	args := []string{
-		accVenvPython, "-m", "acc.cli", "collective", "pkg-install-direct",
+		"env", "PYTHONPATH=/app", accVenvPython, "-m", "acc.cli", "collective", "pkg-install-direct",
 		pkgRef,
 		"--json",
 	}
