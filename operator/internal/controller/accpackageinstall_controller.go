@@ -225,6 +225,15 @@ func (r *AccPackageInstallReconciler) findAccPod(ctx context.Context, ns, corpus
 	if err := r.Client.List(ctx, &pods,
 		client.InNamespace(ns),
 		client.MatchingLabels(labels),
+		// Restrict to AGENT pods. Every ACC pod (NATS, Redis, OTel, OPA, TUI,
+		// WebGUI, agents) carries acc.redhat.io/corpus, but only agent pods
+		// (acc-agent-core) have the acc source at /app/acc + the venv interpreter
+		// the pkg-install exec needs. Without this filter the exec lands on a
+		// random pod and fails with exit 127 ("/opt/app-root/bin/python3: No such
+		// file or directory" on infra pods) or "No module named 'acc'" (on
+		// TUI/WebGUI). LabelAgentRole is present only on agent pods (proposal 032
+		// §11 Finding C).
+		client.HasLabels{accv1alpha1.LabelAgentRole},
 	); err != nil {
 		return nil, fmt.Errorf("listing pods: %w", err)
 	}
@@ -240,7 +249,7 @@ func (r *AccPackageInstallReconciler) findAccPod(ctx context.Context, ns, corpus
 			}
 		}
 	}
-	return nil, fmt.Errorf("no ready ACC pod in namespace %q (corpus=%q)", ns, corpusName)
+	return nil, fmt.Errorf("no ready ACC agent pod in namespace %q (corpus=%q)", ns, corpusName)
 }
 
 // execInPod runs ``args`` inside the first container of ``pod`` and
