@@ -30,20 +30,46 @@ class TestNATSBackend:
             assert backend._nc is mock_nc
 
     @pytest.mark.asyncio
-    async def test_connect_failure_raises_backend_connection_error(self):
+    async def test_connect_failure_raises_backend_connection_error(self, monkeypatch):
+        monkeypatch.setenv("ACC_NATS_CONNECT_ATTEMPTS", "1")  # fail fast (proposal 031 §11 #1)
         with patch("nats.connect", AsyncMock(side_effect=ConnectionRefusedError("refused"))):
             backend = NATSBackend("nats://localhost:4222")
             with pytest.raises(BackendConnectionError, match="refused"):
                 await backend.connect()
 
     @pytest.mark.asyncio
-    async def test_connect_chains_original_exception(self):
+    async def test_connect_chains_original_exception(self, monkeypatch):
+        monkeypatch.setenv("ACC_NATS_CONNECT_ATTEMPTS", "1")
         original = ConnectionRefusedError("conn refused")
         with patch("nats.connect", AsyncMock(side_effect=original)):
             backend = NATSBackend("nats://localhost:4222")
             with pytest.raises(BackendConnectionError) as exc_info:
                 await backend.connect()
             assert exc_info.value.__cause__ is original
+
+    @pytest.mark.asyncio
+    async def test_connect_retries_then_succeeds(self, monkeypatch, mock_nc):
+        # proposal 031 §11 #1 — the initial connect is resilient: a momentarily
+        # unready NATS (NoServersError) is retried, not crashed-on.
+        monkeypatch.setenv("ACC_NATS_CONNECT_ATTEMPTS", "5")
+        monkeypatch.setenv("ACC_NATS_CONNECT_WAIT_S", "0")
+        connect = AsyncMock(side_effect=[Exception("no servers"), Exception("no servers"), mock_nc])
+        with patch("nats.connect", connect):
+            backend = NATSBackend("nats://localhost:4222")
+            await backend.connect()
+        assert backend._nc is mock_nc
+        assert connect.await_count == 3  # two transient failures, then success
+
+    @pytest.mark.asyncio
+    async def test_connect_exhausts_retries_then_raises(self, monkeypatch):
+        monkeypatch.setenv("ACC_NATS_CONNECT_ATTEMPTS", "3")
+        monkeypatch.setenv("ACC_NATS_CONNECT_WAIT_S", "0")
+        connect = AsyncMock(side_effect=Exception("no servers"))
+        with patch("nats.connect", connect):
+            backend = NATSBackend("nats://localhost:4222")
+            with pytest.raises(BackendConnectionError, match="after 3 attempt"):
+                await backend.connect()
+        assert connect.await_count == 3
 
     @pytest.mark.asyncio
     async def test_publish_serializes_as_msgpack(self, mock_nc):

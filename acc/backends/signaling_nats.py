@@ -46,10 +46,10 @@ class NATSBackend:
                 auth was requested (fail closed, never silently
                 anonymous).
         """
+        import os  # noqa: PLC0415
+
         opts: dict[str, Any] = {}
         if self._nkey_seed_path is not None:
-            import os  # noqa: PLC0415
-
             if not os.path.isfile(self._nkey_seed_path):
                 raise BackendConnectionError(
                     f"NKey auth requested but seed file not found at "
@@ -58,14 +58,29 @@ class NATSBackend:
                     f"the operator-projected Secret (rhoai/edge)"
                 )
             opts["nkeys_seed"] = self._nkey_seed_path
-        try:
-            self._nc = await nats.connect(self._url, **opts)
-        except BackendConnectionError:
-            raise
-        except Exception as exc:
-            raise BackendConnectionError(
-                f"Failed to connect to NATS at {self._url}: {exc}"
-            ) from exc
+        # Resilient initial connect (proposal 031 §11 #1).  nats.py's initial
+        # connect attempts the servers once and raises NoServersError if NATS is
+        # momentarily unready — common when the agent (re)starts before its NATS
+        # pod's headless-Service endpoints exist.  Without a retry the agent
+        # hard-crashes -> CrashLoopBackOff -> races NATS again on restart.
+        # (allow_reconnect only covers drops AFTER a successful connect, not the
+        # first one.)  Bound an explicit backoff loop here; env-tunable, with
+        # defaults giving ~60s of patience for NATS to come up.
+        attempts = max(1, int(os.environ.get("ACC_NATS_CONNECT_ATTEMPTS", "30")))
+        wait_s = float(os.environ.get("ACC_NATS_CONNECT_WAIT_S", "2"))
+        last_exc: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                self._nc = await nats.connect(self._url, **opts)
+                return
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if attempt < attempts:
+                    await asyncio.sleep(wait_s)
+        raise BackendConnectionError(
+            f"Failed to connect to NATS at {self._url} after {attempts} "
+            f"attempt(s): {last_exc}"
+        ) from last_exc
 
     async def close(self) -> None:
         """Drain and close the NATS connection."""
