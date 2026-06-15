@@ -573,18 +573,29 @@ case "$COMMAND" in
         # required_packages (back-compat).  ACC_ALLOW_UNSIGNED=1
         # bypasses the signing floor (audit-logged) for dev hubs
         # that haven't wired cosign yet.
+        #
+        # On a containerized stack the packages root is the in-container
+        # `acc-packages` volume, which the host can't write.  In that case
+        # `pkg-install` returns exit 20 (EXIT_PKG_ROOT_DEFERRED): it prints
+        # an actionable note and defers resolution to the in-container
+        # registry — apply CONTINUES (agents load roles from the volume at
+        # runtime).  Any other non-zero is a genuine failure and aborts.
         REQ_PKG_ARGS=()
         if [[ "${ACC_ALLOW_UNSIGNED:-0}" == "1" ]]; then
             REQ_PKG_ARGS+=(--allow-unsigned)
         fi
         echo "▶ Resolving required_packages from $SPEC..."
-        if ! python -m acc.cli collective pkg-install \
-                "$SPEC_PATH" "${REQ_PKG_ARGS[@]}"; then
-            echo "ERROR: required_packages install failed" >&2
-            echo "       check /etc/acc/catalogs.yaml or set" >&2
-            echo "       ACC_ALLOW_UNSIGNED=1 for unsigned dev installs" >&2
-            exit 1
-        fi
+        PKG_RC=0
+        python -m acc.cli collective pkg-install \
+            "$SPEC_PATH" "${REQ_PKG_ARGS[@]}" || PKG_RC=$?
+        case "$PKG_RC" in
+            0)  ;;  # resolved (or nothing to resolve)
+            20) echo "  → continuing; packs resolve from the in-container registry." >&2 ;;
+            *)  echo "ERROR: required_packages install failed (exit $PKG_RC)" >&2
+                echo "       check /etc/acc/catalogs.yaml or set" >&2
+                echo "       ACC_ALLOW_UNSIGNED=1 for unsigned dev installs" >&2
+                exit 1 ;;
+        esac
 
         echo "▶ Synthesizing overlay from $SPEC..."
         if ! python -m acc.cli collective synthesize \

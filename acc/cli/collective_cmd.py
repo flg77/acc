@@ -30,6 +30,14 @@ from acc.collective import (
     roles_to_compose,
 )
 
+# Soft-skip signal for ``collective pkg-install``: the spec declares
+# required_packages but the packages root is not writable from this host
+# (it's the in-container ``acc-packages`` volume).  Resolution is deferred
+# to the in-container registry rather than crashing.  Deliberately outside
+# the acc-pkg CLI contract band (0-6) so ``acc-deploy.sh`` can tell
+# "defer + continue" apart from a genuine install failure (acc-spearhead#85).
+EXIT_PKG_ROOT_DEFERRED = 20
+
 
 # ---------------------------------------------------------------------------
 # Registrar
@@ -219,6 +227,48 @@ def _cmd_pkg_install(args: argparse.Namespace) -> int:
         return 1
 
     workspace = collective_workspace(args.spec)
+
+    # If the spec declares packs but the packages root is an in-container
+    # volume this host can't write, host-side resolution would crash with
+    # PermissionError.  Detect that and defer to in-container resolution
+    # with an actionable message instead of a traceback (acc-spearhead#85).
+    if spec.iter_required_packages():
+        from acc.pkg.registry import (  # noqa: PLC0415
+            default_root,
+            root_is_host_writable,
+        )
+        root = default_root()
+        if not root_is_host_writable(root):
+            deferred = list(spec.required_packages)
+            if args.json:
+                print(json.dumps({
+                    "collective_id": spec.collective_id,
+                    "installed": [],
+                    "skipped": "packages_root_not_host_writable",
+                    "packages_root": str(root),
+                    "deferred": deferred,
+                }, indent=2, sort_keys=True))
+            else:
+                print(
+                    f"⚠ required_packages not resolved from the host: the packages "
+                    f"root\n"
+                    f"  ({root}) is not writable here — on a containerized stack it "
+                    f"is the\n"
+                    f"  in-container 'acc-packages' volume.  Skipping host-side "
+                    f"install; the\n"
+                    f"  agents resolve these roles from the in-container registry at "
+                    f"runtime.\n"
+                    f"  To pre-provision packs into the volume, use one of:\n"
+                    f"    - the TUI ecosystem screen -> 'Get pack'\n"
+                    f"    - ./acc-deploy.sh pkg add <@scope/name[@constraint]> "
+                    f"<catalog>\n"
+                    f"    - acc-cli collective infuse <role> --from-pkg "
+                    f"<@scope/name> --install\n"
+                    f"  Deferred: {', '.join(deferred)}",
+                    file=sys.stderr,
+                )
+            return EXIT_PKG_ROOT_DEFERRED
+
     missing = spec.unsatisfied_requirements()
     if not missing:
         if args.json:

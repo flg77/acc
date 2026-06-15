@@ -113,6 +113,29 @@ def default_root() -> Path:
     return Path(raw) if raw else DEFAULT_ROOT
 
 
+def root_is_host_writable(root: Path | None = None) -> bool:
+    """Return ``True`` iff this process can create/write the packages root.
+
+    Walks up to the nearest existing ancestor and tests write access
+    there — **non-destructive**, no directory is created.  Returns
+    ``False`` for the containerized-stack case where the root is an
+    in-container volume (e.g. ``/var/lib/acc/packages``) that the host
+    can neither create nor write: callers should then defer package
+    resolution to the in-container registry instead of crashing with a
+    ``PermissionError`` (see acc-spearhead#85).
+    """
+    probe = (root or default_root()).resolve()
+    while True:
+        try:
+            if probe.exists():
+                return os.access(probe, os.W_OK)
+        except OSError:
+            return False
+        if probe.parent == probe:  # reached the filesystem root
+            return False
+        probe = probe.parent
+
+
 # ---------------------------------------------------------------------------
 # Registry class
 # ---------------------------------------------------------------------------
@@ -135,12 +158,27 @@ class Registry:
     # -- lock plumbing --------------------------------------------------
 
     @contextmanager
-    def transaction(self) -> Iterator[None]:
+    def transaction(self, *, create: bool = True) -> Iterator[None]:
         """Hold the registry's exclusive lock for the duration of the
         ``with`` block.  Useful when an external caller does
         ``read → external work → write`` and needs the read state to
         stay consistent.
+
+        With ``create=False`` (read paths), a registry root that was
+        never created is not materialised: the block runs lock-free and
+        the subsequent read sees "nothing installed".  This lets a host
+        that can't write the packages root (the in-container
+        ``acc-packages`` volume) still *read* an empty registry instead
+        of crashing with ``PermissionError`` (acc-spearhead#85).
         """
+        if not create:
+            try:
+                lock_exists = self.lock_path.exists()
+            except OSError:
+                lock_exists = False
+            if not lock_exists:
+                yield
+                return
         self.root.mkdir(parents=True, exist_ok=True)
         # ``touch`` is idempotent + cheap; needed because flock needs an
         # existing file to lock on.
@@ -195,7 +233,7 @@ class Registry:
 
     def list(self) -> list[RegistryEntry]:
         """Return all installed entries, sorted by ``(name, version)``."""
-        with self.transaction():
+        with self.transaction(create=False):
             entries = self._read_unlocked()
         return sorted(entries, key=lambda e: (e.name, e.version))
 
@@ -208,7 +246,7 @@ class Registry:
         plain string sort — semver-aware sort lives in the installer's
         constraint resolver).
         """
-        with self.transaction():
+        with self.transaction(create=False):
             entries = self._read_unlocked()
         matches = [
             e for e in entries
@@ -220,7 +258,7 @@ class Registry:
 
     def find_by_name(self, name: str) -> list[RegistryEntry]:
         """All installed versions of ``name``, oldest version first."""
-        with self.transaction():
+        with self.transaction(create=False):
             entries = self._read_unlocked()
         return sorted(
             (e for e in entries if e.name == name),
