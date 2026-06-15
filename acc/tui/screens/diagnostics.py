@@ -109,7 +109,10 @@ class DiagnosticsScreen(Screen):
                 # + writes to the writable store; New starts a blank
                 # template.  "+ Add" attaches a directory (e.g. of
                 # markdown prompts) that the pane watches + reloads.
-                yield Label("EDIT / NEW (YAML)", classes="panel-label")
+                yield Label(
+                    "EDIT / NEW (YAML) — Enter/click a row to load it",
+                    classes="panel-label",
+                )
                 yield TextArea("", id="golden-editor", language="yaml")
                 with Horizontal(id="golden-editor-actions"):
                     yield Button("New", id="btn-golden-new", variant="default")
@@ -129,6 +132,12 @@ class DiagnosticsScreen(Screen):
 
     def on_mount(self) -> None:
         table = self.query_one("#golden-table", DataTable)
+        # Row-cursor (not the default cell-cursor) so DataTable posts
+        # RowHighlighted / RowSelected as the operator navigates — without
+        # this the selection handlers never fire in the running TUI, so the
+        # detail panel stayed blank and prompts could not be loaded into the
+        # editor (the pilot test masked it by calling the handler directly).
+        table.cursor_type = "row"
         table.add_columns("Name", "Role", "Mode", "Last")
         self._reload_prompts()
         # PR-Y-2 — live-reload: poll the load roots' file mtimes every
@@ -192,6 +201,18 @@ class DiagnosticsScreen(Screen):
     # ------------------------------------------------------------------
 
     def on_data_table_row_highlighted(self, event) -> None:
+        # Moving the cursor only updates the (read-only) detail panel.
+        # Loading into the editor is deferred to an EXPLICIT row select
+        # (Enter / click) so a background file-reload — which resets the
+        # cursor — can never clobber the operator's unsaved editor edits.
+        if getattr(event, "data_table", None) is None:
+            return
+        if event.data_table.id != "golden-table":
+            return
+        self._render_detail(self._row_key_value(event.row_key))
+
+    def on_data_table_row_selected(self, event) -> None:
+        # Enter / click on a row: load it into the editor for tweaking.
         if getattr(event, "data_table", None) is None:
             return
         if event.data_table.id != "golden-table":
@@ -199,6 +220,12 @@ class DiagnosticsScreen(Screen):
         name = self._row_key_value(event.row_key)
         self._render_detail(name)
         self._load_into_editor(name)
+        if name in self._prompts:
+            self._set_status(
+                f"[dim]loaded[/dim] [b]{name}[/b] "
+                f"[dim]into editor — tweak + Save (writes to your "
+                f"writable store as a copy).[/dim]"
+            )
 
     @staticmethod
     def _row_key_value(row_key) -> str:

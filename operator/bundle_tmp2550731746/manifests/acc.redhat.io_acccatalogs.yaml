@@ -1,0 +1,248 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: acccatalogs.acc.redhat.io
+spec:
+  group: acc.redhat.io
+  names:
+    kind: AccCatalog
+    listKind: AccCatalogList
+    plural: acccatalogs
+    shortNames:
+    - acccatalog
+    singular: acccatalog
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.tier
+      name: Tier
+      type: string
+    - jsonPath: .spec.mode
+      name: Mode
+      type: string
+    - jsonPath: .spec.priority
+      name: Priority
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: AccCatalog is the Schema for the acccatalogs API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              AccCatalogSpec declares one entry in the layered catalog list
+              rendered to /etc/acc/catalogs.yaml inside ACC pods (Stage 1.6).
+
+              Mirrors acc/pkg/catalog.py's Catalog Pydantic model so the YAML
+              the operator emits validates cleanly against the Python loader.
+              Operator reconciler watches all AccCatalog resources in the
+              namespace and renders one ConfigMap acc-catalogs per namespace
+              containing the merged YAML.
+            properties:
+              catalogId:
+                description: |-
+                  CatalogID is the unique, human-readable identifier for this
+                  catalog layer (for example "acc-canonical" or "acme-internal").
+                  It is surfaced in the Compliance pane's package "alternates"
+                  column and in acc-pkg output. Must be unique within the
+                  namespace.
+                maxLength: 63
+                minLength: 1
+                type: string
+              mode:
+                description: |-
+                  Mode selects where this catalog's index is read from: "https"
+                  fetches index.json from a remote URL (set the url field);
+                  "file" reads it from an on-disk directory (set the path field,
+                  typically a mounted PVC). Use https for the public ACC
+                  ecosystem catalog and file for air-gapped or self-hosted
+                  catalogs.
+                enum:
+                - https
+                - file
+                type: string
+              path:
+                description: |-
+                  Path is the on-disk directory holding this catalog's index
+                  (for example "/var/lib/acc/catalogs/acme"), typically a PVC
+                  mount inside the ACC pod. Required when mode=file; ignored when
+                  mode=https.
+                type: string
+              priority:
+                default: 100
+                description: |-
+                  Priority breaks ties when two catalogs in the same tier
+                  advertise the same @scope/name package — the higher number
+                  wins. Defaults to 100; raise it to make this catalog override
+                  its peers.
+                format: int32
+                maximum: 1000
+                minimum: 1
+                type: integer
+              requiredSigner:
+                description: |-
+                  RequiredSigner pins the cosign signing identity that every
+                  package from this catalog must satisfy. It is the signing floor
+                  enforced at acc-pkg install time — packages whose signature
+                  does not match are rejected unless the AccPackageInstall
+                  explicitly sets allowUnsigned.
+                properties:
+                  issuer:
+                    description: |-
+                      Issuer is the expected OIDC token issuer for keyless
+                      (Fulcio) signatures, for example
+                      "https://token.actions.githubusercontent.com" for GitHub
+                      Actions. In keypair mode it is a free-form audit label
+                      describing the key owner.
+                    minLength: 1
+                    type: string
+                  keyPath:
+                    description: |-
+                      KeyPath switches verification to keypair mode: an absolute
+                      path to a cosign public-key PEM file mounted in the ACC pod
+                      (for example "/etc/acc/keys/acme.pub"). Leave empty to use
+                      keyless (Fulcio/Rekor) verification via issuer +
+                      subjectPattern.
+                    type: string
+                  subjectPattern:
+                    description: |-
+                      SubjectPattern is a regular expression the signing
+                      certificate's subject must match, for example
+                      "^https://github.com/flg77/acc-ecosystem/.*". Anchored,
+                      RE2/Python-re style; validated by the operator's admission
+                      webhook.
+                    minLength: 1
+                    type: string
+                required:
+                - issuer
+                - subjectPattern
+                type: object
+              tier:
+                description: |-
+                  Tier is the trust classification that orders catalog layers
+                  during package resolution (a higher-trust tier wins ties). One
+                  of: "trusted" (ACC-curated, fully vetted), "tp" (verified
+                  third-party partner), "community" (self-attested community
+                  publisher), or "self" (your own private or local catalog).
+                  Higher tiers usually pin a stricter requiredSigner.
+                enum:
+                - trusted
+                - tp
+                - community
+                - self
+                type: string
+              url:
+                description: |-
+                  URL is the HTTPS endpoint serving this catalog's index.json
+                  (for example "https://flg77.github.io/acc-ecosystem"). Required
+                  when mode=https; ignored when mode=file.
+                type: string
+            required:
+            - catalogId
+            - mode
+            - requiredSigner
+            - tier
+            type: object
+          status:
+            description: |-
+              AccCatalogStatus carries observed-state fields the controller
+              populates so kubectl get / GitOps tooling can show readiness.
+            properties:
+              conditions:
+                description: Conditions list the standard Ready / Reconciled conditions.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              lastRenderedAt:
+                description: |-
+                  LastRenderedAt is when the operator last wrote the catalogs
+                  ConfigMap from this resource.
+                format: date-time
+                type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration matches metadata.generation when the
+                  controller last reconciled.
+                format: int64
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
