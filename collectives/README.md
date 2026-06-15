@@ -48,6 +48,7 @@ served from a community pack, and never declared in `required_packages`.
 | `demo-coding` | control plane + `@acc/workspace-roles` + `@acc/devops-roles` | both | proposal-018 coding+devops demo |
 | `demo-financial` | control plane + business specialists | `@acc/business-roles` | proposal-018 finance demo |
 | `demo-multi` | hub assistant + 2 managed sub-collectives | all of the above | `[DELEGATE:cid]` sub-collective routing |
+| `e2e-demo` | control plane + coding cluster + `reviewer` + `devops_engineer` | `@acc/workspace-roles` + `@acc/devops-roles` | end-to-end coding+review on **external MaaS** models (reviewer=`maas-qwen3-14b`, coding=`maas-llama-scout-17b`); key via `MAAS_API_KEY` in `.env` |
 
 ## Keeping presets aligned
 
