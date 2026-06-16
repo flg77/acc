@@ -251,3 +251,136 @@ async def test_attach_dir_registers_and_loads(tmp_path, monkeypatch):
         await pilot.pause()
         # The markdown prompt from the attached dir now shows up.
         assert "extra" in screen._prompts
+
+
+# ---------------------------------------------------------------------------
+# Proposal 033 WS-B — Form/MD subnav + role selector + Send
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_form_and_md_tabs_present():
+    from textual.widgets import TabbedContent
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        tabbed = screen.query_one("#golden-edit-tabs", TabbedContent)
+        ids = [t.id for t in tabbed.query("TabPane")]
+        assert "tab-golden-form" in ids
+        assert "tab-golden-md" in ids
+
+
+@pytest.mark.asyncio
+async def test_available_role_names_includes_control_role():
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        names = screen._available_role_names()
+        # The assistant control role is always in-tree.
+        assert "assistant" in names
+
+
+@pytest.mark.asyncio
+async def test_highlight_populates_form():
+    from textual.widgets import Select, TextArea
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        table = screen.query_one("#golden-table", DataTable)
+        first_key = list(table.rows.keys())[0]
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=table, cursor_row=0, row_key=first_key,
+            )
+        )
+        await pilot.pause()
+        name = screen._row_key_value(first_key)
+        prompt = screen._prompts[name]
+        assert screen._current_name == name
+        assert (
+            screen.query_one("#form-prompt", TextArea).text.strip()
+            == prompt.prompt.strip()
+        )
+        assert (
+            str(screen.query_one("#form-role", Select).value)
+            == prompt.target_role
+        )
+
+
+@pytest.mark.asyncio
+async def test_form_to_prompt_requires_role_and_text():
+    from textual.widgets import TextArea
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        # Empty prompt → no transient GoldenPrompt is built.
+        screen.query_one("#form-prompt", TextArea).text = ""
+        assert screen._form_to_prompt() is None
+
+
+@pytest.mark.asyncio
+async def test_send_form_renders_reply(monkeypatch):
+    """Send dispatches the Form's values via run_one and renders the
+    reply in the detail panel (the operator's 'feedback of the prompts
+    we sent')."""
+    import acc.golden_prompts as gp
+    from acc.golden_prompts import GoldenPrompt, GoldenResult
+    from textual.widgets import Static
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        app._observers = [MagicMock()]
+        app._active_collective_idx = 0
+        app._collective_ids = ["sol-test"]
+
+        async def _fake_run_one(prompt, *, observer, collective_id):
+            return GoldenResult(
+                name=prompt.name, passed=True, elapsed_ms=42,
+                output_excerpt="hello from the agent",
+            )
+
+        monkeypatch.setattr(gp, "run_one", _fake_run_one)
+
+        captured: list[str] = []
+        detail = screen.query_one("#diagnostics-detail", Static)
+        original = detail.update
+
+        def _cap(content="", *a, **kw):
+            captured.append(str(content))
+            return original(content, *a, **kw)
+
+        detail.update = _cap  # type: ignore[assignment]
+
+        await screen._send_form(
+            GoldenPrompt(name="t", prompt="hi", target_role="assistant"),
+        )
+        await pilot.pause()
+        assert any("hello from the agent" in c for c in captured)
+
+
+@pytest.mark.asyncio
+async def test_send_without_observer_sets_error():
+    from acc.golden_prompts import GoldenPrompt
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        app._observers = []
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+
+        await screen._send_form(
+            GoldenPrompt(name="t", prompt="hi", target_role="assistant"),
+        )
+        joined = " ".join(statuses).lower()
+        assert "nats" in joined or "cannot send" in joined
