@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 
@@ -82,5 +83,56 @@ func TestTUI_DeploysIdleAttachPod(t *testing.T) {
 	}
 	if env["ACC_NATS_URL"] != "nats://rhoai-corpus-nats:4222" {
 		t.Errorf("ACC_NATS_URL = %q, want the corpus NATS service", env["ACC_NATS_URL"])
+	}
+}
+
+// webTerminal=true + a corpus webgui Keycloak → ttyd behind oauth2-proxy.
+func TestTUI_WebTerminalDeploysTtydWithKeycloak(t *testing.T) {
+	c, _ := webguiClient(t)
+	r := &ui.TUIReconciler{Client: c, Scheme: newScheme(t)}
+	corpus := tuiCorpus(&accv1alpha1.TUISpec{Enabled: ptr.To(true), WebTerminal: ptr.To(true)})
+	corpus.Spec.WebGUI = &accv1alpha1.WebGUISpec{Keycloak: fullKeycloak()} // reused for auth
+	if _, err := r.Reconcile(context.Background(), corpus); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !corpus.Status.TUIDeployed {
+		t.Fatal("expected TUIDeployed=true")
+	}
+	deploy := &appsv1.Deployment{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "acc-system", Name: "rhoai-corpus-tui"}, deploy); err != nil {
+		t.Fatalf("expected tui Deployment: %v", err)
+	}
+	byName := map[string][]string{}
+	for _, ct := range deploy.Spec.Template.Spec.Containers {
+		byName[ct.Name] = ct.Command
+	}
+	if _, ok := byName["oauth2-proxy"]; !ok {
+		t.Fatalf("web terminal must run behind oauth2-proxy, got %v", deploy.Spec.Template.Spec.Containers)
+	}
+	cmd, ok := byName["tui"]
+	if !ok || len(cmd) == 0 || cmd[0] != "ttyd" {
+		t.Errorf("web-terminal tui container should run ttyd, got %v", cmd)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "acc-system", Name: "rhoai-corpus-tui"}, &corev1.Service{}); err != nil {
+		t.Errorf("expected tui Service for the web terminal: %v", err)
+	}
+}
+
+// webTerminal=true WITHOUT a Keycloak config → fail-safe to the idle
+// rsh-attach pod (ADR 025 §5: never expose an unauthenticated terminal).
+func TestTUI_WebTerminalWithoutKeycloakFallsBackToIdle(t *testing.T) {
+	c, _ := webguiClient(t)
+	r := &ui.TUIReconciler{Client: c, Scheme: newScheme(t)}
+	corpus := tuiCorpus(&accv1alpha1.TUISpec{Enabled: ptr.To(true), WebTerminal: ptr.To(true)})
+	if _, err := r.Reconcile(context.Background(), corpus); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	deploy := &appsv1.Deployment{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "acc-system", Name: "rhoai-corpus-tui"}, deploy); err != nil {
+		t.Fatalf("expected tui Deployment: %v", err)
+	}
+	ctr := deploy.Spec.Template.Spec.Containers[0]
+	if len(ctr.Command) == 0 || ctr.Command[0] != "sleep" {
+		t.Errorf("no keycloak → must fall back to the idle (sleep) pod, got %v", ctr.Command)
 	}
 }

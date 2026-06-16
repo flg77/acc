@@ -205,9 +205,9 @@ type RHOAISpec struct {
 }
 
 // TUISpec configures the acc-tui interaction surface (proposal 023 / ADR
-// 025). The deployed pod idles (the TUI needs a TTY); attach with
-// `oc rsh deploy/<corpus>-tui acc-tui`. The web-terminal variant (ttyd +
-// oauth-proxy + Route) is a deliberate follow-up (proposal 023 §8 Q1).
+// 025). By default the pod idles (attach with `oc rsh deploy/<corpus>-tui
+// acc-tui`). Set webTerminal=true to expose the interactive TUI in a
+// browser via ttyd behind the corpus's Keycloak oauth2-proxy + Route.
 type TUISpec struct {
 	// Enabled deploys the tui pod. Default true within the block; a nil
 	// TUI block = not deployed.
@@ -221,6 +221,15 @@ type TUISpec struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	Replicas int32 `json:"replicas,omitempty"`
+
+	// WebTerminal exposes the interactive TUI in a browser via ttyd behind
+	// a Keycloak oauth2-proxy + Route (proposal 023 §8 Q1). Default false —
+	// the TUI is an `oc rsh` attach pod unless this is set. Requires
+	// spec.webgui.keycloak (reused for auth); without it the operator
+	// refuses to stand up an unauthenticated terminal (ADR 025 §5) and
+	// falls back to the rsh-attach pod.
+	// +optional
+	WebTerminal *bool `json:"webTerminal,omitempty"`
 }
 
 // WebGUISpec configures the acc-webgui interaction surface (proposal 023 /
