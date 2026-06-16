@@ -179,7 +179,13 @@ class CatalogIndexEntry(BaseModel):
     glob entry (file mode).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # Tolerate unknown fields: the published index.json schema evolves (newer
+    # generators add fields such as `bundle_url`) and an older agent's resolver
+    # must not reject the entire catalog over a field it doesn't consume.
+    # Forbidding extras made EVERY entry fail validation, so the index parsed to
+    # zero entries → "no catalog advertises X" (proposal 032 §11 catalog schema
+    # drift, observed live: extra_forbidden on `bundle_url`).
+    model_config = ConfigDict(extra="ignore")
 
     name: str
     version: str

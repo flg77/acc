@@ -11,6 +11,27 @@ from acc.pkg._semver import version_satisfies
 from acc.pkg.catalog import _format_resolution_failure
 
 
+def test_index_entry_tolerates_unknown_fields():
+    # The live index.json carries `bundle_url`, which the strict model rejected
+    # (extra_forbidden) → the whole catalog parsed to zero entries. The entry
+    # model must ignore unknown fields (proposal 032 §11 catalog schema drift).
+    from acc.pkg.catalog import CatalogIndexEntry
+
+    e = CatalogIndexEntry.model_validate(
+        {
+            "name": "@acc/workspace-roles",
+            "version": "1.0.2",
+            "tarball_sha256": "a" * 64,
+            "tarball_url": "workspace-roles-1.0.2.accpkg",
+            "bundle_url": "/packages/acc/workspace-roles-1.0.2.accpkg",  # unknown
+            "some_future_field": {"nested": True},  # unknown
+        }
+    )
+    assert e.name == "@acc/workspace-roles"
+    assert e.version == "1.0.2"
+    assert not hasattr(e, "bundle_url")  # dropped, not retained
+
+
 def test_caret_one_zero_matches_patch_excludes_next_major():
     assert version_satisfies("1.0.0", "^1.0") is True
     assert version_satisfies("1.0.2", "^1.0") is True
