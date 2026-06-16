@@ -103,7 +103,13 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 	}
 
 	// Deployment — webgui (loopback) + oauth2-proxy (Keycloak OIDC) sidecar.
-	deploy := r.buildDeployment(corpus, name, labels)
+	// Gather the corpus's collective ids so the webgui's NATSObserver
+	// connects to the right NATS and subscribes to the right subjects.
+	// (Crash fix: without ACC_NATS_URL / ACC_COLLECTIVE_IDS the webgui
+	// fell back to a default that can't resolve → NoServersError →
+	// "Application startup failed. Exiting." crash-loop.)
+	collectiveIDs := r.collectiveIDs(ctx, corpus)
+	deploy := r.buildDeployment(corpus, name, labels, collectiveIDs)
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {
 		ed := existing.(*appsv1.Deployment)
 		ed.Spec.Replicas = deploy.Spec.Replicas
@@ -132,7 +138,7 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 	return reconcilers.SubResult{Progressing: result != util.UpsertResultNoop}, nil
 }
 
-func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name string, labels map[string]string) *appsv1.Deployment {
+func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name string, labels map[string]string, collectiveIDs []string) *appsv1.Deployment {
 	spec := corpus.Spec.WebGUI
 	replicas := spec.Replicas
 	if replicas == 0 {
@@ -171,6 +177,14 @@ func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name
 								{Name: "ACC_WEBGUI_AUTH_MODE", Value: "oauth-proxy"},
 								{Name: "ACC_WEBGUI_OIDC_GROUPS_CLAIM", Value: groupsClaim},
 								{Name: "ACC_WEBGUI_GROUP_MAPPINGS", Value: renderGroupMappings(spec.GroupMappings)},
+								// Crash fix — the FastAPI lifespan starts a
+								// NATSObserver per collective; without these it
+								// fell back to localhost/sol-01 (gaierror →
+								// NoServersError → startup crash-loop). Point it
+								// at the corpus NATS + the observed collectives.
+								{Name: "ACC_NATS_URL", Value: fmt.Sprintf("nats://%s-nats:4222", corpus.Name)},
+								{Name: "ACC_CORPUS_NAME", Value: corpus.Name},
+								{Name: "ACC_COLLECTIVE_IDS", Value: strings.Join(collectiveIDs, ",")},
 							},
 						},
 						{
@@ -221,6 +235,27 @@ func (r *WebGUIReconciler) upsertRoute(ctx context.Context, corpus *accv1alpha1.
 		return unstructured.SetNestedMap(eu.Object, spec, "spec")
 	})
 	return err
+}
+
+// collectiveIDs resolves the CollectiveID of every AgentCollective the
+// corpus references, so the webgui's NATSObserver subscribes to the
+// right subjects. Best-effort: an unresolvable collective is skipped
+// rather than blocking the webgui (it can still serve the UI + the
+// collectives that do resolve).
+func (r *WebGUIReconciler) collectiveIDs(ctx context.Context, corpus *accv1alpha1.AgentCorpus) []string {
+	ids := make([]string, 0, len(corpus.Spec.Collectives))
+	for _, ref := range corpus.Spec.Collectives {
+		c := &accv1alpha1.AgentCollective{}
+		if err := r.Client.Get(ctx, client.ObjectKey{
+			Namespace: corpus.Namespace, Name: ref.Name,
+		}, c); err != nil {
+			continue
+		}
+		if c.Spec.CollectiveID != "" {
+			ids = append(ids, c.Spec.CollectiveID)
+		}
+	}
+	return ids
 }
 
 // renderGroupMappings turns the tier→group map into the
