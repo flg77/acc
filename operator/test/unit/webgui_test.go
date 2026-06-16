@@ -162,6 +162,16 @@ func TestWebGUI_DeploysWithKeycloak(t *testing.T) {
 	if env["ACC_WEBGUI_GROUP_MAPPINGS"] != "operator=acc-operators;publisher=acc-publishers" {
 		t.Errorf("GROUP_MAPPINGS = %q (want sorted operator;publisher)", env["ACC_WEBGUI_GROUP_MAPPINGS"])
 	}
+	// Signaling wired to this corpus's namespaced NATS (else the app falls
+	// back to nats://nats:4222 and crash-loops on NoServersError).
+	if env["ACC_NATS_URL"] != "nats://rhoai-corpus-nats:4222" {
+		t.Errorf("ACC_NATS_URL = %q, want nats://rhoai-corpus-nats:4222", env["ACC_NATS_URL"])
+	}
+	// No collectives on this corpus → ACC_COLLECTIVE_IDS omitted (app keeps
+	// its default rather than observing a bogus id).
+	if _, set := env["ACC_COLLECTIVE_IDS"]; set {
+		t.Errorf("ACC_COLLECTIVE_IDS should be unset when the corpus has no collectives, got %q", env["ACC_COLLECTIVE_IDS"])
+	}
 
 	// oauth2-proxy is wired to the Keycloak realm + the client secret.
 	argstr := strings.Join(proxy.Args, " ")
@@ -180,5 +190,47 @@ func TestWebGUI_DeploysWithKeycloak(t *testing.T) {
 	}
 	if !foundSecret {
 		t.Error("proxy CLIENT_SECRET must come from the keycloak Secret")
+	}
+}
+
+// The webgui observes exactly this corpus's collectives: ACC_COLLECTIVE_IDS is
+// the comma-joined CollectiveID of every AgentCollective the corpus manages.
+func TestWebGUI_WiresObservedCollectiveIDs(t *testing.T) {
+	collA := &accv1alpha1.AgentCollective{
+		ObjectMeta: metav1.ObjectMeta{Name: "rhoai-corpus-ws", Namespace: "acc-system"},
+		Spec:       accv1alpha1.AgentCollectiveSpec{CollectiveID: "rhoai-corpus-ws"},
+	}
+	collB := &accv1alpha1.AgentCollective{
+		ObjectMeta: metav1.ObjectMeta{Name: "rhoai-corpus-cm", Namespace: "acc-system"},
+		Spec:       accv1alpha1.AgentCollectiveSpec{CollectiveID: "rhoai-corpus-cm"},
+	}
+	c, _ := webguiClient(t, collA, collB)
+	r := &ui.WebGUIReconciler{Client: c, Scheme: newScheme(t)}
+	corpus := webguiCorpus(&accv1alpha1.WebGUISpec{
+		Enabled:  ptr.To(true),
+		Route:    ptr.To(false),
+		Keycloak: fullKeycloak(),
+	})
+	corpus.Spec.Collectives = []accv1alpha1.CollectiveRef{
+		{Name: "rhoai-corpus-ws"}, {Name: "rhoai-corpus-cm"},
+	}
+	if _, err := r.Reconcile(context.Background(), corpus); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	deploy := &appsv1.Deployment{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "acc-system", Name: "rhoai-corpus-webgui"}, deploy); err != nil {
+		t.Fatalf("expected webgui Deployment: %v", err)
+	}
+	env := map[string]string{}
+	for _, ct := range deploy.Spec.Template.Spec.Containers {
+		if ct.Name == "webgui" {
+			for _, e := range ct.Env {
+				env[e.Name] = e.Value
+			}
+		}
+	}
+	if env["ACC_COLLECTIVE_IDS"] != "rhoai-corpus-ws,rhoai-corpus-cm" {
+		t.Errorf("ACC_COLLECTIVE_IDS = %q, want rhoai-corpus-ws,rhoai-corpus-cm", env["ACC_COLLECTIVE_IDS"])
 	}
 }
