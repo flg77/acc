@@ -52,6 +52,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from acc.models import ModelEntry, load_models
 from acc.tui.path_resolution import resolve_manifest_root
 from acc.tui.widgets.file_picker import FilePickerModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
@@ -449,6 +450,20 @@ class ConfigurationScreen(Screen):
             yield Label("LIVE BACKENDS (per agent)", classes="panel-label")
             yield DataTable(id="llm-live-table", show_cursor=False)
 
+            # 033 WS-C — the "all configured LLM endpoints" overview the
+            # 2026-06-16 TUI review asked for.  The registry (models.yaml)
+            # is what an agentset assigns to roles via AgentSpec.model;
+            # LIVE BACKENDS above shows what each running agent resolved
+            # to.  Read-only here; assignment writeback stays a follow-up.
+            yield Label("MODEL REGISTRY (models.yaml)", classes="panel-label")
+            yield Static(
+                "[dim]Endpoints an agentset can assign to roles "
+                "(per-agent model = AgentSpec.model → a model_id here). "
+                "Empty = agents use the configured default above.[/dim]",
+                id="llm-registry-hint",
+            )
+            yield DataTable(id="llm-registry-table", show_cursor=False)
+
     def _compose_skills_tab(self):
         """Skills tab — table + Upload button.  Moved from Ecosystem."""
         with ScrollableContainer():
@@ -480,6 +495,9 @@ class ConfigurationScreen(Screen):
         live_table = self.query_one("#llm-live-table", DataTable)
         live_table.add_columns("Agent", "Backend", "Model", "Health", "p50ms")
 
+        registry_table = self.query_one("#llm-registry-table", DataTable)
+        registry_table.add_columns("model_id", "Backend", "Model", "Base URL", "Label")
+
         skills_table = self.query_one("#skills-table", DataTable)
         skills_table.add_columns("Skill", "Version", "Risk", "Requires")
         skills_table.cursor_type = "row"
@@ -489,6 +507,7 @@ class ConfigurationScreen(Screen):
         mcps_table.cursor_type = "row"
 
         self._render_llm_summary()
+        self._render_model_registry()
         self._load_skills()
         self._load_mcps()
 
@@ -549,6 +568,58 @@ class ConfigurationScreen(Screen):
                 p50_str,
                 key=agent_id,
             )
+
+    # ------------------------------------------------------------------
+    # LLM tab — model registry overview (033 WS-C)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _model_registry_rows(
+        entries: "list[ModelEntry]",
+    ) -> list[tuple[str, str, str, str, str]]:
+        """Display rows for the MODEL REGISTRY table (pure → testable).
+
+        An empty registry yields one explanatory row rather than a blank
+        table — the 2026-06-16 review flagged silent empty tables as
+        confusing.
+        """
+        if not entries:
+            return [(
+                "—",
+                "(no models.yaml)",
+                "agents use the default backend above",
+                "—",
+                "—",
+            )]
+        rows: list[tuple[str, str, str, str, str]] = []
+        for e in entries:
+            rows.append((
+                (e.model_id or "—")[:24],
+                (e.backend or "—")[:14],
+                (e.model or "—")[:28],
+                (e.base_url or "—")[:32],
+                (e.label or "—")[:40],
+            ))
+        return rows
+
+    def _render_model_registry(self) -> None:
+        """Populate the MODEL REGISTRY table from models.yaml (best-effort).
+
+        ``load_models`` already folds a missing/invalid registry into an
+        empty list, so this never raises on a fresh corpus.
+        """
+        try:
+            entries = load_models()
+        except Exception:
+            logger.exception("configuration: model registry load failed")
+            entries = []
+        try:
+            table = self.query_one("#llm-registry-table", DataTable)
+            table.clear()
+            for row in self._model_registry_rows(entries):
+                table.add_row(*row)
+        except Exception:
+            logger.exception("configuration: model registry render failed")
 
     # ------------------------------------------------------------------
     # LLM tab — config summary + test
