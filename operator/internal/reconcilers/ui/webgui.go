@@ -124,7 +124,8 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 	// failure (route.openshift.io absent on non-OpenShift, or an RBAC/transient
 	// API error) must NOT abort the whole corpus reconcile — the Service is
 	// still reachable (expose it yourself / via GitOps). Log and continue.
-	if spec.Route == nil || *spec.Route {
+	routeEnabled := spec.Route == nil || *spec.Route
+	if routeEnabled {
 		if err := r.upsertRoute(ctx, corpus, name, labels); err != nil {
 			if apimeta.IsNoMatchError(err) {
 				log.Info("route.openshift.io not present — skipping webgui Route (expose the Service yourself)")
@@ -132,10 +133,30 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 				log.Error(err, "webgui Route upsert failed; continuing without an operator-managed Route (expose the Service yourself)")
 			}
 		}
+		// Surface the URL + an app-launcher ConsoleLink once the Route is
+		// admitted (best-effort, discovery-gated, non-fatal) so the WebGUI
+		// shows up as an independent menu item (operator review 2026-06-16).
+		if host := routeHost(ctx, r.Client, ns, name); host != "" {
+			corpus.Status.WebGUIURL = "https://" + host
+			if err := upsertConsoleLink(ctx, r.Client, corpus,
+				fmt.Sprintf("acc-%s-webgui", corpus.Name),
+				fmt.Sprintf("ACC WebGUI — %s", corpus.Name),
+				corpus.Status.WebGUIURL,
+			); err != nil && !apimeta.IsNoMatchError(err) {
+				log.Error(err, "webgui ConsoleLink upsert failed (non-fatal)")
+			}
+		}
 	}
 
 	corpus.Status.WebGUIDeployed = true
-	return reconcilers.SubResult{Progressing: result != util.UpsertResultNoop}, nil
+	// Requeue while the Route host isn't admitted yet so the URL +
+	// ConsoleLink get captured on a later pass (a Ready corpus otherwise
+	// stops reconciling before the host appears).
+	progressing := result != util.UpsertResultNoop
+	if routeEnabled && corpus.Status.WebGUIURL == "" {
+		progressing = true
+	}
+	return reconcilers.SubResult{Progressing: progressing}, nil
 }
 
 func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name string, labels map[string]string, collectiveIDs []string) *appsv1.Deployment {

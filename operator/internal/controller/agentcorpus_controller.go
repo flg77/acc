@@ -77,6 +77,7 @@ var (
 // +kubebuilder:rbac:groups=dashboard.opendatahub.io,resources=odhapplications,verbs=get;list;create;update
 // +kubebuilder:rbac:groups=console.openshift.io,resources=odhquickstarts,verbs=get;list;create;update
 // +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=console.openshift.io,resources=consolelinks,verbs=get;list;watch;create;update;patch;delete
 type AgentCorpusReconciler struct {
 	Client    client.Client
 	Scheme    *runtime.Scheme

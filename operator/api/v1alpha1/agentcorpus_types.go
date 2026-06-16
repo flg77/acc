@@ -925,6 +925,17 @@ type AgentCorpusStatus struct {
 	// +optional
 	TUIDeployed bool `json:"tuiDeployed,omitempty"`
 
+	// WebGUIURL is the external https URL of the webgui Route once
+	// admitted (also surfaced as an app-launcher ConsoleLink). Empty
+	// until the Route gets an ingress host.
+	// +optional
+	WebGUIURL string `json:"webguiURL,omitempty"`
+
+	// TUIURL is the external https URL of the acc-tui web-terminal Route
+	// once admitted (proposal 023 ttyd web-terminal). Empty until then.
+	// +optional
+	TUIURL string `json:"tuiURL,omitempty"`
+
 	// DefaultCatalogBootstrapped is true once the operator created the
 	// acc-canonical AccCatalog in this namespace (or found catalogs
 	// already present).
