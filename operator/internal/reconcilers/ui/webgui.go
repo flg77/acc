@@ -102,8 +102,15 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 		return reconcilers.SubResult{}, fmt.Errorf("upsert webgui Service: %w", err)
 	}
 
+	// Signaling: the webgui is the read-only observer surface, so it must
+	// connect to *this corpus's* NATS and observe *this corpus's*
+	// collectives. Without these it falls back to nats://nats:4222 / sol-01
+	// and crash-loops on NoServersError (the service name is namespaced).
+	natsURL := fmt.Sprintf("nats://%s-nats:4222", corpus.Name)
+	collectiveIDs := r.observedCollectiveIDs(ctx, corpus)
+
 	// Deployment — webgui (loopback) + oauth2-proxy (Keycloak OIDC) sidecar.
-	deploy := r.buildDeployment(corpus, name, labels)
+	deploy := r.buildDeployment(corpus, name, labels, natsURL, collectiveIDs)
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {
 		ed := existing.(*appsv1.Deployment)
 		ed.Spec.Replicas = deploy.Spec.Replicas
@@ -130,7 +137,30 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 	return reconcilers.SubResult{Progressing: result != util.UpsertResultNoop}, nil
 }
 
-func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name string, labels map[string]string) *appsv1.Deployment {
+// observedCollectiveIDs resolves the CollectiveID of every AgentCollective
+// the corpus manages, so the webgui's ACC_COLLECTIVE_IDS names exactly this
+// corpus's collectives (not the sol-01 default). Best-effort: a collective
+// that can't be fetched is skipped (logged), not fatal — the NATS URL alone
+// already lifts the crash-loop, and a missing collective will resolve on a
+// later reconcile.
+func (r *WebGUIReconciler) observedCollectiveIDs(ctx context.Context, corpus *accv1alpha1.AgentCorpus) []string {
+	log := ctrllog.FromContext(ctx).WithName("webgui")
+	ids := make([]string, 0, len(corpus.Spec.Collectives))
+	for _, ref := range corpus.Spec.Collectives {
+		coll := &accv1alpha1.AgentCollective{}
+		if err := r.Client.Get(ctx, client.ObjectKey{Namespace: corpus.Namespace, Name: ref.Name}, coll); err != nil {
+			log.Info("webgui: omitting collective from ACC_COLLECTIVE_IDS (not resolvable yet)",
+				"collective", ref.Name, "err", err.Error())
+			continue
+		}
+		if coll.Spec.CollectiveID != "" {
+			ids = append(ids, coll.Spec.CollectiveID)
+		}
+	}
+	return ids
+}
+
+func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name string, labels map[string]string, natsURL string, collectiveIDs []string) *appsv1.Deployment {
 	spec := corpus.Spec.WebGUI
 	replicas := spec.Replicas
 	if replicas == 0 {
@@ -145,6 +175,24 @@ func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name
 			LocalObjectReference: corev1.LocalObjectReference{Name: spec.Keycloak.ClientSecretName},
 			Key:                  key,
 		}}
+	}
+
+	// webgui container env: auth wiring + the signaling config (NATS URL +
+	// observed collectives) it needs to start. ACC_COLLECTIVE_IDS is only set
+	// when the corpus has resolvable collectives; otherwise the app keeps its
+	// default rather than observing a bogus id.
+	webguiEnv := []corev1.EnvVar{
+		{Name: "ACC_WEBGUI_HOST", Value: "127.0.0.1"},
+		{Name: "ACC_WEBGUI_PORT", Value: fmt.Sprintf("%d", webguiPort)},
+		{Name: "ACC_WEBGUI_AUTH_MODE", Value: "oauth-proxy"},
+		{Name: "ACC_WEBGUI_OIDC_GROUPS_CLAIM", Value: groupsClaim},
+		{Name: "ACC_WEBGUI_GROUP_MAPPINGS", Value: renderGroupMappings(spec.GroupMappings)},
+		{Name: "ACC_NATS_URL", Value: natsURL},
+	}
+	if len(collectiveIDs) > 0 {
+		webguiEnv = append(webguiEnv, corev1.EnvVar{
+			Name: "ACC_COLLECTIVE_IDS", Value: strings.Join(collectiveIDs, ","),
+		})
 	}
 
 	return &appsv1.Deployment{
@@ -163,13 +211,7 @@ func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name
 							// sole ingress (shared pod network namespace).
 							Name:  "webgui",
 							Image: util.ComponentImage(corpus, "acc-webgui", corpus.Spec.Version),
-							Env: []corev1.EnvVar{
-								{Name: "ACC_WEBGUI_HOST", Value: "127.0.0.1"},
-								{Name: "ACC_WEBGUI_PORT", Value: fmt.Sprintf("%d", webguiPort)},
-								{Name: "ACC_WEBGUI_AUTH_MODE", Value: "oauth-proxy"},
-								{Name: "ACC_WEBGUI_OIDC_GROUPS_CLAIM", Value: groupsClaim},
-								{Name: "ACC_WEBGUI_GROUP_MAPPINGS", Value: renderGroupMappings(spec.GroupMappings)},
-							},
+							Env:   webguiEnv,
 						},
 						{
 							// oauth2-proxy — runs the Keycloak OIDC auth-code
