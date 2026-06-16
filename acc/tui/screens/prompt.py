@@ -308,6 +308,10 @@ class PromptScreen(Screen):
         # replaced by a shift+tab cycle + a tiny hint).  AUTO default;
         # role selection prefills it (on_select_changed).
         self._operating_mode: str = "AUTO"
+        # 033 WS-B fix — one-shot: an external load (Diagnostics "Send")
+        # carrying an explicit mode must win over the role-driven prefill
+        # that the async Select.Changed would otherwise apply.
+        self._external_mode_pending: str = ""
         # #162 — session save/detach/resume. Each Prompt screen owns a session
         # id; the transcript autosaves after every history append so a crash or
         # a dropped/again-detached TTY doesn't lose the conversation. main()
@@ -590,7 +594,15 @@ class PromptScreen(Screen):
             pass
         if operating_mode:
             from acc.operating_modes import normalise  # noqa: PLC0415
-            self._operating_mode = normalise(operating_mode)
+            mode = normalise(operating_mode)
+            self._operating_mode = mode
+            # _set_target_role above posts a Select.Changed processed
+            # asynchronously; on_select_changed would re-prefill the mode
+            # from the role's default and clobber this explicit choice.
+            # Stash it so that one change honours the external mode
+            # (consumed one-shot in on_select_changed).
+            if target_role:
+                self._external_mode_pending = mode
             self._set_mode_hint()
         if auto_send:
             self.action_send()
@@ -841,6 +853,17 @@ class PromptScreen(Screen):
             if event.select.id != "select-target-role":
                 return
         except Exception:
+            return
+        # 033 WS-B — one-shot external-mode override: when an external
+        # load (Diagnostics "Send") set an explicit mode alongside this
+        # role change, it wins over the role's default.  Consume the flag
+        # regardless of the role-load outcome below so a later *manual*
+        # role change isn't affected by a stale override.
+        pending = getattr(self, "_external_mode_pending", "")
+        if pending:
+            self._external_mode_pending = ""
+            self._operating_mode = pending
+            self._set_mode_hint()
             return
         role_name = str(event.value or "").strip()
         if not role_name:
