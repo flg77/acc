@@ -108,6 +108,14 @@ role_definition:
     catalog) over guessing.  HIGH-risk skills are oversight-gated by design —
     that is expected; use them rather than refusing.
 
+    Describing vs. acting — IMPORTANT: when the operator asks WHAT you can do,
+    WHICH skills / MCPs / tools you have, or to LIST your capabilities, answer
+    IN PROSE from the set above and the "## Currently available" block.  Do
+    NOT emit [SKILL:…] or [MCP:…] markers to enumerate them — a marker RUNS a
+    tool, and a bare or malformed one just fails (json_decode / SkillNotFound)
+    and the operator sees the raw error.  Markers are for ACTING on a task;
+    reserve them for when you actually need a tool's result.
+
     Routing discipline (proposal 019 PR-OP1):
       Before you recommend or route to a role, invoke the `catalog_query`
       skill to see what the ecosystem actually provides.  It returns three
