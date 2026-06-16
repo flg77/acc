@@ -51,6 +51,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from acc.capability_validator import PackageValidationError
 from acc.pkg.build import MANIFEST_NAME, build as build_pkg
 from acc.pkg.catalog import RequiredSigner, list_available, resolve
 from acc.pkg.install import (
@@ -143,7 +144,15 @@ def _cmd_build(args: argparse.Namespace, out: _Output) -> int:
         return EXIT_USER_ERROR
     output = Path(args.output).resolve()
     try:
-        result = build_pkg(src, output)
+        result = build_pkg(src, output, validate=not args.no_validate)
+    except PackageValidationError as exc:
+        # Proposal 033 WS-A — "verify before packaging".  A malformed
+        # capability manifest / inconsistent role config blocks the build
+        # so it never ships to a user; --no-validate is the escape hatch.
+        print("error: package failed capability validation:", file=sys.stderr)
+        for finding in exc.findings:
+            print(f"  {finding}", file=sys.stderr)
+        return EXIT_SCHEMA
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USER_ERROR
@@ -581,6 +590,8 @@ def _build_parser() -> argparse.ArgumentParser:
     b = sub.add_parser("build", help="build a .accpkg from a source tree")
     b.add_argument("source", help="path to the source tree containing accpkg.yaml")
     b.add_argument("-o", "--output", required=True, help="output .accpkg path")
+    b.add_argument("--no-validate", action="store_true",
+                   help="skip the capability-validation gate (proposal 033 WS-A)")
 
     # install
     i = sub.add_parser("install", help="install a .accpkg")

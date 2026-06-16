@@ -206,7 +206,9 @@ def load_source_manifest(source_dir: Path) -> AccPkgManifest:
     return AccPkgManifest.model_validate(raw)
 
 
-def build(source_dir: Path, output_path: Path) -> BuildResult:
+def build(
+    source_dir: Path, output_path: Path, *, validate: bool = False
+) -> BuildResult:
     """Build ``<source_dir>`` into a deterministic ``.accpkg`` at
     ``output_path``.
 
@@ -214,6 +216,18 @@ def build(source_dir: Path, output_path: Path) -> BuildResult:
     :class:`FileNotFoundError` if ``accpkg.yaml`` is missing,
     :class:`ValueError` on invalid source layout, and
     :class:`pydantic.ValidationError` on a malformed manifest.
+
+    Proposal 033 WS-A — when *validate* is True the source tree's
+    capability config is checked first (see
+    :func:`acc.capability_validator.validate_package_tree`): a malformed
+    skill/MCP manifest, a ``default_*`` not contained in its
+    ``allowed_*``, or an unloadable role raises
+    :class:`acc.capability_validator.PackageValidationError` before any
+    tarball is written; unresolved references are logged as WARNINGs.
+    The low-level primitive defaults to *validate=False* so internal /
+    fixture builds stay pure; the user-facing ``acc-pkg build`` command
+    turns it ON (the "verify before packaging" gate) with a
+    ``--no-validate`` escape hatch.
     """
     source_dir = source_dir.resolve()
     output_path = output_path.resolve()
@@ -226,6 +240,25 @@ def build(source_dir: Path, output_path: Path) -> BuildResult:
             "source manifest must not pre-declare content_sha256; "
             "build computes it"
         )
+
+    # Proposal 033 WS-A — capability validation gate.  A role that
+    # references a capability nothing provides, or a malformed skill/MCP
+    # manifest, must not ship.  Hard-fail on ERROR findings; unresolved
+    # references are WARNINGs (a declared dependency may satisfy them).
+    if validate:
+        from acc.capability_validator import (  # noqa: PLC0415
+            ERROR as _VALIDATE_ERROR,
+            PackageValidationError,
+            validate_package_tree,
+        )
+
+        findings = validate_package_tree(source_dir)
+        errors = [f for f in findings if f.severity == _VALIDATE_ERROR]
+        for finding in findings:
+            if finding.severity != _VALIDATE_ERROR:
+                logger.warning("pkg build: %s", finding)
+        if errors:
+            raise PackageValidationError(errors)
 
     # Step 2-3: walk + content-tree hash
     file_entries = _walk_source(source_dir)
