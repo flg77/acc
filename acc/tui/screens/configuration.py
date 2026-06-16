@@ -53,6 +53,7 @@ from textual.widgets import (
 )
 
 from acc.models import ModelEntry, load_models
+from acc.pkg.manifest import CORE_BASELINE_MCPS, CORE_BASELINE_SKILLS
 from acc.tui.path_resolution import resolve_manifest_root
 from acc.tui.widgets.file_picker import FilePickerModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
@@ -102,6 +103,18 @@ def _risk_cell(risk_level: str) -> str:
     if risk == "CRITICAL":
         return "[bold red]CRITICAL[/bold red]"
     return risk or "—"
+
+
+def _capability_source(cap_id: str, baseline: "frozenset[str]") -> str:
+    """Provenance cell for the Skills / MCP tabs (033 WS-D).
+
+    ``core`` = a built-in baseline capability that ships with ACC (the
+    trusted floor); ``pack`` = one an installed package added.  This is
+    the trust distinction derivable today; full signer / signature /
+    install-time provenance needs install-pipeline capture and stays a
+    documented follow-up.
+    """
+    return "[dim]core[/dim]" if cap_id in baseline else "[cyan]pack[/cyan]"
 
 
 def _format_health(health: str) -> str:
@@ -499,11 +512,11 @@ class ConfigurationScreen(Screen):
         registry_table.add_columns("model_id", "Backend", "Model", "Base URL", "Label")
 
         skills_table = self.query_one("#skills-table", DataTable)
-        skills_table.add_columns("Skill", "Version", "Risk", "Requires")
+        skills_table.add_columns("Skill", "Version", "Risk", "Requires", "Source")
         skills_table.cursor_type = "row"
 
         mcps_table = self.query_one("#mcps-table", DataTable)
-        mcps_table.add_columns("Server", "Transport", "Risk", "Tools")
+        mcps_table.add_columns("Server", "Transport", "Risk", "Tools", "Source")
         mcps_table.cursor_type = "row"
 
         self._render_llm_summary()
@@ -812,21 +825,21 @@ class ConfigurationScreen(Screen):
         try:
             from acc.skills import SkillRegistry  # noqa: PLC0415
         except Exception:
-            table.add_row("[dim]acc.skills not available[/dim]", "—", "—", "—")
+            table.add_row("[dim]acc.skills not available[/dim]", "—", "—", "—", "—")
             return
 
         try:
             reg = SkillRegistry()
             reg.load_from(_skills_root())
         except Exception as exc:
-            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—")
+            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—", "—")
             return
 
         manifests = reg.manifests()
         if not manifests:
             table.add_row(
                 "[dim]no skills loaded — see docs/howto-skills.md[/dim]",
-                "—", "—", "—",
+                "—", "—", "—", "—",
             )
             return
 
@@ -837,6 +850,7 @@ class ConfigurationScreen(Screen):
                 manifest.version,
                 _risk_cell(manifest.risk_level),
                 ", ".join(manifest.requires_actions) or "—",
+                _capability_source(skill_id, CORE_BASELINE_SKILLS),
                 key=skill_id,
             )
 
@@ -848,21 +862,21 @@ class ConfigurationScreen(Screen):
         try:
             from acc.mcp import MCPRegistry  # noqa: PLC0415
         except Exception:
-            table.add_row("[dim]acc.mcp not available[/dim]", "—", "—", "—")
+            table.add_row("[dim]acc.mcp not available[/dim]", "—", "—", "—", "—")
             return
 
         try:
             reg = MCPRegistry()
             reg.load_from(_mcps_root())
         except Exception as exc:
-            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—")
+            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—", "—")
             return
 
         manifests = reg.manifests()
         if not manifests:
             table.add_row(
                 "[dim]no MCPs loaded — see docs/howto-mcps.md[/dim]",
-                "—", "—", "—",
+                "—", "—", "—", "—",
             )
             return
 
@@ -873,6 +887,7 @@ class ConfigurationScreen(Screen):
                 manifest.transport,
                 _risk_cell(manifest.risk_level),
                 ", ".join(manifest.allowed_tools) or "—",
+                _capability_source(server_id, CORE_BASELINE_MCPS),
                 key=server_id,
             )
 
