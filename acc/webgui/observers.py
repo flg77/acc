@@ -57,7 +57,17 @@ class ObserverHub:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Connect + subscribe every observer; start the drain tasks."""
+        """Launch one resilient observer task per collective.
+
+        NATS being unreachable at startup must NOT crash the web server:
+        each observer connects (with backoff retry) inside its own
+        background task, so the HTTP API comes up immediately and live
+        data starts flowing once NATS is reachable.
+
+        Hardening: previously a single failed ``connect()`` raised out of
+        the FastAPI lifespan and crash-looped the pod (gaierror /
+        NoServersError → "Application startup failed. Exiting."). This
+        mirrors the agents' NATS-connect resilience (#89)."""
         from acc.tui.client import NATSObserver  # noqa: PLC0415 — reuse
 
         for cid in self._collective_ids:
@@ -68,15 +78,46 @@ class ObserverHub:
                 update_queue=queue,
                 nkey_seed_path=self._nkey_seed_path,
             )
-            await obs.connect()
-            await obs.subscribe()
             self._observers[cid] = obs
             self._queues[cid] = queue
             self._drain_tasks.append(
-                asyncio.create_task(self._drain(cid, queue), name=f"webgui-drain-{cid}")
+                asyncio.create_task(
+                    self._connect_and_drain(cid, obs, queue),
+                    name=f"webgui-observe-{cid}",
+                )
             )
         logger.info("webgui: observing %d collective(s): %s",
                     len(self._collective_ids), ", ".join(self._collective_ids))
+
+    async def _connect_and_drain(self, cid: str, obs: Any, queue: asyncio.Queue) -> None:
+        """Connect + subscribe with backoff retry, then drain forever.
+
+        One background task per collective: a NATS outage degrades the
+        live view (no updates) instead of crashing the server. Cancelled
+        by :meth:`stop`."""
+        delay = 2.0
+        while True:
+            try:
+                await obs.connect()
+                await obs.subscribe()
+                break
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # noqa: BLE001 — retry past any connect error
+                logger.warning(
+                    "webgui: NATS connect for %s failed (%s); retrying in %.0fs",
+                    cid, exc, delay,
+                )
+                try:
+                    await asyncio.sleep(delay)
+                except asyncio.CancelledError:
+                    return
+                delay = min(delay * 2, 30.0)
+        logger.info("webgui: observer connected for %s", cid)
+        try:
+            await self._drain(cid, queue)
+        except asyncio.CancelledError:
+            return
 
     async def stop(self) -> None:
         """Cancel drain tasks and close every NATS connection."""
