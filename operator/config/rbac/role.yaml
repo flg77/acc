@@ -43,6 +43,10 @@ rules:
 - apiGroups: ["route.openshift.io"]
   resources: ["routes"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# OpenShift ConsoleLinks for the webgui/tui app-launcher menu items (033 menu surfacing).
+- apiGroups: ["console.openshift.io"]
+  resources: ["consolelinks"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["get", "list", "watch", "create"]

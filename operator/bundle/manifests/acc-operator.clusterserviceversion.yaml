@@ -96,7 +96,7 @@ metadata:
       ]
     capabilities: Seamless Upgrades
     categories: AI/Machine Learning, Integration & Delivery
-    containerImage: quay.io/redhat-ai-dev/acc-operator:0.2.9
+    containerImage: quay.io/redhat-ai-dev/acc-operator:0.2.10
     createdAt: "2026-04-15T00:00:00Z"
     operatorframework.io/suggested-namespace: acc-system
     description: >-
@@ -109,7 +109,7 @@ metadata:
     operators.operatorframework.io/builder: operator-sdk-v1.34.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     support: Community (best-effort; no SLA) — NOT supported by Red Hat
-  name: acc-operator.v0.2.9
+  name: acc-operator.v0.2.10
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -267,6 +267,9 @@ spec:
         - apiGroups: ["route.openshift.io"]
           resources: ["routes"]
           verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["console.openshift.io"]
+          resources: ["consolelinks"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
         serviceAccountName: acc-operator-controller-manager
       deployments:
       - label:
@@ -295,7 +298,7 @@ spec:
                 - --metrics-bind-address=:8080
                 command:
                 - /manager
-                image: quay.io/redhat-ai-dev/acc-operator:0.2.9
+                image: quay.io/redhat-ai-dev/acc-operator:0.2.10
                 imagePullPolicy: Always
                 livenessProbe:
                   httpGet:
@@ -366,10 +369,10 @@ spec:
     name: Agentic Cell Corpus (Community)
     url: https://github.com/flg77/acc
   relatedImages:
-  - image: quay.io/redhat-ai-dev/acc-operator:0.2.9
+  - image: quay.io/redhat-ai-dev/acc-operator:0.2.10
     name: manager
-  version: 0.2.9
-  replaces: acc-operator.v0.2.8
+  version: 0.2.10
+  replaces: acc-operator.v0.2.9
   webhookdefinitions:
   - admissionReviewVersions:
     - v1
