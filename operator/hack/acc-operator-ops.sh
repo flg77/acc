@@ -235,8 +235,174 @@ rebuild-operator-up() {
   run "oc -n '$OPNS' scale deploy/${SUB}-controller-manager --replicas=1 && oc -n '$OPNS' rollout status deploy/${SUB}-controller-manager --timeout=120s"
 }
 
+# ---- help -----------------------------------------------------------------
+usage() {
+  cat <<EOF
+acc-operator-ops.sh — repeatable runbook for the ACC operator on the RHOAI/OLM
+cluster (acc1). Diagnose a crash, cut+ship a new operator version through OLM,
+verify, and recover. Full guide: operator/docs/howto-operator-ops.md
+
+USAGE
+  acc-operator-ops.sh <command> [args]        (run -h on any command for detail)
+
+COMMANDS
+  diagnose [deploy] [ctr]  CrashLoopBackOff SOP: containers, logs (now+prev),
+                           env, and a diff vs the healthy TUI's NATS env.   [read-only]
+  preflight                Build the operator image on acc1, local tag, no push.   [safe]
+  build                    Build + push operator/bundle/index at \$VER to the
+                           registry.  Needs your 'podman login quay.io'.   [pushes to quay]
+  ship                     Point the CatalogSource at index-\$VER; watch the
+                           OLM auto-upgrade.                                [mutates cluster]
+  verify                   CSV version + webgui signaling env + pod health.    [read-only]
+  release                  build -> ship -> verify, then append a FLEET log line.
+  hotpatch                 Fast dev: build+push operator image only, patch the
+                           CSV deployment image (no bundle/index).   [quay + cluster]
+  unblock [deploy]         EMERGENCY: scale operator->0 + inject NATS env
+                           (reverted by the next reconcile).            [mutates cluster]
+  rebuild-operator-up      Scale the operator back to 1.                [mutates cluster]
+  fleet-log "<msg>"        Append a FLEET decisions-log entry + push.
+
+ENV KNOBS (current effective value)
+  VER       version to cut .................... ${VER:-<unset; required for build/ship/release/hotpatch>}
+  PREV      version being replaced ............ ${PREV:-<auto-detected from the live CSV>}
+  NS        workload namespace ............... $NS
+  OPNS      operator namespace ............... $OPNS
+  MKTNS     marketplace namespace ............ $MKTNS
+  REG       image registry .................. $REG
+  CATSRC    CatalogSource name .............. $CATSRC
+  SUB       Subscription name ............... $SUB
+  ACC1_HOST build/cluster host (SSH) ........ $ACC1_USER@$ACC1_HOST  (key: $ACC1_KEY)
+  REPO      repo root on the build host ..... $REPO
+  ACC_LOCAL run here instead of over SSH .... ${ACC_LOCAL:-0}
+  FLEET_LOG auto-log release to FLEET ....... ${FLEET_LOG:-1}   (HARNESS: $HARNESS)
+
+EXAMPLES
+  acc-operator-ops.sh diagnose                         # why is webgui crash-looping?
+  acc-operator-ops.sh preflight                        # does my change build?
+  VER=0.2.10 acc-operator-ops.sh release               # ship it (after: podman login quay.io)
+  ACC_LOCAL=1 acc-operator-ops.sh verify               # when running on acc1 itself
+EOF
+}
+
+help_for() {
+  case "$1" in
+    diagnose) cat <<'H'
+diagnose [deploy] [container]   (default: acc-demo-coding-webgui webgui)   [READ-ONLY]
+
+  The standard CrashLoopBackOff investigation, in order:
+    1. resolves the newest pod of <deploy> in $NS
+    2. prints each container's ready / restartCount / lastExit-code+reason
+       (a 2-container webgui pod hides *which* half is failing — this shows it)
+    3. dumps the failing container's CURRENT and PREVIOUS (-p) logs — a crash
+       loop means the live log may be mid-backoff, so the previous one is the
+       real stack trace
+    4. dumps the container's runtime env (the signaling fix is an env gap)
+    5. diffs against the healthy TUI's NATS env so a missing/wrong ACC_NATS_URL
+       jumps out
+  Use it on any workload, e.g.:  diagnose acc-demo-coding-tui tui
+H
+;;
+    preflight) cat <<'H'
+preflight                                                                  [SAFE]
+
+  Runs `make docker-build` on acc1 with a throwaway local tag (no push). The Go
+  build happens inside the Containerfile's go-toolset stage, so it compiles your
+  current checkout and proves the operator image packages cleanly before you
+  spend a real version number. Nothing leaves the host.
+H
+;;
+    build) cat <<'H'
+build                                                          [PUSHES TO QUAY]
+
+  Requires: VER set, and `podman login quay.io` already done on the build host
+  (the script guards on this; it cannot log in for you).
+  Steps (mirrors hack/deploy-private-catalog.sh, retargeted to public quay):
+    1. operator image  -> $REG:acc-operator-$VER            (make docker-build + push)
+    2. bundle manifests regenerated at $VER inside the go-toolset container
+       (acc1 lacks host kustomize/operator-sdk); CSV `replaces` is forced to the
+       version currently live so OLM builds the upgrade edge
+    3. bundle image   -> $REG:acc-operator-bundle-$VER
+    4. catalog index  -> $REG:acc-operator-index-$VER  (--from-index the PREV index,
+       carrying the upgrade graph)
+  PREV auto-detects from the live CSV; override with PREV=x.y.z.
+H
+;;
+    ship) cat <<'H'
+ship                                                        [MUTATES CLUSTER]
+
+  Requires: VER set, the index-$VER image already pushed (run `build` first).
+  Patches the CatalogSource ($CATSRC) image to $REG:acc-operator-index-$VER.
+  OLM repolls, and because the Subscription is Automatic it creates+approves an
+  InstallPlan to upgrade the CSV to v$VER. The command then polls until
+  installedCSV == acc-operator.v$VER and phase == Succeeded (Ctrl-C is safe —
+  OLM continues server-side).
+H
+;;
+    verify) cat <<'H'
+verify                                                                [READ-ONLY]
+
+  Confirms the operator CSV version, that the webgui Deployment now carries
+  ACC_NATS_URL / ACC_COLLECTIVE_IDS (the fix), and that the webgui pod is 2/2
+  Running. Safe to run anytime to check state.
+H
+;;
+    release) cat <<'H'
+release                                              [PUSHES TO QUAY + CLUSTER]
+
+  build -> ship -> verify in one shot, then appends a one-line entry to the
+  FLEET decisions log and pushes it (acc-fleet). PREV is captured once up front
+  so the build's upgrade edge and the log line agree. Opt out of the log with
+  FLEET_LOG=0. This is the normal "ship the operator fix" path.
+H
+;;
+    hotpatch) cat <<'H'
+hotpatch                                             [PUSHES TO QUAY + CLUSTER]
+
+  Fast dev iteration: builds+pushes ONLY the operator image (tag
+  acc-operator-$VER-dev) and patches the CSV's embedded deployment image. OLM
+  reconciles the Deployment from the CSV and (imagePullPolicy=Always) re-pulls.
+  Skips bundle+index. NOT a real OLM version — a CatalogSource re-sync reverts
+  the hand-edit. Use `release` to ship for real.
+H
+;;
+    unblock) cat <<'H'
+unblock [deploy]                  (default: acc-demo-coding-webgui)  [MUTATES CLUSTER]
+
+  EMERGENCY stop-the-crash-loop without a new operator image. Scales the
+  operator to 0 (so it stops reverting the Deployment) and injects
+  ACC_NATS_URL=nats://<corpus>-nats:4222 + ACC_COLLECTIVE_IDS=<corpus>-ws onto
+  the webgui container. CAVEAT: this pauses reconciliation for EVERY corpus and
+  is undone the moment you scale the operator back up (rebuild-operator-up).
+  Prefer `release`. The corpus name is derived as <deploy> minus the -webgui suffix.
+H
+;;
+    rebuild-operator-up) cat <<'H'
+rebuild-operator-up                                          [MUTATES CLUSTER]
+
+  Scales the operator controller-manager back to 1 replica (undo `unblock`).
+  The operator resumes reconciling and re-templates the webgui Deployment.
+H
+;;
+    fleet-log) cat <<'H'
+fleet-log "<message>"
+
+  Manually append a dated entry to the FLEET decisions log
+  ($HARNESS/coordination/FLEET.md) and push it. Pull-before-edit, append-only.
+  `release` calls this automatically on success.
+H
+;;
+    *) usage ;;
+  esac
+}
+
 # ---- dispatch -------------------------------------------------------------
 cmd="${1:-}"; shift || true
+
+# Global help: no command, or help/-h/--help.
+case "$cmd" in -h|--help|help|"") usage; exit 0 ;; esac
+# Per-command help: `<command> -h|--help`.
+for a in "$@"; do case "$a" in -h|--help) help_for "$cmd"; exit 0 ;; esac; done
+
 case "$cmd" in
   diagnose)              diagnose "$@" ;;
   preflight)             preflight ;;
@@ -248,5 +414,5 @@ case "$cmd" in
   unblock)               unblock "$@" ;;
   rebuild-operator-up)   rebuild-operator-up ;;
   fleet-log)             fleet_log "$*" ;;
-  *) sed -n '2,40p' "$0"; exit 2 ;;
+  *) echo "unknown command: $cmd" >&2; usage; exit 2 ;;
 esac
