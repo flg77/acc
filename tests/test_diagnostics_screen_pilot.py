@@ -326,61 +326,53 @@ async def test_form_to_prompt_requires_role_and_text():
 
 
 @pytest.mark.asyncio
-async def test_send_form_renders_reply(monkeypatch):
-    """Send dispatches the Form's values via run_one and renders the
-    reply in the detail panel (the operator's 'feedback of the prompts
-    we sent')."""
-    import acc.golden_prompts as gp
-    from acc.golden_prompts import GoldenPrompt, GoldenResult
-    from textual.widgets import Static
+async def test_send_posts_prompt_load_message():
+    """Send routes the Form's values to the Prompt screen via a
+    PromptLoadMessage (auto_send) — the Prompt pane owns execution +
+    feedback (proposal 033 WS-B)."""
+    from acc.golden_prompts import GoldenPrompt
+    from acc.tui.messages import PromptLoadMessage
 
     app = _Harness()
     async with app.run_test(size=(160, 50)) as pilot:
         await pilot.pause()
         screen = app.screen
-        app._observers = [MagicMock()]
-        app._active_collective_idx = 0
-        app._collective_ids = ["sol-test"]
-
-        async def _fake_run_one(prompt, *, observer, collective_id):
-            return GoldenResult(
-                name=prompt.name, passed=True, elapsed_ms=42,
-                output_excerpt="hello from the agent",
+        screen._populate_form_fields(
+            GoldenPrompt(
+                name="t", prompt="do the thing", target_role="assistant",
+                operating_mode="PLAN",
             )
-
-        monkeypatch.setattr(gp, "run_one", _fake_run_one)
-
-        captured: list[str] = []
-        detail = screen.query_one("#diagnostics-detail", Static)
-        original = detail.update
-
-        def _cap(content="", *a, **kw):
-            captured.append(str(content))
-            return original(content, *a, **kw)
-
-        detail.update = _cap  # type: ignore[assignment]
-
-        await screen._send_form(
-            GoldenPrompt(name="t", prompt="hi", target_role="assistant"),
         )
         await pilot.pause()
-        assert any("hello from the agent" in c for c in captured)
+
+        posted: list = []
+        screen.post_message = lambda m: posted.append(m)  # type: ignore
+
+        screen.action_send()
+        msgs = [m for m in posted if isinstance(m, PromptLoadMessage)]
+        assert msgs, "expected a PromptLoadMessage to be posted"
+        msg = msgs[0]
+        assert msg.target_role == "assistant"
+        assert msg.prompt_text == "do the thing"
+        assert msg.operating_mode == "PLAN"
+        assert msg.auto_send is True
 
 
 @pytest.mark.asyncio
-async def test_send_without_observer_sets_error():
-    from acc.golden_prompts import GoldenPrompt
+async def test_send_with_empty_form_sets_status_not_message():
+    """An empty Form posts nothing and warns instead."""
+    from acc.tui.messages import PromptLoadMessage
+    from textual.widgets import TextArea
 
     app = _Harness()
     async with app.run_test(size=(160, 50)) as pilot:
         await pilot.pause()
         screen = app.screen
-        app._observers = []
+        screen.query_one("#form-prompt", TextArea).text = ""
+        posted: list = []
+        screen.post_message = lambda m: posted.append(m)  # type: ignore
         statuses: list[str] = []
         screen._set_status = lambda m: statuses.append(m)  # type: ignore
-
-        await screen._send_form(
-            GoldenPrompt(name="t", prompt="hi", target_role="assistant"),
-        )
-        joined = " ".join(statuses).lower()
-        assert "nats" in joined or "cannot send" in joined
+        screen.action_send()
+        assert not [m for m in posted if isinstance(m, PromptLoadMessage)]
+        assert any("needs" in s.lower() for s in statuses)

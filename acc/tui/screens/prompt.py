@@ -461,6 +461,12 @@ class PromptScreen(Screen):
             self._maybe_resume_session()
         except Exception:
             logger.debug("prompt: resume check failed", exc_info=True)
+        # Proposal 033 WS-B — replay a deferred external load (a
+        # Diagnostics "Send" that arrived before this screen composed).
+        try:
+            self._maybe_replay_external()
+        except Exception:
+            logger.debug("prompt: external replay failed", exc_info=True)
 
     def on_unmount(self) -> None:
         """Cancel any in-flight workers so screen-switch is clean."""
@@ -542,6 +548,76 @@ class PromptScreen(Screen):
             )
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Proposal 033 WS-B — external prompt load (Diagnostics "Send")
+    # ------------------------------------------------------------------
+
+    def load_external(
+        self,
+        *,
+        prompt_text: str,
+        target_role: str = "",
+        target_agent_id: str = "",
+        operating_mode: str = "AUTO",
+        auto_send: bool = False,
+    ) -> None:
+        """Populate the Prompt pane from an external source (the
+        Diagnostics golden-prompt "Send") and optionally fire the send.
+
+        Mount-safe: if the widget tree isn't composed yet (the message
+        arrived mid screen-switch), the request is stashed and replayed
+        from :meth:`on_mount`."""
+        try:
+            textarea = self.query_one("#prompt-textarea", TextArea)
+        except Exception:
+            self._pending_external = {
+                "prompt_text": prompt_text,
+                "target_role": target_role,
+                "target_agent_id": target_agent_id,
+                "operating_mode": operating_mode,
+                "auto_send": auto_send,
+            }
+            return
+        textarea.text = prompt_text
+        if target_role:
+            self._set_target_role(target_role)
+        try:
+            self.query_one("#input-target-agent-id", Input).value = (
+                target_agent_id or ""
+            )
+        except Exception:
+            pass
+        if operating_mode:
+            from acc.operating_modes import normalise  # noqa: PLC0415
+            self._operating_mode = normalise(operating_mode)
+            self._set_mode_hint()
+        if auto_send:
+            self.action_send()
+
+    def _set_target_role(self, role: str) -> None:
+        """Select *role* in the target-role dropdown, adding it as an
+        option first when it isn't one of the built-in choices."""
+        try:
+            sel = self.query_one("#select-target-role", Select)
+        except Exception:
+            return
+        if role not in [value for _label, value in _TARGET_ROLES]:
+            try:
+                sel.set_options([*_TARGET_ROLES, (role, role)])
+            except Exception:
+                pass
+        try:
+            sel.value = role
+        except Exception:
+            pass
+
+    def _maybe_replay_external(self) -> None:
+        pending = getattr(self, "_pending_external", None)
+        if not pending:
+            return
+        self._pending_external = None
+        self.load_external(**pending)
 
     def _open_workspace_select(self) -> None:
         """PR-X — open the directory picker.  The modal browses the

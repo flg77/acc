@@ -461,68 +461,29 @@ class DiagnosticsScreen(Screen):
         )
 
     def action_send(self) -> None:
-        """Dispatch the Form's current values to a live agent and show
-        the reply in the detail panel (proposal 033 WS-B)."""
-        if self._running:
-            return
+        """Send the Form's current values to the Prompt screen and fire
+        it there so the reply streams on the Prompt pane (proposal 033
+        WS-B).  Routing through the Prompt screen is what makes "going
+        back to Prompt show the golden prompt we just sent" + its
+        feedback — the Prompt pane owns the rich reasoning/reply view."""
         prompt = self._form_to_prompt()
         if prompt is None:
             self._set_status(
                 "[yellow]Form needs a target role + a prompt.[/yellow]"
             )
             return
-        self.run_worker(
-            self._send_form(prompt), exclusive=True, group="diagnostics-run",
+        from acc.tui.messages import PromptLoadMessage  # noqa: PLC0415
+
+        self.post_message(PromptLoadMessage(
+            prompt_text=prompt.prompt,
+            target_role=prompt.target_role,
+            target_agent_id=prompt.target_agent_id,
+            operating_mode=prompt.operating_mode,
+            auto_send=True,
+        ))
+        self._set_status(
+            f"[b]→ Prompt[/b] sending to {prompt.target_role}…"
         )
-
-    async def _send_form(self, prompt) -> None:
-        from acc.golden_prompts import run_one  # noqa: PLC0415
-
-        observer = self._active_observer()
-        if observer is None:
-            self._set_status("[red]No NATS connection — cannot send.[/red]")
-            return
-        cid = self._active_collective_id()
-        self._running = True
-        try:
-            self._set_status(
-                f"[yellow]Sending to {prompt.target_role}…[/yellow]"
-            )
-            try:
-                result = await run_one(
-                    prompt, observer=observer, collective_id=cid,
-                )
-            except Exception as exc:
-                logger.exception("diagnostics: send failed")
-                self._set_status(f"[red]send failed: {exc}[/red]")
-                return
-            self._render_send_result(prompt, result)
-            self._set_status(
-                f"[b]sent[/b] → {prompt.target_role} ({result.elapsed_ms}ms)"
-            )
-        finally:
-            self._running = False
-
-    def _render_send_result(self, prompt, result) -> None:
-        panel = self.query_one("#diagnostics-detail", Static)
-        agent_bit = (
-            f" · agent {prompt.target_agent_id}"
-            if prompt.target_agent_id else ""
-        )
-        lines = [
-            f"[b]Sent to {prompt.target_role}[/b]{agent_bit}",
-            f"[dim]mode {prompt.operating_mode} · {result.elapsed_ms}ms[/dim]",
-            "",
-            "[b]prompt[/b]",
-            f"  {prompt.prompt.strip()[:300]}",
-            "",
-            "[b]reply[/b]",
-        ]
-        if result.error:
-            lines.append(f"  [red]{result.error}[/red]")
-        else:
-            lines.append(f"  {result.output_excerpt or '(empty reply)'}")
-        panel.update("\n".join(lines))
 
     def _editor_new(self) -> None:
         try:
