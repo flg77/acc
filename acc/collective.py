@@ -531,8 +531,14 @@ def _dormant_service(
         "environment": env,
         "volumes": [
             "lancedb-data:/app/data/lancedb:U,z",
+            # Shared packages root (parity with the base compose) so a worker
+            # that self-promotes can resolve + persist infused packs.
+            "acc-packages:/var/lib/acc/packages:U,z",
             "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
-            "../../roles:/app/roles:ro,z",
+            # roles/ is RW (:z, not :ro,z) so a promoted assistant can
+            # self-author role.yaml; writes stay gated by the role-authoring
+            # boundary + operator_mode, the mount only enables them.
+            "../../roles:/app/roles:z",
         ],
         "networks": ["acc-net"],
         "restart": "unless-stopped",
@@ -598,7 +604,7 @@ def roles_to_compose(
             "networks": {
                 "acc-net": {"driver": "bridge"},  # match the base's bare bridge decl (not external+hardcoded-project-name) so -f base -f overlay merges into ONE shared project network
             },
-            "volumes": {"lancedb-data": None},  # null (not external) — matches the base's bare decl so podman-compose can merge -f base -f overlay, and shares the same project-prefixed volume
+            "volumes": {"lancedb-data": None, "acc-packages": None},  # null (not external) — matches the base's bare decl so podman-compose can merge -f base -f overlay, and shares the same project-prefixed volumes
         }
 
     for agent in spec.agents:
@@ -640,8 +646,14 @@ def roles_to_compose(
                 "environment": env,
                 "volumes": [
                     "lancedb-data:/app/data/lancedb:U,z",
+                    # Shared packages root (parity with the base compose) so
+                    # infused packs persist + resolve across restarts.
+                    "acc-packages:/var/lib/acc/packages:U,z",
                     "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
-                    "../../roles:/app/roles:ro,z",
+                    # roles/ is RW (:z, not :ro,z) so the assistant can
+                    # self-author role.yaml and have the edit persist; writes
+                    # stay gated by the role-authoring boundary + operator_mode.
+                    "../../roles:/app/roles:z",
                 ],
                 "networks": ["acc-net"],
                 "restart": "unless-stopped",
@@ -655,7 +667,7 @@ def roles_to_compose(
     return {
         "services": services,
         "networks": {"acc-net": {"driver": "bridge"}},  # match base's bare bridge decl (not external+hardcoded project name) so -f base -f overlay merges into ONE shared project network
-        "volumes": {"lancedb-data": None},  # null (not external) — matches the base's bare decl so podman-compose can merge -f base -f overlay, and shares the same project-prefixed volume
+        "volumes": {"lancedb-data": None, "acc-packages": None},  # null (not external) — matches the base's bare decl so podman-compose can merge -f base -f overlay, and shares the same project-prefixed volumes
     }
 
 
