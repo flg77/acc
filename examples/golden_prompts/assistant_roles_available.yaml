@@ -1,0 +1,14 @@
+name: assistant_roles_available
+description: >-
+  Assistant self-test — reports how many roles are installed/available to the
+  collective right now, lists them, and notes which installable packs it could
+  infuse. Exercises the Assistant's catalog-awareness + role-inventory path.
+prompt: |
+  How many roles are available to this collective right now? List the installed
+  roles, and note which installable packs you could infuse if asked.
+target_role: assistant
+timeout_s: 60.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: "(?i)role|coding_agent|assistant|@acc/"
