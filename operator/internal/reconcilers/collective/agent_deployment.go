@@ -278,6 +278,15 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 									SubPath:   "acc-role.yaml",
 									ReadOnly:  true,
 								},
+								// Writable packages root for AccPackageInstall.
+								// The agent runs non-root (SCC-injected UID, GID 0)
+								// and acc-pkg unpacks installed packs under
+								// /var/lib/acc, which is not writable in the image
+								// layer (PermissionError on a signed-pack install).
+								// Back it with an emptyDir — ephemeral is fine: the
+								// operator re-reconciles AccPackageInstall after a
+								// pod restart (032 §11 tail / proposal 034 §8-Q3).
+								{Name: "acc-packages", MountPath: "/var/lib/acc"},
 							}, manifestMounts...),
 						},
 					},
@@ -310,6 +319,11 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 									},
 								},
 							},
+						},
+						// Writable packages root (see the acc-packages VolumeMount).
+						{
+							Name:         "acc-packages",
+							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 						},
 					}, manifestVolumes...),
 					// Append any role-specific VolumeClaimTemplates as emptyDir for Deployments
