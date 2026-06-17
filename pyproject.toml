@@ -76,14 +76,14 @@ slack = [
     # firewalls without exposing a public webhook.  aiohttp is pulled
     # transitively but listing it here documents the runtime requirement.
     "slack_bolt>=1.20,<2.0",
-    "aiohttp>=3.14.0,<4.0",
+    "aiohttp>=3.14.1,<4.0",
 ]
 a2a = [
     # acc/a2a — A2A (Agent-to-Agent protocol) interop for ACC.  Phases 1b/2
     # add an opt-in HTTP / JSON-RPC server alongside the agent's NATS
     # subscriber; Phase 3 adds an outbound A2A client.  All gated by
     # ACC_A2A_PORT — default off → no aiohttp import at runtime.
-    "aiohttp>=3.14.0,<4.0",
+    "aiohttp>=3.14.1,<4.0",
 ]
 mlflow = [
     # OpenSpec 20260527-mlflow-otel-telemetry Phase 1 — OTLP/HTTP
