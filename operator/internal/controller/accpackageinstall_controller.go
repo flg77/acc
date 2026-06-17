@@ -113,8 +113,18 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return r.requeue(), nil
 	}
 
-	// Set Installing phase while we exec.
-	r.setPhase(ctx, cr, PhaseInstalling, "Exec", fmt.Sprintf("exec into %s", pod.Name))
+	// Surface "Installing" only on a first install or a retry — NOT on every
+	// steady-state requeue. The exec below runs each PollInterval (idempotent
+	// self-heal for a restarted pod that lost its emptyDir packages root), but
+	// flipping Phase to Installing every cycle makes the CR visibly oscillate
+	// Installing<->Installed, so `oc get` / the TUI / the console look stuck
+	// "Installing" when the pack is in fact Installed. Only churn the phase when
+	// it isn't already Installed for the current generation.
+	steadyInstalled := cr.Status.Phase == PhaseInstalled &&
+		cr.Status.ObservedGeneration == cr.Generation
+	if !steadyInstalled {
+		r.setPhase(ctx, cr, PhaseInstalling, "Exec", fmt.Sprintf("exec into %s", pod.Name))
+	}
 
 	// Build the acc CLI command. Two pieces both matter (proposal 032 §11
 	// Finding C, observed live):
