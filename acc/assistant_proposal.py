@@ -184,7 +184,14 @@ _ACCEPT_EDITS_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_ROUTE})
 _NEVER_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_INFUSE, PROPOSAL_ROLE_GAP})
 
 
-def decide_dispatch(operating_mode: str, kind: str) -> str:
+def _operator_mode_env() -> str:
+    """Security-floor mode (proposal 034) from the environment; 'prod' default."""
+    import os  # noqa: PLC0415
+
+    return (os.environ.get("ACC_OPERATOR_MODE") or "prod").strip().lower() or "prod"
+
+
+def decide_dispatch(operating_mode: str, kind: str, *, operator_mode: str | None = None) -> str:
     """Return one of ``DISPATCH_PLAN`` / ``DISPATCH_QUEUE`` / ``DISPATCH_EXECUTE``.
 
     Pure function; safe for unit tests + the cognitive core's per-task
@@ -200,7 +207,17 @@ def decide_dispatch(operating_mode: str, kind: str) -> str:
     if mode == MODE_PLAN:
         return DISPATCH_PLAN
     if kind in _NEVER_AUTOEXEC:
-        # Filesystem-state mutations always go through Compliance pane.
+        # Filesystem-state mutations route through the Compliance pane — EXCEPT a
+        # dev-mode autonomy escape: in operator_mode=dev AND AUTO, an INFUSE
+        # auto-executes so the Assistant can self-infuse role packs without a
+        # human approval click (autonomous-assistant goal; proposal 034 relaxes
+        # the dev floor). prod (default) + every non-AUTO mode still queue.
+        if (
+            kind == PROPOSAL_INFUSE
+            and mode == MODE_AUTO
+            and (operator_mode or _operator_mode_env()) == "dev"
+        ):
+            return DISPATCH_EXECUTE
         return DISPATCH_QUEUE
     if mode == MODE_AUTO:
         return DISPATCH_EXECUTE

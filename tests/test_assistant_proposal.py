@@ -28,6 +28,7 @@ from acc.assistant_proposal import (
     DISPATCH_EXECUTE,
     DISPATCH_PLAN,
     DISPATCH_QUEUE,
+    PROPOSAL_INFUSE,
     PROPOSAL_ROLE_UPDATE,
     PROPOSAL_ROUTE,
     PROPOSAL_SPAWN,
@@ -162,6 +163,24 @@ def test_empty_or_unknown_mode_normalises_to_auto():
     safe because Cat-A/B/C still gate beneath."""
     assert decide_dispatch("", PROPOSAL_ROUTE) == DISPATCH_EXECUTE
     assert decide_dispatch("PANIC", PROPOSAL_ROUTE) == DISPATCH_EXECUTE
+
+
+def test_infuse_queues_by_default_even_in_auto():
+    """PROPOSE_INFUSE routes through Compliance in every mode by default
+    (operator_mode defaults to prod) — the Stage 1.4 floor stays intact."""
+    assert decide_dispatch(MODE_AUTO, PROPOSAL_INFUSE, operator_mode="prod") == DISPATCH_QUEUE
+    assert decide_dispatch(MODE_ASK_PERMISSIONS, PROPOSAL_INFUSE, operator_mode="prod") == DISPATCH_QUEUE
+
+
+def test_infuse_auto_executes_only_in_dev_plus_auto():
+    """Dev-mode autonomy escape (proposal 034 / autonomous-assistant goal):
+    operator_mode=dev AND AUTO lets the Assistant self-infuse role packs without
+    a human approval click; any non-AUTO mode, or prod, still queues."""
+    assert decide_dispatch(MODE_AUTO, PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_EXECUTE
+    # non-AUTO modes still queue even in dev
+    assert decide_dispatch(MODE_ASK_PERMISSIONS, PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_QUEUE
+    assert decide_dispatch(MODE_ACCEPT_EDITS, PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_QUEUE
+    assert decide_dispatch(MODE_PLAN, PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_PLAN
 
 
 # ---------------------------------------------------------------------------
