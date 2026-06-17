@@ -505,23 +505,36 @@ async def _dispatch_role_gap(signaling, cid: str, p: AssistantProposal) -> bool:
     return True
 
 
-async def _dispatch_infuse(signaling, cid: str, p: AssistantProposal) -> bool:
-    """Stage 1.4 — install the requested package via the catalog.
+def _infuse_allow_unsigned() -> bool:
+    """033 WS-G — ``operator_mode == "dev"`` relaxes the signing floor at
+    infuse-install time (consistent with proposal 034); prod stays strict.
 
-    Resolves ``params["name"]`` + ``params["constraint"]`` through
-    :func:`acc.pkg.fetch.fetch_and_install`, which handles the catalog
-    walk + download + cosign verify + install.  Idempotent: a
-    re-approve of an already-installed pkg is a no-op.
+    Read from ``ACC_OPERATOR_MODE`` (the env var ``acc.config`` maps to
+    ``operator_mode``) so the dispatch path stays hermetic — no disk read,
+    no cwd coupling.  Unset / anything but ``dev`` => strict (False).
+    """
+    import os  # noqa: PLC0415
+    return os.environ.get("ACC_OPERATOR_MODE", "").strip().lower() == "dev"
+
+
+async def _dispatch_infuse(signaling, cid: str, p: AssistantProposal) -> bool:
+    """Stage 1.4 / 033 WS-G Part 3 — actually install the requested package.
+
+    Reconstructs ``@scope/name@constraint`` from ``params["name"]`` +
+    ``params["constraint"]`` and hands off to
+    :func:`acc.pkg.install_infuse.execute_infuse_install`, which resolves
+    the spec against the layered catalog resolver and calls the installer
+    (catalog walk + download + cosign verify + install).  This is the
+    EXECUTE-path wiring that makes an approved/auto-executed infuse
+    ACTUALLY install.  Idempotent: a re-approve of an already-installed
+    pkg is a no-op (``already_satisfied``).
 
     On success we publish a thin notification on the bus so the
-    Marketplace / Capability surfaces can refresh; on failure we log
-    the cosign / EC / dep error and return False (caller may retry
+    Marketplace / Capability surfaces can refresh; on failure we log the
+    cosign / EC / dep / resolve error and return False (caller may retry
     or surface the error in the Compliance pane).
     """
-    from acc.pkg.fetch import (  # noqa: PLC0415
-        FetchError,
-        fetch_and_install_closure,
-    )
+    from acc.pkg.install_infuse import execute_infuse_install  # noqa: PLC0415
     from acc.signals import subject_assistant_proposal  # noqa: PLC0415
 
     name = p.params.get("name", "").strip()
@@ -533,27 +546,23 @@ async def _dispatch_infuse(signaling, cid: str, p: AssistantProposal) -> bool:
         )
         return False
 
-    try:
-        result = fetch_and_install_closure(name, constraint)
-    except FetchError as exc:
+    spec = f"{name}@{constraint}"
+    result = execute_infuse_install(
+        spec, allow_unsigned=_infuse_allow_unsigned(),
+    )
+    if not result.ok:
         logger.warning(
-            "assistant_proposal: infuse %s@%s failed: %s",
-            name, constraint, exc,
-        )
-        return False
-    except Exception:  # noqa: BLE001 — surface in log, don't crash dispatch loop
-        logger.exception(
-            "assistant_proposal: infuse %s@%s crashed", name, constraint,
+            "assistant_proposal: infuse %s failed: %s", spec, result.error,
         )
         return False
 
     payload = {
         "trigger": "assistant_proposal",
         "proposal_id": p.proposal_id,
-        "name": result.install.entry.name,
-        "version": result.install.entry.version,
-        "install_path": str(result.install.install_path),
-        "was_already_installed": result.install.was_already_installed,
+        "name": result.name,
+        "version": result.version,
+        "install_path": result.install_path,
+        "was_already_installed": result.already_satisfied,
         "ts": time.time(),
     }
     try:
