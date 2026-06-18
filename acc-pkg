@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Thin host wrapper: run the containerized acc-pkg against the current dir.
+#
+# Lets a user run `./acc-pkg build .` (or eval/inspect/list/install/…) with
+# ZERO local Python or `acc` install — the toolchain ships as a container
+# image (container/production/Containerfile.acc-pkg).
+#
+# The CWD is bind-mounted at /work (the image's WORKDIR), so paths you pass
+# are relative to where you invoke the wrapper. Build artifacts (dist/*.accpkg)
+# are written back to your CWD owned by YOU — see the userns handling below.
+#
+# Knobs (env):
+#   ACC_VERSION        image tag suffix          (default 0.3.34)
+#   ACC_PKG_IMAGE      full image ref override   (default quay.io/flg77/acc_images:acc-pkg-<ACC_VERSION>)
+#   ACC_CONTAINER_TOOL podman | docker           (default podman)
+#   ACC_PKG_NETWORK    container network         (e.g. host — needed for
+#                                                 keyless-OIDC `verify`/`install`)
+#   ACC_PKG_UID        image's runtime uid       (default 1001 — keep in sync
+#                                                 with the Containerfile USER)
+#
+# Examples:
+#   ./acc-pkg build . -o dist/foo.accpkg
+#   ./acc-pkg inspect dist/foo.accpkg
+#   ./acc-pkg install dist/foo.accpkg --allow-unsigned
+#   ./acc-pkg eval ~/.acc/packages/@acc/foo
+#   ./acc-pkg list --available
+#   ACC_PKG_NETWORK=host ./acc-pkg install dist/foo.accpkg   # signed (keyless)
+set -euo pipefail
+IMG="${ACC_PKG_IMAGE:-quay.io/flg77/acc_images:acc-pkg-${ACC_VERSION:-0.3.34}}"
+TOOL="${ACC_CONTAINER_TOOL:-podman}"
+UID_IN_IMG="${ACC_PKG_UID:-1001}"
+
+# Make build output land owned by the caller despite the image's non-root user.
+#   * rootless podman: map THIS host user onto the image's uid (keeps USER 1001
+#     inside, but files written to /work are owned by you on the host).
+#   * docker (no userns remap): just run as the host uid directly.
+case "$TOOL" in
+  *podman*) MAP=(--userns="keep-id:uid=${UID_IN_IMG},gid=0") ;;
+  *)        MAP=(--user "$(id -u):0") ;;
+esac
+
+# `install` persists packages under ACC_PACKAGES_ROOT. The container is --rm,
+# so default it INTO the bind mount (./.acc/packages in the caller's CWD) — the
+# same `.acc/` workspace convention the catalog uses. Must be a path under /work;
+# override with a /work-relative path if you want it elsewhere.
+exec "$TOOL" run --rm "${MAP[@]}" \
+  -v "$PWD:/work:z" -w /work \
+  -e ACC_PACKAGES_ROOT="${ACC_PACKAGES_ROOT:-/work/.acc/packages}" \
+  ${ACC_PKG_NETWORK:+--network "$ACC_PKG_NETWORK"} \
+  "$IMG" "$@"

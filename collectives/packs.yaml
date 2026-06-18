@@ -1,0 +1,84 @@
+# Auto-maintained role->pack manifest — source of truth for the
+# collective alignment check (tools/check_collectives.py) + the
+# /acc-collectives skill.  Regenerate after a pack changes:
+#   python tools/check_collectives.py --refresh-packs
+# Refresh is ADDITIVE (union) so packs unavailable on this host are
+# preserved.  control_roles = substrate; never served by a community pack.
+control_roles:
+- arbiter
+- assistant
+- compliance_officer
+- ingester
+- observer
+- orchestrator
+- reviewer
+packs:
+  '@acc/business-roles':
+  - account_executive
+  - business_analyst
+  - content_marketer
+  - contract_analyst
+  - customer_success_manager
+  - customer_support_agent
+  - demand_generation_specialist
+  - financial_analyst
+  - fpa_analyst
+  - hr_business_partner
+  - it_operations_specialist
+  - it_support_specialist
+  - learning_development_specialist
+  - marketing_analyst
+  - operations_analyst
+  - procurement_specialist
+  - product_manager
+  - product_marketer
+  - project_manager
+  - recruiter
+  - revenue_operations_analyst
+  - risk_compliance_analyst
+  - sales_development_rep
+  - sales_engineer
+  - technical_support_specialist
+  '@acc/capital-markets-roles':
+  - crypto_analyst
+  - equity_analyst
+  - fixed_income_analyst
+  - instrument_discovery
+  - investment_compliance_officer
+  - macro_strategist
+  - market_data_ingester
+  - news_sentiment_analyst
+  - options_strategist
+  - portfolio_manager
+  - quant_researcher
+  - technical_analyst
+  - wealth_advisor
+  '@acc/control-roles':
+  - arbiter
+  - assistant
+  - compliance_officer
+  - ingester
+  - observer
+  - orchestrator
+  - reviewer
+  '@acc/devops-roles':
+  - data_engineer
+  - devops_engineer
+  - ml_engineer
+  - security_analyst
+  '@acc/research-roles':
+  - research_competitor
+  - research_critic
+  - research_economist
+  - research_planner
+  - research_strategist
+  - research_synthesizer
+  '@acc/workspace-roles':
+  - analyst
+  - coding_agent
+  - coding_agent_architect
+  - coding_agent_dependency
+  - coding_agent_implementer
+  - coding_agent_reviewer
+  - coding_agent_tester
+  - synthesizer

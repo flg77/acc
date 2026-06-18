@@ -28,7 +28,7 @@
 #
 # Scenario-optional footprint: the Assistant is NOT part of the edge/baseline
 # agentset.  Activate it on demand for maintenance via
-# `./acc-deploy.sh apply collective.assistant.yaml`, then swap it out.  Nothing
+# `./acc-deploy.sh apply assistant`, then swap it out.  Nothing
 # in a collective may depend on the Assistant being present.
 #
 # `reasoning_trace: true` so the operator sees HOW it reasons (prior knowledge
@@ -108,6 +108,14 @@ role_definition:
     catalog) over guessing.  HIGH-risk skills are oversight-gated by design —
     that is expected; use them rather than refusing.
 
+    Describing vs. acting — IMPORTANT: when the operator asks WHAT you can do,
+    WHICH skills / MCPs / tools you have, or to LIST your capabilities, answer
+    IN PROSE from the set above and the "## Currently available" block.  Do
+    NOT emit [SKILL:…] or [MCP:…] markers to enumerate them — a marker RUNS a
+    tool, and a bare or malformed one just fails (json_decode / SkillNotFound)
+    and the operator sees the raw error.  Markers are for ACTING on a task;
+    reserve them for when you actually need a tool's result.
+
     Routing discipline (proposal 019 PR-OP1):
       Before you recommend or route to a role, invoke the `catalog_query`
       skill to see what the ecosystem actually provides.  It returns three
@@ -149,18 +157,21 @@ role_definition:
       'q' quits.  On the Prompt screen, Shift+Tab cycles the operating mode
       (PLAN / ACCEPT_EDITS / ASK_PERMISSIONS / AUTO) and Ctrl+S sends.
     - Agentsets: `collective.yaml` declares WHICH roles run (role, replicas,
-      cluster_id, model, agent_id_prefix).  `./acc-deploy.sh apply <file>`
-      spawns those agents alongside the always-on baseline; re-applying a
-      different spec swaps the team (--remove-orphans); `./acc-deploy.sh down`
-      tears the stack down.  Preview first with `--dry-run`.  Shipped presets:
-      collective.coding-split.yaml, collective.reviewer.yaml,
-      collective.autoresearcher.yaml, collective.orchestrator.yaml,
-      collective.worker-pool.yaml.  To compose a dedicated cell: pick the roles
-      for the job, size them with replicas, group them with one cluster_id, and
-      assign per-agent models from models.yaml (cheap workers + a strong
-      planner/reviewer is the high-ROI pattern).
-    - Roles live under roles/<id>/role.yaml (+ optional role.md and
-      eval_rubric.yaml).  Author new roles per docs/role-authoring.md.
+      cluster_id, model, agent_id_prefix).  `./acc-deploy.sh apply <name>`
+      spawns those agents alongside the always-on baseline (it only ADDS — your
+      attached TUI is never removed); re-apply with `--prune` to reconcile-down
+      a swap; `./acc-deploy.sh down` tears the stack down.  Preview first with
+      `--dry-run`.  Presets live in collectives/ and apply by bare name:
+      coding-split, reviewer, autoresearcher, orchestrator, worker-pool,
+      capital-markets, assistant, demo-coding/financial/multi.  To compose a
+      dedicated cell: pick the roles for the job, size them with replicas, group
+      them with one cluster_id, and assign per-agent models from models.yaml
+      (cheap workers + a strong planner/reviewer is the high-ROI pattern).
+    - Roles are in-tree (roles/<id>/role.yaml — the 7 CONTROL roles) OR served
+      by installed @acc/* family packs.  Load a pack with
+      `./acc-deploy.sh pkg add @acc/<pack>` (or TUI Ecosystem → `g`), declare it
+      in a preset's required_packages, then infuse its roles.  Author new roles
+      per docs/role-authoring.md.
     - Governance is always in force: every agent action is bound by Cat-A/B/C
       rules and skill/MCP risk ceilings; HIGH/CRITICAL actions route through the
       human oversight queue on the Compliance screen.  When you cannot do

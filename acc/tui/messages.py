@@ -75,3 +75,41 @@ class HelpRequestMessage(Message):
     def __init__(self, screen_id: str) -> None:
         super().__init__()
         self.screen_id = screen_id
+
+
+class PromptLoadMessage(Message):
+    """Request that the Prompt screen load a prompt and optionally send it.
+
+    Posted by the Diagnostics screen's golden-prompt "Send" action
+    (proposal 033 WS-B).  The App routes it to the Prompt screen
+    (switching there), which populates its target-role / agent / mode /
+    textarea from these fields and — when ``auto_send`` is True — fires
+    the send so the reply streams on the Prompt pane (the operator's
+    "going back to Prompt shows the golden prompt we just sent" + its
+    feedback).
+
+    Attributes:
+        prompt_text: The prompt body to place in the Prompt textarea.
+        target_role: Role to target (added to the dropdown if it isn't a
+            built-in option).
+        target_agent_id: Optional specific agent id ("" = any).
+        operating_mode: PLAN / ACCEPT_EDITS / ASK_PERMISSIONS / AUTO.
+        auto_send: When True, the Prompt screen fires the send after
+            populating.
+    """
+
+    def __init__(
+        self,
+        *,
+        prompt_text: str,
+        target_role: str = "",
+        target_agent_id: str = "",
+        operating_mode: str = "AUTO",
+        auto_send: bool = False,
+    ) -> None:
+        super().__init__()
+        self.prompt_text = prompt_text
+        self.target_role = target_role
+        self.target_agent_id = target_agent_id
+        self.operating_mode = operating_mode
+        self.auto_send = auto_send

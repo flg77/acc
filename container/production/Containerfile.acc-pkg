@@ -1,0 +1,85 @@
+# ACC package toolchain — Production UBI10 Python 3.12 (minimal + cosign)
+#
+# One-shot `acc-pkg ...` runner.  Runs `acc-pkg ...` and exits.  Designed to
+# be invoked through a thin host-side wrapper (`./acc-pkg` in the repo root)
+# that wraps `podman run --rm` and bind-mounts the caller's CWD at /work, so
+# users build/inspect/eval/install local pack sources with zero Python setup.
+#
+# Why a separate image (vs. acc-cli)?
+#   * acc-pkg has a TINY dependency surface — no NATS/ML/DB/redis — so the
+#     image stays well under the acc-cli image. Only extra over a pure-Python
+#     base is the `cosign` binary, required to verify/install SIGNED packs.
+#
+# Image dep matrix (per acc/pkg/cli.py + acc/pkg/*.py imports):
+#   build / inspect / list / eval / init / new-role / validate
+#                          → pyyaml + pydantic only (deterministic tar is
+#                            stdlib; catalog fetch is stdlib urllib).
+#   verify / install (signed packs)
+#                          → the `cosign` binary on PATH (ACC_COSIGN_BIN).
+#                            Keyless-OIDC verify needs network: run the wrapper
+#                            with ACC_PKG_NETWORK=host.
+#
+# Build:
+#   podman build -f container/production/Containerfile.acc-pkg \
+#     --build-arg ACC_VERSION=0.3.34 \
+#     -t quay.io/flg77/acc_images:acc-pkg-0.3.34 .
+#
+# Run (one-shot, CWD bind-mounted at /work):
+#   podman run --rm -v "$PWD:/work:z" -w /work \
+#     quay.io/flg77/acc_images:acc-pkg-0.3.34 build .
+#
+# A repo-root wrapper `acc-pkg` collapses these into:
+#   ./acc-pkg build .
+#   ./acc-pkg inspect dist/foo.accpkg
+#   ./acc-pkg eval @acc/capital-markets-roles
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.3.34
+ARG COSIGN_VERSION=v2.4.3
+
+LABEL org.opencontainers.image.title="acc-pkg" \
+      org.opencontainers.image.description="ACC package toolchain (build/sign-verify/install/inspect/eval)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+USER 0
+
+# cosign — required by `acc-pkg verify` / `install` of signed packs.
+# Copied as a static binary from the upstream distrolesss cosign image (no
+# extra layers in our image).  Pin COSIGN_VERSION above; keep the --from tag
+# in lock-step (build args can't interpolate into --from).
+COPY --from=ghcr.io/sigstore/cosign/cosign:v2.4.3 /ko-app/cosign /usr/local/bin/cosign
+
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+
+# Minimal pkg-toolchain deps (no NATS/ML/DB — see matrix above).  Use `pip`
+# directly — NOT a subprocess shim — to avoid the dual-python path mismatch on
+# UBI10 python-312-minimal that hit the TUI image during initial bring-up.
+RUN pip install --no-cache-dir \
+      "pyyaml>=6.0,<7.0" \
+      "pydantic>=2.8,<3.0"
+
+# Application source.  acc-pkg needs the `acc` package only — packs are
+# bind-mounted at /work by the wrapper, so no roles/ copy (unlike acc-cli).
+COPY acc/ /app/acc/
+
+RUN pip install --no-cache-dir --no-deps . \
+ && echo "acc:x:1001:0:ACC pkg:/app:/bin/sh" >> /etc/passwd \
+ && chown -R 1001:0 /app \
+ && chmod -R g=u /app
+
+USER 1001
+
+ENV ACC_COSIGN_BIN=/usr/local/bin/cosign \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Operate on the caller's pack sources, mounted here by the wrapper.
+WORKDIR /work
+
+# Default to the help screen so `podman run --rm acc-pkg` prints usage.
+ENTRYPOINT ["acc-pkg"]
+CMD ["--help"]

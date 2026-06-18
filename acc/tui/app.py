@@ -33,7 +33,7 @@ from textual.message import Message
 from textual.widgets import Label
 
 from acc.tui.client import NATSObserver
-from acc.tui.messages import RolePreloadMessage
+from acc.tui.messages import PromptLoadMessage, RolePreloadMessage
 from acc.tui.models import CollectiveSnapshot
 from acc.tui.screens.compliance import ComplianceScreen, _OversightAction
 from acc.tui.screens.comms import CommunicationsScreen
@@ -552,6 +552,37 @@ class ACCTUIApp(App):
                     )
                 except Exception:
                     pass
+
+    def on_prompt_load_message(self, message: PromptLoadMessage) -> None:
+        """Route a Diagnostics golden-prompt "Send" to the Prompt screen.
+
+        Switches to the Prompt screen (so it composes), resolves the
+        instance, and calls ``load_external`` — which populates the
+        target-role / agent / mode / textarea and, when ``auto_send``,
+        fires the send so the reply streams on the Prompt pane
+        (proposal 033 WS-B).
+        """
+        try:
+            self.switch_screen("prompt")
+        except Exception:
+            logger.exception("app: switch_screen('prompt') failed")
+            return
+        try:
+            prompt_screen = self.get_screen("prompt")
+        except Exception:
+            logger.exception("app: get_screen('prompt') failed")
+            return
+        if isinstance(prompt_screen, PromptScreen):
+            try:
+                prompt_screen.load_external(
+                    prompt_text=message.prompt_text,
+                    target_role=message.target_role,
+                    target_agent_id=message.target_agent_id,
+                    operating_mode=message.operating_mode,
+                    auto_send=message.auto_send,
+                )
+            except Exception:
+                logger.exception("app: prompt load_external failed")
 
     async def on__oversight_action(self, message: _OversightAction) -> None:
         """Publish OVERSIGHT_DECISION to NATS (REQ-TUI-026 / ACC-12).

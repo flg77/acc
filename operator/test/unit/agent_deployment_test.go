@@ -21,6 +21,8 @@ import (
 	"sort"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/collective"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/manifests"
 )
@@ -59,6 +61,54 @@ func TestProjectManifestItems_Sorted(t *testing.T) {
 	}
 	if !sort.StringsAreSorted(keys) {
 		t.Errorf("items not sorted by Key: %v", keys)
+	}
+}
+
+// TestAgentPodSecurityContext_OpenShiftSCCSafe is the regression guard for the
+// live RHOAI 3.4 finding: the operator hardcoded the agent pod's
+// securityContext.runAsUser to 1001, which OpenShift's restricted-v2 SCC
+// rejects ("must be in the ranges: [1000920000, 1000929999]") — so zero agent
+// ReplicaSets ever produced a pod. The pod SecurityContext must NOT pin a fixed
+// runAsUser/runAsGroup/fsGroup (those come from the namespace UID range), while
+// still asserting non-root.
+func TestAgentPodSecurityContext_OpenShiftSCCSafe(t *testing.T) {
+	sc := collective.AgentPodSecurityContext()
+	if sc == nil {
+		t.Fatal("AgentPodSecurityContext returned nil")
+	}
+	if sc.RunAsUser != nil {
+		t.Errorf("pod SecurityContext pins runAsUser=%d — OpenShift restricted-v2 SCC needs the namespace UID range injected (must be nil)", *sc.RunAsUser)
+	}
+	if sc.RunAsGroup != nil {
+		t.Errorf("pod SecurityContext pins runAsGroup=%d — must be nil for SCC compatibility", *sc.RunAsGroup)
+	}
+	if sc.FSGroup != nil {
+		t.Errorf("pod SecurityContext pins fsGroup=%d — must be nil for SCC compatibility", *sc.FSGroup)
+	}
+	if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+		t.Error("pod SecurityContext must keep runAsNonRoot: true")
+	}
+}
+
+// TestAgentContainerSecurityContext_OpenShiftSCCSafe asserts the container-level
+// context drops ALL capabilities, disallows privilege escalation, and — like the
+// pod context — does NOT pin runAsUser, so the SCC-injected UID is honored.
+func TestAgentContainerSecurityContext_OpenShiftSCCSafe(t *testing.T) {
+	sc := collective.AgentContainerSecurityContext()
+	if sc == nil {
+		t.Fatal("AgentContainerSecurityContext returned nil")
+	}
+	if sc.RunAsUser != nil {
+		t.Errorf("container SecurityContext pins runAsUser=%d — must be nil for OpenShift SCC compatibility", *sc.RunAsUser)
+	}
+	if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+		t.Error("container SecurityContext must keep runAsNonRoot: true")
+	}
+	if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+		t.Error("container SecurityContext must set allowPrivilegeEscalation: false")
+	}
+	if sc.Capabilities == nil || len(sc.Capabilities.Drop) == 0 || sc.Capabilities.Drop[0] != corev1.Capability("ALL") {
+		t.Errorf("container SecurityContext must drop ALL capabilities, got %+v", sc.Capabilities)
 	}
 }
 

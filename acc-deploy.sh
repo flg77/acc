@@ -11,13 +11,26 @@
 #   setup     Scaffold ./.env from ./.env.example if absent.  No-op when
 #             ./.env is already present.  Run this once after the first
 #             clone; or use ./env/use.sh to pick a backend preset.
-#   apply [SPEC] [--dry-run]
+#   apply [SPEC] [--dry-run] [--prune] [--recreate]
 #             Declarative agentset.  Reads collective.yaml (or SPEC) and
 #             synthesizes a podman-compose overlay; brings up any agent
-#             declared in the spec that's not already running.  Presets
-#             ship at the repo root: collective.coding-split.yaml,
-#             collective.autoresearcher.yaml.  --dry-run prints the
-#             reconcile diff without acting.  PR-B.
+#             declared in the spec that's not already running.  SPEC may be a
+#             path OR a bare preset name resolved under collectives/ — e.g.
+#             `apply coding-split` -> collectives/collective.coding-split.yaml.
+#             Additive + non-disruptive by default (--no-recreate): the attached
+#             acc-tui + baseline are left running in place.  --dry-run prints the
+#             reconcile diff without acting.  --prune opts into orphan removal
+#             (reconcile-down).  --recreate applies config changes to existing
+#             agents (force-recreate — WILL restart matched services).  PR-B.
+#   pkg <verb> [args]
+#             Load + inspect ecosystem role packs from the deploy host.  Verbs
+#             mirror the native acc-pkg CLI; `add` is the catalog-fetch helper:
+#               pkg add @acc/workspace-roles [catalog-id]   # fetch+install by name
+#               pkg list [--available]                      # installed / catalog offers
+#               pkg install ./dist/foo.accpkg               # install a local .accpkg
+#               pkg inspect|eval|verify|info|contents ...   # acc-pkg passthrough
+#             Installs land in the stack's packages root (ACC_ALLOW_UNSIGNED=1
+#             permits unsigned dev packs).
 #   build     Build container images (must be done before first 'up')
 #   flavour <name> --packs "<packs>" [--base IMG] [--registry R] [--push]
 #             Build an immutable flavour image (base + chosen packs baked at
@@ -319,6 +332,23 @@ echo "  Compose file : $COMPOSE_FILE"
 echo "  Command      : $COMMAND $*"
 echo ""
 
+# ── Host-side acc deps ─────────────────────────────────────────────────────────
+# `apply` (required_packages) + `pkg` install/list/inspect run acc on the HOST
+# python (not in a container) so installs land in the same packages root the
+# stack reads.  Production hosts (lighthouse) often ship /usr/bin/python3
+# without these — probe once, install once via `pip --user`, never re-prompt.
+_ensure_host_acc_deps() {
+    if ! python -c "import msgpack, pydantic, ruamel.yaml" 2>/dev/null; then
+        echo "▶ Host Python is missing acc-cli deps — installing once via pip --user..."
+        if python -m pip install --user --quiet msgpack pydantic "ruamel.yaml" 2>&1 | tail -3; then
+            echo "  ✓ msgpack + pydantic + ruamel.yaml installed for $(python -c 'import sys; print(sys.executable)')"
+        else
+            echo "ERROR: pip install --user failed.  Install msgpack pydantic ruamel.yaml manually and retry." >&2
+            exit 1
+        fi
+    fi
+}
+
 # ── Execute ────────────────────────────────────────────────────────────────────
 case "$COMMAND" in
 
@@ -432,6 +462,58 @@ case "$COMMAND" in
         echo "✓ Stack '$SNAME' ready: image acc-${SNAME} + $OUT"
         ;;
 
+    pkg)
+        # Role-pack management from the deploy host — a thin front-end over the
+        # acc-pkg toolchain so operators load ecosystem packs without leaving
+        # the deploy workflow.  Verbs mirror the native `acc-pkg` CLI; `add` is
+        # the catalog-fetch convenience the native CLI spells as a name install.
+        #
+        #   ./acc-deploy.sh pkg add @acc/workspace-roles            # fetch+install from the catalog
+        #   ./acc-deploy.sh pkg add @acc/business-roles@^1.0 acc-canonical   # pin a catalog id
+        #   ./acc-deploy.sh pkg list                                # installed packs
+        #   ./acc-deploy.sh pkg list --available                    # what the catalog offers
+        #   ./acc-deploy.sh pkg install ./dist/foo.accpkg           # native acc-pkg: install a file
+        #   ./acc-deploy.sh pkg inspect ./dist/foo.accpkg           # native acc-pkg passthrough
+        #   ./acc-deploy.sh pkg eval ~/.acc/.../@acc/foo            # native acc-pkg passthrough
+        #
+        # Runs acc on the HOST python (same as `apply`) so installs land in the
+        # same packages root the running stack reads (/var/lib/acc/packages, or
+        # ACC_PACKAGES_ROOT).  Set ACC_ALLOW_UNSIGNED=1 for unsigned dev packs.
+        if [[ "$STACK" != "production" ]]; then
+            echo "ERROR: 'pkg' is only available with STACK=production." >&2
+            exit 1
+        fi
+        _ensure_host_acc_deps
+        PKG_SUB="${1:-list}"
+        shift 2>/dev/null || true
+        case "$PKG_SUB" in
+            add|get)
+                SPEC="${1:?usage: ./acc-deploy.sh pkg add <@scope/name[@constraint]> [catalog-id]}"
+                shift 2>/dev/null || true
+                DIRECT_ARGS=("$SPEC")
+                # An optional bare 2nd positional is a catalog id to pin to.
+                if [[ "${1:-}" != "" && "${1:-}" != --* ]]; then
+                    DIRECT_ARGS+=(--catalog "$1"); shift
+                fi
+                [[ "${ACC_ALLOW_UNSIGNED:-0}" == "1" ]] && DIRECT_ARGS+=(--allow-unsigned)
+                echo "▶ Installing $SPEC from the catalog..."
+                exec python -m acc.cli collective pkg-install-direct "${DIRECT_ARGS[@]}" "$@"
+                ;;
+            ""|list|install|inspect|eval|verify|info|contents|owner|qf|rdeps|verify-installed|qv|uninstall|remove|qi|ql|validate|build)
+                # Native acc-pkg verbs — pass straight through to the CLI.
+                exec python -m acc.pkg.cli "$PKG_SUB" "$@"
+                ;;
+            -h|--help|help)
+                exec python -m acc.pkg.cli --help
+                ;;
+            *)
+                echo "pkg: unknown subcommand '$PKG_SUB'" >&2
+                echo "     try: add | list | install | inspect | eval | verify | info | contents | uninstall" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+
     apply)
         # PR-B — declarative agentset.  Reads ./collective.yaml (or the
         # path supplied as $1) and synthesizes a podman-compose overlay
@@ -439,35 +521,50 @@ case "$COMMAND" in
         # ANY agents declared in the spec that aren't already running;
         # does not touch the baseline acc-agent-* services in the base
         # compose (those stay there until PR-E).
-        SPEC="${1:-collective.yaml}"
+        # Flags can appear in any position; the first non-flag token is the
+        # spec (path OR bare preset name).  `--dry-run` previews the reconcile
+        # diff; `--prune` opts into orphan removal (off by default — see the
+        # compose call below for why).
+        SPEC=""
         DRY_RUN=false
-        if [[ "$SPEC" == "--dry-run" ]]; then
-            DRY_RUN=true
-            SPEC="${2:-collective.yaml}"
-        fi
-        if [[ ! -f "$REPO_ROOT/$SPEC" ]]; then
-            echo "ERROR: spec not found: $REPO_ROOT/$SPEC" >&2
+        PRUNE=false
+        RECREATE=false
+        for _a in "$@"; do
+            case "$_a" in
+                --dry-run)              DRY_RUN=true ;;
+                --prune|--remove-orphans) PRUNE=true ;;
+                --recreate|--force-recreate) RECREATE=true ;;
+                -*) echo "apply: unknown flag '$_a'" >&2; exit 1 ;;
+                *)  [[ -z "$SPEC" ]] && SPEC="$_a" ;;
+            esac
+        done
+        SPEC="${SPEC:-collective.yaml}"
+        # Resolve the spec.  Accept (first match wins): an explicit path
+        # (absolute or repo-root-relative); a file in collectives/; a bare
+        # preset name -> collectives/collective.<name>.yaml or
+        # collectives/<name>.yaml; and the legacy repo-root collective.<name>.yaml
+        # / <name> paths (back-compat with the pre-collectives/ layout).
+        SPEC_PATH=""
+        for cand in \
+            "$SPEC" \
+            "$REPO_ROOT/$SPEC" \
+            "$REPO_ROOT/collectives/$SPEC" \
+            "$REPO_ROOT/collectives/collective.$SPEC.yaml" \
+            "$REPO_ROOT/collectives/$SPEC.yaml" \
+            "$REPO_ROOT/collective.$SPEC.yaml"
+        do
+            if [[ -f "$cand" ]]; then SPEC_PATH="$cand"; break; fi
+        done
+        if [[ -z "$SPEC_PATH" ]]; then
+            echo "ERROR: spec not found: $SPEC" >&2
             echo "       Available presets:" >&2
-            for f in "$REPO_ROOT"/collective*.yaml; do
+            for f in "$REPO_ROOT"/collectives/*.yaml "$REPO_ROOT"/collective*.yaml; do
                 [[ -f "$f" ]] && echo "         $(basename "$f")" >&2
             done
             exit 1
         fi
         OVERLAY_PATH="$REPO_ROOT/container/production/podman-compose.overlay.yml"
-        # Bootstrap host-Python deps if missing.  The synthesize call needs
-        # msgpack + pydantic + ruamel.yaml on whatever `python` resolves to;
-        # production hosts (lighthouse) often ship /usr/bin/python3 without
-        # them and the first `apply` fails with ModuleNotFoundError.  Probe
-        # once, install once via `pip install --user`, never re-prompt.
-        if ! python -c "import msgpack, pydantic, ruamel.yaml" 2>/dev/null; then
-            echo "▶ Host Python is missing acc-cli deps — installing once via pip --user..."
-            if python -m pip install --user --quiet msgpack pydantic "ruamel.yaml" 2>&1 | tail -3; then
-                echo "  ✓ msgpack + pydantic + ruamel.yaml installed for $(python -c 'import sys; print(sys.executable)')"
-            else
-                echo "ERROR: pip install --user failed.  Install msgpack pydantic ruamel.yaml manually and retry." >&2
-                exit 1
-            fi
-        fi
+        _ensure_host_acc_deps
         # Stage 1.5.3 — boot-time required_packages fetch.  Reads
         # the spec, resolves each unsatisfied @scope/name@constraint
         # through the layered catalog, downloads + verifies +
@@ -476,47 +573,82 @@ case "$COMMAND" in
         # required_packages (back-compat).  ACC_ALLOW_UNSIGNED=1
         # bypasses the signing floor (audit-logged) for dev hubs
         # that haven't wired cosign yet.
+        #
+        # On a containerized stack the packages root is the in-container
+        # `acc-packages` volume, which the host can't write.  In that case
+        # `pkg-install` returns exit 20 (EXIT_PKG_ROOT_DEFERRED): it prints
+        # an actionable note and defers resolution to the in-container
+        # registry — apply CONTINUES (agents load roles from the volume at
+        # runtime).  Any other non-zero is a genuine failure and aborts.
         REQ_PKG_ARGS=()
         if [[ "${ACC_ALLOW_UNSIGNED:-0}" == "1" ]]; then
             REQ_PKG_ARGS+=(--allow-unsigned)
         fi
         echo "▶ Resolving required_packages from $SPEC..."
-        if ! python -m acc.cli collective pkg-install \
-                "$REPO_ROOT/$SPEC" "${REQ_PKG_ARGS[@]}"; then
-            echo "ERROR: required_packages install failed" >&2
-            echo "       check /etc/acc/catalogs.yaml or set" >&2
-            echo "       ACC_ALLOW_UNSIGNED=1 for unsigned dev installs" >&2
-            exit 1
-        fi
+        PKG_RC=0
+        python -m acc.cli collective pkg-install \
+            "$SPEC_PATH" "${REQ_PKG_ARGS[@]}" || PKG_RC=$?
+        case "$PKG_RC" in
+            0)  ;;  # resolved (or nothing to resolve)
+            20) echo "  → continuing; packs resolve from the in-container registry." >&2 ;;
+            *)  echo "ERROR: required_packages install failed (exit $PKG_RC)" >&2
+                echo "       check /etc/acc/catalogs.yaml or set" >&2
+                echo "       ACC_ALLOW_UNSIGNED=1 for unsigned dev installs" >&2
+                exit 1 ;;
+        esac
 
         echo "▶ Synthesizing overlay from $SPEC..."
         if ! python -m acc.cli collective synthesize \
-                "$REPO_ROOT/$SPEC" -o "$OVERLAY_PATH"; then
+                "$SPEC_PATH" -o "$OVERLAY_PATH"; then
             echo "ERROR: synthesize failed" >&2
             exit 1
         fi
         echo "  → $OVERLAY_PATH"
         if [[ "$DRY_RUN" == "true" ]]; then
             echo "▶ Reconcile diff (dry-run):"
-            python -m acc.cli collective diff "$REPO_ROOT/$SPEC" || true
+            python -m acc.cli collective diff "$SPEC_PATH" || true
             echo "✓ Dry-run complete; nothing applied."
             exit 0
         fi
-        echo "▶ Applying $SPEC..."
-        # NOTE: do NOT pass "$@" here — at this point $@ still carries the
-        # consumed positional args (the spec filename, possibly --dry-run),
-        # which podman-compose interprets as service names and silently
-        # filters everything out with "missing services [<spec>]".
-        # See follow-up: AoA-P1 baseline-roster fix (v0.3.35).
-        podman-compose -f "$COMPOSE_FILE" -f "$OVERLAY_PATH" up -d \
-            --remove-orphans
+        echo "▶ Applying $(basename "$SPEC_PATH")..."
+        # Build the compose command from BASE_CMD so apply inherits the SAME
+        # active profiles as `up` — crucially `--profile tui` (default TUI=true)
+        # and the userns overlay.  The previous raw `podman-compose -f base -f
+        # overlay up -d --remove-orphans` did NOT carry the tui profile, so the
+        # profile-gated acc-tui container was an orphan of the active config and
+        # --remove-orphans DELETED it: the synthesized roles came up but the
+        # operator's attached TUI vanished and could not reconnect.
+        #
+        # Orphan removal is now OPT-IN (`--prune`).  apply's contract is to ADD
+        # declared agents without touching the baseline, so the default no
+        # longer prunes anything.  Even under --prune the TUI is safe because
+        # BASE_CMD makes the tui profile part of the active config.
+        #
+        # `--no-recreate` keeps apply purely ADDITIVE: already-running services
+        # (acc-tui + the baseline) are left in place — only not-yet-running
+        # agents are created.  Without it, `up -d` reconciles + RECREATES the
+        # whole config (the stack is often started by systemd with a different
+        # config-hash), which restarts the operator's attached acc-tui out from
+        # under them.  Pass `--recreate` to opt into applying config changes to
+        # existing agents (this WILL restart matched services).
+        APPLY_CMD=("${BASE_CMD[@]}" -f "$OVERLAY_PATH" up -d)
+        if [[ "$RECREATE" == "true" ]]; then
+            APPLY_CMD+=(--force-recreate)
+        else
+            APPLY_CMD+=(--no-recreate)
+        fi
+        if [[ "$PRUNE" == "true" ]]; then
+            APPLY_CMD+=(--remove-orphans)
+        fi
+        "${APPLY_CMD[@]}"
         echo ""
-        echo "✓ Applied $SPEC.  Synthesized services:"
+        echo "✓ Applied $(basename "$SPEC_PATH").  Synthesized services:"
         podman ps --filter "label=acc.synthesized=true" \
             --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
         echo ""
         echo "  Monitor:  ./acc-deploy.sh logs"
         echo "  Diff:     ./acc-deploy.sh apply --dry-run $SPEC"
+        echo "  Prune:    ./acc-deploy.sh apply --prune $SPEC   # reconcile-down removed agents"
         echo "  Stop:     ./acc-deploy.sh down"
         ;;
 

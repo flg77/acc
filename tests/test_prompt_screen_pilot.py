@@ -123,6 +123,32 @@ async def test_select_directory_button_present():
 
 
 @pytest.mark.asyncio
+async def test_operator_mode_badge_renders():
+    """033 WS-F — the Prompt target row carries a dev/prod security-floor
+    badge whose content reads DEV or PROD."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        badge = screen.query_one("#prompt-mode-badge", Static)
+        # Capture what _render_mode_badge paints (Static.renderable isn't
+        # reliably readable across Textual versions).
+        captured: list[str] = []
+        real = badge.update
+
+        def recording(content="", **kwargs):
+            captured.append(str(content))
+            return real(content, **kwargs)
+
+        badge.update = recording  # type: ignore[assignment]
+        screen._render_mode_badge()
+        await pilot.pause()
+
+        rendered = "\n".join(captured)
+        assert "DEV" in rendered or "PROD" in rendered, rendered
+
+
+@pytest.mark.asyncio
 async def test_mode_hint_and_shift_tab_cycles():
     """PR-V2 — the Mode dropdown is gone; a tiny hint shows the mode and
     shift+tab (action_cycle_mode) cycles AUTO→PLAN→ACCEPT_EDITS→ASK."""

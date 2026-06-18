@@ -40,6 +40,14 @@ const (
 	PhaseFailed     = "Failed"
 )
 
+// accVenvPython is the ABSOLUTE path to the agent image's S2I virtualenv
+// interpreter, which carries acc's runtime DEPENDENCIES. acc itself is not in
+// the venv site-packages — it ships as the source tree at /app/acc, so the
+// pkg-install exec also sets PYTHONPATH=/app (see the exec args). A bare
+// `python3` under `kubectl exec` resolves to /usr/bin/python3 (no deps).
+// Proposal 032 §11 Finding C.
+const accVenvPython = "/opt/app-root/bin/python3"
+
 // AccPackageInstallReconciler reconciles an AccPackageInstall by
 // exec'ing `acc-cli collective pkg-install` against an ACC pod
 // matching the target AgentCorpus.
@@ -105,18 +113,38 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return r.requeue(), nil
 	}
 
-	// Set Installing phase while we exec.
-	r.setPhase(ctx, cr, PhaseInstalling, "Exec", fmt.Sprintf("exec into %s", pod.Name))
+	// Surface "Installing" only on a first install or a retry — NOT on every
+	// steady-state requeue. The exec below runs each PollInterval (idempotent
+	// self-heal for a restarted pod that lost its emptyDir packages root), but
+	// flipping Phase to Installing every cycle makes the CR visibly oscillate
+	// Installing<->Installed, so `oc get` / the TUI / the console look stuck
+	// "Installing" when the pack is in fact Installed. Only churn the phase when
+	// it isn't already Installed for the current generation.
+	steadyInstalled := cr.Status.Phase == PhaseInstalled &&
+		cr.Status.ObservedGeneration == cr.Generation
+	if !steadyInstalled {
+		r.setPhase(ctx, cr, PhaseInstalling, "Exec", fmt.Sprintf("exec into %s", pod.Name))
+	}
 
-	// Build the acc-cli command. An empty constraint means "latest": pass the
-	// bare @scope/name so the resolver picks the highest published version
-	// ("name@" would be malformed).
+	// Build the acc CLI command. Two pieces both matter (proposal 032 §11
+	// Finding C, observed live):
+	//   1. interpreter: the venv python by ABSOLUTE PATH
+	//      (/opt/app-root/bin/python3) — it carries acc's deps. A bare `python3`
+	//      under a non-login `kubectl exec` resolves to /usr/bin/python3 (no deps).
+	//   2. PYTHONPATH=/app: acc itself is NOT importable from the venv
+	//      site-packages — it ships as the source tree at /app/acc (exactly what
+	//      the agent's own CMD `python3 -m acc.agent` imports via WORKDIR /app).
+	//      The exec does not run from /app, so without PYTHONPATH=/app the import
+	//      fails ("No module named 'acc'"). `env PYTHONPATH=/app` puts the source
+	//      on sys.path regardless of the exec's working directory.
+	// An empty constraint means "latest": pass the bare @scope/name so the
+	// resolver picks the highest published version ("name@" would be malformed).
 	pkgRef := cr.Spec.Name
 	if cr.Spec.Constraint != "" {
 		pkgRef = fmt.Sprintf("%s@%s", cr.Spec.Name, cr.Spec.Constraint)
 	}
 	args := []string{
-		"acc-cli", "collective", "pkg-install-direct",
+		"env", "PYTHONPATH=/app", accVenvPython, "-m", "acc.cli", "collective", "pkg-install-direct",
 		pkgRef,
 		"--json",
 	}
@@ -207,6 +235,15 @@ func (r *AccPackageInstallReconciler) findAccPod(ctx context.Context, ns, corpus
 	if err := r.Client.List(ctx, &pods,
 		client.InNamespace(ns),
 		client.MatchingLabels(labels),
+		// Restrict to AGENT pods. Every ACC pod (NATS, Redis, OTel, OPA, TUI,
+		// WebGUI, agents) carries acc.redhat.io/corpus, but only agent pods
+		// (acc-agent-core) have the acc source at /app/acc + the venv interpreter
+		// the pkg-install exec needs. Without this filter the exec lands on a
+		// random pod and fails with exit 127 ("/opt/app-root/bin/python3: No such
+		// file or directory" on infra pods) or "No module named 'acc'" (on
+		// TUI/WebGUI). LabelAgentRole is present only on agent pods (proposal 032
+		// §11 Finding C).
+		client.HasLabels{accv1alpha1.LabelAgentRole},
 	); err != nil {
 		return nil, fmt.Errorf("listing pods: %w", err)
 	}
@@ -222,7 +259,7 @@ func (r *AccPackageInstallReconciler) findAccPod(ctx context.Context, ns, corpus
 			}
 		}
 	}
-	return nil, fmt.Errorf("no ready ACC pod in namespace %q (corpus=%q)", ns, corpusName)
+	return nil, fmt.Errorf("no ready ACC agent pod in namespace %q (corpus=%q)", ns, corpusName)
 }
 
 // execInPod runs ``args`` inside the first container of ``pod`` and

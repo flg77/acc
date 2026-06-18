@@ -9,7 +9,7 @@ OPM_VERSION ?= v1.47.0
 
 # Image settings
 IMG ?= quay.io/redhat-ai-dev/acc-operator:$(VERSION)
-VERSION ?= 0.1.0
+VERSION ?= 0.2.12
 BUNDLE_IMG ?= quay.io/redhat-ai-dev/acc-operator-bundle:$(VERSION)
 # CATALOG_IMG — the opm index (file-based catalog) image that a
 # CatalogSource points at (Method C / GitOps local-catalog install).

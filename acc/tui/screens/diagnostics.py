@@ -38,13 +38,21 @@ from textual.widgets import (
     Footer,
     Input,
     Label,
+    Select,
     Static,
+    TabbedContent,
+    TabPane,
     TextArea,
 )
 
 from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar
 
 logger = logging.getLogger("acc.tui.diagnostics")
+
+# Proposal 033 WS-B — operating modes offered in the Form's Mode
+# selector (mirrors acc.operating_modes: PLAN / ACCEPT_EDITS /
+# ASK_PERMISSIONS / AUTO).
+_OPERATING_MODES = ("PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS", "AUTO")
 
 
 class DiagnosticsScreen(Screen):
@@ -76,6 +84,9 @@ class DiagnosticsScreen(Screen):
         # detail panel + the "Last" column.
         self._results: dict[str, Any] = {}
         self._running = False
+        # Proposal 033 WS-B — name of the prompt currently mirrored into
+        # the Form tab (reused as the GoldenPrompt name when sending).
+        self._current_name = ""
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="diagnostics", id="nav")
@@ -104,13 +115,45 @@ class DiagnosticsScreen(Screen):
                         "detail.[/dim]",
                         id="diagnostics-detail",
                     )
-                # PR-Y-2 — in-pane editor: write/edit golden prompts.
-                # Highlighting a row loads its YAML here; Save validates
-                # + writes to the writable store; New starts a blank
-                # template.  "+ Add" attaches a directory (e.g. of
-                # markdown prompts) that the pane watches + reloads.
-                yield Label("EDIT / NEW (YAML)", classes="panel-label")
-                yield TextArea("", id="golden-editor", language="yaml")
+                # PR-Y-2 + proposal 033 WS-B — Form/MD subnav.  The
+                # MD (YAML) tab is the authoritative editor (highlight a
+                # row → its YAML loads here; Save validates + writes to
+                # the writable store; New starts a template).  The Form
+                # tab is a human-readable projection of the important
+                # fields (role / agent / mode / timeout / prompt) with a
+                # Send button that dispatches the (possibly retargeted)
+                # prompt to a live agent.  Switching to Form re-derives
+                # its fields from the YAML so the Form reflects the MD.
+                yield Label("EDIT / SEND", classes="panel-label")
+                with TabbedContent(id="golden-edit-tabs"):
+                    with TabPane("Form", id="tab-golden-form"):
+                        yield Label("Target role")
+                        yield Select(
+                            [], id="form-role", prompt="select role",
+                            allow_blank=True,
+                        )
+                        yield Label("Target agent (optional)")
+                        yield Input(
+                            placeholder="agent_id or blank", id="form-agent",
+                        )
+                        yield Label("Mode")
+                        yield Select(
+                            [(m, m) for m in _OPERATING_MODES],
+                            id="form-mode", value="AUTO", allow_blank=False,
+                        )
+                        yield Label("Timeout (s)")
+                        yield Input(value="60", id="form-timeout")
+                        yield Label("Prompt")
+                        yield TextArea("", id="form-prompt")
+                        with Horizontal(id="form-actions"):
+                            yield Button(
+                                "Send", id="btn-golden-send",
+                                variant="success",
+                            )
+                    with TabPane("MD (YAML)", id="tab-golden-md"):
+                        yield TextArea(
+                            "", id="golden-editor", language="yaml",
+                        )
                 with Horizontal(id="golden-editor-actions"):
                     yield Button("New", id="btn-golden-new", variant="default")
                     yield Button(
@@ -129,8 +172,15 @@ class DiagnosticsScreen(Screen):
 
     def on_mount(self) -> None:
         table = self.query_one("#golden-table", DataTable)
+        # Row-cursor (not the default cell-cursor) so DataTable posts
+        # RowHighlighted / RowSelected as the operator navigates — without
+        # this the selection handlers never fire in the running TUI, so the
+        # detail panel stayed blank and prompts could not be loaded into the
+        # editor (the pilot test masked it by calling the handler directly).
+        table.cursor_type = "row"
         table.add_columns("Name", "Role", "Mode", "Last")
         self._reload_prompts()
+        self._populate_role_options()
         # PR-Y-2 — live-reload: poll the load roots' file mtimes every
         # 2s and refresh the table when a golden file changes (mirrors
         # the Ecosystem role watcher).  The editor is independent of the
@@ -192,6 +242,18 @@ class DiagnosticsScreen(Screen):
     # ------------------------------------------------------------------
 
     def on_data_table_row_highlighted(self, event) -> None:
+        # Moving the cursor only updates the (read-only) detail panel.
+        # Loading into the editor is deferred to an EXPLICIT row select
+        # (Enter / click) so a background file-reload — which resets the
+        # cursor — can never clobber the operator's unsaved editor edits.
+        if getattr(event, "data_table", None) is None:
+            return
+        if event.data_table.id != "golden-table":
+            return
+        self._render_detail(self._row_key_value(event.row_key))
+
+    def on_data_table_row_selected(self, event) -> None:
+        # Enter / click on a row: load it into the editor for tweaking.
         if getattr(event, "data_table", None) is None:
             return
         if event.data_table.id != "golden-table":
@@ -199,6 +261,13 @@ class DiagnosticsScreen(Screen):
         name = self._row_key_value(event.row_key)
         self._render_detail(name)
         self._load_into_editor(name)
+        self._load_into_form(name)
+        if name in self._prompts:
+            self._set_status(
+                f"[dim]loaded[/dim] [b]{name}[/b] "
+                f"[dim]into editor — tweak + Save (writes to your "
+                f"writable store as a copy).[/dim]"
+            )
 
     @staticmethod
     def _row_key_value(row_key) -> str:
@@ -254,6 +323,8 @@ class DiagnosticsScreen(Screen):
             self._editor_save()
         elif bid == "btn-golden-add-dir":
             self._attach_dir()
+        elif bid == "btn-golden-send":
+            self.action_send()
 
     # ------------------------------------------------------------------
     # PR-Y-2 — in-pane editor + attach/watch
@@ -289,6 +360,154 @@ class DiagnosticsScreen(Screen):
             self._editor().text = text
         except Exception:
             logger.debug("diagnostics: editor load failed", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Proposal 033 WS-B — Form tab (role selector + Send) + Form/MD sync
+    # ------------------------------------------------------------------
+
+    def _available_role_names(self) -> list[str]:
+        """Roles offered in the Form's role selector: the installed set
+        (in-tree control roles + packaged roles) plus any role a loaded
+        golden prompt targets."""
+        names: set[str] = set()
+        try:
+            from acc.role_loader import list_roles  # noqa: PLC0415
+            from acc.tui.path_resolution import (  # noqa: PLC0415
+                resolve_manifest_root,
+            )
+            roots = str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
+            names.update(list_roles(roots))
+        except Exception:
+            logger.debug("diagnostics: list_roles failed", exc_info=True)
+        for prompt in self._prompts.values():
+            tr = getattr(prompt, "target_role", "")
+            if tr:
+                names.add(tr)
+        return sorted(names)
+
+    def _populate_role_options(self) -> None:
+        try:
+            sel = self.query_one("#form-role", Select)
+        except Exception:
+            return
+        sel.set_options([(n, n) for n in self._available_role_names()])
+
+    def _populate_form_fields(self, prompt) -> None:
+        """Set the Form widgets from a GoldenPrompt (no side effects on
+        the loaded library)."""
+        try:
+            sel = self.query_one("#form-role", Select)
+            options = self._available_role_names()
+            if prompt.target_role and prompt.target_role not in options:
+                options = sorted(set(options) | {prompt.target_role})
+            sel.set_options([(n, n) for n in options])
+            try:
+                sel.value = prompt.target_role or Select.BLANK
+            except Exception:
+                sel.value = Select.BLANK
+            self.query_one("#form-agent", Input).value = (
+                prompt.target_agent_id or ""
+            )
+            mode_sel = self.query_one("#form-mode", Select)
+            mode_sel.value = (
+                prompt.operating_mode
+                if prompt.operating_mode in _OPERATING_MODES
+                else "AUTO"
+            )
+            self.query_one("#form-timeout", Input).value = str(prompt.timeout_s)
+            self.query_one("#form-prompt", TextArea).text = prompt.prompt
+        except Exception:
+            logger.debug("diagnostics: form populate failed", exc_info=True)
+
+    def _load_into_form(self, name: str) -> None:
+        prompt = self._prompts.get(name)
+        if prompt is None:
+            return
+        self._current_name = name
+        self._populate_form_fields(prompt)
+
+    def on_tabbed_content_tab_activated(self, event) -> None:
+        """When the Form tab becomes active, re-derive its fields from
+        the MD (YAML) editor so the Form reflects the authoritative MD
+        view (proposal 033 WS-B)."""
+        try:
+            active = self.query_one("#golden-edit-tabs", TabbedContent).active
+        except Exception:
+            return
+        if active == "tab-golden-form":
+            self._derive_form_from_md()
+
+    def _derive_form_from_md(self) -> None:
+        import yaml  # noqa: PLC0415
+        from acc.golden_prompts import GoldenPrompt  # noqa: PLC0415
+
+        try:
+            raw = self.query_one("#golden-editor", TextArea).text
+        except Exception:
+            return
+        if not raw.strip():
+            return
+        try:
+            prompt = GoldenPrompt.model_validate(yaml.safe_load(raw) or {})
+        except Exception:
+            return  # MD mid-edit / invalid — leave the Form untouched
+        self._populate_form_fields(prompt)
+
+    def _form_to_prompt(self):
+        """Build a transient GoldenPrompt from the Form fields, or None
+        when the required role + prompt are missing."""
+        from acc.golden_prompts import GoldenPrompt  # noqa: PLC0415
+
+        try:
+            raw_role = self.query_one("#form-role", Select).value
+            agent = self.query_one("#form-agent", Input).value.strip()
+            mode = str(self.query_one("#form-mode", Select).value or "AUTO")
+            timeout_raw = self.query_one("#form-timeout", Input).value.strip()
+            text = self.query_one("#form-prompt", TextArea).text.strip()
+        except Exception:
+            return None
+        if raw_role is None or raw_role == Select.BLANK:
+            return None
+        role = str(raw_role).strip()
+        if not role or not text:
+            return None
+        try:
+            timeout_s = float(timeout_raw) if timeout_raw else 60.0
+        except ValueError:
+            timeout_s = 60.0
+        return GoldenPrompt(
+            name=self._current_name or "form_send",
+            prompt=text,
+            target_role=role,
+            target_agent_id=agent,
+            operating_mode=mode if mode in _OPERATING_MODES else "AUTO",
+            timeout_s=timeout_s,
+        )
+
+    def action_send(self) -> None:
+        """Send the Form's current values to the Prompt screen and fire
+        it there so the reply streams on the Prompt pane (proposal 033
+        WS-B).  Routing through the Prompt screen is what makes "going
+        back to Prompt show the golden prompt we just sent" + its
+        feedback — the Prompt pane owns the rich reasoning/reply view."""
+        prompt = self._form_to_prompt()
+        if prompt is None:
+            self._set_status(
+                "[yellow]Form needs a target role + a prompt.[/yellow]"
+            )
+            return
+        from acc.tui.messages import PromptLoadMessage  # noqa: PLC0415
+
+        self.post_message(PromptLoadMessage(
+            prompt_text=prompt.prompt,
+            target_role=prompt.target_role,
+            target_agent_id=prompt.target_agent_id,
+            operating_mode=prompt.operating_mode,
+            auto_send=True,
+        ))
+        self._set_status(
+            f"[b]→ Prompt[/b] sending to {prompt.target_role}…"
+        )
 
     def _editor_new(self) -> None:
         try:

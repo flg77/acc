@@ -36,6 +36,7 @@ import (
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/observability"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/rhoai"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/security"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/ui"
 	statuspkg "github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/status"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/util"
 )
@@ -75,6 +76,8 @@ var (
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get;patch
 // +kubebuilder:rbac:groups=dashboard.opendatahub.io,resources=odhapplications,verbs=get;list;create;update
 // +kubebuilder:rbac:groups=console.openshift.io,resources=odhquickstarts,verbs=get;list;create;update
+// +kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=console.openshift.io,resources=consolelinks,verbs=get;list;watch;create;update;patch;delete
 type AgentCorpusReconciler struct {
 	Client    client.Client
 	Scheme    *runtime.Scheme
@@ -270,6 +273,12 @@ func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconcile
 		&infra.NATSReconciler{Client: r.Client, Scheme: r.Scheme},
 		&infra.RedisReconciler{Client: r.Client, Scheme: r.Scheme},
 		&infra.MilvusReconciler{},
+		// Aggregate infra health into the InfrastructureReady condition that
+		// ComputeCorpusPhase gates the corpus Ready phase on (proposal 032 G1).
+		// Runs right after the NATS/Redis/Milvus slots so their StatefulSets
+		// exist this pass. Without it the condition is never set and no corpus
+		// can ever reach Ready.
+		&infra.ReadyReconciler{Client: r.Client},
 		&governance.OPABundleServerReconciler{Client: r.Client, Scheme: r.Scheme},
 		&governance.GatekeeperReconciler{Client: r.Client},
 		&bridge.KafkaBridgeReconciler{Client: r.Client, Scheme: r.Scheme},
@@ -283,6 +292,14 @@ func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconcile
 		// infrastructure are known, before agent Deployments are
 		// created, so the policies exist as pods come up.
 		&security.NetworkPolicyReconciler{Client: r.Client, Scheme: r.Scheme},
+		// Interaction plane (proposal 023 / ADR 025): acc-webgui behind a
+		// Keycloak-OIDC oauth2-proxy. No-op unless spec.webgui is enabled +
+		// its Keycloak block is complete (never exposes an unauthenticated
+		// surface). After infra so NATS/config exist for the UI to reach.
+		&ui.WebGUIReconciler{Client: r.Client, Scheme: r.Scheme},
+		// acc-tui attach pod (proposal 023 §4a) — `oc rsh` ops surface.
+		// No-op unless spec.tui is enabled.
+		&ui.TUIReconciler{Client: r.Client, Scheme: r.Scheme},
 		&collectiverec.CollectiveReconciler{Client: r.Client, Scheme: r.Scheme},
 	}
 }

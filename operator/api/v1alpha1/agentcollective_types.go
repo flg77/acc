@@ -69,6 +69,18 @@ type AgentCollectiveSpec struct {
 	// collectives are unaffected.
 	// +optional
 	Kagenti *KagentiSpec `json:"kagenti,omitempty"`
+
+	// DisableAssistant opts the collective out of the default `assistant`
+	// concierge.  Every collective ships an assistant by default — the
+	// mutating webhook injects `assistant` into spec.agents when absent — so
+	// there is always a governed entry point for onboarding, catalogue
+	// queries and PROPOSE_INFUSE routing (proposal 023 §4b / 021 C3).  Set
+	// true to suppress that injection (e.g. a minimal or special-purpose
+	// collective that manages its own roster).  nil/false keeps the
+	// assistant; an explicitly-declared assistant in spec.agents is never
+	// overwritten regardless of this flag.
+	// +optional
+	DisableAssistant *bool `json:"disableAssistant,omitempty"`
 }
 
 // KagentiSpec opts a collective in to Kagenti's AgentCard auto-discovery

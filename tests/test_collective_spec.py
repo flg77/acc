@@ -208,10 +208,45 @@ class TestRolesToCompose:
         # Volume mounts match the base compose's coding-split shape.
         assert "lancedb-data:/app/data/lancedb:U,z" in svc["volumes"]
         assert "../../acc-config.yaml:/app/acc-config.yaml:ro,z" in svc["volumes"]
+        # Packages root (parity with the base compose) so infused packs persist,
+        # + roles mounted RW (:z, not :ro,z) so the assistant can self-author
+        # role.yaml and have the edit survive a restart (lighthouse autonomy e2e).
+        assert "acc-packages:/var/lib/acc/packages:U,z" in svc["volumes"]
+        assert "../../roles:/app/roles:z" in svc["volumes"]
         # Synthesized-label so the reconciler can find them.
         assert svc["labels"]["acc.synthesized"] == "true"
         assert svc["labels"]["acc.collective_id"] == "sol-01"
         assert svc["labels"]["acc.role"] == "coding_agent"
+
+    def test_synthesized_agents_mount_packages_volume(self):
+        """Synthesized cells must mount the shared acc-packages volume +
+        declare it top-level, or pack-served roles never resolve and the
+        cell boots dormant (regression: cells only had roles/ bind-mount)."""
+        overlay = roles_to_compose(
+            CollectiveSpec(
+                collective_id="sol-01",
+                required_packages=["@acc/workspace-roles@^1.0"],
+                agents=[AgentSpec(role="coding_agent_architect", replicas=1)],
+            )
+        )
+        svc = next(iter(overlay["services"].values()))
+        assert "acc-packages:/var/lib/acc/packages:U,z" in svc["volumes"]
+        # Top-level decl (bare/null) so -f base -f overlay merges into the
+        # one project-prefixed acc-packages volume the base agents use.
+        assert "acc-packages" in overlay["volumes"]
+        assert overlay["volumes"]["acc-packages"] is None
+
+    def test_worker_pool_agents_mount_packages_volume(self):
+        overlay = roles_to_compose(
+            CollectiveSpec(
+                collective_id="sol-01",
+                worker_pool=2,
+                agents=[AgentSpec(role="coding_agent_implementer", replicas=1)],
+            )
+        )
+        svc = next(iter(overlay["services"].values()))
+        assert "acc-packages:/var/lib/acc/packages:U,z" in svc["volumes"]
+        assert overlay["volumes"].get("acc-packages", "MISSING") is None
 
     def test_purpose_threaded_as_env_var(self):
         spec = CollectiveSpec(
@@ -336,7 +371,7 @@ class TestWorkerPool:
         from pathlib import Path
         from acc.collective import load_collective, recommended_pool_size
         repo_root = Path(__file__).resolve().parent.parent
-        preset = repo_root / "collective.worker-pool.yaml"
+        preset = repo_root / "collectives" / "collective.worker-pool.yaml"
         spec = load_collective(preset)
         assert spec.worker_pool == 4
         assert recommended_pool_size(spec) == 4  # 2 + 1 + 1
@@ -405,13 +440,18 @@ class TestShippedPresets:
         # tests/ is one level below the repo root.
         return Path(__file__).resolve().parent.parent
 
+    @pytest.fixture
+    def presets_dir(self, repo_root: Path) -> Path:
+        # Named presets live under collectives/; the live default stays at root.
+        return repo_root / "collectives"
+
     def test_default_collective_yaml_parses(self, repo_root: Path):
         spec = load_collective(repo_root / "collective.yaml")
         assert spec.collective_id == "sol-01"
         assert spec.agents == []  # shipped empty by design
 
-    def test_coding_split_preset_parses(self, repo_root: Path):
-        spec = load_collective(repo_root / "collective.coding-split.yaml")
+    def test_coding_split_preset_parses(self, presets_dir: Path):
+        spec = load_collective(presets_dir / "collective.coding-split.yaml")
         assert spec.collective_id == "sol-01"
         # 3 coding_agents, cluster backend.
         coding = [a for a in spec.agents if a.role == "coding_agent"]
@@ -423,8 +463,8 @@ class TestShippedPresets:
         assert names == ["acc-cell-coding-1", "acc-cell-coding-2",
                           "acc-cell-coding-3"]
 
-    def test_autoresearcher_preset_parses(self, repo_root: Path):
-        spec = load_collective(repo_root / "collective.autoresearcher.yaml")
+    def test_autoresearcher_preset_parses(self, presets_dir: Path):
+        spec = load_collective(presets_dir / "collective.autoresearcher.yaml")
         roles = [a.role for a in spec.agents]
         # 6 research roles per expected_topology.md.
         assert set(roles) == {

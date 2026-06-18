@@ -118,6 +118,14 @@ func TestKServe_CrossNamespaceRef(t *testing.T) {
 	if res.InferenceURL != want {
 		t.Errorf("InferenceURL = %q, want %q", res.InferenceURL, want)
 	}
+	// 026 G1: a model consumed from another namespace is "shared".
+	if !res.ModelShared {
+		t.Error("cross-ns model must be ModelShared=true")
+	}
+	if res.ModelNamespace != "my-first-model" || res.ModelName != "llama-31-8b-instruct" {
+		t.Errorf("resolved model = %s/%s, want my-first-model/llama-31-8b-instruct",
+			res.ModelNamespace, res.ModelName)
+	}
 }
 
 // Empty inferenceServiceNamespace keeps the pre-existing same-namespace
@@ -134,6 +142,13 @@ func TestKServe_SameNamespaceDefault(t *testing.T) {
 	}
 	if !res.KServeReady || res.InferenceURL == "" {
 		t.Errorf("same-ns ref should resolve, got ready=%v url=%q", res.KServeReady, res.InferenceURL)
+	}
+	// 026 G1: a model served in the collective's own namespace is not shared.
+	if res.ModelShared {
+		t.Error("same-ns model must be ModelShared=false")
+	}
+	if res.ModelNamespace != "acc-system" {
+		t.Errorf("ModelNamespace = %q, want acc-system", res.ModelNamespace)
 	}
 }
 

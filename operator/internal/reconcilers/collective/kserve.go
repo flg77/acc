@@ -37,6 +37,14 @@ type KServeResult struct {
 	// InferenceService publishes one. Injected into agent pods as
 	// ACC_VLLM_INFERENCE_URL.
 	InferenceURL string
+
+	// Model identity resolved for status surfacing (proposal 026 G1).
+	// Empty for non-vllm backends. ModelShared is true when the consumed
+	// InferenceService lives in a namespace other than the corpus namespace
+	// — the acc-system shared-model pattern.
+	ModelName      string
+	ModelNamespace string
+	ModelShared    bool
 }
 
 // KServeReconciler creates a KServe InferenceService when the collective's
@@ -81,6 +89,9 @@ func (r *KServeReconciler) ReconcileCollective(
 		}
 		result.KServeReady = ready
 		result.InferenceURL = url
+		result.ModelName = vllm.InferenceServiceRef
+		result.ModelNamespace = refNS
+		result.ModelShared = refNS != corpus.Namespace
 		return result, nil
 	}
 
@@ -110,6 +121,9 @@ func (r *KServeReconciler) ReconcileCollective(
 	}
 	result.KServeReady = ready
 	result.InferenceURL = url
+	result.ModelName = isName
+	result.ModelNamespace = corpus.Namespace
+	result.ModelShared = false
 	return result, nil
 }
 

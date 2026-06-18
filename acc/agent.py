@@ -363,6 +363,27 @@ class Agent:
         )
         self._active_role = self._role_store.load_at_startup()
 
+        # Pack-role boot-and-wait — a non-trivial role whose own role.yaml was
+        # not resolvable from any real source (no installed package, no in-tree
+        # dir, nothing in file/redis/lancedb) fell back to the generic config
+        # default above.  Rather than masquerade as the role with default
+        # behaviour, boot DORMANT and wait for the role's package to be
+        # installed; _heartbeat_loop re-polls and self-promotes (like a
+        # ROLE_ASSIGN) the moment it lands.  CONTROL/observer/dormant roles are
+        # always in-image, so this only ever trips for an uninstalled pack role.
+        self._dormant_pending_pack = (
+            self.config.agent.role not in _NO_COGNITIVE_ROLES
+            and self._role_store.loaded_from_default
+        )
+        if self._dormant_pending_pack:
+            self.state = STATE_DORMANT
+            logger.warning(
+                "agent: role %r has no resolvable role.yaml yet (package not "
+                "installed; only the generic default is available) — booting "
+                "DORMANT to await its pack",
+                self.config.agent.role,
+            )
+
         # CognitiveCore — skipped for observer role (REQ-CORE-008)
         self._cognitive_core: CognitiveCore | None = None
         # Phase 4.3 — Skill + MCP registries.  Built once at agent startup
@@ -372,7 +393,10 @@ class Agent:
         # restart to gain capability access.
         self._skill_registry = self._build_skill_registry()
         self._mcp_registry = self._build_mcp_registry()
-        if self.config.agent.role not in _NO_COGNITIVE_ROLES:
+        if (
+            self.config.agent.role not in _NO_COGNITIVE_ROLES
+            and not self._dormant_pending_pack
+        ):
             # Merge hub_collective_id into peer_collectives when both are set
             peer_collectives = list(self.config.agent.peer_collectives)
             hub_cid = self.config.agent.hub_collective_id
@@ -998,9 +1022,17 @@ class Agent:
         Includes current StressIndicators fields in the JSON payload.
         """
         interval = self.config.agent.heartbeat_interval_s
-        self.state = STATE_ACTIVE
+        # Pack-role boot-and-wait: a DORMANT-pending-pack agent stays DORMANT
+        # (the heartbeat keeps flowing per the Knative-style watcher invariant)
+        # until its package lands — don't flip it ACTIVE here.
+        if not self._dormant_pending_pack:
+            self.state = STATE_ACTIVE
 
         while True:
+            # Pack-role self-promote: re-poll real sources each tick while
+            # awaiting our package; promote the moment it lands.
+            self._maybe_promote_pending_pack()
+
             stress = (
                 self._cognitive_core.stress
                 if self._cognitive_core is not None
@@ -1980,6 +2012,38 @@ class Agent:
                     if key:
                         return str(key)
         return ""
+
+    def _maybe_promote_pending_pack(self) -> bool:
+        """Pack-role boot-and-wait — self-promote once our package lands.
+
+        A pack-role agent whose ``role.yaml`` was not resolvable at boot (no
+        installed package, no in-tree definition) booted DORMANT with no
+        CognitiveCore (``_dormant_pending_pack``).  Each heartbeat tick this
+        re-polls the *real* role sources; the moment the role's package is
+        installed (an ``AccPackageInstall`` lands its ``role.yaml``) it promotes
+        DORMANT -> ACTIVE — reusing :meth:`_promote_from_dormant`, the exact
+        transition a signed ROLE_ASSIGN takes — and builds the deferred
+        CognitiveCore.  Returns True if it promoted this call; a cheap no-op
+        (False) once promoted or while the package has not yet arrived.
+        """
+        if not getattr(self, "_dormant_pending_pack", False):
+            return False
+        resolved = self._role_store.try_resolve_real_role()
+        if resolved is None:
+            return False
+        self._dormant_pending_pack = False
+        self._promote_from_dormant(
+            {
+                "role_definition": resolved.model_dump(),
+                "role": self.config.agent.role,
+            }
+        )
+        logger.info(
+            "agent: role %r package now installed — self-promoted "
+            "DORMANT->ACTIVE",
+            self.config.agent.role,
+        )
+        return True
 
     def _promote_from_dormant(self, payload: dict) -> None:
         """Promote this agent from DORMANT to its assigned role.

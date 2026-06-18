@@ -308,6 +308,10 @@ class PromptScreen(Screen):
         # replaced by a shift+tab cycle + a tiny hint).  AUTO default;
         # role selection prefills it (on_select_changed).
         self._operating_mode: str = "AUTO"
+        # 033 WS-B fix — one-shot: an external load (Diagnostics "Send")
+        # carrying an explicit mode must win over the role-driven prefill
+        # that the async Select.Changed would otherwise apply.
+        self._external_mode_pending: str = ""
         # #162 — session save/detach/resume. Each Prompt screen owns a session
         # id; the transcript autosaves after every history append so a crash or
         # a dropped/again-detached TTY doesn't lose the conversation. main()
@@ -368,6 +372,10 @@ class PromptScreen(Screen):
                 placeholder="e.g. coding_agent-deadbeef",
                 id="input-target-agent-id",
             )
+            # 033 WS-F — operator-mode (dev/prod) security-floor badge.
+            # Populated at mount via load_operator_mode(); dev is shown
+            # loudly because it relaxes the signing/auth/secret floors.
+            yield Static(id="prompt-mode-badge")
 
         # PR-4 — collapsible cluster topology panel.  Rendered above
         # the transcript so the operator can see active sub-agent
@@ -435,6 +443,8 @@ class PromptScreen(Screen):
     def on_mount(self) -> None:
         """Render the empty transcript once at mount."""
         self._render_transcript()
+        # 033 WS-F — paint the dev/prod operator-mode badge in the target row.
+        self._render_mode_badge()
         # PR-F — initialise the invocation waterfall column layout.
         try:
             wf = self.query_one("#invocation-waterfall", DataTable)
@@ -461,6 +471,12 @@ class PromptScreen(Screen):
             self._maybe_resume_session()
         except Exception:
             logger.debug("prompt: resume check failed", exc_info=True)
+        # Proposal 033 WS-B — replay a deferred external load (a
+        # Diagnostics "Send" that arrived before this screen composed).
+        try:
+            self._maybe_replay_external()
+        except Exception:
+            logger.debug("prompt: external replay failed", exc_info=True)
 
     def on_unmount(self) -> None:
         """Cancel any in-flight workers so screen-switch is clean."""
@@ -468,6 +484,24 @@ class PromptScreen(Screen):
             if not task.done():
                 task.cancel()
         self._workers.clear()
+
+    def _render_mode_badge(self) -> None:
+        """Paint the dev/prod security-floor badge into ``#prompt-mode-badge``.
+
+        033 WS-F.  Loaded defensively — :func:`load_operator_mode` never
+        raises and falls back to ``"prod"``; a failed render is logged
+        but never crashes the prompt pane.
+        """
+        from acc.tui.config_helpers import load_operator_mode  # noqa: PLC0415
+        from acc.tui.mode_badge import operator_mode_markup  # noqa: PLC0415
+
+        self._operator_mode = load_operator_mode()
+        try:
+            self.query_one("#prompt-mode-badge", Static).update(
+                operator_mode_markup(self._operator_mode)
+            )
+        except Exception:
+            logger.exception("prompt: render mode badge failed")
 
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
         """Push cluster topology to the cluster panel on every tick.
@@ -542,6 +576,84 @@ class PromptScreen(Screen):
             )
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Proposal 033 WS-B — external prompt load (Diagnostics "Send")
+    # ------------------------------------------------------------------
+
+    def load_external(
+        self,
+        *,
+        prompt_text: str,
+        target_role: str = "",
+        target_agent_id: str = "",
+        operating_mode: str = "AUTO",
+        auto_send: bool = False,
+    ) -> None:
+        """Populate the Prompt pane from an external source (the
+        Diagnostics golden-prompt "Send") and optionally fire the send.
+
+        Mount-safe: if the widget tree isn't composed yet (the message
+        arrived mid screen-switch), the request is stashed and replayed
+        from :meth:`on_mount`."""
+        try:
+            textarea = self.query_one("#prompt-textarea", TextArea)
+        except Exception:
+            self._pending_external = {
+                "prompt_text": prompt_text,
+                "target_role": target_role,
+                "target_agent_id": target_agent_id,
+                "operating_mode": operating_mode,
+                "auto_send": auto_send,
+            }
+            return
+        textarea.text = prompt_text
+        if target_role:
+            self._set_target_role(target_role)
+        try:
+            self.query_one("#input-target-agent-id", Input).value = (
+                target_agent_id or ""
+            )
+        except Exception:
+            pass
+        if operating_mode:
+            from acc.operating_modes import normalise  # noqa: PLC0415
+            mode = normalise(operating_mode)
+            self._operating_mode = mode
+            # _set_target_role above posts a Select.Changed processed
+            # asynchronously; on_select_changed would re-prefill the mode
+            # from the role's default and clobber this explicit choice.
+            # Stash it so that one change honours the external mode
+            # (consumed one-shot in on_select_changed).
+            if target_role:
+                self._external_mode_pending = mode
+            self._set_mode_hint()
+        if auto_send:
+            self.action_send()
+
+    def _set_target_role(self, role: str) -> None:
+        """Select *role* in the target-role dropdown, adding it as an
+        option first when it isn't one of the built-in choices."""
+        try:
+            sel = self.query_one("#select-target-role", Select)
+        except Exception:
+            return
+        if role not in [value for _label, value in _TARGET_ROLES]:
+            try:
+                sel.set_options([*_TARGET_ROLES, (role, role)])
+            except Exception:
+                pass
+        try:
+            sel.value = role
+        except Exception:
+            pass
+
+    def _maybe_replay_external(self) -> None:
+        pending = getattr(self, "_pending_external", None)
+        if not pending:
+            return
+        self._pending_external = None
+        self.load_external(**pending)
 
     def _open_workspace_select(self) -> None:
         """PR-X — open the directory picker.  The modal browses the
@@ -765,6 +877,17 @@ class PromptScreen(Screen):
             if event.select.id != "select-target-role":
                 return
         except Exception:
+            return
+        # 033 WS-B — one-shot external-mode override: when an external
+        # load (Diagnostics "Send") set an explicit mode alongside this
+        # role change, it wins over the role's default.  Consume the flag
+        # regardless of the role-load outcome below so a later *manual*
+        # role change isn't affected by a stale override.
+        pending = getattr(self, "_external_mode_pending", "")
+        if pending:
+            self._external_mode_pending = ""
+            self._operating_mode = pending
+            self._set_mode_hint()
             return
         role_name = str(event.value or "").strip()
         if not role_name:

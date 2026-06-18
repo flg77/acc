@@ -93,9 +93,53 @@ class TestACCConfigValidation:
         })
         assert config.deploy_mode == "rhoai"
 
-    def test_invalid_role(self):
-        with pytest.raises(ValidationError):
-            ACCConfig.model_validate({"agent": {"role": "overlord"}})
+    def test_arbitrary_role_accepted(self):
+        # AgentRole is intentionally a free string: built-in roles ship in-tree,
+        # but pack/persona roles (@acc/* families) are equally valid and resolved
+        # by the dual-source RoleLoader at runtime — not validated at config-parse.
+        # (Previously a closed Literal; this test guarded the old behavior.)
+        config = ACCConfig.model_validate({"agent": {"role": "coding_agent_reviewer"}})
+        assert config.agent.role == "coding_agent_reviewer"
+
+
+class TestOperatorMode:
+    """operator_mode (proposal 034 / 033 WS-F) — the security-floor gate,
+    distinct from deploy_mode. ``prod`` is the default; ``dev`` relaxes the
+    signing/auth/secret floors and is refused on a real (rhoai/edge) cluster."""
+
+    def test_defaults_prod(self):
+        assert ACCConfig().operator_mode == "prod"
+
+    def test_dev_allowed_on_standalone(self):
+        config = ACCConfig.model_validate(
+            {"deploy_mode": "standalone", "operator_mode": "dev"}
+        )
+        assert config.operator_mode == "dev"
+
+    def test_dev_refused_on_rhoai(self):
+        # rhoai required fields are valid, so only the operator_mode gate fails.
+        with pytest.raises(ValidationError, match="operator_mode='dev' is refused"):
+            ACCConfig.model_validate({
+                "deploy_mode": "rhoai",
+                "operator_mode": "dev",
+                "vector_db": {"milvus_uri": "http://milvus:19530"},
+                "llm": {"vllm_inference_url": "http://vllm:8000"},
+            })
+
+    def test_dev_refused_on_edge(self):
+        with pytest.raises(ValidationError, match="operator_mode='dev' is refused"):
+            ACCConfig.model_validate(
+                {"deploy_mode": "edge", "operator_mode": "dev"}
+            )
+
+    def test_prod_allowed_on_rhoai(self):
+        config = ACCConfig.model_validate({
+            "deploy_mode": "rhoai",
+            "operator_mode": "prod",
+            "vector_db": {"milvus_uri": "http://milvus:19530"},
+            "llm": {"vllm_inference_url": "http://vllm:8000"},
+        })
+        assert config.operator_mode == "prod"
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +186,11 @@ class TestApplyEnv:
         monkeypatch.setenv("ACC_DEPLOY_MODE", "rhoai")
         data = _apply_env({})
         assert data["deploy_mode"] == "rhoai"
+
+    def test_applies_operator_mode(self, monkeypatch):
+        monkeypatch.setenv("ACC_OPERATOR_MODE", "dev")
+        data = _apply_env({})
+        assert data["operator_mode"] == "dev"
 
     def test_nested_key(self, monkeypatch):
         monkeypatch.setenv("ACC_MILVUS_URI", "http://milvus:19530")

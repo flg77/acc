@@ -12,7 +12,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -91,6 +90,20 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 		return result, fmt.Errorf("render acc-config: %w", err)
 	}
 
+	// Deliver the namespace's AccCatalogs (rendered into the acc-catalogs
+	// ConfigMap by AccCatalogReconciler) as /etc/acc/catalogs.yaml via the SAME
+	// acc-config mount the agent already reads. Merging into acc-config avoids a
+	// nested subPath file mount into the /etc/acc ConfigMap volume, which does
+	// NOT materialize reliably (the file is absent in-pod even though the mount
+	// renders in the Deployment) — proposal 032 §11 catalog delivery.
+	cmData := map[string]string{"acc-config.yaml": accConfigYAML}
+	catCM := &corev1.ConfigMap{}
+	if getErr := r.Client.Get(ctx, types.NamespacedName{Namespace: ns, Name: "acc-catalogs"}, catCM); getErr == nil {
+		if cy := catCM.Data["catalogs.yaml"]; cy != "" {
+			cmData["catalogs.yaml"] = cy
+		}
+	}
+
 	configMapName := fmt.Sprintf("%s-acc-config", collective.Name)
 	configMapLabels := util.CollectiveLabels(corpus.Name, collective.Spec.CollectiveID, "acc-config", corpus.Spec.Version)
 	cm := &corev1.ConfigMap{
@@ -99,7 +112,7 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 			Namespace: ns,
 			Labels:    configMapLabels,
 		},
-		Data: map[string]string{"acc-config.yaml": accConfigYAML},
+		Data: cmData,
 	}
 	if _, err := util.Upsert(ctx, r.Client, r.Scheme, collective, cm, func(existing client.Object) error {
 		existing.(*corev1.ConfigMap).Data = cm.Data
@@ -180,6 +193,42 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 	return result, nil
 }
 
+// AgentPodSecurityContext returns the pod-level SecurityContext for
+// operator-rendered agent pods.
+//
+// It is deliberately OpenShift restricted-v2 SCC compatible: it does NOT pin
+// runAsUser (nor runAsGroup / fsGroup). On OpenShift the namespace's
+// openshift.io/sa.scc.uid-range annotation supplies a per-namespace UID and
+// the SCC admission plugin injects it; hardcoding runAsUser: 1001 makes
+// restricted-v2 reject every pod ("must be in the ranges: [1000920000, ...]")
+// and zero agent pods are created (live RHOAI 3.4 finding).
+//
+// The acc-agent-core image (UBI10, USER 1001, GID 0, `chmod -R g=u /app`)
+// tolerates an arbitrary high UID because all app dirs are group-0 writable
+// and OpenShift always runs with GID 0 under restricted-v2. On vanilla
+// Kubernetes (no UID injection) the container falls back to the image's own
+// USER 1001 — also fine. Keeping runAsNonRoot: true preserves the non-root
+// guarantee on both platforms without conflicting with the SCC.
+func AgentPodSecurityContext() *corev1.PodSecurityContext {
+	return &corev1.PodSecurityContext{
+		RunAsNonRoot:   ptr.To(true),
+		SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+}
+
+// AgentContainerSecurityContext returns the container-level SecurityContext for
+// operator-rendered agent containers. It drops ALL capabilities and disallows
+// privilege escalation, satisfying restricted-v2 while — crucially — NOT
+// pinning runAsUser, so the SCC-injected namespace UID is honored.
+func AgentContainerSecurityContext() *corev1.SecurityContext {
+	return &corev1.SecurityContext{
+		RunAsNonRoot:             ptr.To(true),
+		AllowPrivilegeEscalation: ptr.To(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+}
+
 func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	ctx context.Context,
 	corpus *accv1alpha1.AgentCorpus,
@@ -197,10 +246,10 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	// Default off → objectLabels == labels and existing collectives are
 	// unchanged.  See kagenti.go.
 	objectLabels := AgentObjectLabels(collective, labels)
-	// Role names may contain underscores (e.g. coding_agent) which are
-	// invalid in RFC-1123 object names — sanitize for the Deployment name
-	// (labels keep the raw role; '_' is legal in label values).
-	deployName := fmt.Sprintf("%s-%s", collective.Name, strings.ReplaceAll(string(role), "_", "-"))
+	// Deployment name sanitizes underscores → hyphens (RFC-1123). Use the
+	// shared helper so the AgentCollective status controller resolves the
+	// EXACT same name (proposal 032 Finding A) — labels keep the raw role.
+	deployName := util.AgentDeploymentName(collective.Name, string(role))
 
 	// Resolve Anthropic API key env var if needed.
 	extraEnv := buildExtraEnv(corpus, collective, roleSpec, inferenceURL)
@@ -236,8 +285,10 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 			ServiceName: agentHeadlessServiceName(collective),
 			// Selector labels are immutable — keep the canonical agent set
 			// only; objectLabels (which may include kagenti.io/type=agent)
-			// ride on the metadata + pod template instead.
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
+			// ride on the metadata + pod template instead.  SelectorLabels
+			// narrows to the stable subset so a corpus version bump doesn't
+			// mutate the immutable selector (proposal 032 stable-selector fix).
+			Selector: &metav1.LabelSelector{MatchLabels: util.SelectorLabels(labels)},
 			VolumeClaimTemplates: []corev1.PersistentVolumeClaim{
 				{
 					ObjectMeta: metav1.ObjectMeta{Name: dataVolumeName},
@@ -255,18 +306,16 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 				ObjectMeta: metav1.ObjectMeta{Labels: objectLabels},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets: util.ImagePullSecrets(corpus),
-					// No pinned UID: OpenShift's restricted-v2 SCC REJECTS
-					// any runAsUser outside the namespace's assigned range
-					// (live c26sx failure) and assigns a range UID itself
-					// when unset; plain k8s falls back to the image USER.
-					// The UBI-based agent image is group-0 tolerant.
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: ptr.To(true),
-					},
+					// OpenShift restricted-v2 SCC compatible: no hardcoded
+					// runAsUser — the namespace UID range is injected by the
+					// SCC admission plugin. See AgentPodSecurityContext
+					// (also sets the RuntimeDefault seccomp profile).
+					SecurityContext: AgentPodSecurityContext(),
 					Containers: []corev1.Container{
 						{
-							Name:  "agent",
-							Image: image,
+							Name:            "agent",
+							Image:           image,
+							SecurityContext: AgentContainerSecurityContext(),
 							Env: append(append([]corev1.EnvVar{
 								{Name: "ACC_AGENT_ROLE", Value: string(role)},
 								{Name: "ACC_COLLECTIVE_ID", Value: collective.Spec.CollectiveID},
@@ -310,6 +359,15 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 								// restarts.  Milvus-backed agents simply leave it
 								// near-empty.
 								{Name: dataVolumeName, MountPath: "/app/data"},
+								// Writable packages root for AccPackageInstall.
+								// The agent runs non-root (SCC-injected UID, GID 0)
+								// and acc-pkg unpacks installed packs under
+								// /var/lib/acc, which is not writable in the image
+								// layer (PermissionError on a signed-pack install).
+								// Back it with an emptyDir — ephemeral is fine: the
+								// operator re-reconciles AccPackageInstall after a
+								// pod restart (032 §11 tail / proposal 034 §8-Q3).
+								{Name: "acc-packages", MountPath: "/var/lib/acc"},
 							}, manifestMounts...),
 						},
 					},
@@ -342,6 +400,11 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 									},
 								},
 							},
+						},
+						// Writable packages root (see the acc-packages VolumeMount).
+						{
+							Name:         "acc-packages",
+							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 						},
 					}, manifestVolumes...),
 					// Per-replica /app/data PVC is the StatefulSet's

@@ -202,6 +202,64 @@ class TestObserverHub:
         latest = asyncio.run(_exercise())
         assert latest == {"collective_id": "sol-01", "agents": {}}
 
+    def test_start_is_nonfatal_when_nats_unavailable(self, monkeypatch):
+        """NATS down at boot must NOT raise out of start() — the webgui is a
+        read-only observer and has to degrade, not crash-loop (the RHOAI
+        regression: NoServersError killed the pod 116 times)."""
+        import acc.tui.client as tui_client
+        import acc.webgui.observers as observers_mod
+
+        class _DownObserver(_FakeObserver):
+            async def connect(self):
+                raise RuntimeError("nats: no servers available for connection")
+
+        monkeypatch.setattr(tui_client, "NATSObserver", _DownObserver)
+        monkeypatch.setattr(observers_mod, "_RECONNECT_MIN_S", 0.01)
+        monkeypatch.setattr(observers_mod, "_RECONNECT_MAX_S", 0.01)
+        from acc.webgui.observers import ObserverHub
+
+        async def _exercise():
+            hub = ObserverHub("nats://down:4222", ["sol-01"])
+            await hub.start()  # must not raise
+            observer = hub.observer("sol-01")  # not connected yet
+            await hub.stop()
+            return observer
+
+        assert asyncio.run(_exercise()) is None
+
+    def test_observer_connects_after_nats_recovers(self, monkeypatch):
+        """Once NATS comes back, the background retry connects the observer."""
+        import acc.tui.client as tui_client
+        import acc.webgui.observers as observers_mod
+
+        state = {"down": True}
+
+        class _FlakyObserver(_FakeObserver):
+            async def connect(self):
+                if state["down"]:
+                    raise RuntimeError("nats: no servers available for connection")
+                return None
+
+        monkeypatch.setattr(tui_client, "NATSObserver", _FlakyObserver)
+        monkeypatch.setattr(observers_mod, "_RECONNECT_MIN_S", 0.01)
+        monkeypatch.setattr(observers_mod, "_RECONNECT_MAX_S", 0.01)
+        from acc.webgui.observers import ObserverHub
+
+        async def _exercise():
+            hub = ObserverHub("nats://flaky:4222", ["sol-01"])
+            await hub.start()
+            assert hub.observer("sol-01") is None  # boot failed → background retry
+            state["down"] = False  # NATS recovers
+            for _ in range(100):
+                await asyncio.sleep(0.01)
+                if hub.observer("sol-01") is not None:
+                    break
+            observer = hub.observer("sol-01")
+            await hub.stop()
+            return observer
+
+        assert asyncio.run(_exercise()) is not None
+
 
 # ---------------------------------------------------------------------------
 # Action endpoints

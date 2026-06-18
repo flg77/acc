@@ -37,8 +37,9 @@ Marker grammar (strict — case-sensitive, single-line per marker):
 The JSON payload is parsed with the standard library — no
 permissive single-quote handling, because LLMs that emit JSON-shaped
 content reliably emit valid JSON when prompted.  Malformed payloads
-yield a :class:`InvocationOutcome` with ``error="json_decode"`` and
-the offending substring; the marker is NOT dispatched.
+yield a :class:`InvocationOutcome` whose ``error`` is an operator-
+readable "skipped a malformed tool call …" note (it carries the decode
+detail for debugging); the marker is NOT dispatched.
 
 Tool-name grammar for MCP markers: dot-separated identifier where the
 first segment is the ``server_id`` and the remainder is the
@@ -187,9 +188,19 @@ def _parse_args(text: str) -> tuple[dict[str, Any], str]:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        return {}, f"json_decode: {exc.msg} at col {exc.colno}"
+        # Operator-facing: this string renders verbatim in the prompt
+        # pane (via the TASK_COMPLETE invocation summary).  Say what
+        # happened + how a marker should look, and keep the decode
+        # detail for debugging.  (033 WS-A2 — no raw "json_decode" dump.)
+        return {}, (
+            "skipped a malformed tool call — its arguments weren't valid "
+            f'JSON ({exc.msg} at col {exc.colno}); expected e.g. [SKILL:name {{"arg": "value"}}]'
+        )
     if not isinstance(parsed, dict):
-        return {}, f"json_not_object: got {type(parsed).__name__}"
+        return {}, (
+            "skipped a malformed tool call — arguments must be a JSON "
+            f'object like {{"arg": "value"}}, got {type(parsed).__name__}'
+        )
     return parsed, ""
 
 

@@ -1,0 +1,54 @@
+# ACC collective preset — autoresearcher agentset.
+#
+# Six roles forming the 5-phase research DAG documented in
+# `examples/acc_autoresearcher/expected_topology.md`.  Each role gets a
+# distinct cluster_id so the arbiter's PlanExecutor can fan out
+# per-phase tasks without crossing wires.
+#
+# The six research_* roles are served by the @acc/research-roles family pack
+# (no longer in-tree).  `required_packages` makes `apply` fetch + verify +
+# install it from the catalog at boot — or pre-install it:
+#   ./acc-pkg install @acc/research-roles@^1.0
+#   ./acc-deploy.sh pkg add @acc/research-roles
+#
+# Apply (the declarative replacement for `AUTORESEARCHER=true ./acc-deploy.sh up`):
+#   ./acc-deploy.sh apply autoresearcher
+#   ./acc-deploy.sh apply --dry-run autoresearcher
+# The real research MCP servers still need `AUTORESEARCHER=true` on `up`
+# (web_search_brave / web_fetch / web_browser_harness) + BRAVE_API_KEY.
+
+collective_id: sol-01
+
+required_packages:
+  - "@acc/research-roles@^1.0"
+
+agents:
+  - role: research_planner
+    replicas: 1
+    cluster_id: planner
+    purpose: "Decompose the research brief into per-phase tasks."
+
+  - role: research_economist
+    replicas: 2
+    cluster_id: economist
+    purpose: "Quantify the economic angle of the research brief."
+
+  - role: research_competitor
+    replicas: 2
+    cluster_id: competitor
+    purpose: "Map the competitive landscape relevant to the brief."
+
+  - role: research_strategist
+    replicas: 1
+    cluster_id: strategist
+    purpose: "Synthesise the economic + competitor findings into strategy."
+
+  - role: research_synthesizer
+    replicas: 1
+    cluster_id: synthesizer
+    purpose: "Compose the final report from the strategist's output."
+
+  - role: research_critic
+    replicas: 1
+    cluster_id: critic
+    purpose: "Review the synthesised report; emit NEEDS_REVISE to iterate."

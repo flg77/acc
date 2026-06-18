@@ -373,6 +373,9 @@ class EcosystemScreen(Screen):
         # quick shortcut for when the role table has focus.
         ("i", "infuse", "Schedule infusion"),
         ("f2", "infuse", "Infuse → Nucleus"),
+        # Load a role pack from the catalog into the ecosystem, then its roles
+        # appear here to infuse.  `g` = "get pack".
+        ("g", "get_pack", "Get pack"),
         # Commit-4 — operator-requested two-step selection:
         #   Space = preview (load role.md + role.yaml into the right
         #           pane WITHOUT arming buttons or pinning selection)
@@ -404,6 +407,73 @@ class EcosystemScreen(Screen):
             self._handle_schedule_infusion()
         except Exception:
             logger.exception("ecosystem: action_infuse failed")
+
+    def action_get_pack(self) -> None:
+        """Open the catalog pack-install modal; on confirm, fetch+install."""
+        try:
+            from acc.tui.widgets.pack_install_modal import PackInstallModal  # noqa: PLC0415
+        except Exception:
+            logger.exception("ecosystem: pack-install modal unavailable")
+            return
+
+        def _on_pick(result: object) -> None:
+            if not result:
+                return
+            spec = result.get("spec") if isinstance(result, dict) else None
+            if not spec:
+                return
+            catalog = result.get("catalog") if isinstance(result, dict) else None
+            self.run_worker(
+                self._install_pack(spec, catalog),
+                exclusive=True, group="ecosystem-pkg-install",
+            )
+
+        self.app.push_screen(PackInstallModal(), _on_pick)
+
+    async def _install_pack(self, spec: str, catalog: str | None) -> None:
+        """Fetch+verify+install a catalog pack, then refresh the roster.
+
+        Runs the blocking install off the UI thread.  Uses the same
+        ``fetch_and_install_closure`` path as ``acc-deploy.sh pkg add`` /
+        ``acc-pkg install`` so the TUI and CLI install identically.
+        """
+        import asyncio  # noqa: PLC0415
+
+        try:
+            self.notify(f"Installing {spec} …", timeout=4.0)
+        except Exception:
+            pass
+        try:
+            from acc.collective import parse_required_package  # noqa: PLC0415
+            from acc.pkg.fetch import (  # noqa: PLC0415
+                FetchError,
+                fetch_and_install_closure,
+            )
+        except ImportError as exc:
+            self.notify(f"acc.pkg unavailable: {exc}", severity="error", timeout=8.0)
+            return
+
+        try:
+            name, constraint = parse_required_package(spec)
+            res = await asyncio.to_thread(
+                fetch_and_install_closure, name, constraint,
+            )
+        except (ValueError, FetchError) as exc:
+            self.notify(f"Install failed: {exc}", severity="error", timeout=10.0)
+            return
+        except Exception as exc:  # noqa: BLE001
+            self.notify(f"Install error: {type(exc).__name__}: {exc}",
+                        severity="error", timeout=10.0)
+            return
+
+        installed = f"{res.install.entry.name}@{res.install.entry.version}"
+        self.notify(f"Installed {installed} — roles added to the genome browser.",
+                    severity="information", timeout=8.0)
+        # Surface the new roles immediately.
+        try:
+            self._load_roles()
+        except Exception:
+            logger.exception("ecosystem: role refresh after install failed")
 
     def action_preview_cursor_role(self) -> None:
         """Space-bar — commit the row under the cursor as the active selection.
@@ -586,6 +656,23 @@ class EcosystemScreen(Screen):
                     yield _editor
                     yield Static("", id="yaml-save-status")
 
+                    # 033 WS-E Part 1 — per-role capabilities subview.
+                    # Lists this role's allowed_skills + allowed_mcps, each
+                    # annotated with whether it is installed on this deploy
+                    # (allowed∩installed via
+                    # acc.capability_index.get_allowed_installed_capabilities)
+                    # and its provenance (core baseline vs pack — reuses the
+                    # CORE_BASELINE_* sets from acc.pkg.manifest).  Collapsed
+                    # by default so the prose/yaml surfaces stay primary.
+                    with Collapsible(
+                        title="Skills & MCPs (per-role)",
+                        collapsed=True,
+                        id="role-caps-collapsible",
+                    ):
+                        yield DataTable(
+                            id="role-caps-table", cursor_type="row",
+                        )
+
                 # Infusion action — bridge from Ecosystem (extracellular role
                 # catalogue) to Nucleus (intracellular role expression).
                 # Biologically: reading DNA in the matrix → expressing it in
@@ -597,10 +684,30 @@ class EcosystemScreen(Screen):
                         variant="primary",
                         disabled=True,
                     )
+                    # 033 WS-E Part 2 — roll a signed .accpkg for the
+                    # selected role.  Validates → builds → signs, then
+                    # shows the publish gate (the operator runs the
+                    # final push: private-image push is user-only).
+                    # Armed only when a role row is selected.
+                    yield Button(
+                        "Roll a release",
+                        id="btn-roll-release",
+                        variant="warning",
+                        disabled=True,
+                    )
                     yield Static(
                         "[dim]Select a role first[/dim]",
                         id="infusion-hint",
                     )
+
+                # 033 WS-E Part 2 — publish gate.  Hidden until a roll
+                # completes; then shows the tarball/signature/cert paths,
+                # the signer identity, and the exact `acc-pkg publish …`
+                # command the operator runs to push (USER-GATED — the TUI
+                # never pushes to a registry itself).
+                _gate = Static("", id="roll-release-gate", markup=False)
+                _gate.display = False
+                yield _gate
 
                 # PR-A — Save the inline TextArea (atomic write, validated).
                 # The "Open in $EDITOR" buttons stay as power-user fallbacks
@@ -693,6 +800,15 @@ class EcosystemScreen(Screen):
         # impossible to misread.  The marker is updated whenever
         # `_selected_role` changes via :meth:`_paint_selection_marker`.
         role_table.add_columns("", "Role", "Domain", "Persona", "Tasks")
+
+        # 033 WS-E Part 1 — per-role capability subview columns.
+        try:
+            caps_table = self.query_one("#role-caps-table", DataTable)
+            caps_table.add_columns(
+                "Capability", "Kind", "Installed", "Source",
+            )
+        except Exception:
+            logger.exception("ecosystem: caps table init failed")
 
         # Proposal 009 — Skills / MCPs / LLM tables removed from
         # Ecosystem.  Their canonical home is the Configuration
@@ -919,9 +1035,11 @@ class EcosystemScreen(Screen):
         # PR-A — also arm the inline Save-yaml button (same selection
         # state — operator can edit + save the highlighted role).
         # Commit-3b — also arm the "Edit" toggle (read-only ↔ edit).
+        # 033 WS-E Part 2 — arm the Roll-a-release button (same
+        # selection state — rolls a pkg for the highlighted role).
         for btn_id in (
             "btn-edit-yaml", "btn-edit-md", "btn-save-yaml",
-            "btn-toggle-edit-yaml",
+            "btn-toggle-edit-yaml", "btn-roll-release",
         ):
             try:
                 self.query_one(f"#{btn_id}", Button).disabled = False
@@ -1003,6 +1121,8 @@ class EcosystemScreen(Screen):
         bid = event.button.id or ""
         if bid == "btn-schedule-infusion":
             self._handle_schedule_infusion()
+        elif bid == "btn-roll-release":
+            self._handle_roll_release()
         elif bid == "btn-save-yaml":
             self._handle_save_yaml()
         elif bid == "btn-toggle-edit-yaml":
@@ -1512,6 +1632,218 @@ class EcosystemScreen(Screen):
         self.app.post_message(RolePreloadMessage(target))
 
     # ------------------------------------------------------------------
+    # 033 WS-E Part 2 — roll a release (.accpkg) for the selected role
+    # ------------------------------------------------------------------
+
+    def _handle_roll_release(self) -> None:
+        """Kick off the roll-a-release worker for the selected role.
+
+        033 WS-E Part 2.  The button is armed only when a role is
+        selected; this guard re-affirms that so a forced press (tests)
+        still notifies rather than rolling a release for an empty role.
+        """
+        target = self._selected_role
+        if not target:
+            self.notify(
+                "Select a role row first",
+                severity="warning",
+                timeout=4.0,
+            )
+            return
+        self.run_worker(
+            self._roll_release_worker(target),
+            exclusive=True,
+            group="ecosystem-roll-release",
+        )
+
+    async def _roll_release_worker(self, role_name: str) -> None:
+        """Validate → build → sign a single-role ``.accpkg``, then show
+        the publish gate.
+
+        033 WS-E Part 2.  Each blocking step runs off the UI thread via
+        ``asyncio.to_thread``.  The push itself is NEVER performed here —
+        the gate prints the exact ``acc-pkg publish`` command and the
+        operator runs it ("private-image push is user-only").
+
+        Step 1 (validate) uses ``acc.capability_validator.validate_roles_dir``
+        (033 WS-A).  When that module is not present in this build, the
+        step is skipped with an operator-visible notice rather than
+        hard-failing — the build itself remains the floor (``acc-pkg
+        build`` runs the same validator as a gate once WS-A lands).
+        """
+        import asyncio  # noqa: PLC0415
+
+        root = _roles_root()
+
+        # --- Step 1: validate the role's capabilities (WS-A) ----------
+        try:
+            from acc.capability_validator import (  # noqa: PLC0415
+                format_findings,
+                has_errors,
+                validate_roles_dir,
+            )
+        except Exception:
+            validate_roles_dir = None  # type: ignore[assignment]
+            self.notify(
+                "Capability validator unavailable — skipping pre-build "
+                "validation (build remains the floor).",
+                severity="warning",
+                timeout=6.0,
+            )
+        if validate_roles_dir is not None:
+            try:
+                findings = await asyncio.to_thread(
+                    validate_roles_dir, root,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.notify(
+                    f"Validation error: {type(exc).__name__}: {exc}",
+                    severity="error",
+                    timeout=10.0,
+                )
+                return
+            if has_errors(findings):
+                self.notify(
+                    f"Validation FAILED for {role_name} — fix before "
+                    f"rolling:\n{format_findings(findings)}",
+                    severity="error",
+                    timeout=12.0,
+                )
+                return
+            self.notify(
+                f"Validation passed for {role_name}.",
+                severity="information",
+                timeout=4.0,
+            )
+
+        # --- Step 2: build the single-role .accpkg --------------------
+        try:
+            tarball_path = await asyncio.to_thread(
+                self._build_role_pkg, role_name, root,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.notify(
+                f"Build failed for {role_name}: "
+                f"{type(exc).__name__}: {exc}",
+                severity="error",
+                timeout=12.0,
+            )
+            return
+
+        # --- Step 3: sign the tarball (OIDC keyless via cosign) -------
+        try:
+            from acc.pkg.publish import (  # noqa: PLC0415
+                resolve_oidc_token,
+                sign_blob,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.notify(
+                f"acc.pkg.publish unavailable: {exc}",
+                severity="error",
+                timeout=8.0,
+            )
+            return
+        token = resolve_oidc_token()
+        try:
+            artefacts = await asyncio.to_thread(
+                sign_blob, tarball_path,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.notify(
+                f"Signing failed for {tarball_path.name}: "
+                f"{type(exc).__name__}: {exc}",
+                severity="error",
+                timeout=12.0,
+            )
+            return
+
+        # --- Step 4: render the publish gate (USER-GATED push) --------
+        self._render_publish_gate(role_name, tarball_path, artefacts, token)
+        self.notify(
+            f"Rolled + signed {tarball_path.name}. Review the publish "
+            "gate, then run the printed command to push.",
+            severity="information",
+            timeout=8.0,
+        )
+
+    def _build_role_pkg(self, role_name: str, roles_root: Path):
+        """Synthesise + build a single-role ``.accpkg``; return its path.
+
+        033 WS-E Part 2.  Reuses ``tools/build_family_pkg.build_family``
+        with a one-role ``FamilyManifest`` override rather than inventing
+        a new package shape — the manifest-synthesis (role-tree copy +
+        skill/MCP tier resolution + ``accpkg.yaml`` emission) and the
+        deterministic ``acc.pkg.build.build`` call all come from there.
+
+        ``repo_root`` is the parent of *roles_root* so the family builder
+        finds ``roles/`` / ``skills/`` / ``mcps/`` under it.  Runs on a
+        worker thread (called via ``asyncio.to_thread``).
+        """
+        from tools.build_family_pkg import (  # noqa: PLC0415
+            FamilyManifest,
+            build_family,
+        )
+
+        repo_root = Path(roles_root).resolve().parent
+        manifest = FamilyManifest(
+            name=f"@acc/{role_name}-role",
+            roles=(role_name,),
+            description=f"Single-role package for {role_name} (rolled from TUI).",
+        )
+        out = build_family(
+            manifest.name,
+            version="0.1.0",
+            repo_root=repo_root,
+            manifest_override=manifest,
+        )
+        return Path(out)
+
+    def _render_publish_gate(
+        self, role_name: str, tarball_path: Path, artefacts, token,
+    ) -> None:
+        """Populate + reveal the publish-gate Static.
+
+        033 WS-E Part 2.  Shows the artefact paths, the signer identity,
+        and the EXACT ``acc-pkg publish`` command.  The operator runs
+        the push — the TUI never pushes to a registry itself
+        ("private-image push is user-only").
+        """
+        signer = "(interactive browser OIDC)"
+        if token:
+            signer = (
+                "GitHub Actions OIDC"
+                if token == "${ACTIONS_TOKEN}"
+                else "SIGSTORE_ID_TOKEN (pre-fetched)"
+            )
+        sig_path = getattr(artefacts, "signature_path", "")
+        cert_path = getattr(artefacts, "certificate_path", "")
+        rekor = getattr(artefacts, "rekor_log_index", None)
+        publish_cmd = f"acc-pkg publish {tarball_path} <catalog-url>"
+
+        body = "\n".join([
+            f"PUBLISH GATE — {role_name}",
+            "",
+            "Rolled + signed.  The push is USER-GATED: run the command "
+            "below yourself.",
+            "(ACC never pushes packages to a registry on your behalf.)",
+            "",
+            f"  tarball   : {tarball_path}",
+            f"  signature : {sig_path}",
+            f"  certificate: {cert_path}",
+            f"  signer    : {signer}",
+            f"  rekor idx : {rekor if rekor is not None else '(not recorded)'}",
+            "",
+            "  Run to publish:",
+            f"    {publish_cmd}",
+        ])
+        try:
+            gate = self.query_one("#roll-release-gate", Static)
+            gate.update(body)
+            gate.display = True
+        except Exception:
+            logger.exception("ecosystem: failed to render publish gate")
+
+    # ------------------------------------------------------------------
     # Proposal 009 — Upload flow + snapshot LLM render moved to the
     # Configuration pane (pane 8).  EcosystemScreen no longer reacts
     # to ``watch_snapshot`` for LLM telemetry.
@@ -1563,7 +1895,18 @@ class EcosystemScreen(Screen):
         empty pane.
         """
         root = _roles_root()
-        self._role_names = list_roles(root)
+        # Dual-source roster: in-tree roles/ + roles served by installed family
+        # packs (under ACC_PACKAGES_ROOT).  Without the installed half, a pack
+        # loaded via `acc-deploy.sh pkg add` / the catalog-install action would
+        # not appear here to be infused.  RoleLoader.load() resolves either
+        # source transparently.
+        names = set(list_roles(root))
+        try:
+            from acc.pkg.role_resolution import list_installed_roles  # noqa: PLC0415
+            names |= set(list_installed_roles().keys())
+        except Exception:  # pragma: no cover - acc.pkg optional at import time
+            logger.debug("ecosystem: installed-roles enumeration unavailable")
+        self._role_names = sorted(names)
         self._all_role_rows = []
 
         for role_name in self._role_names:
@@ -1816,6 +2159,116 @@ class EcosystemScreen(Screen):
         except Exception:
             logger.exception("ecosystem: selection lock release failed")
 
+    # ------------------------------------------------------------------
+    # 033 WS-E Part 1 — per-role capability subview
+    # ------------------------------------------------------------------
+
+    def _capability_registries(self):
+        """Build (once, cached) the skill + MCP registries used to compute
+        the allowed∩installed overlap for the caps subview.
+
+        Mirrors ``InfuseScreen._capability_registries`` (033 WS-G): a
+        registry that fails to load yields ``None`` so the caps table
+        renders nothing rather than raising on the detail-render path.
+        """
+        cached = getattr(self, "_caps_registries", None)
+        if cached is not None:
+            return cached
+        skill_reg = None
+        mcp_reg = None
+        try:
+            from acc.skills.registry import SkillRegistry  # noqa: PLC0415
+            skill_reg = SkillRegistry()
+            skill_reg.load_from()
+        except Exception:
+            logger.exception("ecosystem: SkillRegistry load failed (caps subview)")
+            skill_reg = None
+        try:
+            from acc.mcp.registry import MCPRegistry  # noqa: PLC0415
+            mcp_reg = MCPRegistry()
+            mcp_reg.load_from()
+        except Exception:
+            logger.exception("ecosystem: MCPRegistry load failed (caps subview)")
+            mcp_reg = None
+        self._caps_registries = (skill_reg, mcp_reg)
+        return self._caps_registries
+
+    def _load_role_capabilities(self, role_name: str) -> None:
+        """Repaint ``#role-caps-table`` with *role_name*'s allowed caps.
+
+        033 WS-E Part 1.  One row per ``allowed_skills`` + ``allowed_mcps``
+        entry on the role definition.  Each row annotates:
+
+        * **Installed** — ✓ when the cap is in the allowed∩installed set
+          computed by
+          :func:`acc.capability_index.get_allowed_installed_capabilities`
+          (the same helper Nucleus uses), ✗ otherwise.
+        * **Source** — ``core`` when the id is in
+          ``CORE_BASELINE_SKILLS`` / ``CORE_BASELINE_MCPS``
+          (``acc.pkg.manifest``), else ``pack``.
+
+        Best-effort end-to-end: any failure logs + leaves the table in
+        its previous state (never breaks the detail render).
+        """
+        try:
+            table = self.query_one("#role-caps-table", DataTable)
+        except Exception:
+            return
+        table.clear()
+
+        root = _roles_root()
+        try:
+            role_def = RoleLoader(root, role_name).load()
+        except Exception:
+            logger.exception(
+                "ecosystem: role load failed for caps subview (%r)", role_name,
+            )
+            role_def = None
+        if role_def is None:
+            table.add_row("—", "—", "—", "—")
+            return
+
+        allowed_skills = list(getattr(role_def, "allowed_skills", []) or [])
+        allowed_mcps = list(getattr(role_def, "allowed_mcps", []) or [])
+
+        skill_reg, mcp_reg = self._capability_registries()
+        try:
+            from acc.capability_index import (  # noqa: PLC0415
+                get_allowed_installed_capabilities,
+            )
+            inst_skills, inst_mcps = get_allowed_installed_capabilities(
+                role_def, skill_reg, mcp_reg,
+            )
+        except Exception:
+            logger.exception("ecosystem: capability intersection failed")
+            inst_skills, inst_mcps = [], []
+        installed_skills = set(inst_skills)
+        installed_mcps = set(inst_mcps)
+
+        try:
+            from acc.pkg.manifest import (  # noqa: PLC0415
+                CORE_BASELINE_MCPS,
+                CORE_BASELINE_SKILLS,
+            )
+        except Exception:
+            logger.exception("ecosystem: CORE_BASELINE import failed")
+            CORE_BASELINE_SKILLS = frozenset()  # type: ignore[assignment]
+            CORE_BASELINE_MCPS = frozenset()  # type: ignore[assignment]
+
+        rows = 0
+        for sid in sorted(allowed_skills):
+            installed = "✓" if sid in installed_skills else "✗"
+            source = "core" if sid in CORE_BASELINE_SKILLS else "pack"
+            table.add_row(sid, "skill", installed, source)
+            rows += 1
+        for mid in sorted(allowed_mcps):
+            installed = "✓" if mid in installed_mcps else "✗"
+            source = "core" if mid in CORE_BASELINE_MCPS else "pack"
+            table.add_row(mid, "mcp", installed, source)
+            rows += 1
+        if rows == 0:
+            table.add_row("(no allowed caps)", "—", "—", "—")
+
     def _show_role_detail(self, role_name: str) -> None:
         """Render the role's narrative + raw definition in the detail
         panel (REQ-TUI-038).
@@ -1899,6 +2352,9 @@ class EcosystemScreen(Screen):
             self.query_one("#yaml-save-status", Static).update("")
         except Exception:
             pass
+
+        # 033 WS-E Part 1 — refresh the per-role capability subview.
+        self._load_role_capabilities(role_name)
 
         # The legacy `#role-yaml-content` Static was retired in PR-A;
         # the inline TextArea above is the new surface.  Keep this

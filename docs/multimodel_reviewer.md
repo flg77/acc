@@ -138,11 +138,11 @@ workers with cheap ones.
 
 ## Preset
 
-`collective.reviewer.yaml` wires cheap `coding_agent_implementer` /
+`reviewer` wires cheap `coding_agent_implementer` /
 `coding_agent_tester` workers + a single powerful `reviewer`:
 
 ```bash
-./acc-deploy.sh apply collective.reviewer.yaml
+./acc-deploy.sh apply reviewer
 podman inspect acc-cell-reviewer-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep MODEL
 ```
 

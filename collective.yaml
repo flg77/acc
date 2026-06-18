@@ -12,10 +12,12 @@
 # agents the operator adds via the TUI (or by hand) — coding split,
 # research swarms, custom roles.
 #
-# Two ready-made presets ship at the repo root:
-#   - collective.coding-split.yaml   — 3 coding_agents in cluster `backend`
-#   - collective.autoresearcher.yaml — the 6 research roles
-# Apply one with `./acc-deploy.sh apply collective.coding-split.yaml`.
+# Ready-made presets live in `collectives/` (see collectives/README.md for the
+# full index + which family pack each needs).  Apply one by bare name:
+#   ./acc-deploy.sh apply coding-split        # 3 coding_agents (@acc/workspace-roles)
+#   ./acc-deploy.sh apply autoresearcher      # the 6 research roles (@acc/research-roles)
+#   ./acc-deploy.sh apply capital-markets     # a capital-markets desk (@acc/capital-markets-roles)
+# Swap back to this baseline with `./acc-deploy.sh apply collective.yaml`.
 #
 # Schema mirrors operator/api/v1alpha1/agentcollective_types.go.
 

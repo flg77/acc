@@ -68,6 +68,12 @@ test/history/*
 # leak into commits.
 runs/
 
+# Proposal 036 PR-2 — self-authored draft role packs stage under
+# proposed/<scope>/<name>-<version>/ (role.yaml + role.md + accpkg.yaml)
+# with the built candidate .accpkg alongside. Drafts are local until the
+# operator reviews + promotes one (036 §8 Q3); never committed.
+proposed/
+
 # Operator dev tooling: controller-gen, kustomize, envtest binaries
 # land here when the operator/Makefile downloads them. Refetched per
 # developer.

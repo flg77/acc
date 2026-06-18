@@ -95,7 +95,7 @@ func (r *NATSReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agen
 		},
 		Spec: corev1.ServiceSpec{
 			ClusterIP: "None",
-			Selector:  labels,
+			Selector:  util.SelectorLabels(labels),
 			Ports: []corev1.ServicePort{
 				{Name: "client", Port: natsPort},
 				{Name: "cluster", Port: natsClusterPort},
@@ -137,7 +137,7 @@ func (r *NATSReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Agen
 		Spec: appsv1.StatefulSetSpec{
 			ServiceName: name,
 			Replicas:    replicas,
-			Selector:    &metav1.LabelSelector{MatchLabels: labels},
+			Selector:    &metav1.LabelSelector{MatchLabels: util.SelectorLabels(labels)},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
 				Spec: corev1.PodSpec{

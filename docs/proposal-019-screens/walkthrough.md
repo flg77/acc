@@ -22,7 +22,7 @@ collectives (coding + financial) and golden-prompt benchmarks.
 | #43 | **Authorize infusion** | `roles/assistant/role.yaml` (markers + `propose_infuse`) |
 | #44 | **Role-gap discovery (core)** | `acc/assistant/gap_analysis.py` |
 | #45 | **Role-gap runtime wiring** | `acc/assistant_proposal.py` (`role_gap` kind) |
-| #46 | **Demo collectives** | `examples/collectives/demo-*.yaml` |
+| #46 | **Demo collectives** | `collectives/demo-*.yaml` |
 | #47 | **Demo golden prompts** | `examples/golden_prompts/demo_*.yaml` |
 
 ### 1.1 Catalog awareness (PR #42)
@@ -83,9 +83,9 @@ acknowledgement (authoring the role is a separate human step).
 
 | File | Specialists |
 |---|---|
-| `examples/collectives/demo-coding.yaml` | coding_agent (+architect/reviewer), devops_engineer, ml_engineer |
-| `examples/collectives/demo-financial.yaml` | financial_analyst, fpa_analyst, contract_analyst, risk_compliance_analyst, account_executive, business_analyst |
-| `examples/collectives/demo-multi.yaml` | hub assistant routing both as managed sub-collectives (AoA-P3) |
+| `collectives/demo-coding.yaml` | coding_agent (+architect/reviewer), devops_engineer, ml_engineer |
+| `collectives/demo-financial.yaml` | financial_analyst, fpa_analyst, contract_analyst, risk_compliance_analyst, account_executive, business_analyst |
+| `collectives/demo-multi.yaml` | hub assistant routing both as managed sub-collectives (AoA-P3) |
 
 Each carries the control plane — `assistant` (router), `orchestrator`,
 `reviewer` (critic loop on the stronger model), `compliance_officer`.
@@ -234,7 +234,7 @@ automatically at boot — Stage 1.5.3.)
 ### 3.3 Deploy the financial demo
 
 ```bash
-./acc-deploy.sh apply examples/collectives/demo-financial.yaml
+./acc-deploy.sh apply demo-financial
 ./acc-deploy.sh status        # assistant, orchestrator, reviewer,
                               # compliance_officer + the 6 finance specialists
 acc-tui                       # or acc-webgui
@@ -288,7 +288,7 @@ In the **Diagnostics pane** (key `9`):
 ### 3.6 Both demos at once (sub-collectives)
 
 ```bash
-./acc-deploy.sh apply examples/collectives/demo-multi.yaml
+./acc-deploy.sh apply demo-multi
 ```
 
 The hub assistant delegates each prompt to the sub-collective owning its
@@ -338,7 +338,7 @@ Re-run after any TUI change so the visuals stay in sync.
 * Runbook: `docs/DEMOS.md`
 * Source: `acc/assistant/catalog_view.py`, `acc/assistant/gap_analysis.py`,
   `acc/assistant_proposal.py`, `skills/catalog_query/`,
-  `examples/collectives/demo-*.yaml`, `examples/golden_prompts/demo_*.yaml`
+  `collectives/demo-*.yaml`, `examples/golden_prompts/demo_*.yaml`
 * Tests: `tests/test_catalog_view.py`, `tests/test_catalog_query_skill.py`,
   `tests/test_assistant_infusion_authz.py`, `tests/test_role_gap_discovery.py`,
   `tests/test_role_gap_runtime.py`, `tests/test_demo_collectives.py`,
