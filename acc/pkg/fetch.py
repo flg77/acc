@@ -43,6 +43,7 @@ from acc.pkg.catalog import (
     Catalog,
     CatalogIndexEntry,
     ResolvedPackage,
+    explain_resolution_failure,
     resolve_constraint,
 )
 from acc.pkg.install import (
@@ -191,7 +192,7 @@ def fetch_and_install(
     resolved = resolve_constraint(name, constraint, workspace=workspace)
     if resolved is None:
         raise CatalogResolutionFailed(
-            f"no catalog advertises {name} matching {constraint!r}"
+            explain_resolution_failure(name, constraint, workspace=workspace)
         )
 
     logger.info(
@@ -316,7 +317,7 @@ def _install_closure(
     resolved = resolve_constraint(name, constraint, workspace=workspace)
     if resolved is None:
         raise CatalogResolutionFailed(
-            f"no catalog advertises {name} matching {constraint!r}"
+            explain_resolution_failure(name, constraint, workspace=workspace)
         )
 
     key = (resolved.entry.name, resolved.entry.version)

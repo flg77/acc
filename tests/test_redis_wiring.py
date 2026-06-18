@@ -109,6 +109,12 @@ class TestAgentRedisWiring:
 
             mock_role_store = MagicMock()
             mock_role_store.load_at_startup.return_value = MagicMock(version="0.1.0")
+            # The default role (ingester) resolves from a real in-tree source, so
+            # RoleStore leaves loaded_from_default False. Without this, an
+            # unconfigured MagicMock yields a truthy attr → the agent boots
+            # DORMANT and never constructs CognitiveCore (the pack-role boot gate
+            # in agent.py), so MockCogCore.call_args would be None.
+            mock_role_store.loaded_from_default = False
             MockRoleStore.return_value = mock_role_store
 
             from acc.agent import Agent

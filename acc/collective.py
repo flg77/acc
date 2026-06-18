@@ -531,11 +531,15 @@ def _dormant_service(
         "environment": env,
         "volumes": [
             "lancedb-data:/app/data/lancedb:U,z",
-            # Shared packages volume so synthesized agents resolve roles
-            # served by installed family packs (mirrors the base agents).
+            # Shared packages root (parity with the base compose) so a worker
+            # that self-promotes can resolve + persist infused packs (mirrors
+            # the base agents).
             "acc-packages:/var/lib/acc/packages:U,z",
             "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
-            "../../roles:/app/roles:ro,z",
+            # roles/ is RW (:z, not :ro,z) so a promoted assistant can
+            # self-author role.yaml; writes stay gated by the role-authoring
+            # boundary + operator_mode, the mount only enables them.
+            "../../roles:/app/roles:z",
         ],
         "networks": ["acc-net"],
         "restart": "unless-stopped",
@@ -643,11 +647,15 @@ def roles_to_compose(
                 "environment": env,
                 "volumes": [
                     "lancedb-data:/app/data/lancedb:U,z",
-                    # Shared packages volume so synthesized agents resolve
-                    # pack-served roles (mirrors the base agent template).
+                    # Shared packages root (parity with the base compose) so
+                    # infused packs persist + resolve across restarts (mirrors
+                    # the base agent template).
                     "acc-packages:/var/lib/acc/packages:U,z",
                     "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
-                    "../../roles:/app/roles:ro,z",
+                    # roles/ is RW (:z, not :ro,z) so the assistant can
+                    # self-author role.yaml and have the edit persist; writes
+                    # stay gated by the role-authoring boundary + operator_mode.
+                    "../../roles:/app/roles:z",
                 ],
                 "networks": ["acc-net"],
                 "restart": "unless-stopped",

@@ -81,6 +81,15 @@ async def test_ecosystem_renders_without_crashing_when_coding_agent_missing(
         shutil.rmtree(coding_dir)
 
     monkeypatch.setenv("ACC_ROLES_ROOT", str(fake_roots))
+    # Stage 2 cutover: coding_agent is now a *packaged* role, surfaced via the
+    # dual-source roster (ecosystem._load_roles unions list_roles with
+    # list_installed_roles). Deleting only the in-tree copy no longer simulates
+    # "missing" — the session-scoped installed_family_packs fixture still serves
+    # it from ACC_PACKAGES_ROOT. Point the package root at an empty dir so the
+    # role is genuinely absent from BOTH sources for this test.
+    empty_pkgs = tmp_path / "empty-packages"
+    empty_pkgs.mkdir()
+    monkeypatch.setenv("ACC_PACKAGES_ROOT", str(empty_pkgs))
 
     app = _EcoHarness()
     async with app.run_test() as pilot:

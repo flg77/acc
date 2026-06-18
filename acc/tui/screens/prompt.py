@@ -368,6 +368,10 @@ class PromptScreen(Screen):
                 placeholder="e.g. coding_agent-deadbeef",
                 id="input-target-agent-id",
             )
+            # 033 WS-F — operator-mode (dev/prod) security-floor badge.
+            # Populated at mount via load_operator_mode(); dev is shown
+            # loudly because it relaxes the signing/auth/secret floors.
+            yield Static(id="prompt-mode-badge")
 
         # PR-4 — collapsible cluster topology panel.  Rendered above
         # the transcript so the operator can see active sub-agent
@@ -435,6 +439,8 @@ class PromptScreen(Screen):
     def on_mount(self) -> None:
         """Render the empty transcript once at mount."""
         self._render_transcript()
+        # 033 WS-F — paint the dev/prod operator-mode badge in the target row.
+        self._render_mode_badge()
         # PR-F — initialise the invocation waterfall column layout.
         try:
             wf = self.query_one("#invocation-waterfall", DataTable)
@@ -468,6 +474,24 @@ class PromptScreen(Screen):
             if not task.done():
                 task.cancel()
         self._workers.clear()
+
+    def _render_mode_badge(self) -> None:
+        """Paint the dev/prod security-floor badge into ``#prompt-mode-badge``.
+
+        033 WS-F.  Loaded defensively — :func:`load_operator_mode` never
+        raises and falls back to ``"prod"``; a failed render is logged
+        but never crashes the prompt pane.
+        """
+        from acc.tui.config_helpers import load_operator_mode  # noqa: PLC0415
+        from acc.tui.mode_badge import operator_mode_markup  # noqa: PLC0415
+
+        self._operator_mode = load_operator_mode()
+        try:
+            self.query_one("#prompt-mode-badge", Static).update(
+                operator_mode_markup(self._operator_mode)
+            )
+        except Exception:
+            logger.exception("prompt: render mode badge failed")
 
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
         """Push cluster topology to the cluster panel on every tick.

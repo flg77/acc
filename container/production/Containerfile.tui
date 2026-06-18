@@ -60,6 +60,15 @@ RUN microdnf install -y --nodocs \
     && microdnf clean all \
     && rm -rf /var/cache/dnf
 
+# ── ttyd — browser web-terminal for the TUI (operator spec.tui.webTerminal,
+# proposal 023 §8 Q1).  Pinned static binary fetched via python's urllib
+# (no curl dependency on the minimal base; urllib follows the GitHub
+# release redirect).  Inert unless the operator runs the image with
+# `ttyd ... acc-tui` (the operator sets that command on the web-terminal
+# Deployment); the default CMD stays plain acc-tui for the rsh-attach pod.
+RUN python3 -c "import platform,urllib.request; m=platform.machine(); urllib.request.urlretrieve(f'https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.{m}', '/usr/local/bin/ttyd')" \
+    && chmod 0755 /usr/local/bin/ttyd
+
 # ── Layer 2: Dependency install (no source yet — maximises layer caching) ────
 # Copy pyproject.toml only; do NOT copy README.md (may not exist in all branches)
 WORKDIR /app

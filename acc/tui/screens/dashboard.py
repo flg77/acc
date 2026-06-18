@@ -12,6 +12,7 @@ ACC-TUI-Evolution updates:
 from __future__ import annotations
 
 import datetime
+import logging
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
@@ -25,6 +26,8 @@ from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
+
+logger = logging.getLogger("acc.tui.screens.dashboard")
 
 
 class DashboardScreen(Screen):
@@ -48,6 +51,10 @@ class DashboardScreen(Screen):
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="soma", id="nav")
         yield Label("ACC Soma — Collective Health Dashboard", id="dashboard-title")
+        # 033 WS-F — operator-mode (dev/prod) security-floor badge.
+        # Populated at mount via load_operator_mode(); dev is surfaced
+        # loudly because it relaxes the signing/auth/secret floors.
+        yield Static(id="dashboard-mode-badge")
 
         with Horizontal(id="main-row"):
             # Left: agent cards
@@ -104,6 +111,28 @@ class DashboardScreen(Screen):
 
         yield Static(id="last-update", classes="footer-bar")
         yield Footer()
+
+    def on_mount(self) -> None:
+        """Render the operator-mode (dev/prod) badge near the title (033 WS-F)."""
+        self._render_mode_badge()
+
+    def _render_mode_badge(self) -> None:
+        """Paint the dev/prod security-floor badge into ``#dashboard-mode-badge``.
+
+        Loaded defensively — :func:`load_operator_mode` never raises and
+        falls back to ``"prod"``; a failed render is logged but never
+        crashes the dashboard.
+        """
+        from acc.tui.config_helpers import load_operator_mode  # noqa: PLC0415
+        from acc.tui.mode_badge import operator_mode_markup  # noqa: PLC0415
+
+        self._operator_mode = load_operator_mode()
+        try:
+            self.query_one("#dashboard-mode-badge", Static).update(
+                operator_mode_markup(self._operator_mode)
+            )
+        except Exception:
+            logger.exception("dashboard: render mode badge failed")
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)

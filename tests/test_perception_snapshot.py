@@ -325,12 +325,16 @@ def test_render_overflows_to_name_only_tail():
 
 
 def test_render_concludes_with_grounding_directive():
-    """The block ends with the 'roles not in this list do not exist'
-    instruction.  This is the key signal to the LLM that prevents the
-    lighthouse trace's hallucination."""
+    """The block ends with the grounding directive that anchors the LLM:
+    a capability must already be running/installed above, and if it isn't,
+    propose `[PROPOSE_INFUSE:...]` rather than claim it's impossible (a9ac028
+    reworded the old 'do not exist' phrasing into this PROPOSE_INFUSE block).
+    This is the key signal that prevents the lighthouse trace's hallucination."""
     snap = PerceptionSnapshot(
         roster={"assistant": ["assistant-1"]},
         available_roles=[],
     )
     block = render_currently_available_block(snap)
-    assert "do not exist" in block
+    assert "must already be running or installed above" in block
+    assert "[PROPOSE_INFUSE:" in block
+    assert block.rstrip().endswith("to acquire it.")

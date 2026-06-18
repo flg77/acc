@@ -232,6 +232,7 @@ def _load_acc_config_summary() -> dict[str, str]:
             "request_timeout_s": str(getattr(cfg, "request_timeout_s", "—")),
             "role_source": full.role_sync.role_source,
             "deploy_mode": full.deploy_mode,
+            "operator_mode": full.operator_mode,
             "signing_mode": full.security.signing_mode,
             "spiffe_enabled": "yes" if full.security.spiffe.enabled else "no",
             "nkey_enabled": "yes" if full.security.nkey.enabled else "no",
@@ -246,6 +247,7 @@ def _load_acc_config_summary() -> dict[str, str]:
             "request_timeout_s": "—",
             "role_source": "—",
             "deploy_mode": "—",
+            "operator_mode": "—",
             "signing_mode": "—",
             "spiffe_enabled": "—",
             "nkey_enabled": "—",
@@ -556,12 +558,22 @@ class ConfigurationScreen(Screen):
 
     def _render_llm_summary(self) -> None:
         """Render the configured-backend summary (top of LLM tab)."""
+        from acc.tui.mode_badge import (  # noqa: PLC0415
+            operator_mode_hint,
+            operator_mode_markup,
+        )
+
         summary = _load_acc_config_summary()
+        # .get with a safe default: never KeyError if a caller/mock supplies an
+        # older summary shape; the live loader always includes operator_mode.
+        op_mode = summary.get("operator_mode", "prod")
         content = (
             f"[bold]Backend:[/bold] {summary['backend']}\n"
             f"[bold]Model:[/bold] {summary['model']}\n"
             f"[bold]Base URL:[/bold] {summary['base_url']}\n"
             f"[bold]Timeout (s):[/bold] {summary['request_timeout_s']}\n"
+            f"[bold]Operator mode:[/bold] {operator_mode_markup(op_mode)} "
+            f"[dim]{operator_mode_hint(op_mode)} (033 WS-F)[/dim]\n"
             "\n"
             f"[bold]Role sync:[/bold] {summary['role_source']} "
             f"[dim](deploy_mode={summary['deploy_mode']}; "

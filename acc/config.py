@@ -28,6 +28,12 @@ from acc.backends import LLMBackend, MetricsBackend, SignalingBackend, VectorBac
 # ---------------------------------------------------------------------------
 
 DeployMode = Literal["standalone", "rhoai", "edge"]
+# OperatorMode (proposal 034 / 033 WS-F): the security-FLOOR axis, distinct from
+# deploy_mode (WHERE it runs) and a role's operating_mode (PLAN/AUTO/…). ``dev``
+# tolerates absent secrets + lowers the signing/auth floors for local/demo use;
+# ``prod`` (the default) enforces them. A validator refuses ``dev`` on a real
+# cluster (deploy_mode rhoai|edge) so it can never silently weaken production.
+OperatorMode = Literal["dev", "prod"]
 # AgentRole is a free string, not a closed Literal: built-in roles ship
 # in-tree, but PACK roles (@acc/* families, post ecosystem-split) are equally
 # valid role names resolved by the dual-source RoleLoader at runtime. A closed
@@ -1060,6 +1066,11 @@ class RoleSyncConfig(BaseModel):
 
 class ACCConfig(BaseModel):
     deploy_mode: DeployMode = "standalone"
+    operator_mode: OperatorMode = "prod"
+    """Security-floor gate (proposal 034 / 033 WS-F). ``prod`` (default) enforces
+    signing + auth + secret presence; ``dev`` tolerates absent secrets and lowers
+    those floors for local/demo use. Refused on ``deploy_mode`` rhoai/edge (see
+    ``_validate_operator_mode``) so a real cluster cannot silently run relaxed."""
     agent: AgentConfig = Field(default_factory=AgentConfig)
     signaling: SignalingConfig = Field(default_factory=SignalingConfig)
     vector_db: VectorConfig = Field(default_factory=VectorConfig)
@@ -1082,6 +1093,19 @@ class ACCConfig(BaseModel):
                 )
         # edge: no required fields — hub_url and peer_collectives are optional
         # (agent operates locally when disconnected from hub).
+        return self
+
+    @model_validator(mode="after")
+    def _validate_operator_mode(self) -> "ACCConfig":
+        """dev-mode is refused on a real cluster — a deployed rhoai/edge corpus
+        must not silently relax its signing/auth/secret floors (proposal 034 G4).
+        Only ``standalone`` (laptop/compose/demo) may opt into ``dev``."""
+        if self.operator_mode == "dev" and self.deploy_mode in ("rhoai", "edge"):
+            raise ValueError(
+                f"operator_mode='dev' is refused in deploy_mode='{self.deploy_mode}' "
+                "— dev-mode relaxes signing/auth/secret floors and is only allowed "
+                "for standalone/local use (proposal 034)"
+            )
         return self
 
     @model_validator(mode="after")
@@ -1175,6 +1199,7 @@ class ACCConfig(BaseModel):
 
 _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_DEPLOY_MODE":              ("deploy_mode",),
+    "ACC_OPERATOR_MODE":            ("operator_mode",),
     "ACC_AGENT_ROLE":               ("agent", "role"),
     "ACC_COLLECTIVE_ID":            ("agent", "collective_id"),
     "ACC_NATS_URL":                 ("signaling", "nats_url"),

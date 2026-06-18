@@ -70,13 +70,35 @@ func Upsert(
 		return UpsertResultNoop, fmt.Errorf("Get %T %s: %w", existing, key, err)
 	}
 
-	// Resource exists — apply mutations, then patch.
+	// Resource exists — apply mutations, then patch ONLY if something changed.
+	// Returning Updated unconditionally made every reconciler's
+	// `Progressing: result != Noop` signal always-true (the merge patch is "{}"
+	// when nothing changed), which pinned the corpus in Progressing forever and
+	// prevented it from ever reaching Ready (proposal 032 §11, Finding B-2).
 	patch := client.MergeFrom(existing.DeepCopyObject().(client.Object))
 	if err := mutateFn(existing); err != nil {
 		return UpsertResultNoop, fmt.Errorf("mutateFn: %w", err)
 	}
+	data, err := patch.Data(existing)
+	if err != nil {
+		return UpsertResultNoop, fmt.Errorf("patch data %T %s: %w", existing, key, err)
+	}
+	if string(data) == "{}" {
+		return UpsertResultNoop, nil
+	}
+	// A non-empty merge patch can still be a SEMANTIC no-op: our render omits
+	// server-applied defaults (pod-template fields, etc.), so the apiserver
+	// re-defaults the patched object, finds it identical to what is stored, and
+	// skips the write — leaving resourceVersion unchanged. Treat an unchanged
+	// resourceVersion as Noop, otherwise every reconciler's
+	// `Progressing: result != Noop` is permanently true and the corpus can never
+	// reach Ready (proposal 032 §11 Finding B-2).
+	rvBefore := existing.GetResourceVersion()
 	if err := c.Patch(ctx, existing, patch); err != nil {
 		return UpsertResultNoop, fmt.Errorf("Patch %T %s: %w", existing, key, err)
+	}
+	if existing.GetResourceVersion() == rvBefore {
+		return UpsertResultNoop, nil
 	}
 	return UpsertResultUpdated, nil
 }
@@ -107,8 +129,26 @@ func ClusterUpsert(
 	if err := mutateFn(existing); err != nil {
 		return UpsertResultNoop, fmt.Errorf("mutateFn: %w", err)
 	}
+	data, err := patch.Data(existing)
+	if err != nil {
+		return UpsertResultNoop, fmt.Errorf("patch data %T %s: %w", existing, key, err)
+	}
+	if string(data) == "{}" {
+		return UpsertResultNoop, nil
+	}
+	// A non-empty merge patch can still be a SEMANTIC no-op: our render omits
+	// server-applied defaults (pod-template fields, etc.), so the apiserver
+	// re-defaults the patched object, finds it identical to what is stored, and
+	// skips the write — leaving resourceVersion unchanged. Treat an unchanged
+	// resourceVersion as Noop, otherwise every reconciler's
+	// `Progressing: result != Noop` is permanently true and the corpus can never
+	// reach Ready (proposal 032 §11 Finding B-2).
+	rvBefore := existing.GetResourceVersion()
 	if err := c.Patch(ctx, existing, patch); err != nil {
 		return UpsertResultNoop, fmt.Errorf("Patch %T %s: %w", existing, key, err)
+	}
+	if existing.GetResourceVersion() == rvBefore {
+		return UpsertResultNoop, nil
 	}
 	return UpsertResultUpdated, nil
 }

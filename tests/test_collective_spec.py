@@ -208,6 +208,11 @@ class TestRolesToCompose:
         # Volume mounts match the base compose's coding-split shape.
         assert "lancedb-data:/app/data/lancedb:U,z" in svc["volumes"]
         assert "../../acc-config.yaml:/app/acc-config.yaml:ro,z" in svc["volumes"]
+        # Packages root (parity with the base compose) so infused packs persist,
+        # + roles mounted RW (:z, not :ro,z) so the assistant can self-author
+        # role.yaml and have the edit survive a restart (lighthouse autonomy e2e).
+        assert "acc-packages:/var/lib/acc/packages:U,z" in svc["volumes"]
+        assert "../../roles:/app/roles:z" in svc["volumes"]
         # Synthesized-label so the reconciler can find them.
         assert svc["labels"]["acc.synthesized"] == "true"
         assert svc["labels"]["acc.collective_id"] == "sol-01"

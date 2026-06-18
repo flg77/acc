@@ -124,13 +124,17 @@ def test_index_entry_accepts_bundle_url():
     assert entry.bundle_url.endswith(".accpkg.bundle")
 
 
-def test_index_entry_still_rejects_unknown_field():
-    """Strictness preserved — genuinely unknown fields still fail."""
-    with pytest.raises(ValidationError):
-        CatalogIndexEntry.model_validate({
-            "name": "@acc/x", "version": "1.0.0", "tarball_sha256": "a" * 64,
-            "totally_unknown": True,
-        })
+def test_index_entry_tolerates_genuinely_unknown_field():
+    """Forward-compat (acc-spearhead#92): a genuinely unknown field is ignored,
+    not rejected — an older agent's resolver must not reject the whole catalog
+    over a field it doesn't consume (extra='ignore'). The unknown field is
+    dropped (not retained as an attribute)."""
+    entry = CatalogIndexEntry.model_validate({
+        "name": "@acc/x", "version": "1.0.0", "tarball_sha256": "a" * 64,
+        "totally_unknown": True,
+    })
+    assert entry.name == "@acc/x"
+    assert not hasattr(entry, "totally_unknown")  # ignored, not retained
 
 
 # ---------------------------------------------------------------------------

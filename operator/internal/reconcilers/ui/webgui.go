@@ -102,15 +102,14 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 		return reconcilers.SubResult{}, fmt.Errorf("upsert webgui Service: %w", err)
 	}
 
-	// Signaling: the webgui is the read-only observer surface, so it must
-	// connect to *this corpus's* NATS and observe *this corpus's*
-	// collectives. Without these it falls back to nats://nats:4222 / sol-01
-	// and crash-loops on NoServersError (the service name is namespaced).
-	natsURL := fmt.Sprintf("nats://%s-nats:4222", corpus.Name)
-	collectiveIDs := r.observedCollectiveIDs(ctx, corpus)
-
 	// Deployment — webgui (loopback) + oauth2-proxy (Keycloak OIDC) sidecar.
-	deploy := r.buildDeployment(corpus, name, labels, natsURL, collectiveIDs)
+	// Gather the corpus's collective ids so the webgui's NATSObserver
+	// connects to the right NATS and subscribes to the right subjects.
+	// (Crash fix: without ACC_NATS_URL / ACC_COLLECTIVE_IDS the webgui
+	// fell back to a default that can't resolve → NoServersError →
+	// "Application startup failed. Exiting." crash-loop.)
+	collectiveIDs := r.collectiveIDs(ctx, corpus)
+	deploy := r.buildDeployment(corpus, name, labels, collectiveIDs)
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {
 		ed := existing.(*appsv1.Deployment)
 		ed.Spec.Replicas = deploy.Spec.Replicas
@@ -121,46 +120,46 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 		return reconcilers.SubResult{}, fmt.Errorf("upsert webgui Deployment: %w", err)
 	}
 
-	// Route — discovery-gated: create when route.openshift.io is served,
-	// tolerate its absence (non-OpenShift clusters) without failing.
-	if spec.Route == nil || *spec.Route {
+	// Route — discovery-gated + best-effort (proposal 031 §11 #3): a Route
+	// failure (route.openshift.io absent on non-OpenShift, or an RBAC/transient
+	// API error) must NOT abort the whole corpus reconcile — the Service is
+	// still reachable (expose it yourself / via GitOps). Log and continue.
+	routeEnabled := spec.Route == nil || *spec.Route
+	if routeEnabled {
 		if err := r.upsertRoute(ctx, corpus, name, labels); err != nil {
 			if apimeta.IsNoMatchError(err) {
 				log.Info("route.openshift.io not present — skipping webgui Route (expose the Service yourself)")
 			} else {
-				return reconcilers.SubResult{}, fmt.Errorf("upsert webgui Route: %w", err)
+				log.Error(err, "webgui Route upsert failed; continuing without an operator-managed Route (expose the Service yourself)")
+			}
+		}
+		// Surface the URL + an app-launcher ConsoleLink once the Route is
+		// admitted (best-effort, discovery-gated, non-fatal) so the WebGUI
+		// shows up as an independent menu item (operator review 2026-06-16).
+		if host := routeHost(ctx, r.Client, ns, name); host != "" {
+			corpus.Status.WebGUIURL = "https://" + host
+			if err := upsertConsoleLink(ctx, r.Client, corpus,
+				fmt.Sprintf("acc-%s-webgui", corpus.Name),
+				fmt.Sprintf("ACC WebGUI — %s", corpus.Name),
+				corpus.Status.WebGUIURL,
+			); err != nil && !apimeta.IsNoMatchError(err) {
+				log.Error(err, "webgui ConsoleLink upsert failed (non-fatal)")
 			}
 		}
 	}
 
 	corpus.Status.WebGUIDeployed = true
-	return reconcilers.SubResult{Progressing: result != util.UpsertResultNoop}, nil
-}
-
-// observedCollectiveIDs resolves the CollectiveID of every AgentCollective
-// the corpus manages, so the webgui's ACC_COLLECTIVE_IDS names exactly this
-// corpus's collectives (not the sol-01 default). Best-effort: a collective
-// that can't be fetched is skipped (logged), not fatal — the NATS URL alone
-// already lifts the crash-loop, and a missing collective will resolve on a
-// later reconcile.
-func (r *WebGUIReconciler) observedCollectiveIDs(ctx context.Context, corpus *accv1alpha1.AgentCorpus) []string {
-	log := ctrllog.FromContext(ctx).WithName("webgui")
-	ids := make([]string, 0, len(corpus.Spec.Collectives))
-	for _, ref := range corpus.Spec.Collectives {
-		coll := &accv1alpha1.AgentCollective{}
-		if err := r.Client.Get(ctx, client.ObjectKey{Namespace: corpus.Namespace, Name: ref.Name}, coll); err != nil {
-			log.Info("webgui: omitting collective from ACC_COLLECTIVE_IDS (not resolvable yet)",
-				"collective", ref.Name, "err", err.Error())
-			continue
-		}
-		if coll.Spec.CollectiveID != "" {
-			ids = append(ids, coll.Spec.CollectiveID)
-		}
+	// Requeue while the Route host isn't admitted yet so the URL +
+	// ConsoleLink get captured on a later pass (a Ready corpus otherwise
+	// stops reconciling before the host appears).
+	progressing := result != util.UpsertResultNoop
+	if routeEnabled && corpus.Status.WebGUIURL == "" {
+		progressing = true
 	}
-	return ids
+	return reconcilers.SubResult{Progressing: progressing}, nil
 }
 
-func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name string, labels map[string]string, natsURL string, collectiveIDs []string) *appsv1.Deployment {
+func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name string, labels map[string]string, collectiveIDs []string) *appsv1.Deployment {
 	spec := corpus.Spec.WebGUI
 	replicas := spec.Replicas
 	if replicas == 0 {
@@ -175,24 +174,6 @@ func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name
 			LocalObjectReference: corev1.LocalObjectReference{Name: spec.Keycloak.ClientSecretName},
 			Key:                  key,
 		}}
-	}
-
-	// webgui container env: auth wiring + the signaling config (NATS URL +
-	// observed collectives) it needs to start. ACC_COLLECTIVE_IDS is only set
-	// when the corpus has resolvable collectives; otherwise the app keeps its
-	// default rather than observing a bogus id.
-	webguiEnv := []corev1.EnvVar{
-		{Name: "ACC_WEBGUI_HOST", Value: "127.0.0.1"},
-		{Name: "ACC_WEBGUI_PORT", Value: fmt.Sprintf("%d", webguiPort)},
-		{Name: "ACC_WEBGUI_AUTH_MODE", Value: "oauth-proxy"},
-		{Name: "ACC_WEBGUI_OIDC_GROUPS_CLAIM", Value: groupsClaim},
-		{Name: "ACC_WEBGUI_GROUP_MAPPINGS", Value: renderGroupMappings(spec.GroupMappings)},
-		{Name: "ACC_NATS_URL", Value: natsURL},
-	}
-	if len(collectiveIDs) > 0 {
-		webguiEnv = append(webguiEnv, corev1.EnvVar{
-			Name: "ACC_COLLECTIVE_IDS", Value: strings.Join(collectiveIDs, ","),
-		})
 	}
 
 	return &appsv1.Deployment{
@@ -211,7 +192,21 @@ func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name
 							// sole ingress (shared pod network namespace).
 							Name:  "webgui",
 							Image: util.ComponentImage(corpus, "acc-webgui", corpus.Spec.Version),
-							Env:   webguiEnv,
+							Env: []corev1.EnvVar{
+								{Name: "ACC_WEBGUI_HOST", Value: "127.0.0.1"},
+								{Name: "ACC_WEBGUI_PORT", Value: fmt.Sprintf("%d", webguiPort)},
+								{Name: "ACC_WEBGUI_AUTH_MODE", Value: "oauth-proxy"},
+								{Name: "ACC_WEBGUI_OIDC_GROUPS_CLAIM", Value: groupsClaim},
+								{Name: "ACC_WEBGUI_GROUP_MAPPINGS", Value: renderGroupMappings(spec.GroupMappings)},
+								// Crash fix — the FastAPI lifespan starts a
+								// NATSObserver per collective; without these it
+								// fell back to localhost/sol-01 (gaierror →
+								// NoServersError → startup crash-loop). Point it
+								// at the corpus NATS + the observed collectives.
+								{Name: "ACC_NATS_URL", Value: fmt.Sprintf("nats://%s-nats:4222", corpus.Name)},
+								{Name: "ACC_CORPUS_NAME", Value: corpus.Name},
+								{Name: "ACC_COLLECTIVE_IDS", Value: strings.Join(collectiveIDs, ",")},
+							},
 						},
 						{
 							// oauth2-proxy — runs the Keycloak OIDC auth-code
@@ -261,6 +256,27 @@ func (r *WebGUIReconciler) upsertRoute(ctx context.Context, corpus *accv1alpha1.
 		return unstructured.SetNestedMap(eu.Object, spec, "spec")
 	})
 	return err
+}
+
+// collectiveIDs resolves the CollectiveID of every AgentCollective the
+// corpus references, so the webgui's NATSObserver subscribes to the
+// right subjects. Best-effort: an unresolvable collective is skipped
+// rather than blocking the webgui (it can still serve the UI + the
+// collectives that do resolve).
+func (r *WebGUIReconciler) collectiveIDs(ctx context.Context, corpus *accv1alpha1.AgentCorpus) []string {
+	ids := make([]string, 0, len(corpus.Spec.Collectives))
+	for _, ref := range corpus.Spec.Collectives {
+		c := &accv1alpha1.AgentCollective{}
+		if err := r.Client.Get(ctx, client.ObjectKey{
+			Namespace: corpus.Namespace, Name: ref.Name,
+		}, c); err != nil {
+			continue
+		}
+		if c.Spec.CollectiveID != "" {
+			ids = append(ids, c.Spec.CollectiveID)
+		}
+	}
+	return ids
 }
 
 // renderGroupMappings turns the tier→group map into the

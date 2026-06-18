@@ -98,6 +98,13 @@ LABEL org.opencontainers.image.title="acc-agent-core" \
 
 USER 0
 
+# git — the agent shells out to `git` for the git_status / git_log_recent
+# skills and for autonomous role.yaml commits via shell_exec.  Without it those
+# capabilities fail at runtime (the rest of the agent still boots).
+RUN microdnf install -y --nodocs git \
+    && microdnf clean all \
+    && rm -rf /var/cache/dnf
+
 # Copy the fully-populated S2I app-root (all pip deps incl. the ACC package and
 # CPU torch) and the baked embedding model from the builder. No gcc/devel here.
 COPY --from=builder /opt/app-root /opt/app-root
@@ -107,7 +114,20 @@ COPY --from=builder /app/models /app/models
 WORKDIR /app
 COPY acc/ /app/acc/
 COPY regulatory_layer/ /app/regulatory_layer/
+# Skills + MCP manifests are NOT mounted by the compose (unlike roles/), so they
+# must be baked in — otherwise the agent boots with an empty skill/MCP registry
+# and every advertised capability (shell_exec, python_exec, fs_write,
+# git_status, catalog_query, …) fails at runtime with SkillNotFoundError.
+COPY skills/ /app/skills/
+COPY mcps/ /app/mcps/
 COPY container/production/entrypoint.sh /app/entrypoint.sh
+
+# cosign — the agent shells out to `cosign` to verify .accpkg signatures
+# during an AccPackageInstall; without it any signed pack fails with
+# CosignNotInstalled.  Bake the static binary in (mirrors the ttyd install
+# in Containerfile.tui).
+RUN python3 -c "import platform, urllib.request; m={'x86_64':'amd64','aarch64':'arm64'}.get(platform.machine(),'amd64'); urllib.request.urlretrieve(f'https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-{m}', '/usr/local/bin/cosign')" \
+    && chmod 0755 /usr/local/bin/cosign
 
 # UID 1001 /etc/passwd entry (OpenShift restricted-SCC pattern: GID 0), data
 # dirs, and group-writable perms.
@@ -125,6 +145,8 @@ ENV SENTENCE_TRANSFORMERS_HOME=/app/models \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     ACC_CONFIG_PATH=/app/acc-config.yaml \
+    ACC_SKILLS_ROOT=/app/skills \
+    ACC_MCPS_ROOT=/app/mcps \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
