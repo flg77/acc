@@ -496,21 +496,41 @@ def _validate_draft(role_def: RoleDefinitionConfig, role_md: str) -> list[str]:
     if not role_md.strip():
         errors.append("role.md narrative is empty")
 
-    # Gate 2 — 033 WS-A deeper capability validation (optional).
-    # TODO(036): WS-A capability_validator — deeper check when promoted to main.
+    # Gate 2 — 033 WS-A deeper capability validation (optional, auto-engaging).
     try:
-        from acc.capability_validator import validate_role_capabilities  # type: ignore
+        from acc.capability_validator import (  # type: ignore
+            ERROR,
+            WARNING,
+            _available_mcps,
+            _available_skills,
+            _mcps_root_default,
+            _skills_root_default,
+            validate_role_capabilities,
+        )
     except Exception:  # noqa: BLE001 - module absent on main; degrade cleanly
         logger.debug(
             "self_author: 033 WS-A capability_validator not present; "
             "using RoleDefinitionConfig shape gate only"
         )
-    else:  # pragma: no cover - exercised only once WS-A is promoted
+    else:
         try:
-            ws_a_errors = validate_role_capabilities(role_def) or []
+            role_id = getattr(role_def, "name", "") or "draft"
+            available_skills, _ = _available_skills(_skills_root_default())
+            available_mcps, _ = _available_mcps(_mcps_root_default())
+            findings = validate_role_capabilities(
+                role_id,
+                role_def,
+                available_skills=available_skills,
+                available_mcps=available_mcps,
+                # A draft's requested skills/mcps are infused WITH the pack
+                # later, so an unresolved id must not hard-reject the draft;
+                # only a real self-contradiction (default_* not in allowed_*,
+                # which the validator always emits as ERROR) should reject.
+                unresolved_severity=WARNING,
+            )
+            errors.extend(str(f) for f in findings if f.severity == ERROR)
         except Exception as exc:  # noqa: BLE001
-            ws_a_errors = [f"capability_validator raised: {exc}"]
-        errors.extend(str(e) for e in ws_a_errors)
+            errors.append(f"capability_validator raised: {exc}")
 
     return errors
 

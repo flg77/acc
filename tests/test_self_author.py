@@ -234,17 +234,16 @@ def test_evidence_passed_to_fill_is_redacted(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_ws_a_hook_degrades_when_validator_absent(tmp_path):
-    """capability_validator is ABSENT on main; the draft still validates+builds.
+def test_ws_a_hook_degrades_when_validator_absent(tmp_path, monkeypatch):
+    """When capability_validator can't be imported, the draft still validates+builds.
 
-    The happy path itself proves graceful degradation (the module does not
-    exist), so we assert the success outcome explicitly attributable to the
-    baseline-only gate.
+    The module now exists in-tree, so we simulate its absence by poisoning the
+    import (``sys.modules[...] = None`` makes ``import`` raise). The baseline
+    Pydantic gate alone must still accept + build the draft.
     """
-    import importlib.util
+    import sys
 
-    # Precondition: the WS-A module is genuinely not importable on main.
-    assert importlib.util.find_spec("acc.capability_validator") is None
+    monkeypatch.setitem(sys.modules, "acc.capability_validator", None)
 
     gap = _new_role_gap()
     res = author_role_from_gap(gap, llm_fill=_stub_fill, packages_root=tmp_path)
@@ -264,11 +263,26 @@ def test_ws_a_hook_engages_when_validator_present(tmp_path, monkeypatch):
     import types
 
     fake = types.ModuleType("acc.capability_validator")
+    fake.ERROR = "ERROR"  # type: ignore[attr-defined]
+    fake.WARNING = "WARNING"  # type: ignore[attr-defined]
 
-    def _validate_role_capabilities(role_def):
-        return ["WS-A: skill 'python_exec' exceeds the draft risk envelope"]
+    class _Finding:
+        severity = "ERROR"
 
+        def __str__(self) -> str:
+            return "[ERROR] role:tax_specialist: WS-A: skill 'python_exec' exceeds the draft risk envelope"
+
+    def _validate_role_capabilities(
+        role_id, role, *, available_skills, available_mcps, unresolved_severity="ERROR"
+    ):
+        return [_Finding()]
+
+    # Provide the private helpers the hook imports alongside the public fn.
     fake.validate_role_capabilities = _validate_role_capabilities  # type: ignore[attr-defined]
+    fake._available_skills = lambda root: (set(), [])  # type: ignore[attr-defined]
+    fake._available_mcps = lambda root: (set(), [])  # type: ignore[attr-defined]
+    fake._skills_root_default = lambda: "skills"  # type: ignore[attr-defined]
+    fake._mcps_root_default = lambda: "mcps"  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "acc.capability_validator", fake)
 
     gap = _new_role_gap()
