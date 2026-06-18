@@ -8,10 +8,12 @@ console, running in the console's own session with the **logged-in user's
 token** — so per-user RBAC is automatic and there is no custom backend, no ACC
 auth, and no new exposed port (proposal 035 G6).
 
-> **Scope of this PR (035 PR-1):** scaffold + `src/models.ts` + the CRD↔models
-> CI parity gate only. The list/detail pages, nav extensions, and the
-> catalog→install create path land in PR-2…PR-4. `console-extensions.json` is
-> intentionally an empty array (`[]`) until PR-2 adds nav.
+> **Scope landed so far (035 PR-1…PR-3):** PR-1 scaffold + `src/models.ts` + the
+> CRD↔models CI parity gate; PR-2 list/detail pages + nav for the four CRs; PR-3
+> the `CatalogBrowse` catalog→install centerpiece (`src/components/CatalogBrowse.tsx`)
+> — browse catalogs grouped by tier/priority, an install form that `k8sCreate`s an
+> `AccPackageInstall`, and a live status monitor. PR-4 (OLM wiring + `ConsolePlugin`
+> CR + CSV auto-enable) is still to come.
 
 ## What it covers (target end-state)
 
@@ -99,5 +101,12 @@ console-plugin/
 ├── Containerfile           # UBI9 node build -> UBI9 nginx serve
 ├── nginx.conf              # serves dist/ on :8080, permissive CORS
 └── src/
-    └── models.ts           # the four K8sModels (drift-guarded by the parity gate)
+    ├── models.ts           # the four K8sModels (drift-guarded by the parity gate)
+    ├── types.ts            # TS shapes for the four CRs (subset of spec/status)
+    ├── components/
+    │   ├── list.tsx        # shared list-page factory (watch + filter + table)
+    │   ├── detail.tsx      # shared detail-page chrome (watch + sections)
+    │   ├── status.tsx      # PhaseLabel / ConditionsTable / DetailItem / boxes
+    │   └── CatalogBrowse.tsx  # PR-3: catalog browse -> install form -> status monitor
+    └── pages/              # one List + one Details page per CR + gvk helper
 ```

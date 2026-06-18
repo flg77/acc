@@ -9,12 +9,27 @@
     }
   },
   {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "acc-catalog-browse",
+      "section": "acc",
+      "perspective": "admin",
+      "name": "Catalog browse",
+      "href": "/acc/catalog-browse",
+      "namespaced": true,
+      "dataAttributes": {
+        "data-test": "acc-nav-catalog-browse"
+      }
+    }
+  },
+  {
     "type": "console.navigation/resource-ns",
     "properties": {
       "id": "acc-agentcorpora",
       "section": "acc",
       "perspective": "admin",
       "name": "Corpora",
+      "insertAfter": "acc-catalog-browse",
       "model": {
         "group": "acc.redhat.io",
         "version": "v1alpha1",
@@ -165,6 +180,15 @@
         "kind": "AccPackageInstall"
       },
       "component": { "$codeRef": "AccPackageInstallDetails" }
+    }
+  },
+  {
+    "type": "console.page/route",
+    "properties": {
+      "perspective": "admin",
+      "exact": false,
+      "path": ["/acc/catalog-browse/ns/:ns", "/acc/catalog-browse"],
+      "component": { "$codeRef": "CatalogBrowse" }
     }
   }
 ]

@@ -53,6 +53,7 @@
     "displayName": "Agentic Cell Corpus",
     "description": "Oversight plane for the Agentic Cell Corpus CRs (AgentCorpus, AgentCollective, AccCatalog, AccPackageInstall).",
     "exposedModules": {
+      "CatalogBrowse": "./components/CatalogBrowse.tsx",
       "AgentCorpusList": "./pages/AgentCorpusList.tsx",
       "AgentCorpusDetails": "./pages/AgentCorpusDetails.tsx",
       "AgentCollectiveList": "./pages/AgentCollectiveList.tsx",
