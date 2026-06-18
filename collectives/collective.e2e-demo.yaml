@@ -1,0 +1,113 @@
+# collectives/collective.e2e-demo.yaml
+# =============================================================================
+# End-to-end demo collective — coding + review on RHDP MaaS models.
+#
+# Use case (the demo assignment)
+# ------------------------------
+#   Build a web app — React frontend, FastAPI backend, CMS-style, Keycloak
+#   auth — targeting Podman/Kubernetes (RHOAI test cluster).  Purpose: fetch
+#   stock-market quotes from Yahoo Finance.  The coding agents produce a PLAN
+#   that the Reviewer reviews before implementation; devops handles the
+#   Keycloak/Kubernetes/RHOAI deploy.  See the golden prompt
+#   examples/golden_prompts/e2e_demo_stock_quotes.yaml.
+#
+# Model topology (your two MaaS models, one gateway)
+# --------------------------------------------------
+#   - Reviewer (powerful)      -> maas-qwen3-14b
+#   - Coding agents + devops   -> maas-llama-scout-17b
+#   Both models.yaml ids point at the same RHDP MaaS LiteLLM gateway
+#   (https://maas-rhdp.apps.maas.redhatworkshops.io/v1).
+#
+# Where does the API key go?  (the "API key in collective.yaml -> how")
+# ---------------------------------------------------------------------
+#   NOT here, and NOT in models.yaml — those files are committed.  The
+#   secure, established convention is:
+#     1. models.yaml entry names the env var:  api_key_env: MAAS_API_KEY
+#     2. the secret value lives in .env (gitignored):  MAAS_API_KEY=sk-...
+#     3. the openai_compat backend reads it at call time and sends
+#        "Authorization: Bearer $MAAS_API_KEY" (re-read each call, so key
+#        rotation needs no restart).
+#   This collective only references models by id; the key is never inlined.
+#   (Informational mirror of the operator CRD's llm: block — the running
+#   stack reads acc-config.yaml + .env, so this stays commented:)
+#   # llm:
+#   #   backend: openai_compat
+#   #   base_url: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+#   #   api_key_env: MAAS_API_KEY        # name only — value in .env
+#
+# Reviewer-reviews-plan
+# ---------------------
+#   The reviewer (powerful model) shares the `build` cluster with the coding
+#   workers, so the arbiter's critic loop ties them: a coding step's
+#   NEEDS_REVISE verdict re-issues that step (plan._maybe_reissue_for_revise).
+#   To gate the PLAN explicitly, submit a PLAN whose architect step is
+#   followed by a `reviewer` PLAN_REVIEW step (depends_on the architect) —
+#   see docs/multimodel_reviewer.md.
+#
+# Run
+# ---
+#   # one-time: provide the key
+#   echo 'MAAS_API_KEY=sk-...' >> .env
+#   # provision the role packs into the in-container volume (host can't write
+#   # the packages root — see acc-spearhead#85), then apply:
+#   ./acc-deploy.sh pkg add @acc/workspace-roles
+#   ./acc-deploy.sh pkg add @acc/devops-roles
+#   ./acc-deploy.sh apply e2e-demo
+# =============================================================================
+
+# collective_id is sol-01 (the baseline stack's namespace) so these agents
+# join the running collective the baseline arbiter coordinates — PLANs to
+# sol-01 dispatch to them, and the reviewer critic loop applies.  (The preset
+# is still applied by its file name: `apply e2e-demo`.)
+collective_id: sol-01
+
+required_packages:
+  - "@acc/workspace-roles@^1.0"
+  - "@acc/devops-roles@^1.0"
+
+agents:
+  # ── Control plane (in-tree CONTROL roles) — powerful model for routing,
+  #    infusion decisions, and governance. ───────────────────────────────
+  - role: assistant
+    cluster_id: ctl
+    model: maas-qwen3-14b
+    purpose: "Gatekeeper/guide: route the build request, infuse the roles
+      this job needs (coding + devops), and surface the reviewer's verdicts."
+  - role: orchestrator
+    cluster_id: ctl
+    model: maas-qwen3-14b
+  - role: compliance_officer
+    cluster_id: ctl
+    model: maas-qwen3-14b
+
+  # ── Build cluster — coding workers on the coding model, reviewed by the
+  #    powerful reviewer (same cluster → arbiter critic loop). ────────────
+  - role: coding_agent_architect
+    cluster_id: build
+    model: maas-llama-scout-17b
+    agent_id_prefix: architect
+    purpose: "Produce the implementation PLAN (React + FastAPI CMS, Keycloak
+      auth, k8s/RHOAI deploy, Yahoo Finance quotes) for the Reviewer to review."
+  - role: coding_agent_implementer
+    replicas: 2
+    cluster_id: build
+    model: maas-llama-scout-17b
+    agent_id_prefix: impl
+  - role: coding_agent_tester
+    cluster_id: build
+    model: maas-llama-scout-17b
+    agent_id_prefix: tester
+  - role: reviewer
+    cluster_id: build
+    model: maas-qwen3-14b        # powerful reviewer (PR-MM3 critic loop)
+    agent_id_prefix: reviewer
+    purpose: "Review the architect's plan and the implementers' output; emit
+      GOOD/PARTIAL/NEEDS_REVISE/BAD verdicts that drive the critic loop."
+
+  # ── Deploy — Keycloak / Podman / Kubernetes / RHOAI test cluster. ──────
+  - role: devops_engineer
+    cluster_id: deploy
+    model: maas-llama-scout-17b
+    agent_id_prefix: devops
+    purpose: "Wire Keycloak OIDC + render Podman/Kubernetes manifests; deploy
+      the site to the RHOAI test cluster."

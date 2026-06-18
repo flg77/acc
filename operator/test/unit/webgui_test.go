@@ -162,6 +162,15 @@ func TestWebGUI_DeploysWithKeycloak(t *testing.T) {
 	if env["ACC_WEBGUI_GROUP_MAPPINGS"] != "operator=acc-operators;publisher=acc-publishers" {
 		t.Errorf("GROUP_MAPPINGS = %q (want sorted operator;publisher)", env["ACC_WEBGUI_GROUP_MAPPINGS"])
 	}
+	// Crash fix — the webgui must be told the corpus NATS, else its
+	// FastAPI lifespan NATSObserver falls back to a default that can't
+	// resolve and crash-loops at startup.
+	if env["ACC_NATS_URL"] != "nats://rhoai-corpus-nats:4222" {
+		t.Errorf("ACC_NATS_URL = %q, want the corpus NATS service", env["ACC_NATS_URL"])
+	}
+	if env["ACC_CORPUS_NAME"] != "rhoai-corpus" {
+		t.Errorf("ACC_CORPUS_NAME = %q, want corpus name", env["ACC_CORPUS_NAME"])
+	}
 
 	// oauth2-proxy is wired to the Keycloak realm + the client secret.
 	argstr := strings.Join(proxy.Args, " ")
@@ -180,5 +189,42 @@ func TestWebGUI_DeploysWithKeycloak(t *testing.T) {
 	}
 	if !foundSecret {
 		t.Error("proxy CLIENT_SECRET must come from the keycloak Secret")
+	}
+}
+
+// The CollectiveID of every referenced AgentCollective is injected into
+// ACC_COLLECTIVE_IDS so the webgui observer subscribes to the right
+// subjects (crash fix — proposal 023 follow-up).
+func TestWebGUI_InjectsCollectiveIDs(t *testing.T) {
+	coll := &accv1alpha1.AgentCollective{
+		ObjectMeta: metav1.ObjectMeta{Name: "ws", Namespace: "acc-system"},
+		Spec:       accv1alpha1.AgentCollectiveSpec{CollectiveID: "rhoai-corpus-ws"},
+	}
+	c, _ := webguiClient(t, coll)
+	r := &ui.WebGUIReconciler{Client: c, Scheme: newScheme(t)}
+	corpus := webguiCorpus(&accv1alpha1.WebGUISpec{
+		Enabled: ptr.To(true), Route: ptr.To(false), Keycloak: fullKeycloak(),
+	})
+	corpus.Spec.Collectives = []accv1alpha1.CollectiveRef{{Name: "ws"}}
+	if _, err := r.Reconcile(context.Background(), corpus); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	deploy := &appsv1.Deployment{}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: "acc-system", Name: "rhoai-corpus-webgui"}, deploy); err != nil {
+		t.Fatalf("expected webgui Deployment: %v", err)
+	}
+	var got string
+	for _, ct := range deploy.Spec.Template.Spec.Containers {
+		if ct.Name != "webgui" {
+			continue
+		}
+		for _, e := range ct.Env {
+			if e.Name == "ACC_COLLECTIVE_IDS" {
+				got = e.Value
+			}
+		}
+	}
+	if got != "rhoai-corpus-ws" {
+		t.Errorf("ACC_COLLECTIVE_IDS = %q, want rhoai-corpus-ws", got)
 	}
 }

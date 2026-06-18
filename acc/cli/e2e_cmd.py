@@ -212,6 +212,10 @@ async def _run_suite_once(prompts, *, cid: str, nats_url: str):
         nats_url=nats_url, collective_id=cid, update_queue=queue,
     )
     await observer.connect()
+    # connect() opens the NATS connection but does NOT install the subject
+    # subscription — without this the observer never routes TASK_COMPLETE and
+    # every prompt times out with empty output (headless e2e false-negative).
+    await observer.subscribe()
     try:
         async def _drain():
             while True:

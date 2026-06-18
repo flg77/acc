@@ -1,0 +1,1732 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: agentcorpora.acc.redhat.io
+spec:
+  group: acc.redhat.io
+  names:
+    categories:
+    - acc
+    kind: AgentCorpus
+    listKind: AgentCorpusList
+    plural: agentcorpora
+    shortNames:
+    - ac
+    singular: agentcorpus
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.deployMode
+      name: Mode
+      type: string
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: AgentCorpus is the primary resource representing a full ACC deployment.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AgentCorpusSpec defines the desired state of an ACC deployment.
+            properties:
+              bootstrapDefaultCatalog:
+                default: true
+                description: |-
+                  BootstrapDefaultCatalog creates the canonical signed AccCatalog
+                  (acc-canonical, the published ecosystem catalog) in this namespace
+                  when NO AccCatalog exists there yet — so a fresh corpus is
+                  package-ready out of the box (the Core+Assistant roles ship in the
+                  agent image; the catalog enables role-package infusions on top).
+                  CREATE-IF-ABSENT ONLY: the operator never updates an existing
+                  catalog and never recreates one the user modified or deleted while
+                  any other AccCatalog exists. Set false to manage catalogs entirely
+                  yourself (e.g. GitOps).
+                type: boolean
+              collectives:
+                description: |-
+                  Collectives lists references to AgentCollective resources this corpus manages.
+                  Each collective gets its own set of agent Deployments and ScaledObjects.
+                items:
+                  description: CollectiveRef references an AgentCollective resource
+                    in the same namespace.
+                  properties:
+                    name:
+                      description: Name is the metadata.name of the AgentCollective
+                        resource.
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 32
+                minItems: 1
+                type: array
+              deployMode:
+                allOf:
+                - enum:
+                  - standalone
+                  - rhoai
+                  - edge
+                - enum:
+                  - standalone
+                  - rhoai
+                  - edge
+                description: |-
+                  DeployMode selects the infrastructure profile.
+                  "standalone" — local dev / CI / Podman Compose.
+                  "edge" — MicroShift / K3s / production edge node; NATS runs as a leaf node
+                            connecting to a datacenter hub when network is available.
+                  "rhoai" — OpenShift datacenter with RHOAI GPU inference.
+
+                  PREREQUISITES: "rhoai" requires RHOAI / OpenShift AI installed (a
+                  DataScienceCluster) and a Milvus URI (infrastructure.milvus.uri). On a
+                  fresh AgentCorpus this field is auto-defaulted to "rhoai" when the operator
+                  detects RHOAI on the cluster, else "standalone".
+                  NOTE: NATS JetStream + Redis are always provisioned by the operator. In a
+                  shared RHOAI datacenter, confirm JetStream storage + NetworkPolicy fit your
+                  cluster — for large agent fleets prefer the Kafka audit bridge (see .kafka).
+                  No static default: the mutating webhook auto-detects RHOAI and sets
+                  "rhoai" (else "standalone"). +optional so an unset value reaches the
+                  defaulter instead of being rejected as required.
+                type: string
+              edge:
+                description: |-
+                  Edge configures edge-specific behaviour (deployMode=edge only).
+                  Ignored when deployMode is standalone or rhoai.
+                properties:
+                  hubCollectiveId:
+                    description: |-
+                      HubCollectiveID is the collective ID of the datacenter hub that edge
+                      agents should delegate complex tasks to (ACC-9 bridge protocol).
+                      Rendered as ACC_HUB_COLLECTIVE_ID in agent pod environments.
+                    type: string
+                  hubNatsUrl:
+                    description: |-
+                      HubNatsUrl is the NATS leaf node remote URL of the datacenter hub.
+                      When set, the operator renders a leafnodes block in nats.conf so the
+                      local NATS server connects to the hub and forwards bridge subjects.
+                      Format: nats-leaf://hub.example.com:7422
+                    type: string
+                  hubRegistry:
+                    description: |-
+                      HubRegistry is the container image registry to pull from when the
+                      edge node has connectivity to the hub (image pull on reconnect).
+                      Defaults to spec.imageRegistry when empty.
+                    type: string
+                  redisMaxMemoryMb:
+                    default: 512
+                    description: |-
+                      RedisMaxMemoryMB caps Redis working memory (MiB) to prevent OOM on
+                      edge hardware. When > 0, sets Redis maxmemory and maxmemory-policy.
+                    format: int32
+                    minimum: 64
+                    type: integer
+                  redisMaxMemoryPolicy:
+                    default: allkeys-lru
+                    description: RedisMaxMemoryPolicy controls Redis eviction when
+                      maxmemory is reached.
+                    enum:
+                    - allkeys-lru
+                    - allkeys-lfu
+                    - volatile-lru
+                    - noeviction
+                    type: string
+                type: object
+              governance:
+                description: Governance configures the 3-tier rule system.
+                properties:
+                  categoryA:
+                    description: CategoryA configures immutable constitutional rule
+                      enforcement.
+                    properties:
+                      wasmConfigMapRef:
+                        default: acc-cat-a-wasm
+                        description: |-
+                          WASMConfigMapRef names the ConfigMap holding the compiled
+                          category_a.wasm blob to mount into each agent pod. WHAT THIS MEANS:
+                          Cat-A is ACC's immutable constitutional layer — rules compiled from
+                          Rego to WASM so every agent evaluates them in-process and cannot
+                          mutate them at runtime. The default "acc-cat-a-wasm" expects the
+                          ConfigMap the operator's governance assets publish; provide your own
+                          ConfigMap to ship a customer constitution. Changing the blob requires
+                          a pod roll (the mount is read-only by design). Pair with
+                          gatekeeperIntegration for admission-time and runtimeEvidence for
+                          kernel-event verification of the same tier.
+                        minLength: 1
+                        type: string
+                    required:
+                    - wasmConfigMapRef
+                    type: object
+                  categoryB:
+                    description: CategoryB configures the live-updatable OPA bundle
+                      server.
+                    properties:
+                      bundlePVCSize:
+                        default: 500Mi
+                        description: BundlePVCSize is the PVC size for the bundle
+                          store.
+                        type: string
+                      bundleServerImage:
+                        default: openpolicyagent/opa:latest
+                        description: BundleServerImage is the OPA bundle server image.
+                        type: string
+                      pollIntervalSeconds:
+                        default: 30
+                        description: PollIntervalSeconds controls how often agent
+                          OPA sidecars poll the bundle server.
+                        format: int32
+                        maximum: 300
+                        minimum: 10
+                        type: integer
+                    type: object
+                  categoryC:
+                    description: CategoryC configures adaptive rule generation by
+                      the arbiter.
+                    properties:
+                      confidenceThreshold:
+                        default: "0.80"
+                        description: |-
+                          ConfidenceThreshold is the minimum ICL confidence an arbiter must have
+                          before signing a Category C rule. Expressed as a decimal string. The
+                          default 0.80 is a production-safe floor: lower values let the arbiter
+                          adopt adaptive rules more eagerly, higher values keep Cat-C nearly
+                          static.
+                        pattern: ^0\.[0-9]+$|^1\.0+$
+                        type: string
+                      maxRulesPerCollective:
+                        default: 100
+                        description: MaxRulesPerCollective caps the number of active
+                          Cat-C rules.
+                        format: int32
+                        maximum: 1000
+                        minimum: 1
+                        type: integer
+                    type: object
+                  gatekeeperIntegration:
+                    default: false
+                    description: |-
+                      GatekeeperIntegration enables syncing Category A rules as OPA Gatekeeper
+                      ConstraintTemplates for admission-time enforcement.
+                      RECOMMENDED ON for RHOAI/OpenShift deployments: it extends Cat-A from
+                      agent-runtime checks to cluster admission time. PREREQUISITE (manual):
+                      install the "Gatekeeper Operator" from OperatorHub first (search
+                      "Gatekeeper"; operator catalog: gatekeeper-operator-product) — the ACC
+                      operator does NOT install it, it only syncs rules when present. Reasons
+                      to leave it off: Gatekeeper not installed yet (synced templates would
+                      have no controller), a cluster-wide admission-latency budget, or another
+                      policy engine (Kyverno/ACS) already owns admission.
+                    type: boolean
+                  runtimeEvidence:
+                    description: |-
+                      RuntimeEvidence configures the optional provider-agnostic
+                      kernel-event evidence layer for Category-A governance (proposal
+                      015, security roadmap Phase 3).  When nil or disabled the
+                      operator emits nothing and Cat-A stays metadata-only.
+                      RECOMMENDED ON for RHOAI/datacenter deployments — Cat-A is the
+                      constitutional floor and runtime evidence is what makes it
+                      verifiable rather than declared. Deactivate only on hosts without
+                      a runtime-security backend (RHACS/Falco/Tetragon/NetObserv) or in
+                      resource-constrained edge profiles.
+                    properties:
+                      enabled:
+                        default: false
+                        description: |-
+                          Enabled is the master switch.  Default false — the operator
+                          emits no bridge and Cat-A behaves exactly as before.
+                        type: boolean
+                      enforce:
+                        default: false
+                        description: |-
+                          Enforce selects enforcement behaviour.  False (default) = a
+                          4-week observe baseline: kernel violations are logged
+                          (`OBSERVED:kernel:*`) but never block.  True = violations block
+                          and emit ALERT_ESCALATE.
+                        type: boolean
+                      observeWindowDays:
+                        default: 28
+                        description: |-
+                          ObserveWindowDays is the recommended observe baseline length
+                          before flipping Enforce on.  Advisory — surfaced in status.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      preferredBackend:
+                        default: auto
+                        description: |-
+                          PreferredBackend picks the process/file evidence backend when
+                          more than one is detected.  "auto" (default) prefers
+                          RHACS > Falco > Tetragon.
+                        enum:
+                        - auto
+                        - rhacs
+                        - falco
+                        - tetragon
+                        type: string
+                    type: object
+                required:
+                - categoryA
+                - categoryB
+                - gatekeeperIntegration
+                type: object
+              imagePullSecrets:
+                default:
+                - acc-images-pull
+                description: |-
+                  ImagePullSecrets is a list of Secret names used to pull the component
+                  images. The operator adds them to the imagePullSecrets of every pod it
+                  renders (agents, NATS, Redis, bridges, otel-collector). The default
+                  matches the runbook's pull-secret name for the default ImageRepository
+                  (a dangling reference is harmless — kubelet ignores missing secrets):
+                    oc -n <ns> create secret docker-registry acc-images-pull \
+                      --docker-server=quay.io --docker-username=<robot> --docker-password=<token>
+                items:
+                  type: string
+                type: array
+              imageRegistry:
+                default: registry.access.redhat.com
+                description: |-
+                  ImageRegistry is the LEGACY base registry for acc-agent-core and
+                  infrastructure images, used only when ImageRepository is explicitly
+                  set to "": images render as <imageRegistry>/<component>:<tag>.
+                  Most clusters should leave this untouched and use ImageRepository.
+                type: string
+              imageRepository:
+                default: quay.io/flg77/acc_images
+                description: |-
+                  ImageRepository addresses every component within a single container
+                  repository, distinguished by tag: images render as
+                  <imageRepository>:<component>-<tag> (e.g.
+                  quay.io/flg77/acc_images:acc-agent-core-0.1.0). The default is where
+                  the ACC images are published; it is a PRIVATE repository — make sure
+                  the Secret named in imagePullSecrets exists in this namespace. Set
+                  explicitly to "" to fall back to the legacy ImageRegistry layout.
+                type: string
+              infrastructure:
+                description: Infrastructure configures the shared backing services.
+                properties:
+                  milvus:
+                    description: |-
+                      Milvus configures the datacenter vector DB (rhoai mode only).
+                      Required when deployMode=rhoai; ignored in standalone mode.
+                    properties:
+                      collectionPrefix:
+                        default: acc_
+                        description: CollectionPrefix is prepended to all ACC Milvus
+                          collection names.
+                        type: string
+                      credentialsSecretRef:
+                        description: CredentialsSecretRef references a Secret with
+                          milvus_user / milvus_password.
+                        properties:
+                          name:
+                            description: name is unique within a namespace to reference
+                              a secret resource.
+                            type: string
+                          namespace:
+                            description: namespace defines the space within which
+                              the secret name must be unique.
+                            type: string
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      uri:
+                        description: URI is the Milvus gRPC endpoint.
+                        minLength: 1
+                        type: string
+                    required:
+                    - uri
+                    type: object
+                  nats:
+                    description: NATS configures the JetStream StatefulSet.
+                    properties:
+                      image:
+                        description: |-
+                          Image, when set, is the FULL NATS container image reference and
+                          overrides the registry/repository-derived default from
+                          util.ComponentImage (i.e. "<imageRepository>:nats-<version>-alpine" or
+                          "<imageRegistry>/nats:<version>-alpine"). Use this when neither the
+                          single ImageRepository nor ImageRegistry hosts a usable nats image — a
+                          fresh RHOAI cluster with imageRegistry=registry.access.redhat.com hits
+                          ImagePullBackOff "name unknown: Repo not found" (observed on the c26sx
+                          sandbox 2026-06-10). Set e.g. docker.io/library/nats:2.10-alpine.
+                        type: string
+                      nkeyAuth:
+                        description: |-
+                          NKeyAuth enables per-role NATS NKey authentication (proposal
+                          013, Phase 0c).  When nil or disabled the NATS server runs
+                          without an authorization block — unchanged legacy behaviour.
+                        properties:
+                          enabled:
+                            default: false
+                            description: |-
+                              Enabled turns on per-role NKey authentication: the operator
+                              generates an eight-identity NKey Secret, renders an
+                              authorization block into nats.conf, and projects each agent's
+                              role seed into its pod.
+                            type: boolean
+                        type: object
+                      replicas:
+                        default: 1
+                        description: Replicas sets the NATS cluster size (1 = single-node,
+                          3 = clustered).
+                        format: int32
+                        maximum: 5
+                        minimum: 1
+                        type: integer
+                      resources:
+                        description: Resources sets CPU/memory for NATS pods.
+                        properties:
+                          claims:
+                            description: |-
+                              Claims lists the names of resources, defined in spec.resourceClaims,
+                              that are used by this container.
+
+                              This is an alpha field and requires enabling the
+                              DynamicResourceAllocation feature gate.
+
+                              This field is immutable. It can only be set for containers.
+                            items:
+                              description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name must match the name of one entry in pod.spec.resourceClaims of
+                                    the Pod where this field is used. It makes that resource available
+                                    inside a container.
+                                  type: string
+                                request:
+                                  description: |-
+                                    Request is the name chosen for a request in the referenced claim.
+                                    If empty, everything from the claim is made available, otherwise
+                                    only the result of this request.
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                        type: object
+                      storageClass:
+                        description: StorageClass for the JetStream PVC.
+                        type: string
+                      storageSize:
+                        default: 2Gi
+                        description: StorageSize for JetStream persistence.
+                        type: string
+                      version:
+                        default: "2.10"
+                        description: Version is the NATS server image tag.
+                        pattern: ^[0-9]+\.[0-9]+.*$
+                        type: string
+                    required:
+                    - replicas
+                    - version
+                    type: object
+                  redis:
+                    description: Redis configures the working memory store.
+                    properties:
+                      image:
+                        description: |-
+                          Image, when set, is the FULL Redis container image reference and
+                          overrides the util.ComponentImage-derived default. Same rationale as
+                          NATSSpec.Image — set e.g. docker.io/library/redis:7-alpine when neither
+                          imageRepository nor imageRegistry hosts a usable redis image.
+                        type: string
+                      replicas:
+                        default: 1
+                        description: Replicas (1 = standalone, 3 = Sentinel mode).
+                        format: int32
+                        maximum: 6
+                        minimum: 1
+                        type: integer
+                      resources:
+                        description: Resources sets CPU/memory for Redis pods.
+                        properties:
+                          claims:
+                            description: |-
+                              Claims lists the names of resources, defined in spec.resourceClaims,
+                              that are used by this container.
+
+                              This is an alpha field and requires enabling the
+                              DynamicResourceAllocation feature gate.
+
+                              This field is immutable. It can only be set for containers.
+                            items:
+                              description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name must match the name of one entry in pod.spec.resourceClaims of
+                                    the Pod where this field is used. It makes that resource available
+                                    inside a container.
+                                  type: string
+                                request:
+                                  description: |-
+                                    Request is the name chosen for a request in the referenced claim.
+                                    If empty, everything from the claim is made available, otherwise
+                                    only the result of this request.
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                        type: object
+                      storageClass:
+                        description: |-
+                          StorageClass for the Redis persistence PVC. When empty, storageClassName
+                          is left unset so the cluster's default StorageClass applies.
+                        type: string
+                      storageSize:
+                        default: 1Gi
+                        description: StorageSize for Redis persistence PVC.
+                        type: string
+                      version:
+                        default: "6"
+                        description: Version selects the UBI Redis image tag.
+                        type: string
+                    required:
+                    - replicas
+                    - version
+                    type: object
+                required:
+                - nats
+                - redis
+                type: object
+              kafka:
+                description: |-
+                  Kafka configures the optional NATS-to-Kafka audit bridge.
+                  LEAVE THIS SECTION EMPTY while NATS is the active transport (the
+                  default) — expanding it makes bootstrapServers required and, with no
+                  Kafka installed, the bridge is skipped with a warning. RECOMMENDED FOR
+                  LARGE AGENT FLEETS: at scale, Kafka is the preferred audit transport
+                  (durable, high-throughput) over NATS-only. Kafka itself is NOT
+                  installed by the operator — install AMQ Streams / Strimzi first
+                  (OpenShift: the "Streams for Apache Kafka" Operator from OperatorHub),
+                  then set bootstrapServers here.
+                properties:
+                  auditTopic:
+                    default: acc.audit.all
+                    description: AuditTopic is the Kafka topic for all signal audit
+                      records.
+                    type: string
+                  bootstrapServers:
+                    description: |-
+                      BootstrapServers is a comma-separated list of Kafka broker addresses.
+                      The operator TCP-probes these to verify connectivity.
+                    minLength: 1
+                    type: string
+                  bridgeReplicas:
+                    default: 1
+                    description: BridgeReplicas sets the number of bridge Deployment
+                      replicas.
+                    format: int32
+                    maximum: 10
+                    minimum: 1
+                    type: integer
+                  credentialsSecretRef:
+                    description: |-
+                      CredentialsSecretRef references a Secret with kafka_sasl_username /
+                      kafka_sasl_password keys.
+                    properties:
+                      name:
+                        description: name is unique within a namespace to reference
+                          a secret resource.
+                        type: string
+                      namespace:
+                        description: namespace defines the space within which the
+                          secret name must be unique.
+                        type: string
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  signalTopicsPrefix:
+                    default: acc.signals
+                    description: SignalTopicsPrefix is the prefix for per-signal-type
+                      Kafka topics.
+                    type: string
+                required:
+                - bootstrapServers
+                type: object
+              manifestDelivery:
+                default: all
+                description: |-
+                  ManifestDelivery controls how the operator-baked roles/, skills/, and
+                  mcps/ trees reach agent pods.
+                    "all"  (default) — operator emits ConfigMaps and mounts them at
+                                       /etc/acc/{roles,skills,mcps} in every agent pod.
+                    "none" — operator skips the mounts; users must bake the trees into
+                             a custom agent image.
+                  The reconciler that emits the ConfigMaps and the volume injection in
+                  agent pods both ship in PR-50 (this PR only adds the schema).
+                enum:
+                - all
+                - none
+                type: string
+              mcpServers:
+                description: |-
+                  MCPServers configures shared MCP servers visible to every collective in
+                  this corpus. Each entry produces a Deployment + Service named
+                  acc-mcp-{name}, matching the URL convention used by mcps/<name>/mcp.yaml.
+                  The reconciler that owns these objects ships in PR-51 (this PR only adds
+                  the schema).
+                items:
+                  description: |-
+                    MCPServerSpec configures one MCP server Deployment + Service.
+                    The operator emits a Deployment named acc-mcp-{Name} and a Service of the
+                    same name on Port. The Service name matches the url: field convention used
+                    by mcps/<Name>/mcp.yaml so agents resolve the server without manifest edits.
+
+                    The reconciler that owns these objects ships in PR-51 of the
+                    20260508-operator-feature-parity-d-e openspec change.
+                  properties:
+                    env:
+                      description: Env injects environment variables into the MCP
+                        container.
+                      items:
+                        description: EnvVar represents an environment variable present
+                          in a Container.
+                        properties:
+                          name:
+                            description: Name of the environment variable. Must be
+                              a C_IDENTIFIER.
+                            type: string
+                          value:
+                            description: |-
+                              Variable references $(VAR_NAME) are expanded
+                              using the previously defined environment variables in the container and
+                              any service environment variables. If a variable cannot be resolved,
+                              the reference in the input string will be unchanged. Double $$ are reduced
+                              to a single $, which allows for escaping the $(VAR_NAME) syntax: i.e.
+                              "$$(VAR_NAME)" will produce the string literal "$(VAR_NAME)".
+                              Escaped references will never be expanded, regardless of whether the variable
+                              exists or not.
+                              Defaults to "".
+                            type: string
+                          valueFrom:
+                            description: Source for the environment variable's value.
+                              Cannot be used if value is not empty.
+                            properties:
+                              configMapKeyRef:
+                                description: Selects a key of a ConfigMap.
+                                properties:
+                                  key:
+                                    description: The key to select.
+                                    type: string
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                  optional:
+                                    description: Specify whether the ConfigMap or
+                                      its key must be defined
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              fieldRef:
+                                description: |-
+                                  Selects a field of the pod: supports metadata.name, metadata.namespace, `metadata.labels['<KEY>']`, `metadata.annotations['<KEY>']`,
+                                  spec.nodeName, spec.serviceAccountName, status.hostIP, status.podIP, status.podIPs.
+                                properties:
+                                  apiVersion:
+                                    description: Version of the schema the FieldPath
+                                      is written in terms of, defaults to "v1".
+                                    type: string
+                                  fieldPath:
+                                    description: Path of the field to select in the
+                                      specified API version.
+                                    type: string
+                                required:
+                                - fieldPath
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              resourceFieldRef:
+                                description: |-
+                                  Selects a resource of the container: only resources limits and requests
+                                  (limits.cpu, limits.memory, limits.ephemeral-storage, requests.cpu, requests.memory and requests.ephemeral-storage) are currently supported.
+                                properties:
+                                  containerName:
+                                    description: 'Container name: required for volumes,
+                                      optional for env vars'
+                                    type: string
+                                  divisor:
+                                    anyOf:
+                                    - type: integer
+                                    - type: string
+                                    description: Specifies the output format of the
+                                      exposed resources, defaults to "1"
+                                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                    x-kubernetes-int-or-string: true
+                                  resource:
+                                    description: 'Required: resource to select'
+                                    type: string
+                                required:
+                                - resource
+                                type: object
+                                x-kubernetes-map-type: atomic
+                              secretKeyRef:
+                                description: Selects a key of a secret in the pod's
+                                  namespace
+                                properties:
+                                  key:
+                                    description: The key of the secret to select from.  Must
+                                      be a valid secret key.
+                                    type: string
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                  optional:
+                                    description: Specify whether the Secret or its
+                                      key must be defined
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            type: object
+                        required:
+                        - name
+                        type: object
+                      type: array
+                    image:
+                      description: |-
+                        Image is the full container image reference for the MCP server,
+                        including registry, repository, and tag.
+                      minLength: 1
+                      type: string
+                    name:
+                      description: |-
+                        Name matches the directory name under mcps/ in the source tree
+                        (e.g. "web-search-brave"). DNS-label-safe.
+                      maxLength: 63
+                      minLength: 2
+                      pattern: ^[a-z][a-z0-9-]{1,62}$
+                      type: string
+                    port:
+                      default: 8080
+                      description: |-
+                        Port is the JSON-RPC port the server listens on. Becomes the Service
+                        port and the targetPort. Convention across the bundled MCPs is 8080.
+                      format: int32
+                      maximum: 65535
+                      minimum: 1
+                      type: integer
+                    replicas:
+                      default: 1
+                      description: Replicas sets the Deployment replica count.
+                      format: int32
+                      maximum: 10
+                      minimum: 0
+                      type: integer
+                    resources:
+                      description: Resources sets CPU/memory requests and limits for
+                        the MCP container.
+                      properties:
+                        claims:
+                          description: |-
+                            Claims lists the names of resources, defined in spec.resourceClaims,
+                            that are used by this container.
+
+                            This is an alpha field and requires enabling the
+                            DynamicResourceAllocation feature gate.
+
+                            This field is immutable. It can only be set for containers.
+                          items:
+                            description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                            properties:
+                              name:
+                                description: |-
+                                  Name must match the name of one entry in pod.spec.resourceClaims of
+                                  the Pod where this field is used. It makes that resource available
+                                  inside a container.
+                                type: string
+                              request:
+                                description: |-
+                                  Request is the name chosen for a request in the referenced claim.
+                                  If empty, everything from the claim is made available, otherwise
+                                  only the result of this request.
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          type: array
+                          x-kubernetes-list-map-keys:
+                          - name
+                          x-kubernetes-list-type: map
+                        limits:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Limits describes the maximum amount of compute resources allowed.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                        requests:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: |-
+                            Requests describes the minimum amount of compute resources required.
+                            If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                            otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                            More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                          type: object
+                      type: object
+                    secretEnv:
+                      description: |-
+                        SecretEnv pulls env vars from referenced Secrets / ConfigMaps via
+                        envFrom (typical use: BRAVE_API_KEY for web-search-brave, an Anthropic
+                        or OpenAI key for web-browser-harness).
+                      items:
+                        description: EnvFromSource represents the source of a set
+                          of ConfigMaps
+                        properties:
+                          configMapRef:
+                            description: The ConfigMap to select from
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the ConfigMap must be
+                                  defined
+                                type: boolean
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          prefix:
+                            description: An optional identifier to prepend to each
+                              key in the ConfigMap. Must be a C_IDENTIFIER.
+                            type: string
+                          secretRef:
+                            description: The Secret to select from
+                            properties:
+                              name:
+                                default: ""
+                                description: |-
+                                  Name of the referent.
+                                  This field is effectively required, but due to backwards compatibility is
+                                  allowed to be empty. Instances of this type with an empty value here are
+                                  almost certainly wrong.
+                                  More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                type: string
+                              optional:
+                                description: Specify whether the Secret must be defined
+                                type: boolean
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                      type: array
+                    shmSizeMi:
+                      default: 0
+                      description: |-
+                        ShmSizeMi mounts a Memory-medium emptyDir at /dev/shm sized to the
+                        requested mebibytes. Required for the browser-harness MCP because
+                        Chromium crashes intermittently with the default 64 MiB tmpfs;
+                        256 MiB is browser-use's documented minimum.
+                      format: int32
+                      maximum: 4096
+                      minimum: 0
+                      type: integer
+                  required:
+                  - image
+                  - name
+                  type: object
+                maxItems: 16
+                type: array
+              networkPolicy:
+                description: |-
+                  NetworkPolicy configures the optional capability-tiered network
+                  isolation layer for agent and infrastructure pods (proposal 014,
+                  security roadmap Phase 1).  When nil or disabled the operator
+                  emits no policy objects — unchanged legacy behaviour.
+                properties:
+                  allowedExternalLLM:
+                    description: |-
+                      AllowedExternalLLM overrides the built-in set of external LLM
+                      provider FQDNs used to scope Tier 2 egress.  When empty a
+                      sensible default set (Anthropic + common OpenAI-compatible
+                      hosts) is used. On RHOAI, prefer models ALREADY SERVED IN-CLUSTER
+                      (list them: `oc get inferenceservice -A`) and reference them via
+                      the AgentCollective's llm.vllm.inferenceServiceRef — in-cluster
+                      traffic needs no entry here. Add FQDNs only for genuinely external
+                      providers; do not carry over endpoints wired for standalone/edge
+                      environments.
+                    items:
+                      type: string
+                    type: array
+                  cniEnforces:
+                    default: auto
+                    description: |-
+                      CNIEnforces overrides the heuristic that detects whether the
+                      running CNI enforces NetworkPolicy.  "auto" (default) infers it;
+                      "true"/"false" force the verdict (use on K3s where the heuristic
+                      cannot be certain).
+                    enum:
+                    - auto
+                    - "true"
+                    - "false"
+                    type: string
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled is the master switch.  Default false — the operator
+                      emits no NetworkPolicy/EgressFirewall/CiliumNetworkPolicy objects
+                      and the collective behaves exactly as before.
+                    type: boolean
+                  extraEgressCIDRs:
+                    description: |-
+                      ExtraEgressCIDRs are additional CIDR blocks agent pods may reach
+                      — the escape hatch for non-DNS external endpoints (e.g. a
+                      fixed-IP NATS hub).
+                    items:
+                      type: string
+                    type: array
+                  extraEgressFQDNs:
+                    description: |-
+                      ExtraEgressFQDNs are additional fully-qualified domain names the
+                      agent pods are allowed to reach (Tier 2+).  E.g. a custom LLM
+                      provider or a private Slack proxy.
+                    items:
+                      type: string
+                    type: array
+                  maxTier:
+                    default: 1
+                    description: |-
+                      MaxTier is the highest policy tier the operator is allowed to
+                      emit.  The active tier is min(MaxTier, clusterCapability).
+                      1 = L4 NetworkPolicy; 2 = FQDN egress; 3 = L7 (Cilium).
+                    format: int32
+                    maximum: 3
+                    minimum: 1
+                    type: integer
+                  mode:
+                    default: enforce
+                    description: |-
+                      Mode selects enforcement behaviour.  "enforce" drops disallowed
+                      traffic; "audit" logs it without dropping (a safe canary path —
+                      honoured only at Tier 3 with Cilium policy-audit).
+                    enum:
+                    - enforce
+                    - audit
+                    type: string
+                type: object
+              observability:
+                description: Observability configures OTel collector and Prometheus
+                  rules.
+                properties:
+                  backend:
+                    allOf:
+                    - enum:
+                      - log
+                      - otel
+                    - enum:
+                      - log
+                      - otel
+                    default: otel
+                    description: |-
+                      Backend selects the telemetry backend. Defaults to "otel": the operator
+                      deploys an OpenTelemetry Collector and the webhook points agents at it, so
+                      traces/metrics flow out of the box. Set "log" for the minimal (stdout)
+                      profile.
+                    type: string
+                  grafanaDashboard:
+                    default: true
+                    description: |-
+                      GrafanaDashboard enables creation of a ConfigMap-based Grafana dashboard.
+                      Defaults to true so a dashboard ships out of the box (harmless if no
+                      Grafana operator is present — it is just a ConfigMap).
+                    type: boolean
+                  otelCollector:
+                    description: |-
+                      OTelCollector configures the OpenTelemetry collector deployment.
+                      Required when backend=otel.
+                    properties:
+                      endpoint:
+                        description: |-
+                          Endpoint is the OTLP gRPC/HTTP endpoint to export telemetry to.
+                          PREREQUISITE: an OTLP backend must be reachable at this address —
+                          nothing on a fresh cluster provides one. Sandbox-friendly option:
+                          the Tempo operator + a TempoMonolithic instance (PVC-backed, no S3),
+                          e.g. tempo-acc-tempo.acc-observability.svc.cluster.local:4317.
+                          If you do not need traces, set observability.backend to "log" instead.
+                        minLength: 1
+                        type: string
+                      image:
+                        description: |-
+                          Image overrides the OpenTelemetry Collector container image. Leave
+                          empty for the operator's pinned default (mirrored into the ACC image
+                          repository). Set this on disconnected clusters or to use your own
+                          mirror of opentelemetry-collector-contrib.
+                        type: string
+                      mlflowEndpoint:
+                        description: |-
+                          MLflowEndpoint is an optional additional OTLP/HTTP endpoint to
+                          fan traces out to alongside the primary Endpoint.  When set, the
+                          operator-rendered Collector config gains an extra otlphttp/mlflow
+                          exporter on the traces pipeline.  Leave empty to skip the fan-out
+                          (operators who run a standalone Collector configure MLflow there).
+                        type: string
+                      protocol:
+                        default: grpc
+                        description: |-
+                          Protocol selects the OTLP transport agents use to reach Endpoint.
+                          Matches the upstream OTel spec env var OTEL_EXPORTER_OTLP_PROTOCOL.
+                          Default "grpc" preserves pre-Phase-3 behaviour (port :4317);
+                          "http/protobuf" targets HTTP collectors / MLflow /v1/traces on
+                          :4318 — see docs/observability/mlflow.md.
+                        enum:
+                        - grpc
+                        - http/protobuf
+                        type: string
+                      serviceName:
+                        default: acc-agent
+                        description: ServiceName is the OTel service.name resource
+                          attribute.
+                        type: string
+                      tlsInsecure:
+                        default: false
+                        description: |-
+                          TLSInsecure disables TLS verification for the remote OTLP endpoint.
+                          Use only in development environments.
+                        type: boolean
+                    required:
+                    - endpoint
+                    type: object
+                  prometheusRules:
+                    default: true
+                    description: |-
+                      PrometheusRules enables creation of PrometheusRule CRs for ACC alerts.
+                      Not "omitempty": the field must serialize even when false, otherwise the
+                      defaulting webhook's re-marshal drops it and the +kubebuilder:default=true
+                      re-applies, making it impossible to disable via the CR.
+                    type: boolean
+                required:
+                - backend
+                type: object
+              rhoai:
+                description: |-
+                  RHOAI configures RHOAI-specific behaviour. Ignored unless deployMode
+                  is rhoai. Leaving it empty applies the defaults (the namespace is
+                  registered as a Data Science Project).
+                properties:
+                  dashboardNamespace:
+                    default: redhat-ods-applications
+                    description: |-
+                      DashboardNamespace is where the RHOAI dashboard reads OdhApplication
+                      tiles and OdhQuickStart guides from (the CRDs are namespaced).
+                      Defaults to "redhat-ods-applications" (RHOAI); set "opendatahub" on
+                      upstream ODH installs.
+                    type: string
+                  projectDisplayName:
+                    description: |-
+                      ProjectDisplayName, when set, becomes the namespace's
+                      openshift.io/display-name annotation (the name RHOAI shows for the
+                      project). Leave empty to keep whatever display name the namespace
+                      already has.
+                    maxLength: 128
+                    type: string
+                  registerNamespaceAsProject:
+                    default: true
+                    description: |-
+                      RegisterNamespaceAsProject labels this corpus's namespace with
+                      opendatahub.io/dashboard=true so it automatically appears in RHOAI
+                      as a Data Science Project — models, pipelines, and workbenches then
+                      wire into the same project naturally. ADDITIVE-ONLY: the operator
+                      never removes the label (on corpus deletion or when this is later
+                      set to false) because other RHOAI assets may live in the namespace.
+                    type: boolean
+                type: object
+              tui:
+                description: |-
+                  TUI deploys the acc-tui interaction surface (proposal 023 / ADR 025
+                  interaction plane) — the power-user/ops terminal, reachable via
+                  `oc rsh deploy/<corpus>-tui acc-tui`. Nil = not deployed. Secondary
+                  to the webgui (the primary surface); the pod idles so the operator
+                  can attach and run the TUI in the rsh TTY.
+                properties:
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled deploys the tui pod. Default true within the block; a nil
+                      TUI block = not deployed.
+                    type: boolean
+                  replicas:
+                    default: 1
+                    description: |-
+                      Replicas of the tui Deployment (usually 1 — it is an attach target,
+                      not a scaled service).
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
+              upgradePolicy:
+                description: UpgradePolicy controls how the operator handles ACC version
+                  upgrades.
+                properties:
+                  minKafkaVersion:
+                    description: |-
+                      MinKafkaVersion is the minimum Kafka broker version required for bridge
+                      compatibility. Operator warns but does not block if Kafka is older.
+                    type: string
+                  mode:
+                    allOf:
+                    - enum:
+                      - auto
+                      - manual
+                    - enum:
+                      - auto
+                      - manual
+                    default: auto
+                    description: Mode selects the upgrade strategy.
+                    type: string
+                  requireApproval:
+                    default: false
+                    description: |-
+                      RequireApproval forces the operator to pause before upgrading shared
+                      infrastructure components (NATS, Redis). When true, the operator writes
+                      a Warning Event and sets UpgradeApprovalPending=True, then waits for the
+                      annotation acc.redhat.io/approve-upgrade=<version> to be applied.
+                    type: boolean
+                required:
+                - mode
+                type: object
+              version:
+                default: 0.1.0
+                description: |-
+                  Version pins the acc-agent-core image tag to deploy.
+                  Must be a valid SemVer string.
+                pattern: ^v?[0-9]+\.[0-9]+\.[0-9]+.*$
+                type: string
+              webgui:
+                description: |-
+                  WebGUI deploys the acc-webgui interaction surface (proposal 023 / ADR
+                  025 interaction plane) behind a Keycloak-OIDC oauth2-proxy sidecar.
+                  Nil = not deployed. The webhook materializes it (enabled) in rhoai
+                  mode. An enabled WebGUI without a Keycloak block is NOT deployed —
+                  the operator refuses to stand up an unauthenticated network surface
+                  (ADR 025 §5); it sets a WebGUIBlocked status condition instead.
+                properties:
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled deploys the webgui. Default true (the webhook materializes
+                      this block enabled in rhoai mode). A nil block = not deployed.
+                    type: boolean
+                  groupMappings:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      GroupMappings maps an ACC tier to the Keycloak group/role names that
+                      grant it (rendered into ACC_WEBGUI_GROUP_MAPPINGS). Keys: "operator",
+                      "publisher" (everything else is viewer). The canonical names live in
+                      lab-gitops group_vars/rbac.yml (backlog 006). Example:
+                      {"operator": "acc-operators", "publisher": "acc-publishers"}.
+                    type: object
+                  keycloak:
+                    description: |-
+                      Keycloak configures the OIDC login (via the oauth2-proxy sidecar).
+                      REQUIRED for the webgui to actually deploy — without it the operator
+                      refuses to stand up an unauthenticated surface (ADR 025 §5).
+                    properties:
+                      clientID:
+                        description: |-
+                          ClientID is the Keycloak confidential client for the webgui. It is
+                          also the OIDC audience the webgui validates (aud/azp).
+                        type: string
+                      clientSecretName:
+                        description: |-
+                          ClientSecretName names a Secret in the corpus namespace holding the
+                          Keycloak client secret under key "client-secret" and a cookie-signing
+                          secret under key "cookie-secret".
+                        type: string
+                      groupsClaim:
+                        default: groups
+                        description: GroupsClaim is the OIDC token claim carrying
+                          group names.
+                        type: string
+                      issuerURL:
+                        description: |-
+                          IssuerURL is the Keycloak realm issuer, e.g.
+                          https://keycloak.example.com/realms/acc.
+                        pattern: ^https://.+/realms/.+
+                        type: string
+                    required:
+                    - clientID
+                    - clientSecretName
+                    - issuerURL
+                    type: object
+                  replicas:
+                    default: 1
+                    description: Replicas of the webgui Deployment.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  route:
+                    default: true
+                    description: |-
+                      Route exposes the webgui (the oauth2-proxy front) via an OpenShift
+                      Route with edge TLS. Default true. Created only when the
+                      route.openshift.io API is present (discovery-gated).
+                    type: boolean
+                type: object
+            required:
+            - collectives
+            - governance
+            - infrastructure
+            - version
+            type: object
+          status:
+            description: AgentCorpusStatus reports the observed state of the full
+              ACC deployment.
+            properties:
+              availableRHOAIModels:
+                description: |-
+                  AvailableRHOAIModels lists READY RHOAI / KServe InferenceServices
+                  discovered on the cluster (name, namespace, in-cluster URL). Surfaced so an
+                  operator can wire an in-cluster model as an AgentCollective LLM backend
+                  instead of an external provider. Populated only when deployMode=rhoai.
+                items:
+                  description: |-
+                    RHOAIModelRef identifies a READY RHOAI / KServe InferenceService discovered
+                    on the cluster.
+                  properties:
+                    name:
+                      description: Name is the InferenceService name.
+                      type: string
+                    namespace:
+                      description: Namespace is the InferenceService namespace.
+                      type: string
+                    url:
+                      description: URL is the in-cluster predictor URL (.status.url
+                        of the InferenceService).
+                      type: string
+                  required:
+                  - name
+                  - namespace
+                  type: object
+                type: array
+              collectiveStatuses:
+                additionalProperties:
+                  description: CollectiveStatus reports per-collective operational
+                    state (embedded in AgentCorpus status).
+                  properties:
+                    conditions:
+                      items:
+                        description: Condition contains details for one aspect of
+                          the current state of this API Resource.
+                        properties:
+                          lastTransitionTime:
+                            description: |-
+                              lastTransitionTime is the last time the condition transitioned from one status to another.
+                              This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                            format: date-time
+                            type: string
+                          message:
+                            description: |-
+                              message is a human readable message indicating details about the transition.
+                              This may be an empty string.
+                            maxLength: 32768
+                            type: string
+                          observedGeneration:
+                            description: |-
+                              observedGeneration represents the .metadata.generation that the condition was set based upon.
+                              For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                              with respect to the current state of the instance.
+                            format: int64
+                            minimum: 0
+                            type: integer
+                          reason:
+                            description: |-
+                              reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                              Producers of specific condition types may define expected values and meanings for this field,
+                              and whether the values are considered a guaranteed API.
+                              The value should be a CamelCase string.
+                              This field may not be empty.
+                            maxLength: 1024
+                            minLength: 1
+                            pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                            type: string
+                          status:
+                            description: status of the condition, one of True, False,
+                              Unknown.
+                            enum:
+                            - "True"
+                            - "False"
+                            - Unknown
+                            type: string
+                          type:
+                            description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                            maxLength: 316
+                            pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                            type: string
+                        required:
+                        - lastTransitionTime
+                        - message
+                        - reason
+                        - status
+                        - type
+                        type: object
+                      type: array
+                    desiredAgents:
+                      additionalProperties:
+                        format: int32
+                        type: integer
+                      type: object
+                    kserveReady:
+                      type: boolean
+                    phase:
+                      description: CollectivePhase represents the operational phase
+                        of a single AgentCollective.
+                      enum:
+                      - Pending
+                      - Progressing
+                      - Ready
+                      - Degraded
+                      type: string
+                    readyAgents:
+                      additionalProperties:
+                        format: int32
+                        type: integer
+                      type: object
+                    scaledObjectsActive:
+                      type: boolean
+                    sharedModel:
+                      description: |-
+                        SharedModel surfaces the KServe model this collective consumes and
+                        whether it is shared in from another namespace (e.g. the acc-system
+                        shared vLLM — proposal 026 G1), so the oversight plane can show
+                        "model: shared from <ns>". Nil for non-KServe backends
+                        (anthropic/ollama/llama_stack).
+                      properties:
+                        inferenceService:
+                          description: InferenceService is the consumed KServe InferenceService
+                            name.
+                          type: string
+                        namespace:
+                          description: Namespace is where that InferenceService lives.
+                          type: string
+                        shared:
+                          description: |-
+                            Shared is true when Namespace differs from the collective's own
+                            namespace — the model is shared in from another Data Science Project
+                            (e.g. acc-system) rather than served locally.
+                          type: boolean
+                        url:
+                          description: |-
+                            URL is the resolved model endpoint (empty until the InferenceService
+                            publishes one).
+                          type: string
+                      type: object
+                  type: object
+                description: CollectiveStatuses maps collective name → its operational
+                  status.
+                type: object
+              conditions:
+                description: |-
+                  Conditions contains the standard metav1.Condition set.
+                  Known types: Ready, InfrastructureReady, CollectivesReady,
+                  PrerequisitesMet, KafkaBridgeReady, UpgradeApprovalPending.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              currentVersion:
+                description: CurrentVersion is the ACC version currently deployed.
+                type: string
+              defaultCatalogBootstrapped:
+                description: |-
+                  DefaultCatalogBootstrapped is true once the operator created the
+                  acc-canonical AccCatalog in this namespace (or found catalogs
+                  already present).
+                type: boolean
+              infrastructure:
+                description: Infrastructure reports the state of operator-managed
+                  shared components.
+                properties:
+                  milvusConnected:
+                    type: boolean
+                  natsLeafConnected:
+                    description: |-
+                      NATSLeafConnected is true when the edge NATS leaf node has established
+                      a connection to the datacenter hub (deployMode=edge only).
+                    type: boolean
+                  natsReady:
+                    type: boolean
+                  natsVersion:
+                    type: string
+                  opaBundleReady:
+                    type: boolean
+                  otelCollectorReady:
+                    type: boolean
+                  redisReady:
+                    type: boolean
+                  redisVersion:
+                    type: string
+                type: object
+              kafkaBridgeReady:
+                description: KafkaBridgeReady is true when the Kafka bridge Deployment
+                  is available.
+                type: boolean
+              manifestDeliveryReady:
+                description: |-
+                  ManifestDeliveryReady is true when the acc-roles, acc-skills, and
+                  acc-mcps ConfigMaps have been emitted by the manifest delivery
+                  reconciler that ships in PR-50.
+                type: boolean
+              mcpServerStatuses:
+                additionalProperties:
+                  description: |-
+                    MCPServerStatus reports the operational state of one MCP server.
+                    Aggregated into AgentCorpusStatus.MCPServerStatuses by the MCP reconciler.
+                  properties:
+                    ready:
+                      description: Ready is true when the Deployment's ReadyReplicas
+                        matches Replicas.
+                      type: boolean
+                    replicas:
+                      description: Replicas is the live ReadyReplicas count from the
+                        Deployment.
+                      format: int32
+                      type: integer
+                    serviceURL:
+                      description: |-
+                        ServiceURL is the in-cluster JSON-RPC URL agents should call.
+                        Format: http://acc-mcp-{name}.{namespace}.svc.cluster.local:{port}/rpc
+                      type: string
+                  required:
+                  - ready
+                  - replicas
+                  type: object
+                description: |-
+                  MCPServerStatuses reports the per-MCP-server state. Keyed by
+                  MCPServerSpec.Name. Populated by the MCP reconciler that ships in PR-51.
+                type: object
+              networkPolicy:
+                description: |-
+                  NetworkPolicy reports what the NetworkPolicyReconciler emitted
+                  (proposal 014).  The companion NetworkPolicyReady condition
+                  carries the human-readable reason.
+                properties:
+                  activeTier:
+                    description: |-
+                      ActiveTier is the policy tier actually emitted —
+                      min(spec.networkPolicy.maxTier, clusterCapability).  0 means no
+                      policy (standalone, disabled, or a non-enforcing CNI).
+                    format: int32
+                    type: integer
+                  backend:
+                    description: |-
+                      Backend names the policy engine in use: "none", "networkpolicy",
+                      "egressfirewall", or "cilium".
+                    type: string
+                  policyCount:
+                    description: |-
+                      PolicyCount is the number of policy objects the operator owns for
+                      this corpus.
+                    format: int32
+                    type: integer
+                type: object
+              observedGeneration:
+                description: ObservedGeneration is the .metadata.generation this status
+                  reflects.
+                format: int64
+                type: integer
+              pendingUpgradeVersion:
+                description: |-
+                  PendingUpgradeVersion is set when upgradePolicy.requireApproval=true and a
+                  version change is pending user approval.
+                type: string
+              phase:
+                description: Phase is the top-level operational state.
+                enum:
+                - Pending
+                - Progressing
+                - Ready
+                - Degraded
+                - Error
+                - UpgradeApprovalPending
+                type: string
+              prerequisites:
+                description: |-
+                  Prerequisites reports the detected presence of each optional cluster dependency.
+                  Written by the PrerequisiteReconciler; read by downstream sub-reconcilers.
+                properties:
+                  allMet:
+                    description: AllMet is true when every required prerequisite is
+                      satisfied.
+                    type: boolean
+                  ciliumInstalled:
+                    description: |-
+                      CiliumInstalled is true when the cilium.io API group is
+                      registered.  Enables Tier 2/3 network policy — proposal 014.
+                    type: boolean
+                  falcoInstalled:
+                    description: |-
+                      FalcoInstalled is true when the Falco CRD group is registered —
+                      a runtime-evidence backend, proposal 015.
+                    type: boolean
+                  gatekeeperInstalled:
+                    description: GatekeeperInstalled is true when templates.gatekeeper.sh
+                      is registered.
+                    type: boolean
+                  kafkaReachable:
+                    description: KafkaReachable is true when the configured Kafka
+                      bootstrap servers are TCP-reachable.
+                    type: boolean
+                  kedaInstalled:
+                    description: KEDAInstalled is true when the KEDA API group (keda.sh)
+                      is present.
+                    type: boolean
+                  kserveInstalled:
+                    description: KServeInstalled is true when serving.kserve.io is
+                      registered.
+                    type: boolean
+                  netobservInstalled:
+                    description: |-
+                      NetObservInstalled is true when the flows.netobserv.io API group
+                      is registered (OpenShift Network Observability) — the
+                      network-connect evidence source, proposal 015.
+                    type: boolean
+                  ovnEgressFirewallSupported:
+                    description: |-
+                      OVNEgressFirewallSupported is true when the k8s.ovn.org API
+                      group is registered (OVN-Kubernetes CNI).  Enables Tier 2 FQDN
+                      egress via EgressFirewall — proposal 014.
+                    type: boolean
+                  prometheusRulesSupported:
+                    description: PrometheusRulesSupported is true when monitoring.coreos.com
+                      is registered.
+                    type: boolean
+                  rhacsInstalled:
+                    description: |-
+                      RHACSInstalled is true when the platform.stackrox.io API group
+                      is registered (Red Hat Advanced Cluster Security) — a
+                      runtime-evidence backend, proposal 015.
+                    type: boolean
+                  rhoaiInstalled:
+                    description: RHOAIInstalled is true when the ODH/RHOAI API group
+                      is registered.
+                    type: boolean
+                  spireInstalled:
+                    description: |-
+                      SpireInstalled is true when the spire.spiffe.io API group is
+                      registered (spire-controller-manager present).  Gates SPIFFE
+                      workload-identity provisioning — proposal 011.
+                    type: boolean
+                  tetragonInstalled:
+                    description: |-
+                      TetragonInstalled is true when the TracingPolicy resource (kind,
+                      under cilium.io/v1alpha1) is registered — a runtime-evidence
+                      backend, proposal 015.  Detected resource-level, NOT by the
+                      cilium.io group (that would collide with CiliumInstalled).
+                    type: boolean
+                type: object
+              rhoaiProjectRegistered:
+                description: |-
+                  RHOAIProjectRegistered is true once the corpus namespace carries the
+                  opendatahub.io/dashboard label (visible as an RHOAI Data Science
+                  Project).
+                type: boolean
+              runtimeEvidence:
+                description: |-
+                  RuntimeEvidence reports the kernel-event evidence layer state
+                  (proposal 015).  The companion RuntimeEvidenceReady condition
+                  carries the human-readable reason.
+                properties:
+                  activeBackend:
+                    description: |-
+                      ActiveBackend names the selected process/file evidence backend:
+                      "none", "rhacs", "falco", or "tetragon".
+                    type: string
+                  bridgeReady:
+                    description: |-
+                      BridgeReady is true when the runtime-evidence bridge Deployment
+                      is available.
+                    type: boolean
+                  enforcing:
+                    description: |-
+                      Enforcing is true when kernel violations block (Enforce mode);
+                      false during the observe baseline.
+                    type: boolean
+                  networkSource:
+                    description: |-
+                      NetworkSource names the network-connect evidence source:
+                      "none" or "netobserv".
+                    type: string
+                type: object
+              tuiDeployed:
+                description: |-
+                  TUIDeployed is true once the acc-tui attach pod is reconciled
+                  (proposal 023). False when spec.tui is unset or disabled.
+                type: boolean
+              webguiDeployed:
+                description: |-
+                  WebGUIDeployed is true once the acc-webgui Deployment + Service (and,
+                  when route.openshift.io is present, Route) are reconciled behind the
+                  Keycloak oauth2-proxy (proposal 023). False when spec.webgui is unset,
+                  disabled, or its Keycloak config is incomplete (the operator refuses
+                  to expose an unauthenticated surface).
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

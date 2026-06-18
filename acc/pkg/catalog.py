@@ -179,7 +179,13 @@ class CatalogIndexEntry(BaseModel):
     glob entry (file mode).
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # Tolerate unknown fields: the published index.json schema evolves (newer
+    # generators add fields such as `bundle_url`) and an older agent's resolver
+    # must not reject the entire catalog over a field it doesn't consume.
+    # Forbidding extras made EVERY entry fail validation, so the index parsed to
+    # zero entries → "no catalog advertises X" (proposal 032 §11 catalog schema
+    # drift, observed live: extra_forbidden on `bundle_url`).
+    model_config = ConfigDict(extra="ignore")
 
     name: str
     version: str
@@ -188,6 +194,12 @@ class CatalogIndexEntry(BaseModel):
     tarball_path: str = ""            # file mode
     signature_url: str = ""           # https mode (relative or absolute)
     signature_path: str = ""          # file mode
+    # Sigstore bundle (cosign --bundle): an alternative to the detached
+    # signature that the publisher (acc-pkg publish) emits alongside it.
+    # Accepted + carried so a newer catalog index parses; verification
+    # still uses the detached signature today (acc-spearhead#92).
+    bundle_url: str = ""              # https mode
+    bundle_path: str = ""             # file mode
 
 
 class ResolvedPackage(BaseModel):
@@ -237,21 +249,42 @@ def load_catalogs(workspace: Path | None = None) -> list[list[Catalog]]:
 # ---------------------------------------------------------------------------
 
 
-def _fetch_index_https(catalog: Catalog) -> list[CatalogIndexEntry]:
-    """Fetch and parse ``<url>/index.json`` for an https catalog."""
+class IndexFetchError(Exception):
+    """An index could not be fetched or parsed.
+
+    :func:`fetch_index` swallows this to an empty list so the resolver can keep
+    walking other catalogs; :func:`fetch_index_strict` re-raises it so the
+    diagnostic path can tell an unreachable catalog apart from a genuinely
+    absent package (proposal 032 Finding D).
+    """
+
+
+def _fetch_index_https_strict(catalog: Catalog) -> list[CatalogIndexEntry]:
+    """Fetch + parse ``<url>/index.json`` for an https catalog, RAISING
+    :class:`IndexFetchError` on any network/parse failure (no silent []).
+    """
     index_url = catalog.url.rstrip("/") + "/index.json"
     try:
         with urllib.request.urlopen(index_url, timeout=10) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.URLError as exc:
-        logger.warning("catalog %s: failed to fetch %s (%s)", catalog.id, index_url, exc)
-        return []
+        raise IndexFetchError(f"GET {index_url}: {exc}") from exc
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        logger.warning("catalog %s: malformed index.json (%s)", catalog.id, exc)
-        return []
+        raise IndexFetchError(f"{index_url}: malformed index.json ({exc})") from exc
     return [CatalogIndexEntry.model_validate(e) for e in data.get("packages", [])]
+
+
+def _fetch_index_https(catalog: Catalog) -> list[CatalogIndexEntry]:
+    """Best-effort https index fetch: logs + returns [] on failure so the
+    resolver can keep walking the remaining catalogs.
+    """
+    try:
+        return _fetch_index_https_strict(catalog)
+    except IndexFetchError as exc:
+        logger.warning("catalog %s: %s", catalog.id, exc)
+        return []
 
 
 _ACCPKG_RE = re.compile(r"^(?P<name>[^/]+)-(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.accpkg$")
@@ -301,10 +334,86 @@ def _fetch_index_file(catalog: Catalog) -> list[CatalogIndexEntry]:
 
 
 def fetch_index(catalog: Catalog) -> list[CatalogIndexEntry]:
-    """Mode-agnostic index fetcher."""
+    """Mode-agnostic index fetcher (best-effort: [] on failure)."""
     if catalog.mode == "https":
         return _fetch_index_https(catalog)
     return _fetch_index_file(catalog)
+
+
+def fetch_index_strict(catalog: Catalog) -> list[CatalogIndexEntry]:
+    """Like :func:`fetch_index` but RAISES :class:`IndexFetchError` instead of
+    swallowing fetch/parse failures — lets :func:`explain_resolution_failure`
+    distinguish an unreachable catalog from a genuinely absent package
+    (proposal 032 Finding D).
+    """
+    if catalog.mode == "https":
+        return _fetch_index_https_strict(catalog)
+    return _fetch_index_file(catalog)
+
+
+def explain_resolution_failure(
+    name: str, constraint: str, *, workspace: Path | None = None
+) -> str:
+    """Build a self-diagnosing message for a failed resolve (proposal 032 Finding D).
+
+    The bare "no catalog advertises X matching C" cannot distinguish three very
+    different causes: the catalog could not be FETCHED (egress / availability —
+    the live coding-pack symptom hid here), the name is genuinely ABSENT, or the
+    name IS published but no version satisfies the constraint. Re-walk the
+    catalogs once (only on the failure path) and say which. Never let the
+    diagnostic itself mask the original failure.
+    """
+    try:
+        consulted: list[str] = []
+        fetch_failures: dict[str, str] = {}
+        versions_seen: list[str] = []
+        for catalog in _iter_layered(workspace):
+            consulted.append(catalog.id)
+            try:
+                index = fetch_index_strict(catalog)
+            except IndexFetchError as exc:
+                fetch_failures[catalog.id] = str(exc)
+                continue
+            versions_seen.extend(e.version for e in index if e.name == name)
+        return _format_resolution_failure(
+            name, constraint, consulted, fetch_failures, sorted(set(versions_seen))
+        )
+    except Exception as exc:  # noqa: BLE001 — diagnostics must never mask the failure
+        return (
+            f"no catalog advertises {name} matching {constraint!r} "
+            f"(diagnostics unavailable: {exc})"
+        )
+
+
+def _format_resolution_failure(
+    name: str,
+    constraint: str,
+    consulted: list[str],
+    fetch_failures: dict[str, str],
+    versions_seen: list[str],
+) -> str:
+    """Pure formatter for :func:`explain_resolution_failure` (unit-tested)."""
+    head = f"no catalog advertises {name} matching {constraint!r}"
+    detail: list[str] = []
+    if not consulted:
+        detail.append("no catalogs are configured")
+    if fetch_failures:
+        fails = "; ".join(f"{cid} ({err})" for cid, err in fetch_failures.items())
+        detail.append(
+            f"{len(fetch_failures)}/{len(consulted)} catalog(s) could not be fetched "
+            f"(check egress / availability): {fails}"
+        )
+    if versions_seen:
+        detail.append(
+            f"{name} IS published at {', '.join(versions_seen)} but none satisfy "
+            f"{constraint!r} — check the version constraint"
+        )
+    elif consulted and not fetch_failures:
+        detail.append(
+            f"{name} is not present in any reachable catalog "
+            f"({', '.join(consulted)}) — stale index or wrong package name"
+        )
+    return head + (" — " + "; ".join(detail) if detail else "")
 
 
 # ---------------------------------------------------------------------------

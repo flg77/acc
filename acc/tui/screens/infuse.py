@@ -121,6 +121,9 @@ class InfuseScreen(Screen):
         # waiting for; cleared once an agent matching it heartbeats.
         self._apply_started_ts: float = 0.0
         self._pending_apply: tuple[str, str | None] | None = None
+        # 033 WS-G Part 2 — lazily-built (skill_reg, mcp_reg) tuple for the
+        # caps panel; None until first _capability_registries() call.
+        self._caps_registries: tuple[Any, Any] | None = None
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="nucleus", id="nav")
@@ -142,6 +145,21 @@ class InfuseScreen(Screen):
                     value="ingester",
                     allow_blank=False,
                 )
+
+            # 033 WS-G Part 2 — Active LLM + caps overview for the selected
+            # role.  The Active-LLM line shows the model the role is BOUND to
+            # in collective.yaml (AgentSpec.model, resolved to a human label
+            # via acc.models.get_model); "—" when unbound.  The two caps
+            # tables show the allowed∩installed skills + MCPs (the
+            # capabilities this role can actually use on this deploy).
+            yield Static("Active LLM: —", id="active-llm-line", classes="status-bar")
+            with Horizontal(id="row-caps"):
+                with Container(id="caps-skills-box"):
+                    yield Label("Skills (allowed ∩ installed)", classes="section-label")
+                    yield DataTable(id="caps-skills-table")
+                with Container(id="caps-mcps-box"):
+                    yield Label("MCPs (allowed ∩ installed)", classes="section-label")
+                    yield DataTable(id="caps-mcps-table")
 
             # PR-D — cluster_id surface.  Tags the agent the operator's
             # about to spawn with a cluster grouping the arbiter's
@@ -218,6 +236,9 @@ class InfuseScreen(Screen):
         """Populate role Select dynamically from filesystem (REQ-TUI-020)."""
         table = self.query_one("#history-table", DataTable)
         table.add_columns("Version", "Timestamp", "Event", "Approver")
+        # 033 WS-G Part 2 — caps tables: one column each (the capability id).
+        self.query_one("#caps-skills-table", DataTable).add_columns("skill")
+        self.query_one("#caps-mcps-table", DataTable).add_columns("mcp")
         self._refresh_status()
         self._set_history_visible(False)
         self._load_dynamic_roles()
@@ -247,6 +268,7 @@ class InfuseScreen(Screen):
         # Pre-populate task types for the first role
         if role_names:
             self._populate_task_types(role_names[0])
+            self._refresh_role_caps(role_names[0])
 
     def _populate_task_types(self, role_name: str) -> None:
         """Load task_types from the selected role and fill the input (REQ-TUI-021)."""
@@ -342,6 +364,10 @@ class InfuseScreen(Screen):
         self.query_one("#input-token-budget", Input).value = str(token_budget)
         self.query_one("#input-rate-rpm", Input).value = str(rate_rpm)
 
+        # 033 WS-G Part 2 — refresh the caps tables + Active-LLM line for the
+        # role we just pre-filled.
+        self._refresh_role_caps(role_name, role_def=role_def)
+
         self.status_text = f"Pre-filled from roles/{role_name}/ — review and Apply"
 
     def on_navigate_to(self, event: NavigateTo) -> None:
@@ -353,6 +379,7 @@ class InfuseScreen(Screen):
             role_name = str(event.value) if event.value else ""
             if role_name:
                 self._populate_task_types(role_name)
+                self._refresh_role_caps(role_name)
 
     # ------------------------------------------------------------------
     # Reactive watchers
@@ -629,6 +656,118 @@ class InfuseScreen(Screen):
 
     def _refresh_status(self) -> None:
         self.query_one("#status-bar", Static).update(self.status_text)
+
+    # ------------------------------------------------------------------
+    # 033 WS-G Part 2 — caps panel + Active-LLM line
+    # ------------------------------------------------------------------
+
+    def _capability_registries(self):
+        """Build (once, cached) the skill + MCP registries used to compute
+        the allowed∩installed overlap.  Best-effort: a registry that fails
+        to load yields an empty one, so the caps tables just show nothing
+        rather than raising on the render path."""
+        cached = getattr(self, "_caps_registries", None)
+        if cached is not None:
+            return cached
+        skill_reg = None
+        mcp_reg = None
+        try:
+            from acc.skills.registry import SkillRegistry  # noqa: PLC0415
+            skill_reg = SkillRegistry()
+            skill_reg.load_from()
+        except Exception:
+            logger.exception("infuse: SkillRegistry load failed (caps panel)")
+            skill_reg = None
+        try:
+            from acc.mcp.registry import MCPRegistry  # noqa: PLC0415
+            mcp_reg = MCPRegistry()
+            mcp_reg.load_from()
+        except Exception:
+            logger.exception("infuse: MCPRegistry load failed (caps panel)")
+            mcp_reg = None
+        self._caps_registries = (skill_reg, mcp_reg)
+        return self._caps_registries
+
+    def _refresh_role_caps(self, role_name: str, role_def: Any = None) -> None:
+        """Repaint the caps tables + the Active-LLM line for *role_name*.
+
+        Best-effort end-to-end: any failure logs + leaves the panel in its
+        previous state (never breaks the Apply form)."""
+        if role_def is None:
+            try:
+                root = _roles_root()
+                role_def = RoleLoader(root, role_name).load()
+            except Exception:
+                logger.exception("infuse: role load failed for caps panel (%r)", role_name)
+                role_def = None
+        self._refresh_caps_tables(role_def)
+        self._refresh_active_llm(role_name)
+
+    def _refresh_caps_tables(self, role_def: Any) -> None:
+        from acc.capability_index import (  # noqa: PLC0415
+            get_allowed_installed_capabilities,
+        )
+
+        skill_reg, mcp_reg = self._capability_registries()
+        try:
+            skills, mcps = get_allowed_installed_capabilities(
+                role_def, skill_reg, mcp_reg,
+            )
+        except Exception:
+            logger.exception("infuse: capability intersection failed")
+            skills, mcps = [], []
+
+        skills_table = self.query_one("#caps-skills-table", DataTable)
+        skills_table.clear()
+        for sid in skills:
+            skills_table.add_row(sid)
+        if not skills:
+            skills_table.add_row("—")
+
+        mcps_table = self.query_one("#caps-mcps-table", DataTable)
+        mcps_table.clear()
+        for mid in mcps:
+            mcps_table.add_row(mid)
+        if not mcps:
+            mcps_table.add_row("—")
+
+    def _role_model_id(self, role_name: str) -> str:
+        """Return the model_id this role is BOUND to in collective.yaml
+        (``AgentSpec.model``), or "" when unbound / no spec is reachable."""
+        try:
+            from acc.collective import load_collective  # noqa: PLC0415
+            path = _resolve_collective_path()
+            if not path.exists():
+                return ""
+            spec = load_collective(path)
+        except Exception:
+            logger.exception("infuse: collective load failed for active-LLM")
+            return ""
+        for agent in getattr(spec, "agents", []) or []:
+            if getattr(agent, "role", "") == role_name:
+                return (getattr(agent, "model", None) or "").strip()
+        return ""
+
+    def _refresh_active_llm(self, role_name: str) -> None:
+        """Paint the Active-LLM line from the role's bound model.
+
+        Resolves ``AgentSpec.model`` (a model_id) to a human label via
+        :func:`acc.models.get_model`; falls back to the raw model_id when
+        the registry has no entry, and to "—" when the role is unbound."""
+        line = self.query_one("#active-llm-line", Static)
+        model_id = self._role_model_id(role_name)
+        if not model_id:
+            line.update("Active LLM: —")
+            return
+        label = model_id
+        try:
+            from acc.models import get_model  # noqa: PLC0415
+            entry = get_model(model_id)
+            if entry is not None:
+                label = entry.display()
+        except Exception:
+            logger.exception("infuse: get_model failed for %r", model_id)
+        line.update(f"Active LLM: {label}")
 
 
 # ---------------------------------------------------------------------------

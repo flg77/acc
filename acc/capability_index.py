@@ -51,6 +51,78 @@ logger = logging.getLogger("acc.capability_index")
 
 
 # ---------------------------------------------------------------------------
+# Capability alignment — role grant ∩ installed registry (033 WS-G Part 1)
+# ---------------------------------------------------------------------------
+
+
+def _registry_installed(registry: Any, *getters: str) -> list[str]:
+    """Best-effort read of the set of ids a registry currently has loaded.
+
+    The skills + MCP registries expose ``list_skill_ids()`` /
+    ``list_server_ids()`` respectively; both also carry a ``manifests()``
+    dict.  We try the explicit list accessors first, then fall back to
+    the manifests keys, so an evolving registry surface can't break the
+    alignment.  Returns ``[]`` when the registry is None or exposes none
+    of the expected accessors.
+    """
+    if registry is None:
+        return []
+    for name in getters:
+        getter = getattr(registry, name, None)
+        if callable(getter):
+            try:
+                value = getter()
+            except Exception:  # noqa: BLE001 — registry read must not raise here
+                continue
+            if isinstance(value, dict):
+                return list(value.keys())
+            return list(value)
+    return []
+
+
+def get_allowed_installed_capabilities(
+    role_def: Any,
+    skill_registry: Any,
+    mcp_registry: Any,
+) -> tuple[list[str], list[str]]:
+    """Intersect a role's *allowed* capabilities with what's *installed*.
+
+    033 WS-G Part 1.  A role's ``allowed_skills`` / ``allowed_mcps`` are
+    the membrane receptor set — what the role MAY reach.  The registries
+    hold what the running process actually loaded (in-tree + installed
+    packs).  The Nucleus pane wants the operator-meaningful overlap: the
+    capabilities this role can use *right now*, on this deploy.
+
+    Args:
+        role_def: A :class:`acc.config.RoleDefinitionConfig` (or any
+            object exposing ``allowed_skills`` / ``allowed_mcps`` list
+            attributes).  ``None`` yields two empty lists.
+        skill_registry: A :class:`acc.skills.registry.SkillRegistry`
+            (read via ``list_skill_ids()`` / ``manifests()``).
+        mcp_registry: A :class:`acc.mcp.registry.MCPRegistry`
+            (read via ``list_server_ids()`` / ``manifests()``).
+
+    Returns:
+        ``(skills, mcps)`` — each the **sorted** intersection of the
+        role's grant and the registry's installed set.  Pure + side-
+        effect free; safe for unit tests + the TUI render path.
+    """
+    allowed_skills = list(getattr(role_def, "allowed_skills", []) or [])
+    allowed_mcps = list(getattr(role_def, "allowed_mcps", []) or [])
+
+    installed_skills = set(
+        _registry_installed(skill_registry, "list_skill_ids", "manifests")
+    )
+    installed_mcps = set(
+        _registry_installed(mcp_registry, "list_server_ids", "manifests")
+    )
+
+    skills = sorted(set(allowed_skills) & installed_skills)
+    mcps = sorted(set(allowed_mcps) & installed_mcps)
+    return skills, mcps
+
+
+# ---------------------------------------------------------------------------
 # Wire protocol — request/reply on ``subject_capability_query(cid)``
 # ---------------------------------------------------------------------------
 

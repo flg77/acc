@@ -70,7 +70,9 @@ class TestExistingBehaviourPreserved:
         out = _render_control(snap, None)
         assert "Running agents" in out
         assert "assistant → assistant-1" in out
-        assert "MUST appear above" in out
+        # Grounding directive (a9ac028 reworded it from "MUST appear above" to
+        # the PROPOSE_INFUSE "Important" block).
+        assert "must already be running or installed above" in out
 
     def test_sub_collectives_section_intact(self) -> None:
         snap = PerceptionSnapshot(

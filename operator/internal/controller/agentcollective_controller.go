@@ -25,6 +25,7 @@ import (
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/filewatch"
 	statuspkg "github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/status"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/util"
 )
 
 var collectiveLog = logf.Log.WithName("agentcollective-controller")
@@ -126,7 +127,7 @@ func (r *AgentCollectiveReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	for _, roleSpec := range collective.Spec.Agents {
 		role := string(roleSpec.Role)
-		deployName := fmt.Sprintf("%s-%s", collective.Name, role)
+		deployName := util.AgentDeploymentName(collective.Name, role)
 
 		deploy := &appsv1.Deployment{}
 		if err := r.Client.Get(ctx, client.ObjectKey{

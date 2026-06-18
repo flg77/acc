@@ -13,9 +13,11 @@ import (
 	"testing"
 )
 
-// TestWalkTree_Roles confirms the embedded roles tree carries every
-// persona shipped under roles/. Specific spot-checks: a legacy 5-role
-// member, a new D3 split-skills persona, and a new E4 research persona.
+// TestWalkTree_Roles confirms the embedded roles tree carries the in-tree
+// control roles shipped under roles/. Domain personas (analyst,
+// coding_agent_implementer, research_planner, …) moved to the @acc/*
+// ecosystem packs in the cutover, so spot-check the control roles that
+// remain in-tree instead.
 func TestWalkTree_Roles(t *testing.T) {
 	data, err := walkTree(embedRoles, "data/roles")
 	if err != nil {
@@ -26,9 +28,9 @@ func TestWalkTree_Roles(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"analyst__role.yaml",                  // legacy
-		"coding_agent_implementer__role.yaml", // D3
-		"research_planner__role.yaml",         // E4
+		"arbiter__role.yaml",            // control: orchestration + countersign
+		"compliance_officer__role.yaml", // control: governance
+		"orchestrator__role.yaml",       // control: CapabilityIndex routing
 	} {
 		if _, ok := data[want]; !ok {
 			t.Errorf("roles ConfigMap missing key %q", want)

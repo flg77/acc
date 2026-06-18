@@ -73,6 +73,58 @@ async def test_row_highlight_renders_detail():
 
 
 @pytest.mark.asyncio
+async def test_real_cursor_navigation_drives_detail_and_select_loads_editor():
+    """Regression for the selection bug: drive the REAL DataTable cursor
+    (not a hand-built RowHighlighted) so this would have caught a cell-mode
+    table where RowHighlighted/RowSelected never fire.
+
+    * cursor_type must be "row";
+    * moving the cursor (highlight) renders detail but does NOT auto-load
+      the editor (so a background reload can't clobber edits);
+    * an explicit row select (Enter) loads the prompt into the editor.
+    """
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        table = screen.query_one("#golden-table", DataTable)
+        assert table.cursor_type == "row", "table must use the row cursor"
+        assert table.row_count >= 2, "shipped suite should provide >= 2 rows"
+
+        detail = screen.query_one("#diagnostics-detail", Static)
+        editor = screen.query_one("#golden-editor", TextArea)
+        captured: list[str] = []
+        original = detail.update
+
+        def _cap(content="", *a, **kw):
+            captured.append(str(content))
+            return original(content, *a, **kw)
+
+        detail.update = _cap  # type: ignore[assignment]
+
+        idx = 1
+        target_name = screen._row_key_value(list(table.rows.keys())[idx])
+
+        # Highlight via the real cursor → detail renders, editor untouched.
+        table.focus()
+        table.move_cursor(row=idx)
+        await pilot.pause()
+        assert any(target_name in c for c in captured), (
+            "row highlight should render the selected prompt's detail"
+        )
+        assert target_name not in editor.text, (
+            "highlight must NOT auto-load the editor (clobber guard)"
+        )
+
+        # Explicit select (Enter) → prompt loads into the editor.
+        await pilot.press("enter")
+        await pilot.pause()
+        assert target_name in editor.text, (
+            "row select (Enter) should load the prompt into the editor"
+        )
+
+
+@pytest.mark.asyncio
 async def test_run_selected_updates_results(monkeypatch):
     """Mock run_one to return a passing GoldenResult; verify the
     table's Last column + the results cache update."""

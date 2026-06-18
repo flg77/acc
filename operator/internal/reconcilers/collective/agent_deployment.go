@@ -12,7 +12,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -70,6 +69,20 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 		return result, fmt.Errorf("render acc-config: %w", err)
 	}
 
+	// Deliver the namespace's AccCatalogs (rendered into the acc-catalogs
+	// ConfigMap by AccCatalogReconciler) as /etc/acc/catalogs.yaml via the SAME
+	// acc-config mount the agent already reads. Merging into acc-config avoids a
+	// nested subPath file mount into the /etc/acc ConfigMap volume, which does
+	// NOT materialize reliably (the file is absent in-pod even though the mount
+	// renders in the Deployment) — proposal 032 §11 catalog delivery.
+	cmData := map[string]string{"acc-config.yaml": accConfigYAML}
+	catCM := &corev1.ConfigMap{}
+	if getErr := r.Client.Get(ctx, types.NamespacedName{Namespace: ns, Name: "acc-catalogs"}, catCM); getErr == nil {
+		if cy := catCM.Data["catalogs.yaml"]; cy != "" {
+			cmData["catalogs.yaml"] = cy
+		}
+	}
+
 	configMapName := fmt.Sprintf("%s-acc-config", collective.Name)
 	configMapLabels := util.CollectiveLabels(corpus.Name, collective.Spec.CollectiveID, "acc-config", corpus.Spec.Version)
 	cm := &corev1.ConfigMap{
@@ -78,7 +91,7 @@ func (r *AgentDeploymentReconciler) ReconcileCollective(
 			Namespace: ns,
 			Labels:    configMapLabels,
 		},
-		Data: map[string]string{"acc-config.yaml": accConfigYAML},
+		Data: cmData,
 	}
 	if _, err := util.Upsert(ctx, r.Client, r.Scheme, collective, cm, func(existing client.Object) error {
 		existing.(*corev1.ConfigMap).Data = cm.Data
@@ -184,10 +197,10 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	// Default off → objectLabels == labels and existing collectives are
 	// unchanged.  See kagenti.go.
 	objectLabels := AgentObjectLabels(collective, labels)
-	// Role names may contain underscores (e.g. coding_agent) which are
-	// invalid in RFC-1123 object names — sanitize for the Deployment name
-	// (labels keep the raw role; '_' is legal in label values).
-	deployName := fmt.Sprintf("%s-%s", collective.Name, strings.ReplaceAll(string(role), "_", "-"))
+	// Deployment name sanitizes underscores → hyphens (RFC-1123). Use the
+	// shared helper so the AgentCollective status controller resolves the
+	// EXACT same name (proposal 032 Finding A) — labels keep the raw role.
+	deployName := util.AgentDeploymentName(collective.Name, string(role))
 
 	// Resolve Anthropic API key env var if needed.
 	extraEnv := buildExtraEnv(corpus, collective, roleSpec, inferenceURL)
@@ -265,6 +278,15 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 									SubPath:   "acc-role.yaml",
 									ReadOnly:  true,
 								},
+								// Writable packages root for AccPackageInstall.
+								// The agent runs non-root (SCC-injected UID, GID 0)
+								// and acc-pkg unpacks installed packs under
+								// /var/lib/acc, which is not writable in the image
+								// layer (PermissionError on a signed-pack install).
+								// Back it with an emptyDir — ephemeral is fine: the
+								// operator re-reconciles AccPackageInstall after a
+								// pod restart (032 §11 tail / proposal 034 §8-Q3).
+								{Name: "acc-packages", MountPath: "/var/lib/acc"},
 							}, manifestMounts...),
 						},
 					},
@@ -297,6 +319,11 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 									},
 								},
 							},
+						},
+						// Writable packages root (see the acc-packages VolumeMount).
+						{
+							Name:         "acc-packages",
+							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 						},
 					}, manifestVolumes...),
 					// Append any role-specific VolumeClaimTemplates as emptyDir for Deployments

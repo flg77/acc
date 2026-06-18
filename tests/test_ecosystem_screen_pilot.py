@@ -108,9 +108,11 @@ def isolated_manifests(tmp_path, monkeypatch):
     skills_root = tmp_path / "skills"
     mcps_root = tmp_path / "mcps"
     roles_root = tmp_path / "roles"
+    packages_root = tmp_path / "packages"
     skills_root.mkdir()
     mcps_root.mkdir()
     roles_root.mkdir()
+    packages_root.mkdir()
 
     _write_skill_manifest(skills_root)
     _write_mcp_manifest(mcps_root)
@@ -123,6 +125,15 @@ def isolated_manifests(tmp_path, monkeypatch):
     monkeypatch.setenv("ACC_SKILLS_ROOT", str(skills_root))
     monkeypatch.setenv("ACC_MCPS_ROOT", str(mcps_root))
     monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
+    # Override the session-wide ``installed_family_packs`` ACC_PACKAGES_ROOT
+    # (conftest, autouse) with an EMPTY package root.  The Ecosystem screen's
+    # ``_load_roles`` is dual-source — it unions ``list_roles(ACC_ROLES_ROOT)``
+    # with ``list_installed_roles()`` (which reads ACC_PACKAGES_ROOT).  Without
+    # this override the 43 packaged @acc/* roles (account_executive, ...) bleed
+    # into the table and sort ahead of the fixtures, so row 0 is no longer
+    # ``test_role`` and the row-0 assertions below break.  monkeypatch restores
+    # the session root when the test ends.
+    monkeypatch.setenv("ACC_PACKAGES_ROOT", str(packages_root))
 
     return {
         "skills_root": skills_root,
