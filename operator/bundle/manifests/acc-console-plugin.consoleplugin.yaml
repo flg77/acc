@@ -1,0 +1,29 @@
+# ACC ConsolePlugin CR — OLM bundle object (proposal 035, PR-4).
+# ConsolePlugin IS in operator-registry's supportedResources (cluster-scoped),
+# so OLM applies this on install. Combined with the CSV annotation
+# `console.openshift.io/plugins: '["acc-console-plugin"]'` (auto-enables the
+# plugin in the console operator config), this surfaces the ACC oversight UI.
+# metadata.name MUST equal package.json consolePlugin.name ("acc-console-plugin").
+# Canonical source: console-plugin/manifests/consoleplugin.yaml — keep synced.
+apiVersion: console.openshift.io/v1
+kind: ConsolePlugin
+metadata:
+  name: acc-console-plugin
+  labels:
+    app.kubernetes.io/component: console-plugin
+    app.kubernetes.io/instance: acc-console-plugin
+    app.kubernetes.io/name: acc-console-plugin
+    app.kubernetes.io/part-of: acc-operator
+spec:
+  displayName: Agentic Cell Corpus
+  backend:
+    type: Service
+    service:
+      name: acc-console-plugin
+      # Cluster-scoped CR -> hard namespace ref. Must match where OLM places the
+      # (namespaced) Service/Deployment, i.e. the operator install namespace.
+      # Pinned to the CSV suggested-namespace (acc-system); patch if installed
+      # elsewhere.
+      namespace: acc-system
+      port: 9443
+      basePath: /

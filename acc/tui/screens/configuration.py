@@ -52,6 +52,8 @@ from textual.widgets import (
     TabPane,
 )
 
+from acc.models import ModelEntry, load_models
+from acc.pkg.manifest import CORE_BASELINE_MCPS, CORE_BASELINE_SKILLS
 from acc.tui.path_resolution import resolve_manifest_root
 from acc.tui.widgets.file_picker import FilePickerModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
@@ -101,6 +103,18 @@ def _risk_cell(risk_level: str) -> str:
     if risk == "CRITICAL":
         return "[bold red]CRITICAL[/bold red]"
     return risk or "—"
+
+
+def _capability_source(cap_id: str, baseline: "frozenset[str]") -> str:
+    """Provenance cell for the Skills / MCP tabs (033 WS-D).
+
+    ``core`` = a built-in baseline capability that ships with ACC (the
+    trusted floor); ``pack`` = one an installed package added.  This is
+    the trust distinction derivable today; full signer / signature /
+    install-time provenance needs install-pipeline capture and stays a
+    documented follow-up.
+    """
+    return "[dim]core[/dim]" if cap_id in baseline else "[cyan]pack[/cyan]"
 
 
 def _format_health(health: str) -> str:
@@ -451,6 +465,20 @@ class ConfigurationScreen(Screen):
             yield Label("LIVE BACKENDS (per agent)", classes="panel-label")
             yield DataTable(id="llm-live-table", show_cursor=False)
 
+            # 033 WS-C — the "all configured LLM endpoints" overview the
+            # 2026-06-16 TUI review asked for.  The registry (models.yaml)
+            # is what an agentset assigns to roles via AgentSpec.model;
+            # LIVE BACKENDS above shows what each running agent resolved
+            # to.  Read-only here; assignment writeback stays a follow-up.
+            yield Label("MODEL REGISTRY (models.yaml)", classes="panel-label")
+            yield Static(
+                "[dim]Endpoints an agentset can assign to roles "
+                "(per-agent model = AgentSpec.model → a model_id here). "
+                "Empty = agents use the configured default above.[/dim]",
+                id="llm-registry-hint",
+            )
+            yield DataTable(id="llm-registry-table", show_cursor=False)
+
     def _compose_skills_tab(self):
         """Skills tab — table + Upload button.  Moved from Ecosystem."""
         with ScrollableContainer():
@@ -482,15 +510,19 @@ class ConfigurationScreen(Screen):
         live_table = self.query_one("#llm-live-table", DataTable)
         live_table.add_columns("Agent", "Backend", "Model", "Health", "p50ms")
 
+        registry_table = self.query_one("#llm-registry-table", DataTable)
+        registry_table.add_columns("model_id", "Backend", "Model", "Base URL", "Label")
+
         skills_table = self.query_one("#skills-table", DataTable)
-        skills_table.add_columns("Skill", "Version", "Risk", "Requires")
+        skills_table.add_columns("Skill", "Version", "Risk", "Requires", "Source")
         skills_table.cursor_type = "row"
 
         mcps_table = self.query_one("#mcps-table", DataTable)
-        mcps_table.add_columns("Server", "Transport", "Risk", "Tools")
+        mcps_table.add_columns("Server", "Transport", "Risk", "Tools", "Source")
         mcps_table.cursor_type = "row"
 
         self._render_llm_summary()
+        self._render_model_registry()
         self._load_skills()
         self._load_mcps()
 
@@ -551,6 +583,58 @@ class ConfigurationScreen(Screen):
                 p50_str,
                 key=agent_id,
             )
+
+    # ------------------------------------------------------------------
+    # LLM tab — model registry overview (033 WS-C)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _model_registry_rows(
+        entries: "list[ModelEntry]",
+    ) -> list[tuple[str, str, str, str, str]]:
+        """Display rows for the MODEL REGISTRY table (pure → testable).
+
+        An empty registry yields one explanatory row rather than a blank
+        table — the 2026-06-16 review flagged silent empty tables as
+        confusing.
+        """
+        if not entries:
+            return [(
+                "—",
+                "(no models.yaml)",
+                "agents use the default backend above",
+                "—",
+                "—",
+            )]
+        rows: list[tuple[str, str, str, str, str]] = []
+        for e in entries:
+            rows.append((
+                (e.model_id or "—")[:24],
+                (e.backend or "—")[:14],
+                (e.model or "—")[:28],
+                (e.base_url or "—")[:32],
+                (e.label or "—")[:40],
+            ))
+        return rows
+
+    def _render_model_registry(self) -> None:
+        """Populate the MODEL REGISTRY table from models.yaml (best-effort).
+
+        ``load_models`` already folds a missing/invalid registry into an
+        empty list, so this never raises on a fresh corpus.
+        """
+        try:
+            entries = load_models()
+        except Exception:
+            logger.exception("configuration: model registry load failed")
+            entries = []
+        try:
+            table = self.query_one("#llm-registry-table", DataTable)
+            table.clear()
+            for row in self._model_registry_rows(entries):
+                table.add_row(*row)
+        except Exception:
+            logger.exception("configuration: model registry render failed")
 
     # ------------------------------------------------------------------
     # LLM tab — config summary + test
@@ -753,21 +837,21 @@ class ConfigurationScreen(Screen):
         try:
             from acc.skills import SkillRegistry  # noqa: PLC0415
         except Exception:
-            table.add_row("[dim]acc.skills not available[/dim]", "—", "—", "—")
+            table.add_row("[dim]acc.skills not available[/dim]", "—", "—", "—", "—")
             return
 
         try:
             reg = SkillRegistry()
             reg.load_from(_skills_root())
         except Exception as exc:
-            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—")
+            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—", "—")
             return
 
         manifests = reg.manifests()
         if not manifests:
             table.add_row(
                 "[dim]no skills loaded — see docs/howto-skills.md[/dim]",
-                "—", "—", "—",
+                "—", "—", "—", "—",
             )
             return
 
@@ -778,6 +862,7 @@ class ConfigurationScreen(Screen):
                 manifest.version,
                 _risk_cell(manifest.risk_level),
                 ", ".join(manifest.requires_actions) or "—",
+                _capability_source(skill_id, CORE_BASELINE_SKILLS),
                 key=skill_id,
             )
 
@@ -789,21 +874,21 @@ class ConfigurationScreen(Screen):
         try:
             from acc.mcp import MCPRegistry  # noqa: PLC0415
         except Exception:
-            table.add_row("[dim]acc.mcp not available[/dim]", "—", "—", "—")
+            table.add_row("[dim]acc.mcp not available[/dim]", "—", "—", "—", "—")
             return
 
         try:
             reg = MCPRegistry()
             reg.load_from(_mcps_root())
         except Exception as exc:
-            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—")
+            table.add_row(f"[red]load error: {exc}[/red]", "—", "—", "—", "—")
             return
 
         manifests = reg.manifests()
         if not manifests:
             table.add_row(
                 "[dim]no MCPs loaded — see docs/howto-mcps.md[/dim]",
-                "—", "—", "—",
+                "—", "—", "—", "—",
             )
             return
 
@@ -814,6 +899,7 @@ class ConfigurationScreen(Screen):
                 manifest.transport,
                 _risk_cell(manifest.risk_level),
                 ", ".join(manifest.allowed_tools) or "—",
+                _capability_source(server_id, CORE_BASELINE_MCPS),
                 key=server_id,
             )
 

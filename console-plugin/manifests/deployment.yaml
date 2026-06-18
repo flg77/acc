@@ -1,0 +1,92 @@
+# ACC console plugin Deployment (proposal 035, PR-4 — OLM wiring).
+#
+# This is the canonical, human-readable copy of the plugin Deployment. The SAME
+# spec is embedded into the operator CSV `spec.install.spec.deployments` (OLM
+# does NOT apply a standalone Deployment from a bundle — Deployment is not in
+# operator-registry's supportedResources set; Service/ConsolePlugin are, so
+# those two ship as standalone bundle objects under operator/bundle/manifests/).
+# Keep this file and the CSV deployment entry in sync.
+#
+# nginx serves the federated bundle over TLS :9443 using the OpenShift
+# service-serving cert that the service-ca operator mints from the Service
+# annotation and projects via the `serving-cert` volume.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: acc-console-plugin
+  namespace: acc-system
+  labels:
+    app: acc-console-plugin
+    app.kubernetes.io/component: console-plugin
+    app.kubernetes.io/instance: acc-console-plugin
+    app.kubernetes.io/name: acc-console-plugin
+    app.kubernetes.io/part-of: acc-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: acc-console-plugin
+  template:
+    metadata:
+      labels:
+        app: acc-console-plugin
+        app.kubernetes.io/component: console-plugin
+        app.kubernetes.io/instance: acc-console-plugin
+        app.kubernetes.io/name: acc-console-plugin
+        app.kubernetes.io/part-of: acc-operator
+    spec:
+      containers:
+      - name: acc-console-plugin
+        image: quay.io/flg77/acc_images:acc-console-plugin-0.2.12
+        imagePullPolicy: Always
+        ports:
+        - name: tls
+          containerPort: 9443
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+          requests:
+            cpu: 10m
+            memory: 50Mi
+        readinessProbe:
+          httpGet:
+            path: /plugin-manifest.json
+            port: 9443
+            scheme: HTTPS
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /plugin-manifest.json
+            port: 9443
+            scheme: HTTPS
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: serving-cert
+          mountPath: /var/serving-cert
+          readOnly: true
+      volumes:
+      # service-ca mints this secret from the Service's
+      # service.beta.openshift.io/serving-cert-secret-name annotation.
+      - name: serving-cert
+        secret:
+          secretName: acc-console-plugin-serving-cert
+          defaultMode: 420
+      securityContext:
+        runAsNonRoot: true
+        # No fixed runAsUser: OpenShift's restricted-v2 SCC assigns a uid from
+        # the namespace's range; the UBI nginx image is arbitrary-uid friendly.
+      # Pull secret for the private quay.io/flg77 image (mirrors the operator's
+      # pod-template-level pull secret; OLM re-reconciles the SA on upgrade).
+      imagePullSecrets:
+      - name: acc-images-pull
+      terminationGracePeriodSeconds: 10

@@ -303,3 +303,128 @@ async def test_attach_dir_registers_and_loads(tmp_path, monkeypatch):
         await pilot.pause()
         # The markdown prompt from the attached dir now shows up.
         assert "extra" in screen._prompts
+
+
+# ---------------------------------------------------------------------------
+# Proposal 033 WS-B — Form/MD subnav + role selector + Send
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_form_and_md_tabs_present():
+    from textual.widgets import TabbedContent
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        tabbed = screen.query_one("#golden-edit-tabs", TabbedContent)
+        ids = [t.id for t in tabbed.query("TabPane")]
+        assert "tab-golden-form" in ids
+        assert "tab-golden-md" in ids
+
+
+@pytest.mark.asyncio
+async def test_available_role_names_includes_control_role():
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        names = screen._available_role_names()
+        # The assistant control role is always in-tree.
+        assert "assistant" in names
+
+
+@pytest.mark.asyncio
+async def test_highlight_populates_form():
+    from textual.widgets import Select, TextArea
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        table = screen.query_one("#golden-table", DataTable)
+        first_key = list(table.rows.keys())[0]
+        screen.on_data_table_row_highlighted(
+            DataTable.RowHighlighted(
+                data_table=table, cursor_row=0, row_key=first_key,
+            )
+        )
+        await pilot.pause()
+        name = screen._row_key_value(first_key)
+        prompt = screen._prompts[name]
+        assert screen._current_name == name
+        assert (
+            screen.query_one("#form-prompt", TextArea).text.strip()
+            == prompt.prompt.strip()
+        )
+        assert (
+            str(screen.query_one("#form-role", Select).value)
+            == prompt.target_role
+        )
+
+
+@pytest.mark.asyncio
+async def test_form_to_prompt_requires_role_and_text():
+    from textual.widgets import TextArea
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        # Empty prompt → no transient GoldenPrompt is built.
+        screen.query_one("#form-prompt", TextArea).text = ""
+        assert screen._form_to_prompt() is None
+
+
+@pytest.mark.asyncio
+async def test_send_posts_prompt_load_message():
+    """Send routes the Form's values to the Prompt screen via a
+    PromptLoadMessage (auto_send) — the Prompt pane owns execution +
+    feedback (proposal 033 WS-B)."""
+    from acc.golden_prompts import GoldenPrompt
+    from acc.tui.messages import PromptLoadMessage
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._populate_form_fields(
+            GoldenPrompt(
+                name="t", prompt="do the thing", target_role="assistant",
+                operating_mode="PLAN",
+            )
+        )
+        await pilot.pause()
+
+        posted: list = []
+        screen.post_message = lambda m: posted.append(m)  # type: ignore
+
+        screen.action_send()
+        msgs = [m for m in posted if isinstance(m, PromptLoadMessage)]
+        assert msgs, "expected a PromptLoadMessage to be posted"
+        msg = msgs[0]
+        assert msg.target_role == "assistant"
+        assert msg.prompt_text == "do the thing"
+        assert msg.operating_mode == "PLAN"
+        assert msg.auto_send is True
+
+
+@pytest.mark.asyncio
+async def test_send_with_empty_form_sets_status_not_message():
+    """An empty Form posts nothing and warns instead."""
+    from acc.tui.messages import PromptLoadMessage
+    from textual.widgets import TextArea
+
+    app = _Harness()
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#form-prompt", TextArea).text = ""
+        posted: list = []
+        screen.post_message = lambda m: posted.append(m)  # type: ignore
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+        screen.action_send()
+        assert not [m for m in posted if isinstance(m, PromptLoadMessage)]
+        assert any("needs" in s.lower() for s in statuses)
