@@ -1,0 +1,27 @@
+# Agentic Cell Corpus console plugin image (proposal 035, PR-1).
+# Mirrors openshift/console-plugin-template's two-stage build, adapted to the
+# npm toolchain this repo uses. Joins the acc1 build chain as
+# acc-console-plugin-<ver> (user-pushed per the private-image policy).
+
+# ---- build stage: produce the module-federation bundle in dist/ ----
+FROM registry.access.redhat.com/ubi9/nodejs-22:latest AS build
+USER root
+WORKDIR /usr/src/app
+
+# Install deps first (better layer caching), then build.
+COPY package.json package-lock.json* ./
+RUN npm ci || npm install
+COPY . .
+RUN npm run build
+
+# ---- serve stage: nginx serves the static federated bundle ----
+FROM registry.access.redhat.com/ubi9/nginx-122:latest
+
+COPY --from=build /usr/src/app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/nginx.conf
+
+# UBI nginx images run as 1001 and listen on 8080 by default.
+USER 1001
+EXPOSE 8080
+
+CMD ["nginx", "-g", "daemon off;"]
