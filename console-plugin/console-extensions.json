@@ -1,1 +1,170 @@
-[]
+[
+  {
+    "type": "console.navigation/section",
+    "properties": {
+      "id": "acc",
+      "perspective": "admin",
+      "name": "Agentic Cell Corpus",
+      "insertAfter": "workloads"
+    }
+  },
+  {
+    "type": "console.navigation/resource-ns",
+    "properties": {
+      "id": "acc-agentcorpora",
+      "section": "acc",
+      "perspective": "admin",
+      "name": "Corpora",
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AgentCorpus"
+      },
+      "dataAttributes": {
+        "data-test": "acc-nav-agentcorpora"
+      }
+    }
+  },
+  {
+    "type": "console.navigation/resource-ns",
+    "properties": {
+      "id": "acc-agentcollectives",
+      "section": "acc",
+      "perspective": "admin",
+      "name": "Collectives",
+      "insertAfter": "acc-agentcorpora",
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AgentCollective"
+      },
+      "dataAttributes": {
+        "data-test": "acc-nav-agentcollectives"
+      }
+    }
+  },
+  {
+    "type": "console.navigation/resource-ns",
+    "properties": {
+      "id": "acc-acccatalogs",
+      "section": "acc",
+      "perspective": "admin",
+      "name": "Catalogs",
+      "insertAfter": "acc-agentcollectives",
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AccCatalog"
+      },
+      "dataAttributes": {
+        "data-test": "acc-nav-acccatalogs"
+      }
+    }
+  },
+  {
+    "type": "console.navigation/resource-ns",
+    "properties": {
+      "id": "acc-accpackageinstalls",
+      "section": "acc",
+      "perspective": "admin",
+      "name": "Package installs",
+      "insertAfter": "acc-acccatalogs",
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AccPackageInstall"
+      },
+      "dataAttributes": {
+        "data-test": "acc-nav-accpackageinstalls"
+      }
+    }
+  },
+  {
+    "type": "console.page/resource/list",
+    "properties": {
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AgentCorpus"
+      },
+      "component": { "$codeRef": "AgentCorpusList" }
+    }
+  },
+  {
+    "type": "console.page/resource/details",
+    "properties": {
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AgentCorpus"
+      },
+      "component": { "$codeRef": "AgentCorpusDetails" }
+    }
+  },
+  {
+    "type": "console.page/resource/list",
+    "properties": {
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AgentCollective"
+      },
+      "component": { "$codeRef": "AgentCollectiveList" }
+    }
+  },
+  {
+    "type": "console.page/resource/details",
+    "properties": {
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AgentCollective"
+      },
+      "component": { "$codeRef": "AgentCollectiveDetails" }
+    }
+  },
+  {
+    "type": "console.page/resource/list",
+    "properties": {
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AccCatalog"
+      },
+      "component": { "$codeRef": "AccCatalogList" }
+    }
+  },
+  {
+    "type": "console.page/resource/details",
+    "properties": {
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AccCatalog"
+      },
+      "component": { "$codeRef": "AccCatalogDetails" }
+    }
+  },
+  {
+    "type": "console.page/resource/list",
+    "properties": {
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AccPackageInstall"
+      },
+      "component": { "$codeRef": "AccPackageInstallList" }
+    }
+  },
+  {
+    "type": "console.page/resource/details",
+    "properties": {
+      "model": {
+        "group": "acc.redhat.io",
+        "version": "v1alpha1",
+        "kind": "AccPackageInstall"
+      },
+      "component": { "$codeRef": "AccPackageInstallDetails" }
+    }
+  }
+]

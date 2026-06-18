@@ -66,7 +66,23 @@ module.exports = (env, argv) => {
     plugins: [
       // Reads package.json's `consolePlugin` block → emits plugin-manifest.json
       // + the module-federation container. This is what makes it a console plugin.
-      new ConsoleRemotePlugin(),
+      //
+      // WINDOWS-ONLY GUARD: the SDK's PatternFly "dynamic module" transform
+      // (barrel `@patternfly/react-core` import → per-component
+      // `dist/dynamic/components/<X>` import) builds the rewritten path with
+      // Node's `path` API, whose separator is `\` on Windows; the backslashes
+      // are then stripped, yielding an unresolvable
+      // `@patternfly/react-core/distdynamiccomponents<X>` request and a broken
+      // local build. On Linux (the Containerfile + CI build host) the separator
+      // is `/` and the transform is correct, so we keep PatternFly federated
+      // sharing there and only skip the transform on win32 — where PatternFly is
+      // simply bundled into the plugin instead (a size, not correctness,
+      // tradeoff). Remove this guard once the SDK normalizes the path.
+      new ConsoleRemotePlugin(
+        process.platform === 'win32'
+          ? { sharedDynamicModuleSettings: { transformImports: () => false } }
+          : undefined,
+      ),
       new ForkTsCheckerWebpackPlugin({
         typescript: { configFile: path.resolve(__dirname, 'tsconfig.json') },
       }),
