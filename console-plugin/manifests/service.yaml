@@ -1,0 +1,32 @@
+# ACC console plugin Service (proposal 035, PR-4 — OLM wiring).
+#
+# This is the canonical copy; the SAME object also ships as a standalone bundle
+# object at operator/bundle/manifests/acc-console-plugin.service.yaml so OLM
+# applies it on install (Service IS in operator-registry's supportedResources).
+#
+# The serving-cert-secret-name annotation makes the OpenShift service-ca
+# operator mint a TLS cert into the named secret; the Deployment mounts that
+# secret at /var/serving-cert and nginx terminates TLS with it on :9443.
+apiVersion: v1
+kind: Service
+metadata:
+  name: acc-console-plugin
+  namespace: acc-system
+  labels:
+    app: acc-console-plugin
+    app.kubernetes.io/component: console-plugin
+    app.kubernetes.io/instance: acc-console-plugin
+    app.kubernetes.io/name: acc-console-plugin
+    app.kubernetes.io/part-of: acc-operator
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: acc-console-plugin-serving-cert
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  ports:
+  - name: tls
+    protocol: TCP
+    port: 9443
+    targetPort: 9443
+  selector:
+    app: acc-console-plugin

@@ -1,27 +1,49 @@
-# Agentic Cell Corpus console plugin image (proposal 035, PR-1).
-# Mirrors openshift/console-plugin-template's two-stage build, adapted to the
+# Agentic Cell Corpus console plugin image (proposal 035, PR-4 — OLM wiring).
+# Two-stage build that mirrors openshift/console-plugin-template, adapted to the
 # npm toolchain this repo uses. Joins the acc1 build chain as
-# acc-console-plugin-<ver> (user-pushed per the private-image policy).
+# acc-console-plugin-<ver> (user-pushed per the private-image policy — the
+# operator builds + pushes; agents never push, see CLAUDE.md Quay rule).
+#
+# Build:
+#   podman build -t quay.io/flg77/acc_images:acc-console-plugin-0.2.12 \
+#     -f console-plugin/Containerfile console-plugin
+#
+# The served bundle is fetched cross-origin by the OpenShift console over TLS.
+# OLM mounts an OpenShift service-serving cert (minted from the Service's
+# service.beta.openshift.io/serving-cert-secret-name annotation) at
+# /var/serving-cert; nginx terminates TLS on :9443 with it (see nginx.conf).
 
 # ---- build stage: produce the module-federation bundle in dist/ ----
 FROM registry.access.redhat.com/ubi9/nodejs-22:latest AS build
 USER root
 WORKDIR /usr/src/app
 
-# Install deps first (better layer caching), then build.
+# Install deps first (better layer caching), then build the production bundle.
+# `npm ci` is reproducible against package-lock.json; fall back to install only
+# if the lockfile is somehow absent in the build context.
 COPY package.json package-lock.json* ./
 RUN npm ci || npm install
 COPY . .
 RUN npm run build
 
-# ---- serve stage: nginx serves the static federated bundle ----
-FROM registry.access.redhat.com/ubi9/nginx-122:latest
+# ---- serve stage: nginx serves the static federated bundle over TLS :9443 ----
+# ubi9/nginx-126 runs as uid 1001 / group 0 and is arbitrary-uid friendly
+# (OpenShift restricted-v2 SCC assigns the uid). We supply our own nginx.conf.
+FROM registry.access.redhat.com/ubi9/nginx-126:latest
 
+# The federated assets: plugin-manifest.json, the *-bundle-*.min.js entry, the
+# per-component chunks, and assets/. Served from the nginx html root.
 COPY --from=build /usr/src/app/dist /usr/share/nginx/html
+
+# Our TLS config (listens 9443, reads the mounted serving cert). The UBI nginx
+# entrypoint runs `nginx` from this path.
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# UBI nginx images run as 1001 and listen on 8080 by default.
+# TLS plugin port the console connects to (matches the Service targetPort and
+# the ConsolePlugin spec.backend.service.port).
+EXPOSE 9443
+
+# uid 1001 (group 0) — the UBI nginx default non-root user.
 USER 1001
-EXPOSE 8080
 
 CMD ["nginx", "-g", "daemon off;"]

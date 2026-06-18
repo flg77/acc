@@ -96,6 +96,12 @@ metadata:
       ]
     capabilities: Seamless Upgrades
     categories: AI/Machine Learning, Integration & Delivery
+    # OpenShift dynamic console plugin (proposal 035 / WS-B). Lists the
+    # ConsolePlugin CR names this operator ships; OLM auto-enables them in the
+    # console operator config on install (the install page pre-checks the
+    # "enable plugin" box). The named ConsolePlugin object is delivered as a
+    # standalone bundle object (acc-console-plugin.consoleplugin.yaml).
+    console.openshift.io/plugins: '["acc-console-plugin"]'
     containerImage: quay.io/flg77/acc_images:acc-operator-0.2.12
     createdAt: "2026-04-15T00:00:00Z"
     operatorframework.io/suggested-namespace: acc-system
@@ -334,6 +340,84 @@ spec:
               - name: acc-images-pull
               serviceAccountName: acc-operator-controller-manager
               terminationGracePeriodSeconds: 10
+      # OpenShift dynamic console plugin (proposal 035 / WS-B). OLM does NOT
+      # apply a standalone Deployment from a bundle (Deployment is not in
+      # operator-registry's supportedResources), so the plugin's nginx
+      # Deployment is delivered here. Keep in sync with the canonical copy at
+      # console-plugin/manifests/deployment.yaml. nginx serves the federated
+      # bundle over TLS :9443 using the service-ca serving cert minted from the
+      # acc-console-plugin Service annotation. No extra ServiceAccount/RBAC is
+      # needed (static file server, no Kube API access).
+      - label:
+          app: acc-console-plugin
+          app.kubernetes.io/component: console-plugin
+          app.kubernetes.io/instance: acc-console-plugin
+          app.kubernetes.io/name: acc-console-plugin
+          app.kubernetes.io/part-of: acc-operator
+        name: acc-console-plugin
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: acc-console-plugin
+          template:
+            metadata:
+              labels:
+                app: acc-console-plugin
+                app.kubernetes.io/component: console-plugin
+                app.kubernetes.io/instance: acc-console-plugin
+                app.kubernetes.io/name: acc-console-plugin
+                app.kubernetes.io/part-of: acc-operator
+            spec:
+              containers:
+              - name: acc-console-plugin
+                image: quay.io/flg77/acc_images:acc-console-plugin-0.2.12
+                imagePullPolicy: Always
+                ports:
+                - name: tls
+                  containerPort: 9443
+                  protocol: TCP
+                resources:
+                  limits:
+                    cpu: 100m
+                    memory: 128Mi
+                  requests:
+                    cpu: 10m
+                    memory: 50Mi
+                readinessProbe:
+                  httpGet:
+                    path: /plugin-manifest.json
+                    port: 9443
+                    scheme: HTTPS
+                  initialDelaySeconds: 5
+                  periodSeconds: 10
+                livenessProbe:
+                  httpGet:
+                    path: /plugin-manifest.json
+                    port: 9443
+                    scheme: HTTPS
+                  initialDelaySeconds: 10
+                  periodSeconds: 30
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  readOnlyRootFilesystem: true
+                  capabilities:
+                    drop:
+                    - ALL
+                volumeMounts:
+                - name: serving-cert
+                  mountPath: /var/serving-cert
+                  readOnly: true
+              volumes:
+              - name: serving-cert
+                secret:
+                  secretName: acc-console-plugin-serving-cert
+                  defaultMode: 420
+              securityContext:
+                runAsNonRoot: true
+              imagePullSecrets:
+              - name: acc-images-pull
+              terminationGracePeriodSeconds: 10
     strategy: deployment
   # Cluster-wide install is the DEFAULT (the console preselects
   # "All namespaces" when supported): one install serves every RHOAI Data
@@ -371,6 +455,8 @@ spec:
   relatedImages:
   - image: quay.io/flg77/acc_images:acc-operator-0.2.12
     name: manager
+  - image: quay.io/flg77/acc_images:acc-console-plugin-0.2.12
+    name: console-plugin
   version: 0.2.12
   replaces: acc-operator.v0.2.11
   webhookdefinitions:

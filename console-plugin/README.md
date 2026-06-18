@@ -8,12 +8,16 @@ console, running in the console's own session with the **logged-in user's
 token** — so per-user RBAC is automatic and there is no custom backend, no ACC
 auth, and no new exposed port (proposal 035 G6).
 
-> **Scope landed so far (035 PR-1…PR-3):** PR-1 scaffold + `src/models.ts` + the
+> **Scope landed so far (035 PR-1…PR-4):** PR-1 scaffold + `src/models.ts` + the
 > CRD↔models CI parity gate; PR-2 list/detail pages + nav for the four CRs; PR-3
 > the `CatalogBrowse` catalog→install centerpiece (`src/components/CatalogBrowse.tsx`)
 > — browse catalogs grouped by tier/priority, an install form that `k8sCreate`s an
-> `AccPackageInstall`, and a live status monitor. PR-4 (OLM wiring + `ConsolePlugin`
-> CR + CSV auto-enable) is still to come.
+> `AccPackageInstall`, and a live status monitor. PR-4 the OLM wiring: the
+> `Containerfile`/`nginx.conf` serve the bundle over TLS `:9443` with an
+> OpenShift service-serving cert, `manifests/` carries the `Deployment` +
+> `Service` + `ConsolePlugin` (v1), and the operator CSV gains the
+> `console.openshift.io/plugins` auto-enable annotation plus the plugin
+> `Deployment` (Service + ConsolePlugin ship as standalone bundle objects).
 
 ## What it covers (target end-state)
 
@@ -68,12 +72,34 @@ npm run typecheck
 A successful `npm run build` writes the federated assets and a
 `plugin-manifest.json` into `dist/` — that manifest is what the console loads.
 
-### Run against a console (later PRs)
+### Run against a console (dev)
 
 The dev server serves the federated bundle on `:9001`. Point a running console
-at it (the upstream template's `start-console` flow, or
-`oc patch consoles.operator.openshift.io cluster` once the `ConsolePlugin` CR
-ships in PR-4). PR-1 produces the bundle but advertises no extensions yet.
+at it (the upstream template's `start-console` flow). The federated bundle now
+advertises the PR-2/3 extensions (nav + list/detail + CatalogBrowse).
+
+### Ship via OLM (PR-4)
+
+In a cluster the plugin is delivered by the ACC operator bundle, not by hand:
+
+- The image `quay.io/flg77/acc_images:acc-console-plugin-0.2.12` (built from
+  `Containerfile`) runs nginx serving the bundle over **TLS `:9443`**, using an
+  OpenShift **service-serving cert** minted from the `Service` annotation
+  `service.beta.openshift.io/serving-cert-secret-name` and mounted at
+  `/var/serving-cert`.
+- `manifests/` holds the canonical `Deployment`, `Service`, and `ConsolePlugin`
+  (`console.openshift.io/v1`, `spec.backend` schema; `metadata.name` =
+  `acc-console-plugin`, the `consolePlugin.name` in `package.json`).
+- The operator CSV
+  (`operator/bundle/manifests/acc-operator.clusterserviceversion.yaml`) carries
+  the plugin `Deployment` in `spec.install.spec.deployments` and the annotation
+  `console.openshift.io/plugins: '["acc-console-plugin"]'`, which **auto-enables**
+  the plugin in the console operator config on install. The `Service` and
+  `ConsolePlugin` ship as standalone bundle objects (both are in
+  operator-registry's supported-resource set; `Deployment` is not, hence the CSV).
+- The `ConsolePlugin.spec.backend.service.namespace` is pinned to the CSV
+  suggested namespace `acc-system`; if the operator is installed elsewhere the
+  plugin Service namespace must be patched to match.
 
 ## CRD ↔ models parity (the drift guard, G4)
 
@@ -98,8 +124,9 @@ console-plugin/
 ├── console-extensions.json # extensions array (empty until PR-2 nav)
 ├── tsconfig.json
 ├── .eslintrc.json
-├── Containerfile           # UBI9 node build -> UBI9 nginx serve
-├── nginx.conf              # serves dist/ on :8080, permissive CORS
+├── Containerfile           # UBI9 node build -> UBI9 nginx serve (TLS :9443)
+├── nginx.conf              # serves dist/ on TLS :9443 (service-serving cert), CORS
+├── manifests/              # PR-4: Deployment + Service + ConsolePlugin (OLM-delivered)
 └── src/
     ├── models.ts           # the four K8sModels (drift-guarded by the parity gate)
     ├── types.ts            # TS shapes for the four CRs (subset of spec/status)
