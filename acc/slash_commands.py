@@ -80,6 +80,75 @@ the normal prompt-dispatch path."""
 
 
 # ---------------------------------------------------------------------------
+# Command registry — single source of truth for *discovery* (proposal 039)
+# ---------------------------------------------------------------------------
+#
+# The prompt palette (interactive ``/`` autocomplete) and the generated
+# ``/help`` both read this table, so the verb list lives in exactly one place.
+# ``parse`` below still owns argument *parsing* (each verb shapes its args
+# differently); ``test_registry_verbs_are_all_known_to_parse`` asserts the two
+# never drift.  Keep the list ALPHABETICAL by name so the palette's default
+# order needs no re-sort.
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    """Discovery metadata for one top-level slash verb.
+
+    ``arg_hint`` is the inline placeholder shown for single-shape verbs;
+    ``subforms`` lists ``(signature, summary)`` pairs for verbs with
+    sub-commands (cluster, oversight) so the generated help documents each.
+    """
+
+    name: str
+    summary: str
+    arg_hint: str = ""
+    category: str = "general"   # query | control | oversight | general
+    aliases: tuple[str, ...] = ()
+    subforms: tuple[tuple[str, str], ...] = ()
+
+
+COMMANDS: list[CommandSpec] = [
+    CommandSpec("cancel", "Cancel a task or cluster", "<task_id|cluster_id>", "control"),
+    CommandSpec(
+        "cluster", "Inspect or kill a cluster", category="query",
+        subforms=(
+            ("show [<cid>]", "render cluster snapshot"),
+            ("kill <cid>", "cancel every cluster member"),
+        ),
+    ),
+    CommandSpec("help", "List the available commands", category="general"),
+    CommandSpec(
+        "oversight", "Review the oversight queue", category="oversight",
+        subforms=(
+            ("pending", "list pending oversight items"),
+            ("approve <id>", "approve an oversight item"),
+            ("reject <id> <reason>", "reject with a reason"),
+        ),
+    ),
+    CommandSpec("role", "List available roles", "list", "query"),
+    CommandSpec("skills", "List skills for the current target", category="query"),
+    CommandSpec("sleep", "Assistant → dormant-watcher mode", category="control"),
+    CommandSpec("wake", "Wake the Assistant (also Ctrl+Z toggle)", category="control"),
+]
+
+
+def complete(buffer: str) -> list[CommandSpec]:
+    """Commands whose name (or alias) prefix-matches the typed ``buffer``
+    (e.g. ``"/ov"`` → oversight), **alphabetical by name**.
+
+    Case-insensitive.  A bare ``"/"`` (or empty) returns every command.
+    Drives the prompt's interactive ``/`` palette (proposal 039).
+    """
+    p = buffer.lstrip("/").lower().strip()
+    matches = [
+        c for c in COMMANDS
+        if not p or c.name.startswith(p) or any(a.startswith(p) for a in c.aliases)
+    ]
+    return sorted(matches, key=lambda c: c.name)
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
@@ -205,21 +274,23 @@ def parse(text: str) -> SlashIntent:
 
 
 # ---------------------------------------------------------------------------
-# Help text — rendered when KIND_HELP fires
+# Help text — GENERATED from COMMANDS (stays in sync automatically)
 # ---------------------------------------------------------------------------
 
 
-HELP_TEXT = (
-    "Slash commands:\n"
-    "  /help                                — this list\n"
-    "  /cancel <task_id|cluster_id>         — cancel a task or cluster\n"
-    "  /cluster show [<cid>]                — render cluster snapshot\n"
-    "  /cluster kill <cid>                  — cancel every cluster member\n"
-    "  /role list                           — list available roles\n"
-    "  /skills                              — list skills for current target\n"
-    "  /oversight pending                   — list pending oversight items\n"
-    "  /oversight approve <id>              — approve an oversight item\n"
-    "  /oversight reject <id> <reason>      — reject with a reason\n"
-    "  /sleep                               — Assistant → dormant-watcher mode\n"
-    "  /wake                                — wake the Assistant (also Ctrl+Z toggle)"
-)
+def _render_help() -> str:
+    """Render ``/help`` from the COMMANDS registry — one aligned row per verb
+    (or per sub-form for cluster/oversight), alphabetical by verb."""
+    rows: list[tuple[str, str]] = []
+    for c in sorted(COMMANDS, key=lambda c: c.name):
+        if c.subforms:
+            rows.extend((f"/{c.name} {sig}", sub) for sig, sub in c.subforms)
+        else:
+            rows.append((f"/{c.name} {c.arg_hint}".rstrip(), c.summary))
+    width = max(len(sig) for sig, _ in rows)
+    lines = ["Slash commands:"]
+    lines += [f"  {sig:<{width}}  — {summary}" for sig, summary in rows]
+    return "\n".join(lines)
+
+
+HELP_TEXT = _render_help()

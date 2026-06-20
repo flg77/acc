@@ -202,3 +202,41 @@ def test_task_cancel_signal_subject_format():
     from acc.signals import SIG_TASK_CANCEL, subject_task_cancel
     assert SIG_TASK_CANCEL == "TASK_CANCEL"
     assert subject_task_cancel("sol-01") == "acc.sol-01.task.cancel"
+
+
+# ---------------------------------------------------------------------------
+# Command registry + completion (proposal 039 — palette discovery)
+# ---------------------------------------------------------------------------
+
+
+def test_registry_verbs_are_all_known_to_parse():
+    """Parity guard: every command the palette offers must be a verb
+    ``parse`` recognises — else the menu would surface an ``unknown`` verb."""
+    for spec in sc.COMMANDS:
+        intent = sc.parse(f"/{spec.name}")
+        assert intent.kind != sc.KIND_UNKNOWN, f"/{spec.name} unknown to parse()"
+
+
+def test_complete_bare_slash_returns_all_alphabetical():
+    names = [c.name for c in sc.complete("/")]
+    assert names == sorted(names)
+    assert names == [c.name for c in sc.COMMANDS]  # COMMANDS kept alphabetical
+    assert {"cancel", "oversight", "wake"} <= set(names)
+
+
+def test_complete_prefix_filters_alphabetical():
+    assert [c.name for c in sc.complete("/c")] == ["cancel", "cluster"]
+
+
+def test_complete_is_case_insensitive():
+    assert [c.name for c in sc.complete("/OV")] == ["oversight"]
+
+
+def test_complete_no_match_returns_empty():
+    assert sc.complete("/zzz") == []
+
+
+def test_help_text_generated_and_alphabetical():
+    text = sc.HELP_TEXT
+    assert text.startswith("Slash commands:")
+    assert text.index("/cancel") < text.index("/wake")  # alphabetical order
