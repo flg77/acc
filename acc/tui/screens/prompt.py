@@ -60,6 +60,7 @@ from acc.channels import TUIPromptChannel
 from acc.tui.widgets.cluster_panel import ClusterPanel
 from acc.tui.widgets.invocation_detail_modal import InvocationDetailModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.slash_palette import SlashPalette, top_match
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -169,6 +170,18 @@ class _PromptInput(TextArea):
             event.stop()
             self.insert("\n")
             return
+        # Proposal 039 — Tab completes the top slash-palette match when the
+        # buffer is a single-line slash command (e.g. "/ov" → "/oversight ").
+        if event.key == "tab":
+            buf = self.text
+            if buf.lstrip().startswith("/") and "\n" not in buf:
+                name = top_match(buf.strip())
+                if name:
+                    event.prevent_default()
+                    event.stop()
+                    self.text = f"/{name} "
+                    self.move_cursor(self.document.end)
+                    return
         await super()._on_key(event)
 
 
@@ -413,6 +426,11 @@ class PromptScreen(Screen):
         # two per-prompt controls (mode + workspace) sit together beside
         # the input.  The "+" opens WorkspaceSelectModal (PR-U2b); the
         # chosen path shows in #prompt-workspace-path below.
+        # Proposal 039 — interactive slash-command palette. Hidden until the
+        # operator types '/'; lists matching verbs alphabetically (Tab completes
+        # the top match). Sits just above the input row; fed by on_text_area_changed.
+        yield SlashPalette(id="slash-palette")
+
         with Horizontal(id="prompt-input-row"):
             # PR-V2 — operating mode is a tiny hint (no dropdown).
             # shift+tab cycles AUTO → PLAN → ACCEPT_EDITS →
@@ -439,6 +457,20 @@ class PromptScreen(Screen):
         yield Static("[dim]Idle. Type a prompt and press Enter.[/dim]",
                      id="prompt-status")
         yield Footer()
+
+    def on_text_area_changed(self, event) -> None:
+        """Live-update the slash palette as the operator types (proposal 039).
+
+        Only the prompt textarea drives it; any other TextArea.Changed is
+        ignored.  Pure-logic lives in slash_palette; this is the thin wire."""
+        ta = getattr(event, "text_area", None)
+        if ta is None or getattr(ta, "id", None) != "prompt-textarea":
+            return
+        try:
+            palette = self.query_one("#slash-palette", SlashPalette)
+        except Exception:  # palette not mounted yet  # noqa: BLE001
+            return
+        palette.update_for(ta.text)
 
     def on_mount(self) -> None:
         """Render the empty transcript once at mount."""
