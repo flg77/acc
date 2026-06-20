@@ -321,6 +321,9 @@ class PromptScreen(Screen):
         # replaced by a shift+tab cycle + a tiny hint).  AUTO default;
         # role selection prefills it (on_select_changed).
         self._operating_mode: str = "AUTO"
+        # Proposal 039 (PR-5) — pinned objective; "" = none. /goal sets it and
+        # it's prepended to every outgoing prompt until /goal clear.
+        self._goal: str = ""
         # 033 WS-B fix — one-shot: an external load (Diagnostics "Send")
         # carrying an explicit mode must win over the role-driven prefill
         # that the async Select.Changed would otherwise apply.
@@ -745,6 +748,11 @@ class PromptScreen(Screen):
             self.query_one("#prompt-textarea", TextArea).clear()
             return
 
+        # Proposal 039 (PR-5) — pinned goal: prepend the objective so the agent
+        # carries it on every prompt (set/cleared via /goal).
+        if self._goal:
+            prompt = f"[GOAL: {self._goal}]\n\n{prompt}"
+
         target_role = str(
             self.query_one("#select-target-role", Select).value or ""
         ).strip()
@@ -1122,6 +1130,21 @@ class PromptScreen(Screen):
 
         if intent.kind == _sc.KIND_MODEL:
             self._render_models()
+            return
+
+        if intent.kind == _sc.KIND_GOAL:
+            text = intent.args.get("text", "").strip()
+            if not text:
+                _system(f"goal: {self._goal or '(none)'}")
+            elif text.lower() == "clear":
+                self._goal = ""
+                _system("goal cleared")
+            else:
+                self._goal = text
+                _system(
+                    f"goal set → {text}\n[dim]prepended to every prompt "
+                    f"until /goal clear[/dim]"
+                )
             return
 
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1.

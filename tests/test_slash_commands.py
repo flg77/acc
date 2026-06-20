@@ -277,3 +277,12 @@ def test_pr4_catalog_model_parse():
     assert sc.parse("/catalog @acc").args == {"filter": "@acc"}
     assert sc.parse("/model").kind == sc.KIND_MODEL
     assert {"catalog", "model"} <= {c.name for c in sc.COMMANDS}
+
+
+def test_pr5_goal_parse():
+    set_intent = sc.parse("/goal ship v2 by friday")
+    assert set_intent.kind == sc.KIND_GOAL
+    assert set_intent.args == {"text": "ship v2 by friday"}
+    assert sc.parse("/goal").args == {"text": ""}      # show current
+    assert sc.parse("/goal clear").args == {"text": "clear"}
+    assert "goal" in {c.name for c in sc.COMMANDS}

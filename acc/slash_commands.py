@@ -79,6 +79,8 @@ KIND_CLEAR = "clear"
 # Proposal 039 (PR-4) — catalog/model read-only verbs.
 KIND_CATALOG = "catalog"
 KIND_MODEL = "model"
+# Proposal 039 (PR-5) — pinned objective.
+KIND_GOAL = "goal"
 KIND_UNKNOWN = "unknown"
 KIND_INVALID = "invalid"
 KIND_NOT_SLASH = "not_slash"
@@ -126,6 +128,7 @@ COMMANDS: list[CommandSpec] = [
             ("kill <cid>", "cancel every cluster member"),
         ),
     ),
+    CommandSpec("goal", "Set a pinned objective (prepended to prompts)", "[<text> | clear]", "control"),
     CommandSpec("help", "List the available commands", category="general"),
     CommandSpec("mode", "Set the operating mode", "<AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>", "control"),
     CommandSpec("model", "List the models.yaml registry", category="query"),
@@ -305,6 +308,9 @@ def parse(text: str) -> SlashIntent:
 
     if verb == "model":
         return SlashIntent(kind=KIND_MODEL)
+
+    if verb == "goal":
+        return SlashIntent(kind=KIND_GOAL, args={"text": " ".join(rest)})
 
     return SlashIntent(
         kind=KIND_UNKNOWN,
