@@ -1235,6 +1235,44 @@ class PromptScreen(Screen):
                 )
             return
 
+        # Proposal 039 (PR-6 tail) — /skill: dispatch a governed request to the
+        # active role asking it to use one of its skills (not a direct invoke;
+        # the role's cognitive core + governance decide — 033 WS-A).
+        if intent.kind == _sc.KIND_SKILL:
+            skill = str(intent.args.get("skill", "") or "").strip()
+            extra = str(intent.args.get("args", "") or "").strip()
+            observer = self._active_observer()
+            if observer is None:
+                _system("not connected — can't dispatch a skill request", blocked=True)
+                return
+            try:
+                target_role = str(
+                    self.query_one("#select-target-role", Select).value or ""
+                ).strip()
+                target_aid = self.query_one(
+                    "#input-target-agent-id", Input,
+                ).value.strip() or None
+            except Exception:  # noqa: BLE001 — screen torn down
+                target_role, target_aid = "", None
+            if not target_role:
+                _system("pick a target role first", blocked=True)
+                return
+            prompt = _sc.skill_invocation_prompt(skill, extra)
+            if self._goal:
+                prompt = f"[GOAL: {self._goal}]\n\n{prompt}"
+            self._spawn_dispatch(
+                observer=observer,
+                prompt=prompt,
+                target_role=target_role,
+                target_agent_id=target_aid,
+                operating_mode=self._operating_mode or "AUTO",
+            )
+            _system(
+                f"→ asked {target_role} to use '{skill}'"
+                + (f": {extra}" if extra else "")
+            )
+            return
+
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1.
         if intent.kind == _sc.KIND_ASSISTANT_CONTROL:
             action = str(intent.args.get("action", "") or "").lower()

@@ -82,6 +82,7 @@ KIND_MODEL = "model"
 # Proposal 039 (PR-5) — pinned objective.
 KIND_GOAL = "goal"
 KIND_LOOP = "loop"
+KIND_SKILL = "skill"
 KIND_UNKNOWN = "unknown"
 KIND_INVALID = "invalid"
 KIND_NOT_SLASH = "not_slash"
@@ -144,6 +145,7 @@ COMMANDS: list[CommandSpec] = [
         ),
     ),
     CommandSpec("role", "List available roles", "list", "query"),
+    CommandSpec("skill", "Ask the active role to use a skill (governed prompt)", "<name> [args]", category="control"),
     CommandSpec("skills", "List skills for the current target", category="query"),
     CommandSpec("sleep", "Assistant → dormant-watcher mode", category="control"),
     CommandSpec("status", "Show prompt state (role/mode/workspace)", category="query"),
@@ -258,6 +260,22 @@ def parse(text: str) -> SlashIntent:
             kind=KIND_INVALID, error="usage: /role list",
         )
 
+    # Proposal 039 (PR-6 tail) — per-role skill invocation as a governed prompt.
+    # `/skill <name> [args]` does NOT invoke the skill directly: skills are
+    # agent-invoked + gated by the capability validator / describe-don't-invoke
+    # rule (033 WS-A).  It enqueues a natural-language request to the active
+    # role, which flows through the normal cognitive-core + governance path.
+    if verb == "skill":
+        if not rest:
+            return SlashIntent(
+                kind=KIND_INVALID,
+                error="usage: /skill <name> [args]  (e.g. /skill git commit -am wip)",
+            )
+        return SlashIntent(
+            kind=KIND_SKILL,
+            args={"skill": rest[0], "args": " ".join(rest[1:])},
+        )
+
     if verb == "skills":
         return SlashIntent(kind=KIND_SKILLS)
 
@@ -352,6 +370,22 @@ def parse(text: str) -> SlashIntent:
         kind=KIND_UNKNOWN,
         error=f"unknown command: /{verb} (type /help for the list)",
     )
+
+
+def skill_invocation_prompt(name: str, args: str = "") -> str:
+    """Synthesize the governed natural-language request dispatched to the active
+    role when the operator types ``/skill <name> [args]``.
+
+    The operator is *asking the role* to use one of its skills — the role's
+    cognitive core + governance still decide whether and how — so this honors
+    describe-don't-invoke (033 WS-A) instead of bypassing it.  Pure so it can be
+    unit-tested; the prompt screen's KIND_SKILL handler dispatches the result.
+    """
+    name = name.strip()
+    args = args.strip()
+    if args:
+        return f"Use your '{name}' skill to: {args}"
+    return f"Use your '{name}' skill."
 
 
 # ---------------------------------------------------------------------------

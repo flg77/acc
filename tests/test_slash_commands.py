@@ -314,3 +314,28 @@ def test_pr5_loop_parse():
     assert sc.parse("/loop 5m").kind == sc.KIND_INVALID       # interval, no prompt
     assert sc.parse("/loop 5x do it").kind == sc.KIND_INVALID  # bad unit
     assert "loop" in {c.name for c in sc.COMMANDS}
+
+
+def test_pr6_skill_invocation_parse():
+    # /skill <name> [args] -> KIND_SKILL with name + args split out.
+    intent = sc.parse("/skill git commit -am wip")
+    assert intent.kind == sc.KIND_SKILL
+    assert intent.args == {"skill": "git", "args": "commit -am wip"}
+    # name only, no args.
+    assert sc.parse("/skill python").args == {"skill": "python", "args": ""}
+    # bare /skill is a usage error (no skill named).
+    assert sc.parse("/skill").kind == sc.KIND_INVALID
+    # /skills (plural) still lists — must NOT be captured by the skill branch.
+    assert sc.parse("/skills").kind == sc.KIND_SKILLS
+    # registry + generated help carry it.
+    assert "skill" in {c.name for c in sc.COMMANDS}
+    assert "/skill <name>" in sc.HELP_TEXT
+
+
+def test_pr6_skill_invocation_prompt():
+    assert sc.skill_invocation_prompt("git", "commit -am wip") == \
+        "Use your 'git' skill to: commit -am wip"
+    assert sc.skill_invocation_prompt("python") == "Use your 'python' skill."
+    # whitespace tolerated on both args.
+    assert sc.skill_invocation_prompt("  git  ", "  status ") == \
+        "Use your 'git' skill to: status"
