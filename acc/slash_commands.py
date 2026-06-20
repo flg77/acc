@@ -116,6 +116,7 @@ class CommandSpec:
     category: str = "general"   # query | control | oversight | general
     aliases: tuple[str, ...] = ()
     subforms: tuple[tuple[str, str], ...] = ()
+    prod_locked: bool = False   # PR-6: refused in prod operator-mode (033 WS-F)
 
 
 COMMANDS: list[CommandSpec] = [
@@ -131,7 +132,7 @@ COMMANDS: list[CommandSpec] = [
     ),
     CommandSpec("goal", "Set a pinned objective (prepended to prompts)", "[<text> | clear]", "control"),
     CommandSpec("help", "List the available commands", category="general"),
-    CommandSpec("loop", "Re-run a prompt on an interval", "<30s|5m|2h> <prompt> | stop", "control"),
+    CommandSpec("loop", "Re-run a prompt on an interval", "<30s|5m|2h> <prompt> | stop", "control", prod_locked=True),
     CommandSpec("mode", "Set the operating mode", "<AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>", "control"),
     CommandSpec("model", "List the models.yaml registry", category="query"),
     CommandSpec(
@@ -163,6 +164,20 @@ def complete(buffer: str) -> list[CommandSpec]:
         if not p or c.name.startswith(p) or any(a.startswith(p) for a in c.aliases)
     ]
     return sorted(matches, key=lambda c: c.name)
+
+
+def is_allowed(verb: str, *, dev_mode: bool) -> bool:
+    """PR-6 prod/dev gate: whether ``verb`` may run in the current operator
+    mode.  ``prod_locked`` verbs are refused in prod (``dev_mode=False``);
+    everything is allowed in dev.  Unknown verbs default allowed (parse handles
+    them).  The *policy* (which verbs are locked) is the operator's call
+    (039 §8 Q4); the shipped default locks ``/loop`` (recurring auto-dispatch).
+    """
+    v = verb.lstrip("/").lower()
+    for c in COMMANDS:
+        if c.name == v or v in c.aliases:
+            return dev_mode or not c.prod_locked
+    return True
 
 
 # ---------------------------------------------------------------------------

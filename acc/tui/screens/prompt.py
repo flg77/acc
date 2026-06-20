@@ -1105,6 +1105,18 @@ class PromptScreen(Screen):
                 "blocked": blocked,
             })
 
+        # PR-6 — prod/dev gate: refuse prod_locked verbs in prod operator-mode.
+        _parts = raw_input.strip().lstrip("/").split()
+        verb = _parts[0].lower() if _parts else ""
+        dev_mode = str(getattr(self, "_operator_mode", "") or "").lower() != "prod"
+        if verb and not _sc.is_allowed(verb, dev_mode=dev_mode):
+            _system(
+                f"/{verb} is locked in prod operator-mode. Switch to dev "
+                f"(Config) or run it from the operator console.",
+                blocked=True,
+            )
+            return
+
         if intent.kind == _sc.KIND_HELP:
             _system(_sc.HELP_TEXT)
             return

@@ -288,6 +288,20 @@ def test_pr5_goal_parse():
     assert "goal" in {c.name for c in sc.COMMANDS}
 
 
+def test_pr6_prod_gating():
+    # /loop is prod-locked by default — allowed in dev, refused in prod.
+    assert sc.is_allowed("loop", dev_mode=True) is True
+    assert sc.is_allowed("loop", dev_mode=False) is False
+    assert sc.is_allowed("/loop", dev_mode=False) is False   # leading slash tolerated
+    # non-locked verbs are allowed in both modes.
+    assert sc.is_allowed("status", dev_mode=False) is True
+    assert sc.is_allowed("help", dev_mode=False) is True
+    # unknown verb defaults allowed (parse handles it).
+    assert sc.is_allowed("nope", dev_mode=False) is True
+    loop = next(c for c in sc.COMMANDS if c.name == "loop")
+    assert loop.prod_locked is True
+
+
 def test_pr5_loop_parse():
     started = sc.parse("/loop 5m check the deploy")
     assert started.kind == sc.KIND_LOOP
