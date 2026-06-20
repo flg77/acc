@@ -72,6 +72,10 @@ KIND_OVERSIGHT_REJECT = "oversight_reject"
 # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 — Assistant
 # sleep/wake from the Prompt screen.  Args carry ``"action": "sleep"|"wake"``.
 KIND_ASSISTANT_CONTROL = "assistant_control"
+# Proposal 039 (PR-3) — inspection/config palette verbs.
+KIND_STATUS = "status"
+KIND_MODE = "mode"
+KIND_CLEAR = "clear"
 KIND_UNKNOWN = "unknown"
 KIND_INVALID = "invalid"
 KIND_NOT_SLASH = "not_slash"
@@ -110,6 +114,7 @@ class CommandSpec:
 
 COMMANDS: list[CommandSpec] = [
     CommandSpec("cancel", "Cancel a task or cluster", "<task_id|cluster_id>", "control"),
+    CommandSpec("clear", "Clear the transcript", category="control"),
     CommandSpec(
         "cluster", "Inspect or kill a cluster", category="query",
         subforms=(
@@ -118,6 +123,7 @@ COMMANDS: list[CommandSpec] = [
         ),
     ),
     CommandSpec("help", "List the available commands", category="general"),
+    CommandSpec("mode", "Set the operating mode", "<AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>", "control"),
     CommandSpec(
         "oversight", "Review the oversight queue", category="oversight",
         subforms=(
@@ -129,6 +135,7 @@ COMMANDS: list[CommandSpec] = [
     CommandSpec("role", "List available roles", "list", "query"),
     CommandSpec("skills", "List skills for the current target", category="query"),
     CommandSpec("sleep", "Assistant → dormant-watcher mode", category="control"),
+    CommandSpec("status", "Show prompt state (role/mode/workspace)", category="query"),
     CommandSpec("wake", "Wake the Assistant (also Ctrl+Z toggle)", category="control"),
 ]
 
@@ -266,6 +273,27 @@ def parse(text: str) -> SlashIntent:
         return SlashIntent(
             kind=KIND_INVALID, error=f"unknown oversight subcommand: {sub!r}",
         )
+
+    # Proposal 039 (PR-3) — inspection/config verbs.
+    if verb == "clear":
+        return SlashIntent(kind=KIND_CLEAR)
+
+    if verb == "status":
+        return SlashIntent(kind=KIND_STATUS)
+
+    if verb == "mode":
+        if not rest:
+            return SlashIntent(
+                kind=KIND_INVALID,
+                error="usage: /mode <AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>",
+            )
+        m = rest[0].upper()
+        if m not in ("AUTO", "PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS"):
+            return SlashIntent(
+                kind=KIND_INVALID,
+                error=f"unknown mode {rest[0]!r}; valid: AUTO PLAN ACCEPT_EDITS ASK_PERMISSIONS",
+            )
+        return SlashIntent(kind=KIND_MODE, args={"mode": m})
 
     return SlashIntent(
         kind=KIND_UNKNOWN,

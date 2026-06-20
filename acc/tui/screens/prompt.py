@@ -941,6 +941,27 @@ class PromptScreen(Screen):
                 exc_info=True,
             )
 
+    def _render_status(self) -> None:
+        """Proposal 039 (PR-3) — /status: a one-line read-only snapshot of the
+        operator-facing prompt state (target role, mode, workspace, session)."""
+        role = "?"
+        try:
+            role = str(self.query_one("#select-target-role", Select).value)
+        except Exception:  # noqa: BLE001
+            pass
+        ws = self._workspace_project or "(none)"
+        self._append_history({
+            "role": "system",
+            "task_id": "",
+            "text": (
+                f"status — target={role}  mode={self._operating_mode}  "
+                f"workspace={ws}  session={self._session_id[:8]}  "
+                f"(topology: /cluster show)"
+            ),
+            "ts": time.time(),
+            "blocked": False,
+        })
+
     # ------------------------------------------------------------------
     # PR-5 — slash command dispatch
     # ------------------------------------------------------------------
@@ -1014,6 +1035,22 @@ class PromptScreen(Screen):
                 "oversight slash commands are wired in a follow-up — "
                 "use Compliance screen for now",
             )
+            return
+
+        # Proposal 039 (PR-3) — inspection/config verbs.
+        if intent.kind == _sc.KIND_CLEAR:
+            self.action_clear_transcript()
+            _system("transcript cleared")
+            return
+
+        if intent.kind == _sc.KIND_MODE:
+            self._operating_mode = intent.args["mode"]
+            self._set_mode_hint()
+            _system(f"operating mode → {intent.args['mode']}")
+            return
+
+        if intent.kind == _sc.KIND_STATUS:
+            self._render_status()
             return
 
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1.

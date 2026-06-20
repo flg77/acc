@@ -225,7 +225,7 @@ def test_complete_bare_slash_returns_all_alphabetical():
 
 
 def test_complete_prefix_filters_alphabetical():
-    assert [c.name for c in sc.complete("/c")] == ["cancel", "cluster"]
+    assert [c.name for c in sc.complete("/c")] == ["cancel", "clear", "cluster"]
 
 
 def test_complete_is_case_insensitive():
@@ -240,3 +240,33 @@ def test_help_text_generated_and_alphabetical():
     text = sc.HELP_TEXT
     assert text.startswith("Slash commands:")
     assert text.index("/cancel") < text.index("/wake")  # alphabetical order
+
+
+# ---------------------------------------------------------------------------
+# PR-3 verbs (proposal 039) — clear / status / mode
+# ---------------------------------------------------------------------------
+
+
+def test_clear_and_status_parse():
+    assert sc.parse("/clear").kind == sc.KIND_CLEAR
+    assert sc.parse("/status").kind == sc.KIND_STATUS
+
+
+def test_mode_parse_valid_normalises_uppercase():
+    intent = sc.parse("/mode plan")
+    assert intent.kind == sc.KIND_MODE
+    assert intent.args == {"mode": "PLAN"}
+
+
+def test_mode_parse_missing_or_bogus_is_invalid():
+    assert sc.parse("/mode").kind == sc.KIND_INVALID
+    bogus = sc.parse("/mode turbo")
+    assert bogus.kind == sc.KIND_INVALID
+    assert "turbo" in bogus.error
+
+
+def test_pr3_verbs_in_registry_and_help():
+    names = {c.name for c in sc.COMMANDS}
+    assert {"clear", "status", "mode"} <= names
+    for verb in ("/clear", "/status", "/mode"):
+        assert verb in sc.HELP_TEXT

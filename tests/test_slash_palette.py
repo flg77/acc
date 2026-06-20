@@ -21,7 +21,7 @@ def test_rows_bare_slash_lists_all_alphabetical():
 
 def test_rows_prefix_filters():
     assert [n for n, _ in palette_rows("/ov")] == ["oversight"]
-    assert [n for n, _ in palette_rows("/c")] == ["cancel", "cluster"]
+    assert [n for n, _ in palette_rows("/c")] == ["cancel", "clear", "cluster"]
 
 
 def test_rows_subform_hint_in_label():
