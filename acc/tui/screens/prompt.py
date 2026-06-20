@@ -962,6 +962,69 @@ class PromptScreen(Screen):
             "blocked": False,
         })
 
+    def _render_models(self) -> None:
+        """Proposal 039 (PR-4) — /model: list the models.yaml registry
+        (read-only; switching the active model is a follow-up)."""
+        try:
+            from acc.models import load_models  # noqa: PLC0415
+            models = load_models()
+        except Exception as exc:  # noqa: BLE001
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"models registry unavailable: {exc}",
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        if not models:
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": "no models registered (models.yaml empty or absent)",
+                "ts": time.time(), "blocked": False,
+            })
+            return
+        lines = ["models (models.yaml):"]
+        lines += [f"  {m.model_id:<22} {m.backend:<14} {m.display()}" for m in models]
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": "\n".join(lines), "ts": time.time(), "blocked": False,
+        })
+
+    def _render_catalog(self, name_filter: str = "") -> None:
+        """Proposal 039 (PR-4) — /catalog [filter]: installed roles + available
+        packages from the assistant catalog view (read-only)."""
+        try:
+            from acc.assistant.catalog_view import build_catalog_view  # noqa: PLC0415
+            from acc.tui.path_resolution import resolve_manifest_root  # noqa: PLC0415
+            roots = str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
+            view = build_catalog_view(roles_root=roots, name_filter=name_filter or None)
+        except Exception as exc:  # noqa: BLE001
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"catalog unavailable: {exc}",
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        roles = ", ".join(
+            f"{r.role}[{r.state}]" for r in view.installed_roles
+        ) or "(none)"
+        if view.available_packages:
+            pkgs = ", ".join(
+                f"{p.package}@{p.version}({p.tier})"
+                for p in view.available_packages
+            )
+        else:
+            pkgs = "(none — add an AccCatalog / check signing floor)"
+        suffix = f" (filter: {name_filter})" if name_filter else ""
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": (
+                f"catalog{suffix}:\n"
+                f"  installed roles ({len(view.installed_roles)}): {roles}\n"
+                f"  available packages ({len(view.available_packages)}): {pkgs}"
+            ),
+            "ts": time.time(), "blocked": False,
+        })
+
     # ------------------------------------------------------------------
     # PR-5 — slash command dispatch
     # ------------------------------------------------------------------
@@ -1051,6 +1114,14 @@ class PromptScreen(Screen):
 
         if intent.kind == _sc.KIND_STATUS:
             self._render_status()
+            return
+
+        if intent.kind == _sc.KIND_CATALOG:
+            self._render_catalog(intent.args.get("filter", ""))
+            return
+
+        if intent.kind == _sc.KIND_MODEL:
+            self._render_models()
             return
 
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1.

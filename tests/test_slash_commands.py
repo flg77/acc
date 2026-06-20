@@ -225,7 +225,7 @@ def test_complete_bare_slash_returns_all_alphabetical():
 
 
 def test_complete_prefix_filters_alphabetical():
-    assert [c.name for c in sc.complete("/c")] == ["cancel", "clear", "cluster"]
+    assert [c.name for c in sc.complete("/c")] == ["cancel", "catalog", "clear", "cluster"]
 
 
 def test_complete_is_case_insensitive():
@@ -270,3 +270,10 @@ def test_pr3_verbs_in_registry_and_help():
     assert {"clear", "status", "mode"} <= names
     for verb in ("/clear", "/status", "/mode"):
         assert verb in sc.HELP_TEXT
+
+
+def test_pr4_catalog_model_parse():
+    assert sc.parse("/catalog").kind == sc.KIND_CATALOG
+    assert sc.parse("/catalog @acc").args == {"filter": "@acc"}
+    assert sc.parse("/model").kind == sc.KIND_MODEL
+    assert {"catalog", "model"} <= {c.name for c in sc.COMMANDS}

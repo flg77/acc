@@ -76,6 +76,9 @@ KIND_ASSISTANT_CONTROL = "assistant_control"
 KIND_STATUS = "status"
 KIND_MODE = "mode"
 KIND_CLEAR = "clear"
+# Proposal 039 (PR-4) — catalog/model read-only verbs.
+KIND_CATALOG = "catalog"
+KIND_MODEL = "model"
 KIND_UNKNOWN = "unknown"
 KIND_INVALID = "invalid"
 KIND_NOT_SLASH = "not_slash"
@@ -114,6 +117,7 @@ class CommandSpec:
 
 COMMANDS: list[CommandSpec] = [
     CommandSpec("cancel", "Cancel a task or cluster", "<task_id|cluster_id>", "control"),
+    CommandSpec("catalog", "Browse the role/package catalog", "[<@scope|filter>]", "query"),
     CommandSpec("clear", "Clear the transcript", category="control"),
     CommandSpec(
         "cluster", "Inspect or kill a cluster", category="query",
@@ -124,6 +128,7 @@ COMMANDS: list[CommandSpec] = [
     ),
     CommandSpec("help", "List the available commands", category="general"),
     CommandSpec("mode", "Set the operating mode", "<AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>", "control"),
+    CommandSpec("model", "List the models.yaml registry", category="query"),
     CommandSpec(
         "oversight", "Review the oversight queue", category="oversight",
         subforms=(
@@ -294,6 +299,12 @@ def parse(text: str) -> SlashIntent:
                 error=f"unknown mode {rest[0]!r}; valid: AUTO PLAN ACCEPT_EDITS ASK_PERMISSIONS",
             )
         return SlashIntent(kind=KIND_MODE, args={"mode": m})
+
+    if verb == "catalog":
+        return SlashIntent(kind=KIND_CATALOG, args={"filter": " ".join(rest)})
+
+    if verb == "model":
+        return SlashIntent(kind=KIND_MODEL)
 
     return SlashIntent(
         kind=KIND_UNKNOWN,
