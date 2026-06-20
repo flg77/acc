@@ -53,7 +53,7 @@ dependencies = [
     # Working memory (Redis — Phase 0b)
     "redis>=5.0,<6.0",
     # Wire serialization
-    "msgpack>=1.1,<2.0",
+    "msgpack>=1.2.1,<2.0",
     # Skill manifest input/output schema validation (Phase 4)
     "jsonschema>=4.19,<5.0",
 ]
