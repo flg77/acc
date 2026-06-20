@@ -324,6 +324,9 @@ class PromptScreen(Screen):
         # Proposal 039 (PR-5) — pinned objective; "" = none. /goal sets it and
         # it's prepended to every outgoing prompt until /goal clear.
         self._goal: str = ""
+        # Proposal 039 (PR-5) — /loop: a session-local recurring prompt.
+        self._loop_timer = None       # textual Timer | None
+        self._loop_prompt: str = ""
         # 033 WS-B fix — one-shot: an external load (Diagnostics "Send")
         # carrying an explicit mode must win over the role-driven prefill
         # that the async Select.Changed would otherwise apply.
@@ -829,6 +832,18 @@ class PromptScreen(Screen):
                 # re-press Send the moment the heartbeat lands.
                 return
 
+        self._spawn_dispatch(
+            observer=observer,
+            prompt=prompt,
+            target_role=target_role,
+            target_agent_id=target_aid,
+            operating_mode=operating_mode,
+        )
+
+    def _spawn_dispatch(self, *, observer, prompt: str, target_role: str,
+                        target_agent_id, operating_mode: str) -> None:
+        """Spawn the dispatch-and-await worker for one prompt.  Shared by
+        action_send + the /loop tick so both go through one path."""
         cid = self._active_collective_id()
         worker = asyncio.create_task(
             self._dispatch_and_await(
@@ -836,13 +851,44 @@ class PromptScreen(Screen):
                 collective_id=cid,
                 prompt=prompt,
                 target_role=target_role,
-                target_agent_id=target_aid,
+                target_agent_id=target_agent_id,
                 operating_mode=operating_mode,
                 workspace=self._workspace_project,
             )
         )
         self._workers.add(worker)
         worker.add_done_callback(self._workers.discard)
+
+    def _loop_tick(self) -> None:
+        """Proposal 039 (PR-5) — /loop: re-dispatch the stored prompt on the
+        interval.  Reads the CURRENT target/mode each tick; skips silently
+        (no nag) when the connection or target role isn't live."""
+        if not self._loop_prompt:
+            return
+        observer = self._active_observer()
+        if observer is None:
+            return
+        try:
+            target_role = str(
+                self.query_one("#select-target-role", Select).value or ""
+            ).strip()
+            target_aid = self.query_one(
+                "#input-target-agent-id", Input,
+            ).value.strip() or None
+        except Exception:  # noqa: BLE001  — screen torn down mid-loop
+            return
+        if not target_role:
+            return
+        prompt = self._loop_prompt
+        if self._goal:
+            prompt = f"[GOAL: {self._goal}]\n\n{prompt}"
+        self._spawn_dispatch(
+            observer=observer,
+            prompt=prompt,
+            target_role=target_role,
+            target_agent_id=target_aid,
+            operating_mode=self._operating_mode or "AUTO",
+        )
 
     def action_clear_transcript(self) -> None:
         self.history = []
@@ -1144,6 +1190,36 @@ class PromptScreen(Screen):
                 _system(
                     f"goal set → {text}\n[dim]prepended to every prompt "
                     f"until /goal clear[/dim]"
+                )
+            return
+
+        if intent.kind == _sc.KIND_LOOP:
+            action = intent.args.get("action", "show")
+            if action == "show":
+                if self._loop_timer is not None:
+                    _system(f"loop active → {self._loop_prompt}  (/loop stop to cancel)")
+                else:
+                    _system("no loop active (usage: /loop <30s|5m|2h> <prompt>)")
+            elif action == "stop":
+                if self._loop_timer is not None:
+                    self._loop_timer.stop()
+                    self._loop_timer = None
+                    self._loop_prompt = ""
+                    _system("loop stopped")
+                else:
+                    _system("no loop to stop")
+            else:  # start
+                secs = int(intent.args.get("interval_s", 0))
+                if secs < 10:
+                    _system("loop interval must be >= 10s", blocked=True)
+                    return
+                if self._loop_timer is not None:
+                    self._loop_timer.stop()
+                self._loop_prompt = intent.args.get("prompt", "")
+                self._loop_timer = self.set_interval(secs, self._loop_tick)
+                _system(
+                    f"looping every {secs}s → {self._loop_prompt}\n"
+                    f"[dim]/loop stop to cancel[/dim]"
                 )
             return
 

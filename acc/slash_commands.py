@@ -81,6 +81,7 @@ KIND_CATALOG = "catalog"
 KIND_MODEL = "model"
 # Proposal 039 (PR-5) — pinned objective.
 KIND_GOAL = "goal"
+KIND_LOOP = "loop"
 KIND_UNKNOWN = "unknown"
 KIND_INVALID = "invalid"
 KIND_NOT_SLASH = "not_slash"
@@ -130,6 +131,7 @@ COMMANDS: list[CommandSpec] = [
     ),
     CommandSpec("goal", "Set a pinned objective (prepended to prompts)", "[<text> | clear]", "control"),
     CommandSpec("help", "List the available commands", category="general"),
+    CommandSpec("loop", "Re-run a prompt on an interval", "<30s|5m|2h> <prompt> | stop", "control"),
     CommandSpec("mode", "Set the operating mode", "<AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>", "control"),
     CommandSpec("model", "List the models.yaml registry", category="query"),
     CommandSpec(
@@ -311,6 +313,25 @@ def parse(text: str) -> SlashIntent:
 
     if verb == "goal":
         return SlashIntent(kind=KIND_GOAL, args={"text": " ".join(rest)})
+
+    if verb == "loop":
+        if not rest:
+            return SlashIntent(kind=KIND_LOOP, args={"action": "show"})
+        if rest[0].lower() == "stop":
+            return SlashIntent(kind=KIND_LOOP, args={"action": "stop"})
+        tok = rest[0]
+        unit = tok[-1:].lower()
+        num = tok[:-1]
+        if len(rest) < 2 or unit not in ("s", "m", "h") or not num.isdigit():
+            return SlashIntent(
+                kind=KIND_INVALID,
+                error="usage: /loop <30s|5m|2h> <prompt>  |  /loop stop",
+            )
+        secs = int(num) * {"s": 1, "m": 60, "h": 3600}[unit]
+        return SlashIntent(
+            kind=KIND_LOOP,
+            args={"action": "start", "interval_s": secs, "prompt": " ".join(rest[1:])},
+        )
 
     return SlashIntent(
         kind=KIND_UNKNOWN,

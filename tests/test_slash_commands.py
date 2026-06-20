@@ -286,3 +286,17 @@ def test_pr5_goal_parse():
     assert sc.parse("/goal").args == {"text": ""}      # show current
     assert sc.parse("/goal clear").args == {"text": "clear"}
     assert "goal" in {c.name for c in sc.COMMANDS}
+
+
+def test_pr5_loop_parse():
+    started = sc.parse("/loop 5m check the deploy")
+    assert started.kind == sc.KIND_LOOP
+    assert started.args == {
+        "action": "start", "interval_s": 300, "prompt": "check the deploy",
+    }
+    assert sc.parse("/loop 30s ping").args["interval_s"] == 30
+    assert sc.parse("/loop stop").args == {"action": "stop"}
+    assert sc.parse("/loop").args == {"action": "show"}
+    assert sc.parse("/loop 5m").kind == sc.KIND_INVALID       # interval, no prompt
+    assert sc.parse("/loop 5x do it").kind == sc.KIND_INVALID  # bad unit
+    assert "loop" in {c.name for c in sc.COMMANDS}
