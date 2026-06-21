@@ -103,3 +103,7 @@ workspaces/*
 # Scratch for ad-hoc GPU model deploys during testing — synced by hand to acc1,
 # never committed.
 operator/config/samples/local-models/
+
+# Local implementation plans / scratch design notes. Kept in-tree for
+# convenient reference next to the code, but not for public distribution.
+implementation/
