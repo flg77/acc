@@ -83,6 +83,7 @@ KIND_MODEL = "model"
 KIND_GOAL = "goal"
 KIND_LOOP = "loop"
 KIND_SKILL = "skill"
+KIND_NEW_AGENT = "new_agent"
 KIND_UNKNOWN = "unknown"
 KIND_INVALID = "invalid"
 KIND_NOT_SLASH = "not_slash"
@@ -136,6 +137,7 @@ COMMANDS: list[CommandSpec] = [
     CommandSpec("loop", "Re-run a prompt on an interval", "<30s|5m|2h> <prompt> | stop", "control", prod_locked=True),
     CommandSpec("mode", "Set the operating mode", "<AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>", "control"),
     CommandSpec("model", "List the models.yaml registry", category="query"),
+    CommandSpec("new-agent", "Scaffold + launch a governed agentset from intent (signed A-BOM)", "<what the agent should do>", "control", prod_locked=True),
     CommandSpec(
         "oversight", "Review the oversight queue", category="oversight",
         subforms=(
@@ -344,6 +346,11 @@ def parse(text: str) -> SlashIntent:
     if verb == "model":
         return SlashIntent(kind=KIND_MODEL)
 
+    # Proposal 040 — guided "launch your agent": /new-agent [intent] opens the
+    # acc-new-agent onboarding flow (deploy-class → prod-gated).
+    if verb == "new-agent":
+        return SlashIntent(kind=KIND_NEW_AGENT, args={"intent": " ".join(rest)})
+
     if verb == "goal":
         return SlashIntent(kind=KIND_GOAL, args={"text": " ".join(rest)})
 
@@ -386,6 +393,27 @@ def skill_invocation_prompt(name: str, args: str = "") -> str:
     if args:
         return f"Use your '{name}' skill to: {args}"
     return f"Use your '{name}' skill."
+
+
+def new_agent_intent_prompt(intent: str = "") -> str:
+    """Synthesize the governed onboarding request dispatched to the Assistant when
+    the operator types ``/new-agent [intent]`` (proposal 040).  The operator is
+    *asking the concierge to run the acc-new-agent flow* — elicit the agentset,
+    then produce a signed AgentBOM for oversight; nothing deploys without approval.
+    Pure so it is unit-tested; the prompt screen's KIND_NEW_AGENT handler
+    dispatches the result to the ``assistant`` role.
+    """
+    intent = intent.strip()
+    head = (
+        "[ACC NEW-AGENT] Run the acc-new-agent onboarding flow. Elicit the missing "
+        "details — roles, per-role model, required packages, deploy target "
+        "(rhoai / edge / standalone) and data residency — then produce a signed "
+        "AgentBOM plus a collective.yaml for review. Do NOT deploy without "
+        "oversight approval (this is a deploy-class action)."
+    )
+    if intent:
+        return f"{head}\nOperator intent: {intent}"
+    return f"{head}\nNo intent was given yet — start by asking what the agent should do."
 
 
 # ---------------------------------------------------------------------------

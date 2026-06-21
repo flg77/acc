@@ -339,3 +339,28 @@ def test_pr6_skill_invocation_prompt():
     # whitespace tolerated on both args.
     assert sc.skill_invocation_prompt("  git  ", "  status ") == \
         "Use your 'git' skill to: status"
+
+
+def test_pr040_new_agent_parse():
+    intent = sc.parse("/new-agent build a python code reviewer")
+    assert intent.kind == sc.KIND_NEW_AGENT
+    assert intent.args == {"intent": "build a python code reviewer"}
+    # bare /new-agent opens the flow (the assistant will ask).
+    assert sc.parse("/new-agent").args == {"intent": ""}
+    # registry carries it + it is prod-locked (deploy-class, 040 §8 Q4).
+    spec = next(c for c in sc.COMMANDS if c.name == "new-agent")
+    assert spec.prod_locked is True
+    assert sc.is_allowed("new-agent", dev_mode=True) is True
+    assert sc.is_allowed("new-agent", dev_mode=False) is False
+    # discoverable by prefix (palette/completion); does not collide with /model.
+    assert "new-agent" in [c.name for c in sc.complete("/new")]
+    assert "/new-agent" in sc.HELP_TEXT
+
+
+def test_pr040_new_agent_prompt():
+    p = sc.new_agent_intent_prompt("coding reviewer for python services")
+    assert p.startswith("[ACC NEW-AGENT]")
+    assert "AgentBOM" in p and "oversight" in p
+    assert "Operator intent: coding reviewer for python services" in p
+    # no intent -> it asks.
+    assert "start by asking what the agent should do" in sc.new_agent_intent_prompt()

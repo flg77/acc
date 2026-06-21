@@ -1273,6 +1273,33 @@ class PromptScreen(Screen):
             )
             return
 
+        # Proposal 040 — /new-agent: start the acc-new-agent onboarding by
+        # dispatching a governed request to the assistant concierge. This verb is
+        # prod_locked, so the gate above already refused it outside dev/console.
+        if intent.kind == _sc.KIND_NEW_AGENT:
+            want = str(intent.args.get("intent", "") or "").strip()
+            observer = self._active_observer()
+            if observer is None:
+                _system("not connected — can't start the new-agent flow", blocked=True)
+                return
+            prompt = _sc.new_agent_intent_prompt(want)
+            if self._goal:
+                prompt = f"[GOAL: {self._goal}]\n\n{prompt}"
+            self._spawn_dispatch(
+                observer=observer,
+                prompt=prompt,
+                target_role="assistant",
+                target_agent_id=None,
+                operating_mode=self._operating_mode or "PLAN",
+            )
+            _system(
+                "→ acc-new-agent onboarding started — the assistant will elicit "
+                "roles / models / packages / target, then produce a signed "
+                "AgentBOM for oversight. "
+                + (f"intent: {want}" if want else "(no intent given — it will ask)")
+            )
+            return
+
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1.
         if intent.kind == _sc.KIND_ASSISTANT_CONTROL:
             action = str(intent.args.get("action", "") or "").lower()
