@@ -60,6 +60,7 @@ from acc.channels import TUIPromptChannel
 from acc.tui.widgets.cluster_panel import ClusterPanel
 from acc.tui.widgets.invocation_detail_modal import InvocationDetailModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.slash_palette import SlashPalette, top_match
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -169,6 +170,18 @@ class _PromptInput(TextArea):
             event.stop()
             self.insert("\n")
             return
+        # Proposal 039 — Tab completes the top slash-palette match when the
+        # buffer is a single-line slash command (e.g. "/ov" → "/oversight ").
+        if event.key == "tab":
+            buf = self.text
+            if buf.lstrip().startswith("/") and "\n" not in buf:
+                name = top_match(buf.strip())
+                if name:
+                    event.prevent_default()
+                    event.stop()
+                    self.text = f"/{name} "
+                    self.move_cursor(self.document.end)
+                    return
         await super()._on_key(event)
 
 
@@ -308,6 +321,12 @@ class PromptScreen(Screen):
         # replaced by a shift+tab cycle + a tiny hint).  AUTO default;
         # role selection prefills it (on_select_changed).
         self._operating_mode: str = "AUTO"
+        # Proposal 039 (PR-5) — pinned objective; "" = none. /goal sets it and
+        # it's prepended to every outgoing prompt until /goal clear.
+        self._goal: str = ""
+        # Proposal 039 (PR-5) — /loop: a session-local recurring prompt.
+        self._loop_timer = None       # textual Timer | None
+        self._loop_prompt: str = ""
         # 033 WS-B fix — one-shot: an external load (Diagnostics "Send")
         # carrying an explicit mode must win over the role-driven prefill
         # that the async Select.Changed would otherwise apply.
@@ -413,6 +432,11 @@ class PromptScreen(Screen):
         # two per-prompt controls (mode + workspace) sit together beside
         # the input.  The "+" opens WorkspaceSelectModal (PR-U2b); the
         # chosen path shows in #prompt-workspace-path below.
+        # Proposal 039 — interactive slash-command palette. Hidden until the
+        # operator types '/'; lists matching verbs alphabetically (Tab completes
+        # the top match). Sits just above the input row; fed by on_text_area_changed.
+        yield SlashPalette(id="slash-palette")
+
         with Horizontal(id="prompt-input-row"):
             # PR-V2 — operating mode is a tiny hint (no dropdown).
             # shift+tab cycles AUTO → PLAN → ACCEPT_EDITS →
@@ -439,6 +463,20 @@ class PromptScreen(Screen):
         yield Static("[dim]Idle. Type a prompt and press Enter.[/dim]",
                      id="prompt-status")
         yield Footer()
+
+    def on_text_area_changed(self, event) -> None:
+        """Live-update the slash palette as the operator types (proposal 039).
+
+        Only the prompt textarea drives it; any other TextArea.Changed is
+        ignored.  Pure-logic lives in slash_palette; this is the thin wire."""
+        ta = getattr(event, "text_area", None)
+        if ta is None or getattr(ta, "id", None) != "prompt-textarea":
+            return
+        try:
+            palette = self.query_one("#slash-palette", SlashPalette)
+        except Exception:  # palette not mounted yet  # noqa: BLE001
+            return
+        palette.update_for(ta.text)
 
     def on_mount(self) -> None:
         """Render the empty transcript once at mount."""
@@ -713,6 +751,11 @@ class PromptScreen(Screen):
             self.query_one("#prompt-textarea", TextArea).clear()
             return
 
+        # Proposal 039 (PR-5) — pinned goal: prepend the objective so the agent
+        # carries it on every prompt (set/cleared via /goal).
+        if self._goal:
+            prompt = f"[GOAL: {self._goal}]\n\n{prompt}"
+
         target_role = str(
             self.query_one("#select-target-role", Select).value or ""
         ).strip()
@@ -789,6 +832,18 @@ class PromptScreen(Screen):
                 # re-press Send the moment the heartbeat lands.
                 return
 
+        self._spawn_dispatch(
+            observer=observer,
+            prompt=prompt,
+            target_role=target_role,
+            target_agent_id=target_aid,
+            operating_mode=operating_mode,
+        )
+
+    def _spawn_dispatch(self, *, observer, prompt: str, target_role: str,
+                        target_agent_id, operating_mode: str) -> None:
+        """Spawn the dispatch-and-await worker for one prompt.  Shared by
+        action_send + the /loop tick so both go through one path."""
         cid = self._active_collective_id()
         worker = asyncio.create_task(
             self._dispatch_and_await(
@@ -796,13 +851,44 @@ class PromptScreen(Screen):
                 collective_id=cid,
                 prompt=prompt,
                 target_role=target_role,
-                target_agent_id=target_aid,
+                target_agent_id=target_agent_id,
                 operating_mode=operating_mode,
                 workspace=self._workspace_project,
             )
         )
         self._workers.add(worker)
         worker.add_done_callback(self._workers.discard)
+
+    def _loop_tick(self) -> None:
+        """Proposal 039 (PR-5) — /loop: re-dispatch the stored prompt on the
+        interval.  Reads the CURRENT target/mode each tick; skips silently
+        (no nag) when the connection or target role isn't live."""
+        if not self._loop_prompt:
+            return
+        observer = self._active_observer()
+        if observer is None:
+            return
+        try:
+            target_role = str(
+                self.query_one("#select-target-role", Select).value or ""
+            ).strip()
+            target_aid = self.query_one(
+                "#input-target-agent-id", Input,
+            ).value.strip() or None
+        except Exception:  # noqa: BLE001  — screen torn down mid-loop
+            return
+        if not target_role:
+            return
+        prompt = self._loop_prompt
+        if self._goal:
+            prompt = f"[GOAL: {self._goal}]\n\n{prompt}"
+        self._spawn_dispatch(
+            observer=observer,
+            prompt=prompt,
+            target_role=target_role,
+            target_agent_id=target_aid,
+            operating_mode=self._operating_mode or "AUTO",
+        )
 
     def action_clear_transcript(self) -> None:
         self.history = []
@@ -909,6 +995,90 @@ class PromptScreen(Screen):
                 exc_info=True,
             )
 
+    def _render_status(self) -> None:
+        """Proposal 039 (PR-3) — /status: a one-line read-only snapshot of the
+        operator-facing prompt state (target role, mode, workspace, session)."""
+        role = "?"
+        try:
+            role = str(self.query_one("#select-target-role", Select).value)
+        except Exception:  # noqa: BLE001
+            pass
+        ws = self._workspace_project or "(none)"
+        self._append_history({
+            "role": "system",
+            "task_id": "",
+            "text": (
+                f"status — target={role}  mode={self._operating_mode}  "
+                f"workspace={ws}  session={self._session_id[:8]}  "
+                f"(topology: /cluster show)"
+            ),
+            "ts": time.time(),
+            "blocked": False,
+        })
+
+    def _render_models(self) -> None:
+        """Proposal 039 (PR-4) — /model: list the models.yaml registry
+        (read-only; switching the active model is a follow-up)."""
+        try:
+            from acc.models import load_models  # noqa: PLC0415
+            models = load_models()
+        except Exception as exc:  # noqa: BLE001
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"models registry unavailable: {exc}",
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        if not models:
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": "no models registered (models.yaml empty or absent)",
+                "ts": time.time(), "blocked": False,
+            })
+            return
+        lines = ["models (models.yaml):"]
+        lines += [f"  {m.model_id:<22} {m.backend:<14} {m.display()}" for m in models]
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": "\n".join(lines), "ts": time.time(), "blocked": False,
+        })
+
+    def _render_catalog(self, name_filter: str = "") -> None:
+        """Proposal 039 (PR-4) — /catalog [filter]: installed roles + available
+        packages from the assistant catalog view (read-only)."""
+        try:
+            from acc.assistant.catalog_view import build_catalog_view  # noqa: PLC0415
+            from acc.tui.path_resolution import resolve_manifest_root  # noqa: PLC0415
+            roots = str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
+            view = build_catalog_view(roles_root=roots, name_filter=name_filter or None)
+        except Exception as exc:  # noqa: BLE001
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"catalog unavailable: {exc}",
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        roles = ", ".join(
+            f"{r.role}[{r.state}]" for r in view.installed_roles
+        ) or "(none)"
+        if view.available_packages:
+            pkgs = ", ".join(
+                f"{p.package}@{p.version}({p.tier})"
+                for p in view.available_packages
+            )
+        else:
+            pkgs = "(none — add an AccCatalog / check signing floor)"
+        suffix = f" (filter: {name_filter})" if name_filter else ""
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": (
+                f"catalog{suffix}:\n"
+                f"  installed roles ({len(view.installed_roles)}): {roles}\n"
+                f"  available packages ({len(view.available_packages)}): {pkgs}"
+            ),
+            "ts": time.time(), "blocked": False,
+        })
+
     # ------------------------------------------------------------------
     # PR-5 — slash command dispatch
     # ------------------------------------------------------------------
@@ -934,6 +1104,18 @@ class PromptScreen(Screen):
                 "ts": time.time(),
                 "blocked": blocked,
             })
+
+        # PR-6 — prod/dev gate: refuse prod_locked verbs in prod operator-mode.
+        _parts = raw_input.strip().lstrip("/").split()
+        verb = _parts[0].lower() if _parts else ""
+        dev_mode = str(getattr(self, "_operator_mode", "") or "").lower() != "prod"
+        if verb and not _sc.is_allowed(verb, dev_mode=dev_mode):
+            _system(
+                f"/{verb} is locked in prod operator-mode. Switch to dev "
+                f"(Config) or run it from the operator console.",
+                blocked=True,
+            )
+            return
 
         if intent.kind == _sc.KIND_HELP:
             _system(_sc.HELP_TEXT)
@@ -981,6 +1163,113 @@ class PromptScreen(Screen):
             _system(
                 "oversight slash commands are wired in a follow-up — "
                 "use Compliance screen for now",
+            )
+            return
+
+        # Proposal 039 (PR-3) — inspection/config verbs.
+        if intent.kind == _sc.KIND_CLEAR:
+            self.action_clear_transcript()
+            _system("transcript cleared")
+            return
+
+        if intent.kind == _sc.KIND_MODE:
+            self._operating_mode = intent.args["mode"]
+            self._set_mode_hint()
+            _system(f"operating mode → {intent.args['mode']}")
+            return
+
+        if intent.kind == _sc.KIND_STATUS:
+            self._render_status()
+            return
+
+        if intent.kind == _sc.KIND_CATALOG:
+            self._render_catalog(intent.args.get("filter", ""))
+            return
+
+        if intent.kind == _sc.KIND_MODEL:
+            self._render_models()
+            return
+
+        if intent.kind == _sc.KIND_GOAL:
+            text = intent.args.get("text", "").strip()
+            if not text:
+                _system(f"goal: {self._goal or '(none)'}")
+            elif text.lower() == "clear":
+                self._goal = ""
+                _system("goal cleared")
+            else:
+                self._goal = text
+                _system(
+                    f"goal set → {text}\n[dim]prepended to every prompt "
+                    f"until /goal clear[/dim]"
+                )
+            return
+
+        if intent.kind == _sc.KIND_LOOP:
+            action = intent.args.get("action", "show")
+            if action == "show":
+                if self._loop_timer is not None:
+                    _system(f"loop active → {self._loop_prompt}  (/loop stop to cancel)")
+                else:
+                    _system("no loop active (usage: /loop <30s|5m|2h> <prompt>)")
+            elif action == "stop":
+                if self._loop_timer is not None:
+                    self._loop_timer.stop()
+                    self._loop_timer = None
+                    self._loop_prompt = ""
+                    _system("loop stopped")
+                else:
+                    _system("no loop to stop")
+            else:  # start
+                secs = int(intent.args.get("interval_s", 0))
+                if secs < 10:
+                    _system("loop interval must be >= 10s", blocked=True)
+                    return
+                if self._loop_timer is not None:
+                    self._loop_timer.stop()
+                self._loop_prompt = intent.args.get("prompt", "")
+                self._loop_timer = self.set_interval(secs, self._loop_tick)
+                _system(
+                    f"looping every {secs}s → {self._loop_prompt}\n"
+                    f"[dim]/loop stop to cancel[/dim]"
+                )
+            return
+
+        # Proposal 039 (PR-6 tail) — /skill: dispatch a governed request to the
+        # active role asking it to use one of its skills (not a direct invoke;
+        # the role's cognitive core + governance decide — 033 WS-A).
+        if intent.kind == _sc.KIND_SKILL:
+            skill = str(intent.args.get("skill", "") or "").strip()
+            extra = str(intent.args.get("args", "") or "").strip()
+            observer = self._active_observer()
+            if observer is None:
+                _system("not connected — can't dispatch a skill request", blocked=True)
+                return
+            try:
+                target_role = str(
+                    self.query_one("#select-target-role", Select).value or ""
+                ).strip()
+                target_aid = self.query_one(
+                    "#input-target-agent-id", Input,
+                ).value.strip() or None
+            except Exception:  # noqa: BLE001 — screen torn down
+                target_role, target_aid = "", None
+            if not target_role:
+                _system("pick a target role first", blocked=True)
+                return
+            prompt = _sc.skill_invocation_prompt(skill, extra)
+            if self._goal:
+                prompt = f"[GOAL: {self._goal}]\n\n{prompt}"
+            self._spawn_dispatch(
+                observer=observer,
+                prompt=prompt,
+                target_role=target_role,
+                target_agent_id=target_aid,
+                operating_mode=self._operating_mode or "AUTO",
+            )
+            _system(
+                f"→ asked {target_role} to use '{skill}'"
+                + (f": {extra}" if extra else "")
             )
             return
 

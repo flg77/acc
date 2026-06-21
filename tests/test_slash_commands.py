@@ -202,3 +202,140 @@ def test_task_cancel_signal_subject_format():
     from acc.signals import SIG_TASK_CANCEL, subject_task_cancel
     assert SIG_TASK_CANCEL == "TASK_CANCEL"
     assert subject_task_cancel("sol-01") == "acc.sol-01.task.cancel"
+
+
+# ---------------------------------------------------------------------------
+# Command registry + completion (proposal 039 — palette discovery)
+# ---------------------------------------------------------------------------
+
+
+def test_registry_verbs_are_all_known_to_parse():
+    """Parity guard: every command the palette offers must be a verb
+    ``parse`` recognises — else the menu would surface an ``unknown`` verb."""
+    for spec in sc.COMMANDS:
+        intent = sc.parse(f"/{spec.name}")
+        assert intent.kind != sc.KIND_UNKNOWN, f"/{spec.name} unknown to parse()"
+
+
+def test_complete_bare_slash_returns_all_alphabetical():
+    names = [c.name for c in sc.complete("/")]
+    assert names == sorted(names)
+    assert names == [c.name for c in sc.COMMANDS]  # COMMANDS kept alphabetical
+    assert {"cancel", "oversight", "wake"} <= set(names)
+
+
+def test_complete_prefix_filters_alphabetical():
+    assert [c.name for c in sc.complete("/c")] == ["cancel", "catalog", "clear", "cluster"]
+
+
+def test_complete_is_case_insensitive():
+    assert [c.name for c in sc.complete("/OV")] == ["oversight"]
+
+
+def test_complete_no_match_returns_empty():
+    assert sc.complete("/zzz") == []
+
+
+def test_help_text_generated_and_alphabetical():
+    text = sc.HELP_TEXT
+    assert text.startswith("Slash commands:")
+    assert text.index("/cancel") < text.index("/wake")  # alphabetical order
+
+
+# ---------------------------------------------------------------------------
+# PR-3 verbs (proposal 039) — clear / status / mode
+# ---------------------------------------------------------------------------
+
+
+def test_clear_and_status_parse():
+    assert sc.parse("/clear").kind == sc.KIND_CLEAR
+    assert sc.parse("/status").kind == sc.KIND_STATUS
+
+
+def test_mode_parse_valid_normalises_uppercase():
+    intent = sc.parse("/mode plan")
+    assert intent.kind == sc.KIND_MODE
+    assert intent.args == {"mode": "PLAN"}
+
+
+def test_mode_parse_missing_or_bogus_is_invalid():
+    assert sc.parse("/mode").kind == sc.KIND_INVALID
+    bogus = sc.parse("/mode turbo")
+    assert bogus.kind == sc.KIND_INVALID
+    assert "turbo" in bogus.error
+
+
+def test_pr3_verbs_in_registry_and_help():
+    names = {c.name for c in sc.COMMANDS}
+    assert {"clear", "status", "mode"} <= names
+    for verb in ("/clear", "/status", "/mode"):
+        assert verb in sc.HELP_TEXT
+
+
+def test_pr4_catalog_model_parse():
+    assert sc.parse("/catalog").kind == sc.KIND_CATALOG
+    assert sc.parse("/catalog @acc").args == {"filter": "@acc"}
+    assert sc.parse("/model").kind == sc.KIND_MODEL
+    assert {"catalog", "model"} <= {c.name for c in sc.COMMANDS}
+
+
+def test_pr5_goal_parse():
+    set_intent = sc.parse("/goal ship v2 by friday")
+    assert set_intent.kind == sc.KIND_GOAL
+    assert set_intent.args == {"text": "ship v2 by friday"}
+    assert sc.parse("/goal").args == {"text": ""}      # show current
+    assert sc.parse("/goal clear").args == {"text": "clear"}
+    assert "goal" in {c.name for c in sc.COMMANDS}
+
+
+def test_pr6_prod_gating():
+    # /loop is prod-locked by default — allowed in dev, refused in prod.
+    assert sc.is_allowed("loop", dev_mode=True) is True
+    assert sc.is_allowed("loop", dev_mode=False) is False
+    assert sc.is_allowed("/loop", dev_mode=False) is False   # leading slash tolerated
+    # non-locked verbs are allowed in both modes.
+    assert sc.is_allowed("status", dev_mode=False) is True
+    assert sc.is_allowed("help", dev_mode=False) is True
+    # unknown verb defaults allowed (parse handles it).
+    assert sc.is_allowed("nope", dev_mode=False) is True
+    loop = next(c for c in sc.COMMANDS if c.name == "loop")
+    assert loop.prod_locked is True
+
+
+def test_pr5_loop_parse():
+    started = sc.parse("/loop 5m check the deploy")
+    assert started.kind == sc.KIND_LOOP
+    assert started.args == {
+        "action": "start", "interval_s": 300, "prompt": "check the deploy",
+    }
+    assert sc.parse("/loop 30s ping").args["interval_s"] == 30
+    assert sc.parse("/loop stop").args == {"action": "stop"}
+    assert sc.parse("/loop").args == {"action": "show"}
+    assert sc.parse("/loop 5m").kind == sc.KIND_INVALID       # interval, no prompt
+    assert sc.parse("/loop 5x do it").kind == sc.KIND_INVALID  # bad unit
+    assert "loop" in {c.name for c in sc.COMMANDS}
+
+
+def test_pr6_skill_invocation_parse():
+    # /skill <name> [args] -> KIND_SKILL with name + args split out.
+    intent = sc.parse("/skill git commit -am wip")
+    assert intent.kind == sc.KIND_SKILL
+    assert intent.args == {"skill": "git", "args": "commit -am wip"}
+    # name only, no args.
+    assert sc.parse("/skill python").args == {"skill": "python", "args": ""}
+    # bare /skill is a usage error (no skill named).
+    assert sc.parse("/skill").kind == sc.KIND_INVALID
+    # /skills (plural) still lists — must NOT be captured by the skill branch.
+    assert sc.parse("/skills").kind == sc.KIND_SKILLS
+    # registry + generated help carry it.
+    assert "skill" in {c.name for c in sc.COMMANDS}
+    assert "/skill <name>" in sc.HELP_TEXT
+
+
+def test_pr6_skill_invocation_prompt():
+    assert sc.skill_invocation_prompt("git", "commit -am wip") == \
+        "Use your 'git' skill to: commit -am wip"
+    assert sc.skill_invocation_prompt("python") == "Use your 'python' skill."
+    # whitespace tolerated on both args.
+    assert sc.skill_invocation_prompt("  git  ", "  status ") == \
+        "Use your 'git' skill to: status"
