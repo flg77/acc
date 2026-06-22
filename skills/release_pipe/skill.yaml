@@ -1,0 +1,36 @@
+# skills/release_pipe/skill.yaml — plan a role/skill/pack release (no side effects).
+purpose:        "Plan the ACC release pipeline for a role/skill/pack (review→build→sign→publish→catalog→promote)."
+version:        "0.1.0"
+adapter_class:  "ReleasePipeSkill"
+risk_level:     "LOW"
+domain_id:      "meta"
+tags:           ["release", "meta", "planning"]
+
+input_schema:
+  type: object
+  properties:
+    kind:    {type: string, enum: ["role", "skill", "pack"]}
+    name:    {type: string}
+    version: {type: string}
+    pack:    {type: string, description: "@acc/<pack> if pack-shipped; omit for in-tree"}
+    in_tree: {type: boolean, description: "true = ships in the runtime image (control/core)"}
+  required: ["name"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    artifact: {type: object}
+    steps:    {type: array, items: {type: object}}
+    operator_gated_steps: {type: array, items: {type: integer}}
+    summary:  {type: string}
+  required: ["steps", "summary"]
+  additionalProperties: true
+
+description: |
+  Read-only planner.  Returns the ordered, ACC-correct release steps for a new
+  role/skill/pack — reviewer optimisation first, then build (build_family_pkg),
+  cosign keyless sign, publish, catalog index, acc-promote (spearhead→mirror) —
+  each tagged with who runs it and whether it is oversight-gated.  Sign / publish
+  / promote are OPERATOR-only by ACC policy; this skill plans them, it never
+  executes them.  Pairs with skill_author + role_author.

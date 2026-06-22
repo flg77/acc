@@ -1,0 +1,44 @@
+# skills/role_author/skill.yaml — the Assistant's role-writing capability.
+purpose:        "Scaffold a new ACC role (role.yaml + role.md) — draft for review, then write."
+version:        "0.1.0"
+adapter_class:  "RoleAuthorSkill"
+risk_level:     "MEDIUM"
+domain_id:      "meta"
+tags:           ["authoring", "meta", "scaffold", "role"]
+
+input_schema:
+  type: object
+  properties:
+    name:        {type: string, description: "snake_case role id ([a-z][a-z0-9_]*)"}
+    purpose:     {type: string}
+    persona:     {type: string}
+    task_types:  {type: array, items: {type: string}}
+    domain_id:   {type: string}
+    seed_context: {type: string}
+    reasoning_trace: {type: boolean}
+    allowed_skills:  {type: array, items: {type: string}}
+    allowed_mcps:    {type: array, items: {type: string}}
+    max_skill_risk_level: {type: string}
+    description: {type: string}
+    version:     {type: string}
+    mode:        {type: string, enum: ["draft", "write"]}
+    base_dir:    {type: string}
+  required: ["name", "purpose"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    written: {type: boolean}
+    files:   {description: "dict filename->content (draft) or list (write)"}
+    dir:     {type: string}
+    review_hint: {type: string}
+    next:    {type: string}
+  required: ["written"]
+  additionalProperties: true
+
+description: |
+  Generates a valid role package (role.yaml + role.md) per docs/role-authoring.md.
+  draft mode returns content for the reviewer + a domain-expert role to optimise;
+  write mode commits under roles/<name>/.  After review + write, hand off to
+  release_pipe so the new role is packaged + published through the catalog.
