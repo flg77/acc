@@ -68,6 +68,11 @@ See `container/production/Containerfile.acc-pkg`.
 You don't need a cosign keypair — keyless signing reuses your
 GitHub Actions OIDC identity.
 
+> **Full CLI reference.** This page is a task-oriented walkthrough. For the
+> complete `acc-pkg` command + flag reference — including the rpm/rpmbuild-inspired
+> query verbs (`qf`/`ql`/`qi`/`qv`/`remove`/`rdeps`) and exit codes — see
+> [`acc-pkg.md`](./acc-pkg.md).
+
 ## Step 1 — Scaffold the package
 
 ```bash
@@ -241,6 +246,9 @@ Once published, your package surfaces in:
   install
 * **`PROPOSE_INFUSE` marker** — Assistant can autonomously propose
   your role; the operator approves in the Compliance pane
+* **`/new-agent` onboarding** — an operator can describe an agentset in
+  plain English and the Assistant composes a signed Agent BOM that pins
+  your package; see [`agent-bom-and-new-agent.md`](./agent-bom-and-new-agent.md)
 
 Per-tier display:
 
