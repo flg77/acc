@@ -469,7 +469,8 @@ case "$COMMAND" in
         # the catalog-fetch convenience the native CLI spells as a name install.
         #
         #   ./acc-deploy.sh pkg add @acc/workspace-roles            # fetch+install from the catalog
-        #   ./acc-deploy.sh pkg add @acc/business-roles@^1.0 acc-canonical   # pin a catalog id
+        #   ./acc-deploy.sh pkg add @acc/workspace-roles @acc/devops-roles @acc/business-roles  # many at once
+        #   ./acc-deploy.sh pkg add @acc/business-roles@^1.0 --catalog acc-canonical   # pin a catalog id
         #   ./acc-deploy.sh pkg list                                # installed packs
         #   ./acc-deploy.sh pkg list --available                    # what the catalog offers
         #   ./acc-deploy.sh pkg install ./dist/foo.accpkg           # native acc-pkg: install a file
@@ -488,16 +489,42 @@ case "$COMMAND" in
         shift 2>/dev/null || true
         case "$PKG_SUB" in
             add|get)
-                SPEC="${1:?usage: ./acc-deploy.sh pkg add <@scope/name[@constraint]> [catalog-id]}"
-                shift 2>/dev/null || true
-                DIRECT_ARGS=("$SPEC")
-                # An optional bare 2nd positional is a catalog id to pin to.
-                if [[ "${1:-}" != "" && "${1:-}" != --* ]]; then
-                    DIRECT_ARGS+=(--catalog "$1"); shift
+                # Accept ONE OR MORE pack specs in a single call; pin them all to
+                # an optional catalog with the explicit `--catalog <id>` flag.
+                #   pkg add @acc/workspace-roles @acc/devops-roles @acc/business-roles
+                #   pkg add @acc/business-roles@^1.0 --catalog acc-canonical
+                # (The old bare 2nd-positional-as-catalog-id form is gone: it
+                #  silently broke multi-pack `add A B C`.  Use --catalog now.)
+                CATALOG=""
+                SPECS=()
+                PASSTHRU=()
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        --catalog)   CATALOG="${2:?--catalog needs an id}"; shift 2 ;;
+                        --catalog=*) CATALOG="${1#*=}"; shift ;;
+                        --)          shift; while [[ $# -gt 0 ]]; do PASSTHRU+=("$1"); shift; done ;;
+                        -*)          PASSTHRU+=("$1"); shift ;;
+                        *)           SPECS+=("$1"); shift ;;
+                    esac
+                done
+                if [[ ${#SPECS[@]} -eq 0 ]]; then
+                    echo "usage: ./acc-deploy.sh pkg add <@scope/name[@constraint]> [more packs...] [--catalog <id>]" >&2
+                    exit 2
                 fi
-                [[ "${ACC_ALLOW_UNSIGNED:-0}" == "1" ]] && DIRECT_ARGS+=(--allow-unsigned)
-                echo "▶ Installing $SPEC from the catalog..."
-                exec python -m acc.cli collective pkg-install-direct "${DIRECT_ARGS[@]}" "$@"
+                COMMON=()
+                [[ -n "$CATALOG" ]] && COMMON+=(--catalog "$CATALOG")
+                [[ "${ACC_ALLOW_UNSIGNED:-0}" == "1" ]] && COMMON+=(--allow-unsigned)
+                ADD_RC=0
+                for SPEC in "${SPECS[@]}"; do
+                    echo "▶ Installing $SPEC from the catalog${CATALOG:+ ($CATALOG)}..."
+                    if ! python -m acc.cli collective pkg-install-direct \
+                            "$SPEC" "${COMMON[@]}" "${PASSTHRU[@]}"; then
+                        rc=$?; ADD_RC=$rc
+                        echo "  ✗ $SPEC failed (exit $rc) — see message above" >&2
+                    fi
+                done
+                [[ ${#SPECS[@]} -gt 1 ]] && echo "▶ pkg add: ${#SPECS[@]} pack(s) processed (rc=$ADD_RC)."
+                exit $ADD_RC
                 ;;
             ""|list|install|inspect|eval|verify|info|contents|owner|qf|rdeps|verify-installed|qv|uninstall|remove|qi|ql|validate|build)
                 # Native acc-pkg verbs — pass straight through to the CLI.
