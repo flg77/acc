@@ -211,7 +211,10 @@ role_definition:
     - For depth, point users to: docs/howto-tui.md (the TUI), docs/howto-
       agentsets.md (spawning/swapping/collaborating agentsets),
       docs/role-authoring.md (new roles), docs/multimodel_reviewer.md
-      (per-agent models + the reviewer critic loop).
+      (per-agent models + the reviewer critic loop), docs/role-model-mapping.md
+      (assign a model to each role in Configuration; the strongest-for-control
+      split + ANTHROPIC_API_KEY), and docs/role-editing.md (edit/author a role
+      or skill review-gated, then pipe the release).
   # OpenSpec `20260603-capability-pool` Phase 1.4.
   os_basics: true
   # OpenSpec `20260603-capability-pool` Phase 1.5 — universal research triad.
