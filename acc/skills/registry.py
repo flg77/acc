@@ -153,10 +153,22 @@ class SkillRegistry:
                     continue
                 new[skill_id] = skill
         self._skills = new
-        logger.info(
-            "skills: registry rebuilt — %d skill(s) loaded from %s (%s)",
-            len(new), root, ", ".join(sorted(new.keys())) or "<empty>",
-        )
+        if new:
+            logger.info(
+                "skills: registry rebuilt — %d skill(s) from %d root(s) "
+                "[in-tree=%s + installed packages] (%s)",
+                len(new), len(roots), root, ", ".join(sorted(new.keys())),
+            )
+        else:
+            # Loud: an empty registry is why the TUI shows every capability
+            # 'not installed' and agents hit SkillNotFound (2026-06-22 report).
+            logger.warning(
+                "skills: registry rebuilt EMPTY — 0 skills from %d root(s) "
+                "[in-tree=%s]. Check ACC_SKILLS_ROOT points at a populated "
+                "skills/ dir (image bakes /app/skills) and ACC_PACKAGES_ROOT/"
+                "registry.json for installed packs.",
+                len(roots), root,
+            )
         return len(new)
 
     # ------------------------------------------------------------------
