@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import anthropic
 
 from acc.backends import LLMCallError
 
+logger = logging.getLogger(__name__)
 _RETRYABLE_TYPES = {"overloaded_error", "api_error"}
 
 
@@ -26,7 +28,17 @@ class AnthropicBackend:
     def __init__(self, model: str, embedding_model_path: str) -> None:
         self._model = model
         self._embedding_model_path = embedding_model_path
-        self._client = anthropic.AsyncAnthropic(api_key=os.environ.get("ACC_ANTHROPIC_API_KEY", ""))
+        # Accept the ACC-namespaced key OR the standard Anthropic SDK env name.
+        # Operators (and the SDK itself) default to ANTHROPIC_API_KEY; honouring
+        # it means "I set ANTHROPIC_API_KEY" actually authenticates instead of
+        # silently sending an empty key (2026-06-22 debug report).
+        api_key = (os.environ.get("ACC_ANTHROPIC_API_KEY")
+                   or os.environ.get("ANTHROPIC_API_KEY") or "")
+        if not api_key:
+            logger.warning(
+                "anthropic backend: no API key in ACC_ANTHROPIC_API_KEY or "
+                "ANTHROPIC_API_KEY — requests will 401")
+        self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._st_model = None  # lazy-loaded
 
     def _get_st_model(self):

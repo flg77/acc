@@ -479,6 +479,28 @@ class ConfigurationScreen(Screen):
             )
             yield DataTable(id="llm-registry-table", show_cursor=False)
 
+            # Operator goal 2026-06-22 — ROLE → MODEL, the canonical mapping
+            # surface (locked decision).  Assigns AgentSpec.model per role in the
+            # active collective.yaml; "Seed split" = strongest model for the
+            # control/review roles, cheap workers for the rest.
+            yield Label("ROLE → MODEL (active agentset)", classes="panel-label")
+            yield Static(
+                "[dim]Assign each role's model — persists to collective.yaml as "
+                "AgentSpec.model; re-apply the agentset to take effect.  "
+                "'(default)' = the configured default above.[/dim]",
+                id="role-model-hint",
+            )
+            yield DataTable(id="role-model-table", show_cursor=False)
+            with Horizontal(classes="llm-edit-row"):
+                yield Select([("(role)", "")], id="rolemodel-role",
+                             allow_blank=True, classes="llm-edit-control")
+                yield Select([("(model)", "")], id="rolemodel-model",
+                             allow_blank=True, classes="llm-edit-control")
+                yield Button("Assign", id="btn-rolemodel-assign", variant="primary")
+                yield Button("Seed split defaults", id="btn-rolemodel-seed",
+                             variant="default")
+            yield Static("", id="role-model-status")
+
     def _compose_skills_tab(self):
         """Skills tab — table + Upload button.  Moved from Ecosystem."""
         with ScrollableContainer():
@@ -521,8 +543,12 @@ class ConfigurationScreen(Screen):
         mcps_table.add_columns("Server", "Transport", "Risk", "Tools", "Source")
         mcps_table.cursor_type = "row"
 
+        rm_table = self.query_one("#role-model-table", DataTable)
+        rm_table.add_columns("Role", "Model", "Label", "#agents")
+
         self._render_llm_summary()
         self._render_model_registry()
+        self._render_role_model()
         self._load_skills()
         self._load_mcps()
 
@@ -635,6 +661,102 @@ class ConfigurationScreen(Screen):
                 table.add_row(*row)
         except Exception:
             logger.exception("configuration: model registry render failed")
+
+    # ------------------------------------------------------------------
+    # ROLE → MODEL (operator goal 2026-06-22) — canonical mapping surface.
+    # Persists AgentSpec.model into the active collective.yaml.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _collective_path() -> "Path":
+        """Active collective.yaml: ACC_COLLECTIVE_PATH > /app/collective.yaml > ./collective.yaml."""
+        import os  # noqa: PLC0415
+        from pathlib import Path  # noqa: PLC0415
+        env = os.environ.get("ACC_COLLECTIVE_PATH")
+        if env:
+            return Path(env)
+        container = Path("/app/collective.yaml")
+        return container if container.exists() else Path("collective.yaml")
+
+    def _load_active_collective(self):
+        try:
+            from acc.collective import load_collective  # noqa: PLC0415
+            return load_collective(self._collective_path())
+        except Exception:
+            return None
+
+    def _render_role_model(self) -> None:
+        """Repaint the ROLE → MODEL table + (re)populate the role/model dropdowns."""
+        from acc.role_model_map import role_model_rows  # noqa: PLC0415
+        try:
+            table = self.query_one("#role-model-table", DataTable)
+        except Exception:
+            return
+        table.clear()
+        try:
+            models = load_models()
+        except Exception:
+            models = []
+        spec = self._load_active_collective()
+        roles: list[str] = []
+        if spec is None or not getattr(spec, "agents", None):
+            table.add_row("(no agents in collective.yaml — compose an agentset)", "—", "—", "—")
+        else:
+            for r in role_model_rows(spec, models):
+                table.add_row(r["role"], r["model_id"], r["label"] or "—", str(r["n_agents"]))
+                roles.append(r["role"])
+        try:
+            self.query_one("#rolemodel-role", Select).set_options(
+                [("(role)", "")] + [(r, r) for r in roles])
+            self.query_one("#rolemodel-model", Select).set_options(
+                [("(default)", "(default)")] + [(m.model_id, m.model_id) for m in models])
+        except Exception:
+            logger.exception("configuration: role→model dropdown populate failed")
+
+    def _save_collective(self, spec) -> str:
+        from acc.collective import dump_collective  # noqa: PLC0415
+        dump_collective(spec, self._collective_path())
+        return str(self._collective_path())
+
+    def _on_rolemodel_assign(self) -> None:
+        from acc.role_model_map import assign_role_model  # noqa: PLC0415
+        status = self.query_one("#role-model-status", Static)
+        role = self.query_one("#rolemodel-role", Select).value
+        model = self.query_one("#rolemodel-model", Select).value
+        if not role or role == Select.BLANK:
+            status.update("[yellow]pick a role first[/yellow]")
+            return
+        spec = self._load_active_collective()
+        if spec is None:
+            status.update("[red]no collective.yaml to write[/red]")
+            return
+        n = assign_role_model(spec, role, None if model == Select.BLANK else model)
+        try:
+            self._save_collective(spec)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("configuration: role→model save failed")
+            status.update(f"[red]save failed: {exc}[/red]")
+            return
+        status.update(f"[green]✓ {role} → {model or '(default)'} "
+                      f"({n} slot) — re-apply the agentset to take effect[/green]")
+        self._render_role_model()
+
+    def _on_rolemodel_seed(self) -> None:
+        from acc.role_model_map import seed_split_defaults  # noqa: PLC0415
+        status = self.query_one("#role-model-status", Static)
+        spec = self._load_active_collective()
+        if spec is None or not getattr(spec, "agents", None):
+            status.update("[yellow]no agents in collective.yaml to seed[/yellow]")
+            return
+        applied = seed_split_defaults(spec, strong="claude-opus", worker="maas-qwen3-14b")
+        try:
+            self._save_collective(spec)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("configuration: role→model seed save failed")
+            status.update(f"[red]save failed: {exc}[/red]")
+            return
+        status.update(f"[green]✓ seeded split: {len(applied)} role(s) "
+                      f"(control/review→claude-opus, workers→maas-qwen3-14b) — re-apply[/green]")
+        self._render_role_model()
 
     # ------------------------------------------------------------------
     # LLM tab — config summary + test
@@ -932,6 +1054,12 @@ class ConfigurationScreen(Screen):
                     title="Pick an mcp.yaml to upload",
                 )
             )
+            return
+        if btn_id == "btn-rolemodel-assign":
+            self._on_rolemodel_assign()
+            return
+        if btn_id == "btn-rolemodel-seed":
+            self._on_rolemodel_seed()
             return
 
     def on_file_picker_modal_file_selected(

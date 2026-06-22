@@ -10,11 +10,17 @@
 # (the key itself never lives in this file).
 models:
   # ── Anthropic ────────────────────────────────────────────────────────
+  - model_id: claude-opus
+    backend: anthropic
+    model: claude-opus-4-8
+    api_key_env: ANTHROPIC_API_KEY
+    label: "Claude Opus 4.8 (STRONGEST — control + reviewer)"
+    notes: "Key from ACC_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY."
   - model_id: claude-sonnet
     backend: anthropic
     model: claude-sonnet-4-6
     label: "Claude Sonnet 4.6 (powerful — reviewer)"
-    notes: "Needs ACC_ANTHROPIC_API_KEY."
+    notes: "Key from ACC_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY."
   - model_id: claude-haiku
     backend: anthropic
     model: claude-haiku-4-6
