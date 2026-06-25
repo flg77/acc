@@ -374,12 +374,30 @@ class InfuseScreen(Screen):
         self.app.switch_screen(event.screen_name)
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        """Reload task types when role selection changes (REQ-TUI-021)."""
-        if event.select.id == "select-role":
-            role_name = str(event.value) if event.value else ""
-            if role_name:
-                self._populate_task_types(role_name)
-                self._refresh_role_caps(role_name)
+        """Reload the WHOLE detail form when the role dropdown changes.
+
+        Previously this only refreshed task_types + caps, so version /
+        persona / seed_context / token_budget / rate_limit kept the prior
+        role's values (or the 2048/0.1.0 compose defaults) — the
+        "dropdown is static, budget never changes" finding (TUI test
+        2026-06-25, images 4/7/8).  Re-use the full ``preload_from_role``
+        path so every editable field reflects the selected role's
+        role.yaml.  ``_loading_role`` guards against the re-entrant
+        ``Select.Changed`` that ``preload_from_role`` itself can post when
+        it re-asserts the Select value.
+        """
+        if event.select.id != "select-role":
+            return
+        if getattr(self, "_loading_role", False):
+            return
+        role_name = str(event.value) if event.value else ""
+        if not role_name:
+            return
+        self._loading_role = True
+        try:
+            self.preload_from_role(role_name)
+        finally:
+            self._loading_role = False
 
     # ------------------------------------------------------------------
     # Reactive watchers

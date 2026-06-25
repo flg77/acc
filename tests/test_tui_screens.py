@@ -203,6 +203,49 @@ class TestInfuseScreen:
             panel = app.screen.query_one("#history-panel")
             assert not panel.display
 
+    @pytest.mark.asyncio
+    async def test_role_dropdown_reloads_full_form(self):
+        """Changing the role dropdown must reload the WHOLE detail form —
+        token_budget + version, not just task_types.
+
+        Regression for TUI test 2026-06-25 (images 4/7/8): selecting a
+        different active role left the budget on 2048 (and version on
+        0.1.0) because ``on_select_changed`` only refreshed task_types.
+        """
+        from textual.widgets import Input, Select
+        from acc.role_loader import RoleLoader, list_roles
+        from acc.tui.screens.infuse import _roles_root
+
+        root = _roles_root()
+        target = None
+        for name in list_roles(root):
+            rd = RoleLoader(root, name).load()
+            if rd and (rd.category_b_overrides or {}).get("token_budget", 2048) != 2048:
+                target = (name, rd)
+                break
+        if target is None:
+            pytest.skip("no in-tree role carries a non-default token_budget override")
+        name, rd = target
+        expected_tb = str(rd.category_b_overrides["token_budget"])
+        expected_ver = rd.version or "0.1.0"
+
+        app = _make_app_for(InfuseScreen)
+        async with app.run_test(headless=True) as pilot:
+            await pilot.pause(0.1)
+            screen = app.screen
+            screen.query_one("#select-role", Select).value = name
+            await pilot.pause(0.1)
+            tb = screen.query_one("#input-token-budget", Input).value
+            ver = screen.query_one("#input-version", Input).value
+            assert tb == expected_tb, (
+                f"token_budget {tb!r} should reflect role {name!r}'s "
+                f"override {expected_tb!r} after a dropdown change"
+            )
+            assert ver == expected_ver, (
+                f"version {ver!r} should reflect role {name!r}'s "
+                f"{expected_ver!r} after a dropdown change"
+            )
+
 
 # ---------------------------------------------------------------------------
 # ComplianceScreen — REQ-TUI-003, REQ-TUI-025
