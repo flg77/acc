@@ -483,6 +483,10 @@ class PromptScreen(Screen):
         self._render_transcript()
         # 033 WS-F — paint the dev/prod operator-mode badge in the target row.
         self._render_mode_badge()
+        # 25.6-2.26 — populate the target-role dropdown from in-tree +
+        # installed-pack roles so an infused role can actually be targeted
+        # (it was a static compose-time list, so infused roles never showed).
+        self._populate_target_roles()
         # PR-F — initialise the invocation waterfall column layout.
         try:
             wf = self.query_one("#invocation-waterfall", DataTable)
@@ -522,6 +526,32 @@ class PromptScreen(Screen):
             if not task.done():
                 task.cancel()
         self._workers.clear()
+
+    def _populate_target_roles(self) -> None:
+        """Fill the target-role dropdown with in-tree + installed-pack roles.
+
+        The dropdown was a static compose-time list (``_TARGET_ROLES``), so an
+        infused pack role (e.g. an auto-researcher) could never be selected as
+        a target (25.6-2.26 image 4).  Suppresses Select.Changed during the
+        rebuild so it doesn't trip the mode-prefill handler, and preserves the
+        Assistant default.
+        """
+        try:
+            from acc.role_loader import list_all_role_names  # noqa: PLC0415
+            from acc.tui.path_resolution import resolve_manifest_root  # noqa: PLC0415
+            root = str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
+            names = list_all_role_names(root)
+            if not names:
+                return
+            sel = self.query_one("#select-target-role", Select)
+            keep = sel.value if sel.value in names else (
+                "assistant" if "assistant" in names else names[0]
+            )
+            with sel.prevent(Select.Changed):
+                sel.set_options([(n, n) for n in names])
+                sel.value = keep
+        except Exception:
+            logger.debug("prompt: target-role population failed", exc_info=True)
 
     def _render_mode_badge(self) -> None:
         """Paint the dev/prod security-floor badge into ``#prompt-mode-badge``.

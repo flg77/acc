@@ -34,7 +34,7 @@ from textual.widgets import (
 )
 from textual.reactive import reactive
 
-from acc.role_loader import RoleLoader, list_roles
+from acc.role_loader import RoleLoader, list_roles, list_all_role_names
 from acc.signals import subject_role_update
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
@@ -255,9 +255,14 @@ class InfuseScreen(Screen):
                 )
 
     def _load_dynamic_roles(self) -> None:
-        """Scan roles/ and populate the Select widget (REQ-TUI-020)."""
+        """Populate the Select with in-tree + installed-pack roles (REQ-TUI-020).
+
+        Uses ``list_all_role_names`` so an infused pack role (e.g. an
+        auto-researcher) is selectable here, not only in the Ecosystem library
+        (25.6-2.26).
+        """
         root = _roles_root()
-        role_names = list_roles(root)
+        role_names = list_all_role_names(root)
         if not role_names:
             return  # keep fallback options
 
@@ -286,7 +291,7 @@ class InfuseScreen(Screen):
             select = self.query_one("#select-role", Select)
         except Exception:
             return
-        names = list_roles(_roles_root())
+        names = list_all_role_names(_roles_root())
         if not names or names == getattr(self, "_scanned_roles", []):
             return  # nothing new
         current = select.value

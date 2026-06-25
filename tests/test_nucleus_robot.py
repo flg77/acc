@@ -52,3 +52,28 @@ async def test_role_select_sticks_under_snapshot_churn(monkeypatch):
         assert tb.startswith("4096"), (
             f"token_budget should be assistant's 4096, got {tb!r}"
         )
+
+
+@pytest.mark.asyncio
+async def test_infused_role_visible_in_nucleus_dropdown(monkeypatch):
+    """Standard scenario: an infused pack role (e.g. an auto-researcher) must
+    appear in the Nucleus role dropdown — not only the Ecosystem library
+    (25.6-2.26: infused autoresearcher invisible in Nucleus, images 2/3/8)."""
+    import acc.tui.screens.infuse as infuse_mod
+
+    monkeypatch.setenv("ACC_ROLES_ROOT", "roles")
+    infused = sorted([
+        "arbiter", "assistant", "compliance_officer", "ingester",
+        "observer", "orchestrator", "reviewer", "autoresearcher",
+    ])
+    # The dropdown enumerates in-tree ∪ installed-pack roles via this helper.
+    monkeypatch.setattr(infuse_mod, "list_all_role_names", lambda root: infused)
+
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        sel = app.screen.query_one("#select-role", Select)
+        options = [v for _, v in sel._options]
+        assert "autoresearcher" in options, (
+            f"infused role missing from the Nucleus dropdown: {options}"
+        )
