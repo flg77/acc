@@ -489,6 +489,10 @@ class InfuseScreen(Screen):
 
     def apply_snapshot(self, snapshot: "CollectiveSnapshot") -> None:
         """Update the history panel from the latest collective snapshot."""
+        # Keep the latest snapshot so the Active-LLM line can fall back to the
+        # backend a RUNNING agent of the selected role is actually using when
+        # collective.yaml has no per-role model binding (25.6-2.26).
+        self._last_snapshot = snapshot
         if snapshot.role_audit_rows:
             self._has_live_audit = True  # N8 — real arbiter history now wins
             self.history_rows = snapshot.role_audit_rows
@@ -836,18 +840,42 @@ class InfuseScreen(Screen):
         the registry has no entry, and to "—" when the role is unbound."""
         line = self.query_one("#active-llm-line", Static)
         model_id = self._role_model_id(role_name)
-        if not model_id:
-            line.update("Active LLM: —")
+        if model_id:
+            label = model_id
+            try:
+                from acc.models import get_model  # noqa: PLC0415
+                entry = get_model(model_id)
+                if entry is not None:
+                    label = entry.display()
+            except Exception:
+                logger.exception("infuse: get_model failed for %r", model_id)
+            line.update(f"Active LLM: {label}")
             return
-        label = model_id
-        try:
-            from acc.models import get_model  # noqa: PLC0415
-            entry = get_model(model_id)
-            if entry is not None:
-                label = entry.display()
-        except Exception:
-            logger.exception("infuse: get_model failed for %r", model_id)
-        line.update(f"Active LLM: {label}")
+        # No per-role binding in collective.yaml — show what a RUNNING agent of
+        # this role is ACTUALLY using (from the live snapshot), so the operator
+        # sees the real agent→model mapping instead of a bare "—" (25.6-2.26
+        # "Active LLM: —").  Falls back to "—" only when truly nothing is known.
+        live = self._live_backend_for_role(role_name)
+        line.update(f"Active LLM: {live}" if live else "Active LLM: —")
+
+    def _live_backend_for_role(self, role_name: str) -> str:
+        """The backend·model a running agent of *role_name* reports in the
+        latest snapshot (best-effort; "" when none/unknown)."""
+        snap = getattr(self, "_last_snapshot", None)
+        if snap is None:
+            return ""
+        for agent in (getattr(snap, "agents", {}) or {}).values():
+            if getattr(agent, "role", "") != role_name:
+                continue
+            parts = [
+                p for p in (
+                    (getattr(agent, "llm_backend", "") or "").strip(),
+                    (getattr(agent, "llm_model", "") or "").strip(),
+                ) if p
+            ]
+            if parts:
+                return " · ".join(parts) + " (live)"
+        return ""
 
 
 # ---------------------------------------------------------------------------
