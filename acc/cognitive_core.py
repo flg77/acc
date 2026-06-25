@@ -431,6 +431,23 @@ class CognitiveCore:
         # to ``"none"`` so the validation pass is a no-op until a real
         # snapshot lands.
         self._perception_profile: str = "none"
+        # Personalization overlay (proposal ``agent-personalization-overlay``,
+        # role-scoped per DRAFT §0) — an ordered list of
+        # ``acc.overlay.OverlaySource`` for this agent (AGENTS.md / soul.md from
+        # the role dir, collective.md from the agentset), populated by the agent
+        # constructor at boot.  None / empty means "no overlay", so
+        # ``build_system_prompt`` leaves the legacy prompt unchanged.  The
+        # overlay files only ever toggle *within* the role's signed envelope.
+        self._overlay = None
+        # §0.5 — def ids present in the role dir's ``skills/``/``mcp/`` and the
+        # operator's allow_unsigned flag.  A user-added (out-of-envelope) def is
+        # granted for THIS agent only when an overlay enables it AND
+        # ``_overlay_allow_unsigned`` is set (operator-gated, non-prod, audited).
+        # Defaults are empty/False → today's behaviour is unchanged until the
+        # boot wiring populates them (follow-on, with the local-def loader).
+        self._overlay_local_skills: tuple[str, ...] = ()
+        self._overlay_local_mcps: tuple[str, ...] = ()
+        self._overlay_allow_unsigned: bool = False
 
         # In-process stress state
         self._stress = StressIndicators()
@@ -1485,6 +1502,43 @@ class CognitiveCore:
         if seed:
             parts.append(f"\n{seed}")
 
+        # Personalization overlay (proposal ``agent-personalization-overlay``,
+        # role-scoped §0) — resolve AGENTS.md / soul.md (role dir) +
+        # collective.md (agentset) against the role's SIGNED envelope.  Appended
+        # AFTER the seed (role identity leads) and BEFORE the dynamic perception
+        # block, so it stays in the cacheable prefix.  The resolver toggles
+        # *within* the envelope; ``effective_default_{skills,mcps}`` feed the
+        # advertised blocks below.  A user-added role-dir def admitted via
+        # allow_unsigned widens the advertised ceiling for THIS agent only
+        # (``local_grant_*_ids``).  Non-fatal: any error leaves the legacy prompt
+        # unchanged.
+        effective_default_skills = role.default_skills
+        effective_default_mcps = role.default_mcps
+        advertised_skill_ceiling = set(role.allowed_skills)
+        advertised_mcp_ceiling = set(role.allowed_mcps)
+        overlay_sources = getattr(self, "_overlay", None)
+        if overlay_sources:
+            try:
+                from acc.overlay import resolve_overlay  # noqa: PLC0415
+                profile = resolve_overlay(
+                    role,
+                    overlay_sources,
+                    local_skills=getattr(self, "_overlay_local_skills", ()),
+                    local_mcps=getattr(self, "_overlay_local_mcps", ()),
+                    allow_unsigned=getattr(self, "_overlay_allow_unsigned", False),
+                )
+                if profile.block:
+                    parts.append("\n" + profile.block)
+                effective_default_skills = profile.effective_default_skills
+                effective_default_mcps = profile.effective_default_mcps
+                advertised_skill_ceiling |= set(profile.local_grant_skill_ids())
+                advertised_mcp_ceiling |= set(profile.local_grant_mcp_ids())
+            except Exception:
+                # An overlay error must never break the main prompt path.
+                logger.debug(
+                    "cognitive_core: overlay resolve failed", exc_info=True
+                )
+
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b —
         # inject the sub-collective routing surface into the
         # Assistant's prompt so the LLM sees what's available to
@@ -1556,8 +1610,8 @@ class CognitiveCore:
         # roles with no skill wiring see exactly their previous prompt.
         # Phase 4.4 — block now also documents the [SKILL:...] marker
         # grammar the agent's capability_dispatch parser recognises.
-        if role.default_skills:
-            advertised = [sid for sid in role.default_skills if sid in role.allowed_skills]
+        if effective_default_skills:
+            advertised = [sid for sid in effective_default_skills if sid in advertised_skill_ceiling]
             if advertised:
                 lines = [
                     "\n\nAvailable skills.  Invoke by emitting EXACTLY this "
@@ -1579,8 +1633,8 @@ class CognitiveCore:
 
         # Phase 4.3 — Available MCP servers block.  Same gating as skills.
         # Phase 4.4 — also documents the [MCP:...] marker grammar.
-        if role.default_mcps:
-            advertised = [sid for sid in role.default_mcps if sid in role.allowed_mcps]
+        if effective_default_mcps:
+            advertised = [sid for sid in effective_default_mcps if sid in advertised_mcp_ceiling]
             if advertised:
                 lines = [
                     "\n\nAvailable MCP servers (external tool providers).  "
