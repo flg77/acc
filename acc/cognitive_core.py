@@ -759,6 +759,7 @@ class CognitiveCore:
             return CognitiveResult(
                 blocked=True,
                 block_reason=block_reason,
+                output=self._craft_unblock_message(block_reason, role),
                 stress=self._snapshot_stress(),
             )
 
@@ -972,7 +973,11 @@ class CognitiveCore:
             if reasoning_text:
                 output_text = answer_text
 
-        # Update token utilisation
+        # Update token utilisation.  Also stash the raw token count so the
+        # pre-gate can recompute utilisation against the CURRENT budget on the
+        # next task — that's what heals an exhausted agent when the operator
+        # raises token_budget in Nucleus (N2, 25.6.26 images 3/4).
+        self._last_token_count = token_count
         token_budget = role.category_b_overrides.get("token_budget", 0)
         if token_budget > 0:
             self._stress.token_budget_utilization = token_count / token_budget
@@ -1770,12 +1775,55 @@ class CognitiveCore:
                 return True, f"cat_b_rate_limit_rpm: {rate_limit} rpm exceeded"
             self._task_timestamps.append(now)
 
-        # Token budget — re-check against running utilisation
+        # Token budget — recompute utilisation against the CURRENT budget so a
+        # raised budget (Nucleus Apply / ROLE_UPDATE) heals an exhausted agent
+        # on its next task, instead of staying blocked on a ratio computed
+        # against the old budget (N2, 25.6.26 images 3/4).
         token_budget = overrides.get("token_budget", 0)
-        if token_budget > 0 and self._stress.token_budget_utilization >= 1.0:
-            return True, f"cat_b_token_budget: utilization {self._stress.token_budget_utilization:.2f} >= 1.0"
+        if token_budget > 0:
+            last_tokens = getattr(self, "_last_token_count", 0)
+            util = last_tokens / token_budget
+            self._stress.token_budget_utilization = util
+            if util >= 1.0:
+                return True, f"cat_b_token_budget: utilization {util:.2f} >= 1.0"
 
         return False, ""
+
+    def _craft_unblock_message(
+        self, block_reason: str, role: RoleDefinitionConfig
+    ) -> str:
+        """N6 — turn a Cat-B block into a user-facing unblock suggestion.
+
+        A blocked task otherwise returns an empty reply (the 25.6.26
+        '(empty response)' symptom): the operator sees silence with no idea
+        why or what to do.  Name the gate that fired and the concrete way to
+        clear it instead — so a blocked assistant explains itself rather than
+        going dark.
+        """
+        overrides = role.category_b_overrides or {}
+        role_label = (
+            getattr(role, "role_id", None)
+            or getattr(role, "name", None)
+            or "this role"
+        )
+        if "token_budget" in block_reason:
+            budget = overrides.get("token_budget", 0)
+            util = self._stress.token_budget_utilization
+            return (
+                f"Blocked — token budget exhausted for '{role_label}' "
+                f"(utilization {util:.0%} of {budget} tokens). To continue: "
+                f"raise this role's token_budget in Nucleus (2) and re-send — "
+                f"the budget heals on the next task; or split the task into "
+                f"smaller steps; or hand off to a role with headroom."
+            )
+        if "rate_limit_rpm" in block_reason:
+            rpm = overrides.get("rate_limit_rpm", 0)
+            return (
+                f"Blocked — rate limit reached for '{role_label}' ({rpm} rpm). "
+                f"To continue: wait for the 60-second window to slide, or raise "
+                f"rate_limit_rpm in Nucleus (2)."
+            )
+        return f"Blocked — {block_reason}"
 
     async def _call_llm(
         self, system: str, user: str

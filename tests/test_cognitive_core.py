@@ -146,20 +146,60 @@ class TestPreReasoningGate:
         assert blocked
         assert "rate_limit_rpm" in reason
 
-    def test_blocks_when_token_utilization_ge_1(self):
+    def test_blocks_when_last_tokens_exceed_budget(self):
         core = _make_core()
-        core._stress.token_budget_utilization = 1.0
+        # The gate recomputes utilisation from the last task's raw token
+        # count against the CURRENT budget (N2): 2000 / 1000 = 2.0 ≥ 1.0.
+        core._last_token_count = 2000
         role = _make_role(category_b_overrides={"token_budget": 1000.0})
         blocked, reason = core._pre_reasoning_gate(role)
         assert blocked
         assert "token_budget" in reason
 
-    def test_does_not_block_when_utilization_below_1(self):
+    def test_does_not_block_when_last_tokens_below_budget(self):
         core = _make_core()
-        core._stress.token_budget_utilization = 0.5
+        core._last_token_count = 500
         role = _make_role(category_b_overrides={"token_budget": 1000.0})
         blocked, _ = core._pre_reasoning_gate(role)
         assert not blocked
+
+    def test_raising_budget_heals_exhausted_agent(self):
+        """N2 — an over-budget agent unblocks the moment the operator raises
+        token_budget, without waiting for any explicit counter reset."""
+        core = _make_core()
+        core._last_token_count = 4096
+        tight = _make_role(category_b_overrides={"token_budget": 2048.0})
+        blocked_before, _ = core._pre_reasoning_gate(tight)
+        assert blocked_before  # 4096 / 2048 = 2.0 ≥ 1.0
+
+        raised = _make_role(category_b_overrides={"token_budget": 8192.0})
+        blocked_after, _ = core._pre_reasoning_gate(raised)
+        assert not blocked_after  # 4096 / 8192 = 0.5 → healed
+        # the displayed utilisation reflects the heal too
+        assert core._stress.token_budget_utilization == pytest.approx(0.5)
+
+
+class TestUnblockMessage:
+    """N6 — a Cat-B block returns an actionable message, not an empty reply."""
+
+    def test_token_budget_block_explains_itself(self):
+        core = _make_core()
+        role = _make_role(category_b_overrides={"token_budget": 2048.0})
+        msg = core._craft_unblock_message(
+            "cat_b_token_budget: utilization 2.00 >= 1.0", role
+        )
+        assert msg
+        assert "token budget" in msg.lower()
+        assert "Nucleus" in msg
+
+    def test_rate_limit_block_explains_itself(self):
+        core = _make_core()
+        role = _make_role(category_b_overrides={"rate_limit_rpm": 30.0})
+        msg = core._craft_unblock_message(
+            "cat_b_rate_limit_rpm: 30 rpm exceeded", role
+        )
+        assert msg
+        assert "rate limit" in msg.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +216,9 @@ class TestProcessTaskBlocked:
         result = await core.process_task({"content": "hello"}, role=role)
         assert result.blocked is True
         assert result.block_reason != ""
-        assert result.output == ""
+        # N6 — a blocked task now explains itself instead of returning silence.
+        assert result.output
+        assert "rate limit" in result.output.lower()
 
     @pytest.mark.asyncio
     async def test_blocked_increments_cat_b_trigger(self):
