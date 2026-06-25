@@ -293,6 +293,52 @@ def test_maybe_dispatch_loads_cached_proposal_and_publishes():
     assert deleted_key == "acc:sol-01:assistant_proposal:ov-123"
 
 
+# ---------------------------------------------------------------------------
+# N4 — handover dispatch is flagged, correlated, and reasoned
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_route_marks_handover_and_correlates():
+    """N4 — a route dispatch is flagged as a handover, carries a correlation
+    id, and announces itself (25.6.26: handover never activated / surfaced)."""
+    from acc.assistant_proposal import _dispatch_route  # noqa: PLC0415
+
+    captured = {}
+
+    class _Sig:
+        async def publish(self, subject, payload):
+            captured["subject"] = subject
+            captured["payload"] = payload
+
+    p = AssistantProposal(
+        kind=PROPOSAL_ROUTE,
+        params={"target_role": "research_synthesizer"},
+        collective_id="sol-01",
+        rationale="needs deep multi-source research",
+    )
+    ok = asyncio.run(_dispatch_route(_Sig(), "sol-01", p))
+    assert ok is True
+    pay = captured["payload"]
+    assert pay["handover"] is True
+    assert pay["target_role"] == "research_synthesizer"
+    assert pay["handover_id"] == p.proposal_id
+    assert "research_synthesizer" in pay["handover_announcement"]
+    assert "research" in pay["handover_announcement"].lower()
+
+
+def test_handover_announcement_is_reasoned():
+    from acc.assistant_proposal import handover_announcement  # noqa: PLC0415
+
+    msg = handover_announcement(
+        "research_synthesizer", "needs deep research", "abcd1234ef"
+    )
+    assert "research_synthesizer" in msg
+    assert "needs deep research" in msg
+    assert msg.startswith("→ Handing")
+    # Falls back to a default reason when none given (still non-empty).
+    assert handover_announcement("analyst", "", "")
+
+
 def test_maybe_dispatch_noop_when_cache_miss():
     from acc.agent import Agent  # noqa: PLC0415
 
