@@ -5,6 +5,74 @@
 > Author: hub (workstation), 2026-06-25. Scope: `acc-spearhead` (dev source;
 > promote vetted → mirror `flg77/acc` via acc-promote).
 
+## 0. Design revision — 2026-06-25 (role-scoped; supersedes §4 layout, §7.1 scope, §9 soul phasing, §10)
+
+> Operator design change after the §10 resolutions landed (PR #114). It moves the
+> overlay from **workspace-scoped** to **role-scoped**, makes the role a
+> **self-contained directory**, and adds a **per-role capability surface**. Where
+> this section conflicts with the body below, **this section wins**; the merge-core
+> mechanics (§5.3 resolver, §4 merge order) are unchanged.
+
+**1. The role is a self-contained directory.** Every role ACC ships owns its full
+set of files, co-located — overlays are **role-scoped**, not workspace-scoped:
+
+```
+<roles-root>/<role-name>/
+  role.yaml      # signed, immutable — editing breaks the signature (pack-owned)
+  role.md        # signed authoring source → compiled seed_context (pack-owned)
+  AGENTS.md      # NEW · user-editable · role-scoped operational overlay (Tier-1 toggles + Tier-2 context)
+  soul.md        # NEW · user-editable · this role's persona / voice (Tier-2, voice-wins)
+  skills/        # NEW · role-local skill definitions (shipped = signed; user-added = local/unsigned)
+  mcp/           # NEW · role-local MCP definitions (same trust split as skills/)
+```
+
+`role.yaml` + `role.md` stay the **signed, immutable package core** (editing them
+invalidates the cosign signature). `AGENTS.md` / `soul.md` / `skills/` / `mcp/`
+are the **user-editable surface**, **picked up at runtime init — no repackage,
+no re-sign of the core**. This supersedes §4's workspace-rooted "Default layout"
+and §9's "workspace/operator-scoped" P0.
+
+**2. `soul.md` = the role's persona, user-tunable** (not a user-global voice).
+Each role carries its own `soul.md`; the user edits it to tune that role's
+voice/identity. The earlier "one user-voice that follows the person across
+collectives" idea (§4 "follows the user", §9 P2) is **dropped/deferred** — it
+depended on AoA-P5 per-user identity anyway. The §4 merge order is unchanged in
+mechanics: `soul.md` still applies last so **voice/identity wins**; only its
+*scope* changes (per-role, not per-user).
+
+**3. `AGENTS.md` = role-scoped** — exactly one per role directory. This
+supersedes the §10 "keyed by `cluster_id`/`role`" resolution: there is no
+per-cluster keying; all instances of a role share the role's `AGENTS.md`.
+
+**4. `collective.md` is unchanged** — it remains **agentset-scoped** (lives with
+`collective.yaml` at the collective/workspace level), *not* in the role dir. Only
+`AGENTS.md` + `soul.md` move into the per-role directory.
+
+**5. Per-role `skills/` + `mcp/` — a governed local capability surface.** Roles
+may now bundle skill/MCP **definitions** in their own dir, and users may add
+**agent-specific** capabilities *there* — never in the systemwide
+`accroot/{skills,roles}` pool. Trust splits by origin:
+
+- **Shipped** (in the release): part of the **signed package** → fully trusted,
+  resolvable for that role like any packaged capability; listed in `role.yaml`'s
+  `allowed_*`/`default_*` and signed alongside it.
+- **User-added** (dropped into the role's own `skills/`|`mcp/`): resolvable for
+  **that one agent only**. Granting it **widens the envelope for that local agent
+  exclusively via the existing `allow_unsigned` path** — operator-explicit,
+  **audit-logged**, constrained risk tier, **never silent, never prod-default**.
+  It is **not** promoted into the shared pool and **not** added to any other
+  agent's envelope.
+
+This **refines** the §7.1 invariant rather than breaking it: the *overlay files*
+(`soul.md`/`AGENTS.md`/`collective.md`) still **cannot** widen `allowed_*` — they
+only toggle within the ceiling. The per-role `skills/`/`mcp/` dir is a
+**separate, explicit, operator-gated** local-extension surface, and the "never
+*silently* widen" principle holds (every local add rides `allow_unsigned` +
+audit). It is the low-friction, **local/unsigned** counterpart to proposal 2's
+**signed-infuse** path: a capability gap now resolves **two** operator-choosable
+ways — *promote to the trusted shared pool* (signed infuse / A-BOM, proposal 2)
+**or** *accept it local + unsigned for this agent* (role-dir add, `allow_unsigned`).
+
 ## 1. Problem
 
 ACC personalizes **per role**, never **per user, per project, or per agent**. A
@@ -238,17 +306,30 @@ reconciles against.
   expert → act-first-report-after) — the lever for the "complexity solver"
   behaviour, consumed by the proactive skill suite (proposal 2).
 
-## 10. Open questions — RESOLVED (operator review 2026-06-25)
+## 10. Open questions — RESOLVED
 
-All three locked at the leaning (Decisions log 2026-06-25); P0 build directives.
+**⚠ The first two answers below were SUPERSEDED by the §0 revision (2026-06-25).**
+Kept for history; §0 is authoritative.
 
-- **`soul.md` home in P0 → private-by-default.** A per-operator path outside the
-  repo (`~/.acc/soul.md`), never committed — personal voice prefs stay out of a
-  shared repo.
-- **`AGENTS.md` keying → `cluster_id`/`role`.** Survives replica churn (not
-  `agent_id_prefix`).
-- **Overlay format → front-matter-in-markdown.** One human-first file per scope
-  with a small fenced front-matter for Tier-1 toggles; no sidecar `overlay.yaml`.
+- ~~**`soul.md` home → private-by-default (`~/.acc/soul.md`).**~~ **SUPERSEDED →
+  §0.1/§0.2:** `soul.md` is **role-scoped** (lives in the role's own dir,
+  user-editable, runtime-picked-up) and now means the **role's persona**, not a
+  user-global voice.
+- ~~**`AGENTS.md` keying → `cluster_id`/`role`.**~~ **SUPERSEDED → §0.3:**
+  `AGENTS.md` is **role-scoped** — exactly one per role directory, no per-cluster
+  keying.
+- **Overlay format → front-matter-in-markdown.** (Still current.) One human-first
+  file per scope with a small fenced front-matter for Tier-1 toggles; no sidecar
+  `overlay.yaml`.
+
+**Resolved in the §0 revision (2026-06-25), now P0 build directives:**
+
+- **Role is a self-contained dir** (`role.yaml`+`role.md` signed/immutable +
+  `AGENTS.md`/`soul.md`/`skills/`/`mcp/` user-editable) — one location, edits in
+  place, picked up at init.
+- **Local (user-added) `skills/`/`mcp/`** grant only via `allow_unsigned`
+  (operator-explicit, audit-logged, constrained tier, never prod-default); shipped
+  role-dir capabilities stay signed/trusted.
 
 ## 11. References
 

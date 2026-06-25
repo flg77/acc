@@ -7,6 +7,27 @@
 > 2026-06-25. Scope: `acc-spearhead` (dev source; promote vetted → mirror
 > `flg77/acc` via acc-promote).
 
+## 0. Design revision — 2026-06-25 (role-scoped overlay; two-path capability gap)
+
+> Tracks the overlay's §0 revision (`docs/agent-personalization-overlay-DRAFT.md`).
+> Overlays are now **role-scoped** (each role is a self-contained dir:
+> `role.yaml`+`role.md` signed + `AGENTS.md`/`soul.md`/`skills/`/`mcp/`
+> user-editable, runtime-picked-up). Two consequences for this skill:
+
+- **A capability gap now resolves TWO operator-choosable ways.** When an agent
+  needs a capability outside its signed envelope, the assistant offers either: (a)
+  **signed-infuse / A-BOM** — `execute_infuse_install` promotes a **signed,
+  eval'd** pack into the trusted shared pool (the path this skill's `install` verb
+  already drives); or (b) **local role-dir add** — drop the skill/MCP into the
+  role's own `skills/`/`mcp/` dir, granted for **that one agent only** via
+  `allow_unsigned` (operator-explicit, audit-logged, constrained tier, never
+  prod-default). The skill should **surface both** and let the operator pick
+  trusted-shared vs local-unsigned; `status` reports which kind each active
+  capability is.
+- **`deactivate` / reconcile are unaffected** — they operate on the roster
+  (`collective.yaml` + `compute_releases`), independent of where overlay/capability
+  files live. The §7 declarative-edit-then-reconcile-down mechanism stands.
+
 ## 1. Problem
 
 The Assistant can *propose* one-off mutations today — `[PROPOSE_INFUSE:…]`,
