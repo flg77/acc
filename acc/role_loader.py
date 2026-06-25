@@ -108,6 +108,29 @@ def list_roles(base_dir: str | Path = "roles") -> list[str]:
     return sorted(names)
 
 
+def list_all_role_names(base_dir: str | Path = "roles") -> list[str]:
+    """Return sorted role names from the in-tree ``roles/`` dir UNION the
+    roles served by installed packages.
+
+    Every role *surface* (Nucleus dropdown, Prompt target-role dropdown,
+    Ecosystem library) must show the same set, so a freshly **infused** pack
+    role (e.g. an auto-researcher) is visible everywhere it can be selected —
+    not only in the Ecosystem library (25.6-2.26: infused autoresearcher
+    invisible in Nucleus + Prompt).  ``RoleLoader.load`` resolves either
+    source, so a name returned here is loadable.
+
+    Best-effort on the installed half: a missing/unreadable package registry
+    degrades to just the in-tree roles rather than raising.
+    """
+    names = set(list_roles(base_dir))
+    try:
+        from acc.pkg.role_resolution import list_installed_roles  # noqa: PLC0415
+        names |= set(list_installed_roles().keys())
+    except Exception:
+        logger.debug("list_all_role_names: installed-role scan failed", exc_info=True)
+    return sorted(names)
+
+
 def _compute_rubric_hash(rubric_path: Path) -> str:
     """Compute the SHA-256 hash of a canonical eval_rubric.yaml file.
 

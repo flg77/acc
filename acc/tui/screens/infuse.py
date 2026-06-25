@@ -34,7 +34,7 @@ from textual.widgets import (
 )
 from textual.reactive import reactive
 
-from acc.role_loader import RoleLoader, list_roles
+from acc.role_loader import RoleLoader, list_roles, list_all_role_names
 from acc.signals import subject_role_update
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
@@ -255,9 +255,14 @@ class InfuseScreen(Screen):
                 )
 
     def _load_dynamic_roles(self) -> None:
-        """Scan roles/ and populate the Select widget (REQ-TUI-020)."""
+        """Populate the Select with in-tree + installed-pack roles (REQ-TUI-020).
+
+        Uses ``list_all_role_names`` so an infused pack role (e.g. an
+        auto-researcher) is selectable here, not only in the Ecosystem library
+        (25.6-2.26).
+        """
         root = _roles_root()
-        role_names = list_roles(root)
+        role_names = list_all_role_names(root)
         if not role_names:
             return  # keep fallback options
 
@@ -286,7 +291,7 @@ class InfuseScreen(Screen):
             select = self.query_one("#select-role", Select)
         except Exception:
             return
-        names = list_roles(_roles_root())
+        names = list_all_role_names(_roles_root())
         if not names or names == getattr(self, "_scanned_roles", []):
             return  # nothing new
         current = select.value
@@ -348,12 +353,18 @@ class InfuseScreen(Screen):
             self.status_text = f"⚠ Could not load role {role_name!r}"
             return
 
-        # Switch the Select widget to the named role.  This will also
-        # trigger on_select_changed → _populate_task_types, but we set the
-        # remaining fields explicitly afterwards so partial data from the
-        # previous role does not linger.
+        # Switch the Select widget to the named role.  CRITICAL: suppress the
+        # Select.Changed this would post — otherwise it re-enters
+        # on_select_changed → preload_from_role in an infinite loop (the
+        # _loading_role guard is synchronous and does NOT survive Textual's
+        # async message dispatch), which made the role dropdown blink + revert
+        # to the default and become "not selectable" (25.6-2.26 image 8).
+        # preload_from_role already populates every field directly, so no
+        # Changed is needed here.
         try:
-            self.query_one("#select-role", Select).value = role_name
+            _role_sel = self.query_one("#select-role", Select)
+            with _role_sel.prevent(Select.Changed):
+                _role_sel.value = role_name
         except Exception:
             pass
 
@@ -478,6 +489,10 @@ class InfuseScreen(Screen):
 
     def apply_snapshot(self, snapshot: "CollectiveSnapshot") -> None:
         """Update the history panel from the latest collective snapshot."""
+        # Keep the latest snapshot so the Active-LLM line can fall back to the
+        # backend a RUNNING agent of the selected role is actually using when
+        # collective.yaml has no per-role model binding (25.6-2.26).
+        self._last_snapshot = snapshot
         if snapshot.role_audit_rows:
             self._has_live_audit = True  # N8 — real arbiter history now wins
             self.history_rows = snapshot.role_audit_rows
@@ -825,18 +840,42 @@ class InfuseScreen(Screen):
         the registry has no entry, and to "—" when the role is unbound."""
         line = self.query_one("#active-llm-line", Static)
         model_id = self._role_model_id(role_name)
-        if not model_id:
-            line.update("Active LLM: —")
+        if model_id:
+            label = model_id
+            try:
+                from acc.models import get_model  # noqa: PLC0415
+                entry = get_model(model_id)
+                if entry is not None:
+                    label = entry.display()
+            except Exception:
+                logger.exception("infuse: get_model failed for %r", model_id)
+            line.update(f"Active LLM: {label}")
             return
-        label = model_id
-        try:
-            from acc.models import get_model  # noqa: PLC0415
-            entry = get_model(model_id)
-            if entry is not None:
-                label = entry.display()
-        except Exception:
-            logger.exception("infuse: get_model failed for %r", model_id)
-        line.update(f"Active LLM: {label}")
+        # No per-role binding in collective.yaml — show what a RUNNING agent of
+        # this role is ACTUALLY using (from the live snapshot), so the operator
+        # sees the real agent→model mapping instead of a bare "—" (25.6-2.26
+        # "Active LLM: —").  Falls back to "—" only when truly nothing is known.
+        live = self._live_backend_for_role(role_name)
+        line.update(f"Active LLM: {live}" if live else "Active LLM: —")
+
+    def _live_backend_for_role(self, role_name: str) -> str:
+        """The backend·model a running agent of *role_name* reports in the
+        latest snapshot (best-effort; "" when none/unknown)."""
+        snap = getattr(self, "_last_snapshot", None)
+        if snap is None:
+            return ""
+        for agent in (getattr(snap, "agents", {}) or {}).values():
+            if getattr(agent, "role", "") != role_name:
+                continue
+            parts = [
+                p for p in (
+                    (getattr(agent, "llm_backend", "") or "").strip(),
+                    (getattr(agent, "llm_model", "") or "").strip(),
+                ) if p
+            ]
+            if parts:
+                return " · ".join(parts) + " (live)"
+        return ""
 
 
 # ---------------------------------------------------------------------------

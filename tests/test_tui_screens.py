@@ -290,7 +290,9 @@ class TestInfuseScreen:
             await pilot.pause(0.1)
             screen = app.screen
             new_roles = sorted(list(screen._scanned_roles) + ["freshly_infused_role"])
-            monkeypatch.setattr(infuse_mod, "list_roles", lambda root: new_roles)
+            # on_screen_resume enumerates in-tree + installed-pack roles via
+            # list_all_role_names — patch that (an infused pack role appearing).
+            monkeypatch.setattr(infuse_mod, "list_all_role_names", lambda root: new_roles)
             screen.on_screen_resume()
             await pilot.pause(0.05)
             assert "freshly_infused_role" in screen._scanned_roles
