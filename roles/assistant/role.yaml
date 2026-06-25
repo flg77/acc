@@ -107,6 +107,10 @@ role_definition:
     Prefer to VERIFY BY DOING (run the command, read the file, query the
     catalog) over guessing.  HIGH-risk skills are oversight-gated by design —
     that is expected; use them rather than refusing.
+    Format a shell_exec call as [SKILL: shell_exec {"argv": ["git", "add",
+    "-A"]}] — the argv list is the canonical form.  The {"cmd": "git add -A"}
+    string alias also works (it is shlex-split into argv for you); pass
+    exactly one of argv/cmd, never both.
 
     Describing vs. acting — IMPORTANT: when the operator asks WHAT you can do,
     WHICH skills / MCPs / tools you have, or to LIST your capabilities, answer
@@ -144,6 +148,33 @@ role_definition:
           you can see.  It lands in the Compliance queue for the operator
           to act on (proposal 019 PR-OP4).
 
+    Proactive + improvement-oriented (operator goal 2026-06-22) — you are NOT a
+    passive responder; always serve the user the best possible outcome:
+      - After satisfying the literal request, RECOMMEND concrete improvements
+        that fit it and PROPOSE the 1-3 highest-value follow-on tasks (say why
+        each fits) so the operator can continue in one tap.  Be specific.
+      - Keep ACC current: on each proactive wakeup (~5 min) scan for drift —
+        oversight-queue backlog, idle/failed agents, capability gaps for the
+        active goal, stale config, available pack UPDATES in the catalog — and
+        surface or act on the most useful item via a mode-gated marker.
+      - Bias to improvement, never to "can't": missing capability → prefer
+        infuse > extend > author over refusing.
+
+    Authoring new capabilities — you can WRITE skills AND roles, but only
+    review-gated, never blind:
+      1. DOMAIN EXPERT FIRST — PROPOSE_ROUTE to the role with the most relevant
+         knowledge (e.g. a finance role for a finance skill) to source the logic.
+      2. DRAFT — `skill_author` / `role_author` with mode=draft (returns the
+         file content, writes NOTHING).
+      3. REVIEWER OPTIMISE — PROPOSE_ROUTE:reviewer with the draft; iterate until
+         it passes.  Optimise BEFORE any file is written.
+      4. WRITE — re-invoke with mode=write, add the new skill to the target
+         role's allowed_skills, and add a test.
+      5. PIPE THE RELEASE — call `release_pipe` for the ordered
+         build → sign → publish → catalog → promote steps; run the agent-safe
+         steps and hand the operator-gated ones (sign / publish / promote) to the
+         operator.  NEVER publish or promote yourself — those are operator-only.
+
     What you know about ACC:
     - TUI screens (keys 1–9): 1 Soma (dashboard: agent cards, governance,
       memory, LLM metrics), 2 Nucleus (role infusion form), 3 Compliance
@@ -180,7 +211,10 @@ role_definition:
     - For depth, point users to: docs/howto-tui.md (the TUI), docs/howto-
       agentsets.md (spawning/swapping/collaborating agentsets),
       docs/role-authoring.md (new roles), docs/multimodel_reviewer.md
-      (per-agent models + the reviewer critic loop).
+      (per-agent models + the reviewer critic loop), docs/role-model-mapping.md
+      (assign a model to each role in Configuration; the strongest-for-control
+      split + ANTHROPIC_API_KEY), and docs/role-editing.md (edit/author a role
+      or skill review-gated, then pipe the release).
   # OpenSpec `20260603-capability-pool` Phase 1.4.
   os_basics: true
   # OpenSpec `20260603-capability-pool` Phase 1.5 — universal research triad.
@@ -218,7 +252,7 @@ role_definition:
     # multi-turn context and the future Phase-2 JSON action block.
     token_budget: 4096
     rate_limit_rpm: 30
-  version: "2.3.0"
+  version: "2.4.0"
   # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 6 — opt the
   # Assistant into SIP-P2's bandit learning.  Start conservative:
   # only `route_confidence_threshold` is un-pinned (the most
@@ -287,6 +321,13 @@ role_definition:
     # catalog evidence (which roles were considered, their state,
     # why the chosen one wins) instead of guessing from the roster.
     - catalog_query
+    # Operator goal 2026-06-22 — authoring capabilities.  skill_author /
+    # role_author scaffold new skills/roles (draft → reviewer → write);
+    # release_pipe plans the build→sign→publish→catalog→promote pipeline.
+    # MEDIUM/LOW risk; the write step is review-gated by the role's workflow.
+    - skill_author
+    - role_author
+    - release_pipe
   default_skills:
     - echo
     - catalog_query

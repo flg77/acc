@@ -101,9 +101,13 @@ USER 0
 # git — the agent shells out to `git` for the git_status / git_log_recent
 # skills and for autonomous role.yaml commits via shell_exec.  Without it those
 # capabilities fail at runtime (the rest of the agent still boots).
-RUN microdnf install -y --nodocs git \
+RUN microdnf install -y --nodocs git nano \
     && microdnf clean all \
     && rm -rf /var/cache/dnf
+# Give "Open in $EDITOR" (Ecosystem role editor) a terminal editor that exists
+# in the image — otherwise it fell back to `vi`, which isn't installed, and
+# raised [Errno 2] (2026-06-22 report).  Operators can still override $EDITOR.
+ENV EDITOR=nano
 
 # Copy the fully-populated S2I app-root (all pip deps incl. the ACC package and
 # CPU torch) and the baked embedding model from the builder. No gcc/devel here.

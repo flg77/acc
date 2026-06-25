@@ -1,0 +1,43 @@
+# skills/skill_author/skill.yaml — the Assistant's skill-writing capability.
+purpose:        "Scaffold a new ACC skill (skill.yaml + adapter.py) — draft for review, then write."
+version:        "0.1.0"
+adapter_class:  "SkillAuthorSkill"
+risk_level:     "MEDIUM"
+domain_id:      "meta"
+tags:           ["authoring", "meta", "scaffold"]
+
+input_schema:
+  type: object
+  properties:
+    name:        {type: string, description: "snake_case skill id ([a-z][a-z0-9_]*)"}
+    purpose:     {type: string, description: "one-line purpose for the manifest"}
+    risk_level:  {type: string, enum: ["LOW", "MEDIUM", "HIGH", "CRITICAL"]}
+    domain_id:   {type: string}
+    tags:        {type: array, items: {type: string}}
+    description: {type: string}
+    input_schema:  {type: object, description: "JSON Schema for the new skill's args"}
+    output_schema: {type: object}
+    invoke_body:   {type: string, description: "optional Python body for invoke() (indented)"}
+    mode:        {type: string, enum: ["draft", "write"], description: "draft = return content; write = create files"}
+    base_dir:    {type: string, description: "repo root for mode=write (default cwd)"}
+  required: ["name", "purpose"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    written: {type: boolean}
+    class:   {type: string}
+    files:   {description: "dict of filename->content (draft) or list of filenames (write)"}
+    dir:     {type: string}
+    review_hint: {type: string}
+    next:    {type: string}
+  required: ["written", "class"]
+  additionalProperties: true
+
+description: |
+  Generates a valid in-tree ACC skill package (manifest + Skill subclass +
+  __init__).  Default mode=draft returns the file content WITHOUT writing so the
+  Assistant can route it to the reviewer (and a domain-expert role) to optimise
+  first; mode=write commits the files under skills/<name>/ once reviewed.  Pairs
+  with role_author + release_pipe.  MEDIUM risk (writes files in mode=write).
