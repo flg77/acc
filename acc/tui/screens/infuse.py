@@ -348,12 +348,18 @@ class InfuseScreen(Screen):
             self.status_text = f"⚠ Could not load role {role_name!r}"
             return
 
-        # Switch the Select widget to the named role.  This will also
-        # trigger on_select_changed → _populate_task_types, but we set the
-        # remaining fields explicitly afterwards so partial data from the
-        # previous role does not linger.
+        # Switch the Select widget to the named role.  CRITICAL: suppress the
+        # Select.Changed this would post — otherwise it re-enters
+        # on_select_changed → preload_from_role in an infinite loop (the
+        # _loading_role guard is synchronous and does NOT survive Textual's
+        # async message dispatch), which made the role dropdown blink + revert
+        # to the default and become "not selectable" (25.6-2.26 image 8).
+        # preload_from_role already populates every field directly, so no
+        # Changed is needed here.
         try:
-            self.query_one("#select-role", Select).value = role_name
+            _role_sel = self.query_one("#select-role", Select)
+            with _role_sel.prevent(Select.Changed):
+                _role_sel.value = role_name
         except Exception:
             pass
 
