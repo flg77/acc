@@ -265,19 +265,35 @@ class PerformanceScreen(Screen):
         self.query_one("#task-progress-panel", Static).update("\n".join(lines))
 
     def _render_token_budgets(self, snap: "CollectiveSnapshot") -> None:
-        """Per-agent token budget utilisation bars (REQ-TUI-031)."""
+        """Per-agent token budget utilisation bars + culprit/forecast (N3).
+
+        25.6.26 image 3/5: a complete token report must NAME the culprit
+        (which role is exhausting its budget) and forecast headroom, not
+        just draw bars.  ``token_budget`` is a PER-TASK ceiling, so we report
+        the last task's draw against it and the remaining headroom rather
+        than a misleading cumulative tasks-to-exhaustion number.
+        """
         lines: list[str] = []
+        worst_id = ""
+        worst_role = ""
+        worst_pct = -1.0
         for agent_id, agent in snap.agents.items():
             pct = agent.token_budget_utilization * 100
-            filled = int(pct / 100 * 20)
+            filled = max(0, min(20, int(pct / 100 * 20)))
             bar = "█" * filled + "░" * (20 - filled)
 
-            if pct >= 75.0:
+            if pct >= 100.0:
+                bar_str = f"[red][{bar}][/red]  [red]{pct:>4.0f}%[/red] ⛔"
+            elif pct >= 75.0:
                 bar_str = f"[yellow][{bar}][/yellow]  [yellow]{pct:>4.0f}%[/yellow] ⚠"
             else:
                 bar_str = f"[{bar}]  {pct:>4.0f}%"
 
             lines.append(f"[bold]{agent_id[:14]}[/bold]  {bar_str}")
+            if pct > worst_pct:
+                worst_pct = pct
+                worst_id = agent_id
+                worst_role = getattr(agent, "role", "") or ""
             # PR-CA3 — prompt-cache hit telemetry (best-effort).  Shown
             # only when the backend reports cache reads (Anthropic);
             # edge backends auto-cache server-side without a signal.
@@ -293,6 +309,25 @@ class PerformanceScreen(Screen):
 
         if not lines:
             lines = ["[dim]No agents observed.[/dim]"]
+        elif worst_pct >= 0:
+            who = worst_id[:14] + (f" ({worst_role})" if worst_role else "")
+            if worst_pct >= 100.0:
+                lines.append(
+                    f"\n[red]⛔ culprit: {who} at {worst_pct:.0f}% — over its "
+                    f"per-task token budget; its tasks BLOCK until the budget "
+                    f"is raised in Nucleus (2).[/red]"
+                )
+            elif worst_pct >= 75.0:
+                lines.append(
+                    f"\n[yellow]⚠ watch: {who} at {worst_pct:.0f}% — "
+                    f"{100 - worst_pct:.0f}% headroom before its tasks block."
+                    f"[/yellow]"
+                )
+            else:
+                lines.append(
+                    f"\n[dim]top draw: {who} at {worst_pct:.0f}% "
+                    f"({100 - worst_pct:.0f}% headroom).[/dim]"
+                )
 
         self.query_one("#token-budget-panel", Static).update("\n".join(lines))
 

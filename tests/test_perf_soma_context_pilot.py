@@ -179,6 +179,30 @@ async def test_perf_table_populates_cluster_column_from_topology():
 
 
 @pytest.mark.asyncio
+async def test_token_budget_panel_names_culprit_when_over_budget():
+    """N3 — when an agent is over its per-task token budget, the token panel
+    names the culprit (id + role) and flags that its tasks block."""
+    from textual.widgets import Static
+
+    app = _PerfHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        snap = CollectiveSnapshot(collective_id="sol-test")
+        snap.agents = {
+            "assistant-x": _make_agent("assistant-x", role="assistant", token_util=2.0),
+            "worker-y": _make_agent("worker-y", role="analyst", token_util=0.30),
+        }
+        captured = _capture_static(screen.query_one("#token-budget-panel", Static))
+        screen.snapshot = snap
+        await pilot.pause()
+        text = "\n".join(captured)
+        assert "culprit" in text.lower(), text
+        assert "assistant-x" in text, text
+        assert "block" in text.lower(), text
+
+
+@pytest.mark.asyncio
 async def test_perf_table_populates_intent_from_progress_label():
     """The Intent column carries the first 80 chars of the agent's
     task_progress_label."""
