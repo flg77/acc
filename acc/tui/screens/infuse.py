@@ -264,11 +264,38 @@ class InfuseScreen(Screen):
         select = self.query_one("#select-role", Select)
         options = [(name, name) for name in role_names]
         select.set_options(options)
+        self._scanned_roles = list(role_names)
 
         # Pre-populate task types for the first role
         if role_names:
             self._populate_task_types(role_names[0])
             self._refresh_role_caps(role_names[0])
+
+    def on_screen_resume(self) -> None:
+        """N9 — re-scan roles when Nucleus is re-shown, so an agentset infused
+        from the Ecosystem pane appears in the dropdown without a TUI restart.
+
+        The TUI screens are installed singletons (``on_mount`` runs once), so
+        a role added after the first mount would otherwise never show up here —
+        the 25.6.26 finding "TUI not updated according to the newly deployed
+        agentset" (image 9).  Selection + form are preserved across the
+        refresh (Select.Changed is suppressed so the detail form doesn't
+        reload to a different role).
+        """
+        try:
+            select = self.query_one("#select-role", Select)
+        except Exception:
+            return
+        names = list_roles(_roles_root())
+        if not names or names == getattr(self, "_scanned_roles", []):
+            return  # nothing new
+        current = select.value
+        with select.prevent(Select.Changed):
+            select.set_options([(n, n) for n in names])
+            if current in names:
+                select.value = current
+        self._scanned_roles = list(names)
+        self.status_text = f"Roles refreshed — {len(names)} available"
 
     def _populate_task_types(self, role_name: str) -> None:
         """Load task_types from the selected role and fill the input (REQ-TUI-021)."""
@@ -368,7 +395,30 @@ class InfuseScreen(Screen):
         # role we just pre-filled.
         self._refresh_role_caps(role_name, role_def=role_def)
 
+        # N8 — seed the History panel with this role's release tag when no
+        # live arbiter audit has arrived, so it names the active release
+        # instead of sitting empty (25.6.26 image 7).
+        self._seed_history_from_role(role_def)
+
         self.status_text = f"Pre-filled from roles/{role_name}/ — review and Apply"
+
+    def _seed_history_from_role(self, role_def) -> None:
+        """N8 — show the selected role's current release in the History panel.
+
+        A no-op once live role-audit rows have arrived from the arbiter
+        (those carry the real promotion chain and always win).
+        """
+        if getattr(self, "_has_live_audit", False):
+            return
+        version = getattr(role_def, "version", "") or "0.1.0"
+        self.history_rows = [
+            {
+                "new_version": version,
+                "event_type": "current release",
+                "ts": 0,
+                "approver_id": "—",
+            }
+        ]
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
@@ -429,6 +479,7 @@ class InfuseScreen(Screen):
     def apply_snapshot(self, snapshot: "CollectiveSnapshot") -> None:
         """Update the history panel from the latest collective snapshot."""
         if snapshot.role_audit_rows:
+            self._has_live_audit = True  # N8 — real arbiter history now wins
             self.history_rows = snapshot.role_audit_rows
         if "Awaiting" in self.status_text:
             submitted_ver = self.query_one("#input-version", Input).value.strip()

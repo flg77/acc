@@ -256,6 +256,45 @@ class TestInfuseScreen:
                     f"{expected_ver!r} after a dropdown change"
                 )
 
+    @pytest.mark.asyncio
+    async def test_history_seeds_release_tag_for_selected_role(self, monkeypatch):
+        """N8 — selecting a role seeds the History panel with its release tag
+        (so it names the current release instead of sitting empty)."""
+        from textual.widgets import Select
+        from acc.role_loader import RoleLoader
+
+        monkeypatch.setenv("ACC_ROLES_ROOT", "roles")
+        rd = RoleLoader("roles", "observer").load()
+        if rd is None:
+            pytest.skip("control role 'observer' not present")
+
+        app = _make_app_for(InfuseScreen)
+        async with app.run_test(headless=True) as pilot:
+            await pilot.pause(0.1)
+            screen = app.screen
+            sel = screen.query_one("#select-role", Select)
+            screen.on_select_changed(Select.Changed(sel, "observer"))
+            rows = screen.history_rows
+            assert rows, "history should be seeded from the selected role"
+            assert rows[0]["new_version"] == (rd.version or "0.1.0")
+            assert "current" in rows[0]["event_type"].lower()
+
+    @pytest.mark.asyncio
+    async def test_screen_resume_rescans_new_roles(self, monkeypatch):
+        """N9 — on_screen_resume picks up a role infused after mount, without
+        a TUI restart (singleton screen, on_mount runs once)."""
+        import acc.tui.screens.infuse as infuse_mod
+
+        app = _make_app_for(InfuseScreen)
+        async with app.run_test(headless=True) as pilot:
+            await pilot.pause(0.1)
+            screen = app.screen
+            new_roles = sorted(list(screen._scanned_roles) + ["freshly_infused_role"])
+            monkeypatch.setattr(infuse_mod, "list_roles", lambda root: new_roles)
+            screen.on_screen_resume()
+            await pilot.pause(0.05)
+            assert "freshly_infused_role" in screen._scanned_roles
+
 
 # ---------------------------------------------------------------------------
 # ComplianceScreen — REQ-TUI-003, REQ-TUI-025
