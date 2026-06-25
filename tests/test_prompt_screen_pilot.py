@@ -486,8 +486,11 @@ async def test_invocations_render_as_trace_lines_in_transcript():
                 break
 
         roles = [e.get("role") for e in screen.history]
-        # Order must be: operator → trace × 2 → agent.
-        assert roles == ["operator", "trace", "trace", "agent"], roles
+        # Order: operator → trace × 2 → system (N5 failed-invocation summary,
+        # since mcp:fs.read failed) → agent.
+        assert roles == ["operator", "trace", "trace", "system", "agent"], roles
+        sys_line = next(e for e in screen.history if e["role"] == "system")
+        assert "failed" in sys_line["text"] and "mcp:fs.read" in sys_line["text"]
 
         traces = [e for e in screen.history if e["role"] == "trace"]
         assert traces[0]["kind"] == "skill"
