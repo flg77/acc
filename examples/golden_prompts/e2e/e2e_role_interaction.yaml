@@ -1,0 +1,101 @@
+# Exclusive E2E role-interaction golden prompts.
+#
+# Distinct from the standard golden_prompts/*.yaml set: each entry carries a
+# DETERMINISTIC synthetic reply (so multi-role interaction is reproducible
+# without a live LLM / NATS) plus role-interaction expectations, and the file
+# carries a `panes` snapshot spec that drives the data panes so the E2E run
+# double-checks the 25.6.26 N-series surfaces while it screenshots every pane.
+#
+# Consumed by:
+#   * tests/test_e2e_role_interaction.py        (CI + lighthouse gate)
+#   * acc-dev-harness/tools/e2e_role_interaction (screenshots + walkthrough)
+#
+# This is the "exclusive golden prompts" channel the operator asked for: it
+# verifies that roles interact correctly (hand-off, traces, failures, blocks)
+# and that each pane reflects the executed task.
+
+name: e2e_role_interaction
+version: 1
+
+prompts:
+  # --- 1. Hand-off to the researcher agentset + a silent-failure surface -----
+  - id: research_handover
+    prompt: >-
+      Research the common skills available in openclaw and hermes and
+      summarise what overlaps.
+    target_role: assistant
+    reply:
+      output: >-
+        This needs a deep multi-source sweep — handing it to the research
+        agentset and returning their synthesis.
+      blocked: false
+      latency_ms: 1180
+      invocations:
+        - {kind: skill, target: catalog_query, ok: true}
+        - {kind: mcp, target: web_fetch, ok: false,
+           error: "MCPConnectionError: server_id web_fetch unreachable"}
+      handover_announcement: >-
+        → Handing this to 'research_synthesizer' [a1b2c3d4]: deep multi-source
+        research suited to the researcher agentset
+    expect:
+      roles_involved: [assistant, research_synthesizer]
+      # The assistant's rendered reply mentions the hand-off; the structured
+      # announcement (naming research_synthesizer) is verified by the
+      # handover_announced block (dispatch-level, per the N4 scope).
+      transcript_contains: ["research agentset"]
+      surfaces_failure_summary: true     # N5 — the failed web_fetch is summarised
+      handover_announced: true           # N4 — the hand-off is reasoned + correlated
+
+  # --- 2. Token-budget block that explains itself (N6) -----------------------
+  - id: budget_block_explains_itself
+    prompt: Create a loop to locally monitor the acc repo and check for changes.
+    target_role: assistant
+    reply:
+      # The runtime blocks pre-LLM; N6 fills `output` with the unblock message
+      # instead of returning silence.  We model that exact output here.
+      output: >-
+        Blocked — token budget exhausted for 'assistant' (utilization 200% of
+        2048 tokens). To continue: raise this role's token_budget in Nucleus (2)
+        and re-send — the budget heals on the next task; or split the task into
+        smaller steps; or hand off to a role with headroom.
+      blocked: true
+      block_reason: "cat_b_token_budget: utilization 2.00 >= 1.0"
+      latency_ms: 40
+      invocations: []
+    expect:
+      blocked: true
+      transcript_contains: ["token budget", "Nucleus"]   # N6 — actionable, not empty
+      surfaces_failure_summary: false
+
+  # --- 3. Clean multi-capability success (baseline role interaction) ---------
+  - id: coding_clean_run
+    prompt: Write a Python function that returns the nth Fibonacci number.
+    target_role: coding_agent
+    reply:
+      output: |
+        def fib(n: int) -> int:
+            a, b = 0, 1
+            for _ in range(n):
+                a, b = b, a + b
+            return a
+      blocked: false
+      latency_ms: 900
+      invocations:
+        - {kind: skill, target: code_generate, ok: true}
+        - {kind: skill, target: fs_write, ok: true}
+    expect:
+      roles_involved: [coding_agent]
+      transcript_contains: ["def fib"]
+      surfaces_failure_summary: false
+      handover_announced: false
+
+# Snapshot spec — drives the DATA panes so the E2E run also verifies the
+# N-series visual surfaces while it screenshots every pane.
+panes:
+  agents:
+    - {id: assistant-1,  role: assistant,             token_util: 2.0, backend: vllm,      health: degraded, p50: 900}
+    - {id: research-1,   role: research_synthesizer,  token_util: 0.30, backend: vllm,      health: ok,       p50: 210}
+    - {id: coding-1,     role: coding_agent,          token_util: 0.55, backend: anthropic, health: ok,       p50: 95}
+  expect:
+    performance_contains: ["culprit", "assistant-1"]   # N3 — culprit named
+    configuration_contains: ["degraded"]               # N7 — backend health rollup

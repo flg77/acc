@@ -606,22 +606,50 @@ async def _dispatch_route(signaling, cid: str, p: AssistantProposal) -> bool:
     record (Redis is the source of truth).
     """
     from acc.signals import SIG_TASK_ASSIGN, subject_task_assign  # noqa: PLC0415
+    target_role = p.params.get("target_role", "")
     payload = {
         "signal_type": SIG_TASK_ASSIGN,
         "trigger": "assistant_proposal",
         "proposal_id": p.proposal_id,
         "task_id": p.task_id or p.proposal_id,
-        "target_role": p.params.get("target_role", ""),
+        "target_role": target_role,
         "collective_id": cid,
         "rationale": p.rationale,
+        # N4 — mark this as a HANDOVER so the receiving role knows it was
+        # activated by an assistant handover (not ordinary work dispatch) and
+        # can correlate its result back to this proposal.  The 25.6.26 finding
+        # was that researcher roles were listed but no handover signal ever
+        # activated them; this makes the activation explicit + traceable.
+        "handover": True,
+        "handover_id": p.proposal_id,
+        "handover_announcement": handover_announcement(
+            target_role, p.rationale, p.proposal_id
+        ),
         "ts": time.time(),
     }
     await signaling.publish(subject_task_assign(cid), payload)
     logger.info(
-        "assistant_proposal: route dispatched — target=%r task_id=%r",
-        payload["target_role"], payload["task_id"],
+        "assistant_proposal: HANDOVER dispatched — %s",
+        payload["handover_announcement"],
     )
     return True
+
+
+def handover_announcement(
+    target_role: str, rationale: str, handover_id: str = ""
+) -> str:
+    """N4 — a human-readable announcement of an assistant handover.
+
+    Surfaces the handover as a reasoned, visible event ("→ handing this to
+    <role>: <reason>") instead of a silent re-dispatch — the 25.6.26 finding
+    that researcher roles were listed but no handover signal ever raised, so
+    the activated role never visibly joined.  Pure → unit-testable; carried in
+    the dispatch payload so the Prompt/Compliance surfaces can render it.
+    """
+    role = (target_role or "?").strip() or "?"
+    reason = (rationale or "").strip() or "specialist better suited to this task"
+    tag = f" [{handover_id[:8]}]" if handover_id else ""
+    return f"→ Handing this to '{role}'{tag}: {reason}"
 
 
 # ---------------------------------------------------------------------------

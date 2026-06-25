@@ -62,3 +62,21 @@ def test_role_model_renders_and_seeds(tmp_path, monkeypatch):
     assert models["reviewer"] == "claude-opus"
     assert models["coding_agent"] == "maas-qwen3-14b"   # worker → cheap
     assert models["ingester"] == "maas-qwen3-14b"       # substrate → cheap
+
+
+def test_backend_health_rollup_groups_and_flags_degraded():
+    """N7 — the per-backend health rollup groups agents by backend and
+    flags degraded ones (25.6.26 image 6: monitor the active LLMs)."""
+    from types import SimpleNamespace
+    from acc.tui.screens.configuration import ConfigurationScreen
+
+    agents = {
+        "a1": SimpleNamespace(llm_backend="vllm", llm_health="ok", llm_p50_latency_ms=120),
+        "a2": SimpleNamespace(llm_backend="vllm", llm_health="degraded", llm_p50_latency_ms=900),
+        "a3": SimpleNamespace(llm_backend="anthropic", llm_health="ok", llm_p50_latency_ms=80),
+    }
+    rollup = ConfigurationScreen._backend_health_rollup(agents)
+    assert "vllm" in rollup and "anthropic" in rollup
+    assert "1/2 degraded" in rollup          # vllm has one bad agent
+    assert "1 ok" in rollup                   # anthropic all healthy
+    assert ConfigurationScreen._backend_health_rollup({}) == "No active LLM backends."

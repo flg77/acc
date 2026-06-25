@@ -463,6 +463,9 @@ class ConfigurationScreen(Screen):
             )
 
             yield Label("LIVE BACKENDS (per agent)", classes="panel-label")
+            # N7 — per-backend health rollup so the active LLMs are monitored
+            # at a glance (25.6.26 image 6), above the per-agent detail.
+            yield Static("", id="llm-health-rollup", classes="panel-label")
             yield DataTable(id="llm-live-table", show_cursor=False)
 
             # 033 WS-C — the "all configured LLM endpoints" overview the
@@ -609,6 +612,44 @@ class ConfigurationScreen(Screen):
                 p50_str,
                 key=agent_id,
             )
+        try:
+            self.query_one("#llm-health-rollup", Static).update(
+                self._backend_health_rollup(agents)
+            )
+        except Exception:
+            logger.debug("configuration: health rollup render skipped", exc_info=True)
+
+    @staticmethod
+    def _backend_health_rollup(agents: dict) -> str:
+        """N7 — per-backend health rollup across active agents (pure → testable).
+
+        Groups running agents by their resolved LLM backend and summarises
+        health + worst p50, so the operator can monitor the active LLMs at a
+        glance instead of scanning per-agent rows (25.6.26 image 6).
+        """
+        by_backend: dict[str, dict] = {}
+        for agent in (agents or {}).values():
+            backend = getattr(agent, "llm_backend", "") or "—"
+            b = by_backend.setdefault(backend, {"n": 0, "bad": 0, "p50": 0.0})
+            b["n"] += 1
+            health = (getattr(agent, "llm_health", "") or "").strip().lower()
+            if health and health not in ("ok", "healthy", "up", "ready"):
+                b["bad"] += 1
+            p50 = getattr(agent, "llm_p50_latency_ms", None)
+            if isinstance(p50, (int, float)):
+                b["p50"] = max(b["p50"], float(p50))
+        if not by_backend:
+            return "No active LLM backends."
+        parts = []
+        for backend in sorted(by_backend):
+            b = by_backend[backend]
+            if b["bad"]:
+                status = f"[yellow]{b['bad']}/{b['n']} degraded[/yellow]"
+            else:
+                status = f"[green]{b['n']} ok[/green]"
+            p50s = f", p50≤{b['p50']:.0f}ms" if b["p50"] else ""
+            parts.append(f"{backend}: {status}{p50s}")
+        return "LLMs — " + " · ".join(parts)
 
     # ------------------------------------------------------------------
     # LLM tab — model registry overview (033 WS-C)
