@@ -1104,3 +1104,28 @@ async def test_mode_prefill_tolerates_missing_role(monkeypatch):
         )
         await pilot.pause()
         assert screen._operating_mode == before
+
+
+def test_failed_invocation_summary_lists_failures():
+    """N5 — failed capability calls produce a visible one-line summary so
+    malformed / not-found / unreachable invocations don't pass silently
+    (25.6.26 image 5)."""
+    from acc.tui.screens.prompt import PromptScreen
+
+    invs = [
+        {"kind": "skill", "target": "find_files", "ok": True},
+        {"kind": "skill", "target": "echo", "ok": False,
+         "error": "SkillNotFound: echo not in registry"},
+        {"kind": "mcp", "target": "web_fetch", "ok": False,
+         "error": "MCPConnectionError: server_id web_fetch unreachable"},
+    ]
+    summary = PromptScreen._failed_invocation_summary(invs)
+    assert "2 capability call(s) failed" in summary
+    assert "skill:echo" in summary
+    assert "mcp:web_fetch" in summary
+
+    # A clean run produces no summary.
+    assert PromptScreen._failed_invocation_summary(
+        [{"kind": "skill", "target": "ok", "ok": True}]
+    ) == ""
+    assert PromptScreen._failed_invocation_summary([]) == ""

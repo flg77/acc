@@ -1668,6 +1668,19 @@ class PromptScreen(Screen):
                 "error": str(inv.get("error", "") or ""),
             })
 
+        # N5 — make FAILED capability calls impossible to miss with a one-line
+        # summary (25.6.26 image 5: malformed / not-found / unreachable
+        # invocations passing silently).  Per-call detail stays in the trace
+        # lines above + the invocation waterfall.
+        _fail_summary = self._failed_invocation_summary(reply.invocations or [])
+        if _fail_summary:
+            self._append_history({
+                "role": "system",
+                "task_id": task_id,
+                "text": _fail_summary,
+                "ts": time.time(),
+            })
+
         text = reply.output or "(empty response)"
         if reply.blocked:
             text = f"[BLOCKED] {reply.block_reason}\n{text}"
@@ -1693,6 +1706,34 @@ class PromptScreen(Screen):
         # best-effort — a capture failure must never affect the reply.
         if not reply.blocked and (reply.output or "").strip():
             self._capture_golden_candidate(prompt, target_role, operating_mode)
+
+    @staticmethod
+    def _failed_invocation_summary(invocations: list[dict]) -> str:
+        """N5 — one-line summary of FAILED capability calls (empty if none).
+
+        Extracted as a pure helper so the surfacing logic is unit-testable
+        without driving the whole NATS receive path.
+        """
+        def _short(err: str) -> str:
+            lines = (err or "").strip().splitlines()
+            return lines[0][:60] if lines else ""
+
+        failed = [
+            inv for inv in (invocations or [])
+            if inv.get("kind") and inv.get("target") and not inv.get("ok", False)
+        ]
+        if not failed:
+            return ""
+        parts = []
+        for inv in failed[:5]:
+            label = f"{inv.get('kind')}:{inv.get('target')}"
+            err = _short(str(inv.get("error", "")))
+            parts.append(f"{label} ({err})" if err else label)
+        more = f" (+{len(failed) - 5} more)" if len(failed) > 5 else ""
+        return (
+            f"⚠ {len(failed)} capability call(s) failed: "
+            f"{', '.join(parts)}{more}"
+        )
 
     def _capture_golden_candidate(
         self, prompt: str, target_role: str, operating_mode: str,
