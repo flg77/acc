@@ -72,7 +72,7 @@ role_definition:
     - capability_query
     - capability_reply
   category_b_overrides:
-    token_budget: 2048
+    token_budget: 20480
     rate_limit_rpm: 30
   # Phase 1 ships policy_enabled: false.  Phase 3 flips it on after the
   # gap analyser produces sufficient operator-approval signal to drive

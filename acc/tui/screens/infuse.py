@@ -620,6 +620,13 @@ class InfuseScreen(Screen):
 
         merged_role_def = {**full_role_def, **form_overlay}
 
+        # 26.6.26 — PERSIST the edit to roles/<name>/role.yaml (tier-0) so a
+        # raised token_budget (etc.) is durable + RE-READ by the harness.  The
+        # ROLE_UPDATE signal alone only writes the Redis/LanceDB tiers, which
+        # the tier-0 role.yaml shadows on the next load — that's why a Nucleus
+        # budget bump was "not recognized at all".
+        persisted = self._persist_role_yaml(role_name, merged_role_def)
+
         payload = {
             "signal_type": "ROLE_UPDATE",
             "agent_id": "",
@@ -631,7 +638,10 @@ class InfuseScreen(Screen):
         }
 
         self.app.post_message(_PublishMessage(subject_role_update(collective_id), payload))
-        self.status_text = "Awaiting arbiter approval…"
+        self.status_text = (
+            f"✓ Saved to roles/{role_name}/role.yaml — awaiting arbiter…"
+            if persisted else "Awaiting arbiter approval…"
+        )
 
         # PR-D — write the (role, cluster_id, purpose) tuple to
         # collective.yaml and ask the host-side apply-watcher to
@@ -650,6 +660,32 @@ class InfuseScreen(Screen):
         except Exception:
             logger.exception("infuse: collective spawn path failed; "
                               "legacy ROLE_UPDATE still published")
+
+    def _persist_role_yaml(self, role_name: str, role_def: dict) -> bool:
+        """Write the Apply'd role to roles/<name>/role.yaml (tier-0, durable).
+
+        Returns True on a successful validated write.  Best-effort: a failure
+        is logged and leaves the ROLE_UPDATE signal as the only effect.
+        """
+        if not role_name:
+            return False
+        try:
+            import yaml as _yaml  # noqa: PLC0415
+            from pathlib import Path  # noqa: PLC0415
+            from acc.tui.role_writeback import upsert_role_yaml  # noqa: PLC0415
+            yaml_text = _yaml.safe_dump(
+                {"role_definition": role_def},
+                sort_keys=False, default_flow_style=False, allow_unicode=True,
+            )
+            upsert_role_yaml(
+                Path(_roles_root()) / role_name / "role.yaml",
+                yaml_text,
+                validate=True,
+            )
+            return True
+        except Exception:
+            logger.exception("infuse: role.yaml persist failed for %r", role_name)
+            return False
 
     def _spawn_via_collective(
         self,

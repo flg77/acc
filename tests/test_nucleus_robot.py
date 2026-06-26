@@ -49,8 +49,8 @@ async def test_role_select_sticks_under_snapshot_churn(monkeypatch):
             f"role select reverted to {sel.value!r} under snapshot churn"
         )
         tb = screen.query_one("#input-token-budget", Input).value
-        assert tb.startswith("4096"), (
-            f"token_budget should be assistant's 4096, got {tb!r}"
+        assert tb.startswith("20480"), (
+            f"token_budget should be the 20480 default, got {tb!r}"
         )
 
 
@@ -123,3 +123,28 @@ async def test_active_llm_falls_back_to_live_backend(monkeypatch):
         screen.apply_snapshot(snap)
         live = screen._live_backend_for_role("assistant")
         assert "vllm" in live and "llama-3.2-3B" in live and "(live)" in live, live
+
+
+def test_apply_persists_token_budget_to_role_yaml(tmp_path, monkeypatch):
+    """26.6.26 — Nucleus Apply must WRITE the edited token_budget to
+    roles/<name>/role.yaml (tier-0) so it's durable + re-read by the harness,
+    not just a NATS ROLE_UPDATE the tier-0 file shadows on reload."""
+    import shutil
+    from acc.role_loader import RoleLoader
+
+    roles = tmp_path / "roles"
+    roles.mkdir()
+    shutil.copytree("roles/_base", roles / "_base")
+    shutil.copytree("roles/observer", roles / "observer")
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(roles))
+
+    rd = RoleLoader(str(roles), "observer").load()
+    merged = rd.model_dump()
+    merged["category_b_overrides"] = dict(merged.get("category_b_overrides") or {})
+    merged["category_b_overrides"]["token_budget"] = 99999
+
+    screen = InfuseScreen()
+    assert screen._persist_role_yaml("observer", merged) is True
+
+    reloaded = RoleLoader(str(roles), "observer").load()
+    assert (reloaded.category_b_overrides or {}).get("token_budget") == 99999

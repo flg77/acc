@@ -24,7 +24,7 @@ role_definition:
     - countersign_role_update
     - publish_role_approval
   category_b_overrides:
-    token_budget: 2048
+    token_budget: 20480
     rate_limit_rpm: 30
   version: "1.1.0"
   # Arbiter is the governance node — it does not nominate its own episodes
