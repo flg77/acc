@@ -1,0 +1,37 @@
+# skills/speech_synthesize/skill.yaml — text → speech audio (Piper).
+#
+# On-device TTS (C2). Writes a WAV to out_path (or a temp file) and returns the
+# path + byte count. Needs the optional [speech] extra at runtime. MEDIUM risk.
+
+purpose:        "Synthesize speech audio (WAV) from text (Piper, fully on-device)."
+version:        "0.1.0"
+adapter_class:  "SpeechSynthesizeSkill"
+risk_level:     "MEDIUM"
+requires_actions: []
+domain_id:      "speech"
+tags:           ["speech", "tts", "piper", "voice", "on-device"]
+
+input_schema:
+  type: object
+  properties:
+    text:
+      type: string
+      minLength: 1
+      maxLength: 20000
+    out_path:
+      type: string
+      description: "Optional WAV output path; a temp file is used when omitted."
+  required: ["text"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    audio_path: { type: string }
+    bytes:      { type: integer, minimum: 0 }
+  required: ["audio_path", "bytes"]
+  additionalProperties: false
+
+description: |
+  Delegates to acc.speech.tts.select_tts() (Piper). Audio is produced locally.
+  Install the runtime with `pip install 'acc[speech]'`.

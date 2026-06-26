@@ -358,6 +358,11 @@ role_definition:
     - skill_author
     - role_author
     - release_pipe
+    # Integrations pillar 3 (interact) — on-device speech I/O so the assistant
+    # can transcribe audio and speak results (Whisper STT / Piper TTS). MEDIUM
+    # risk; needs the optional [speech] extra. ACC-PR/Proposals/PR-PROPOSAL-C.
+    - speech_transcribe
+    - speech_synthesize
   default_skills:
     - echo
     - catalog_query

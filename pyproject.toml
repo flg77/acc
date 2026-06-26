@@ -121,6 +121,16 @@ webgui = [
     "authlib>=1.3,<2.0",
     "bcrypt>=4.1,<5.0",
 ]
+speech = [
+    # Integrations pillar 3 — local, on-device STT/TTS for the assistant's
+    # voice interface. OPT-IN: NOT in the base install, so the 2 GB edge memory
+    # floor (C1) is untouched until voice is enabled. faster-whisper is the
+    # GPU/DC runtime; whisper.cpp (edge/CPU) is `pip install pywhispercpp` on
+    # top; the live-mic daemon also needs `sounddevice`. Audio never leaves the
+    # device (C2). See ACC-PR/Proposals/PR-PROPOSAL-C.
+    "faster-whisper>=1.0,<2.0",
+    "piper-tts>=1.2,<2.0",
+]
 
 [project.scripts]
 acc-agent = "acc.agent:main"
@@ -131,6 +141,9 @@ acc-pkg = "acc.pkg.cli:main"
 # Slack channel daemon — operator runs `pip install 'acc[slack]'` first
 # so slack_bolt is on the PYTHONPATH before this entry point is invoked.
 acc-channel-slack = "acc.channels.slack:main"
+# Voice channel daemon — `pip install 'acc[speech]'` first (faster-whisper +
+# piper + sounddevice). Push-to-talk → STT → assistant → TTS. PR-PROPOSAL-C.
+acc-channel-voice = "acc.channels.voice_daemon:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
