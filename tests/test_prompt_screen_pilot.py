@@ -1132,3 +1132,103 @@ def test_failed_invocation_summary_lists_failures():
         [{"kind": "skill", "target": "ok", "ok": True}]
     ) == ""
     assert PromptScreen._failed_invocation_summary([]) == ""
+
+
+# ---------------------------------------------------------------------------
+# 26.6.26 finding #2 — Up/Down sent-prompt history (shell-style recall)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_up_down_recall_sent_prompts():
+    """Up walks toward older sent prompts; Down walks back toward newer and
+    finally restores the live draft when stepping past the newest."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        ta = screen.query_one("#prompt-textarea", TextArea)
+
+        # Seed history exactly as action_send would on each send.
+        screen._record_sent_prompt("first prompt")
+        screen._record_sent_prompt("second prompt")
+
+        ta.focus()
+        await pilot.pause()
+
+        # Empty buffer → Up recalls the newest, then the older.
+        await pilot.press("up")
+        assert ta.text == "second prompt", ta.text
+        await pilot.press("up")
+        assert ta.text == "first prompt", ta.text
+
+        # Down walks back to newest, then restores the (empty) live draft.
+        await pilot.press("down")
+        assert ta.text == "second prompt", ta.text
+        await pilot.press("down")
+        assert ta.text == "", ta.text
+
+
+@pytest.mark.asyncio
+async def test_record_sent_prompt_dedups_and_preserves_multiline_nav():
+    """An immediate duplicate send is collapsed; and Up in the MIDDLE of a
+    multi-line buffer moves the cursor (does NOT hijack to history)."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        ta = screen.query_one("#prompt-textarea", TextArea)
+
+        screen._record_sent_prompt("dup")
+        screen._record_sent_prompt("dup")            # collapsed
+        assert screen._sent_prompts == ["dup"]
+        screen._record_sent_prompt("next")
+        assert screen._sent_prompts == ["dup", "next"]
+
+        # A two-line live buffer with the cursor on the 2nd row: Up must move
+        # the cursor up a line, NOT replace the buffer with history.
+        ta.text = "line one\nline two"
+        ta.focus()
+        ta.move_cursor(ta.document.end)              # row 1 (last row)
+        await pilot.pause()
+        await pilot.press("up")                      # row 1 → row 0: cursor move
+        assert ta.text == "line one\nline two", ta.text
+
+
+# ---------------------------------------------------------------------------
+# 26.6.26 finding #3 — slash/palette execution reflected in the prompt trace
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_slash_command_echoed_into_trace():
+    """Running a slash/palette command appends a 'command' trace entry (the
+    execution itself), and its result follows as a system entry."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        screen._dispatch_slash("/help")
+        await pilot.pause()
+
+        roles = [e.get("role") for e in screen.history]
+        assert "command" in roles, roles
+        cmd_entry = next(e for e in screen.history if e.get("role") == "command")
+        assert cmd_entry["text"] == "/help"
+        # The command echo precedes its result (a system entry).
+        assert roles.index("command") < roles.index("system"), roles
+
+        # And it paints into the transcript.
+        transcript = screen.query_one("#prompt-transcript", Static)
+        captured: list[str] = []
+        real = transcript.update
+
+        def recording(content="", **kwargs):
+            captured.append(str(content))
+            return real(content, **kwargs)
+
+        transcript.update = recording  # type: ignore[assignment]
+        screen._render_transcript()
+        body = "\n".join(captured)
+        assert "operator command" in body and "/help" in body, body
