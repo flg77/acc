@@ -1,0 +1,40 @@
+# skills/mattermost_post/skill.yaml — outbound Mattermost message.
+#
+# Self-hosted, sovereignty-aligned. MATTERMOST_URL + MATTERMOST_BOT_TOKEN (env).
+# MEDIUM risk; Cat-A A-017 + describe-not-invoke (send_message).
+
+purpose:        "Create a post in a Mattermost channel via the REST API /api/v4/posts."
+version:        "0.1.0"
+adapter_class:  "MattermostPostSkill"
+risk_level:     "MEDIUM"
+requires_actions:
+  - "send_message"
+domain_id:      "messaging"
+tags:           ["messaging", "mattermost", "outbound", "notify", "self-hosted"]
+
+input_schema:
+  type: object
+  properties:
+    channel_id:
+      type: string
+      minLength: 1
+      description: "Mattermost channel id the bot can post to."
+    text:
+      type: string
+      minLength: 1
+  required: ["channel_id", "text"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    ok:      { type: boolean }
+    post_id: { type: string }
+  required: ["ok", "post_id"]
+  additionalProperties: false
+
+description: |
+  POSTs to `${MATTERMOST_URL}/api/v4/posts` with a bearer
+  `MATTERMOST_BOT_TOKEN`. Returns the created post id. Missing config →
+  recoverable SkillInvocationError (prod fail-closed). Self-hosted server
+  keeps messaging within the operator's sovereignty boundary.

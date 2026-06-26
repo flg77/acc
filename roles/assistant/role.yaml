@@ -252,6 +252,10 @@ role_definition:
     - arxiv
     - wikipedia
     - web_fetch
+    # Integrations pillar 1 (reach) — Signal needs a signal-cli sidecar, so it
+    # is an MCP; the thin-REST messengers are in-process skills below.
+    # ACC-PR/Proposals/PR-PROPOSAL-A.
+    - signal
   allowed_actions:
     - read_vector_db
     - read_scratchpad
@@ -271,6 +275,10 @@ role_definition:
     # OpenSpec follow-up to `20260603-capability-pool` — operator-asked
     # promotion of the Assistant from gatekeeper to capable navigator.
     - execute_shell
+    # Integrations pillar 1 — describe-not-invoke label for outbound messaging
+    # (telegram_send/slack_post/mattermost_post/signal). Cat-A A-MSG-1 +
+    # daily-cap Cat-B gate the actual send.
+    - send_message
   category_b_overrides:
     # v0.3.44 (followup #58) — bumped from 2048 to 4096.  v0.3.43
     # added the ``## Currently available`` perception block to the
@@ -358,6 +366,11 @@ role_definition:
     - skill_author
     - role_author
     - release_pipe
+    # Integrations pillar 1 (reach) — outbound messaging skills (thin REST →
+    # in-process, edge-lean). MEDIUM risk; admitted by max_skill_risk_level HIGH.
+    - telegram_send
+    - slack_post
+    - mattermost_post
   default_skills:
     - echo
     - catalog_query
