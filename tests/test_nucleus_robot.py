@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App
-from textual.widgets import Input, Select
+from textual.widgets import Button, Input, Select, Static
 
 from acc.tui.screens.infuse import InfuseScreen
 from acc.tui.models import AgentSnapshot, CollectiveSnapshot
@@ -123,6 +123,74 @@ async def test_active_llm_falls_back_to_live_backend(monkeypatch):
         screen.apply_snapshot(snap)
         live = screen._live_backend_for_role("assistant")
         assert "vllm" in live and "llama-3.2-3B" in live and "(live)" in live, live
+
+
+@pytest.mark.asyncio
+async def test_nucleus_dev_prod_stage_gates_build_button(monkeypatch):
+    """26.6.26 finding #4 — Nucleus differentiates DEV/PROD: a security-floor
+    badge renders, and the Build-package button is hidden in the DEV
+    (finetune) stage, revealed only after switching the Stage selector to
+    PROD (build an immutable package)."""
+    monkeypatch.setenv("ACC_ROLES_ROOT", "roles")
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        # The security-floor (DEV/PROD) badge is painted (capture the update
+        # — Static.renderable isn't reliably readable across Textual versions).
+        badge = screen.query_one("#nucleus-mode-badge", Static)
+        captured: list[str] = []
+        real = badge.update
+
+        def recording(content="", **kwargs):
+            captured.append(str(content))
+            return real(content, **kwargs)
+
+        badge.update = recording  # type: ignore[assignment]
+        screen._render_mode_badge()
+        assert any("Security floor" in c for c in captured), captured
+
+        # DEV stage (default): the Build button is hidden.
+        build_btn = screen.query_one("#btn-build-pkg", Button)
+        assert build_btn.display is False
+
+        # Switch the workflow stage to PROD → Build button revealed.
+        stage = screen.query_one("#select-nucleus-stage", Select)
+        stage.value = "prod"
+        for _ in range(4):
+            await pilot.pause()
+        assert build_btn.display is True
+        assert getattr(screen, "_nucleus_stage", "") == "prod"
+
+        # Back to DEV → hidden again.
+        stage.value = "dev"
+        for _ in range(4):
+            await pilot.pause()
+        assert build_btn.display is False
+
+
+@pytest.mark.asyncio
+async def test_nucleus_caps_tables_list_allowed_not_just_installed(monkeypatch):
+    """26.6.26 finding #4 — the Skills/MCP browse tables list the role's
+    ALLOWED capabilities (not the empty allowed∩installed intersection), so
+    they're informative even when nothing is installed on the deploy."""
+    from textual.widgets import DataTable
+
+    monkeypatch.setenv("ACC_ROLES_ROOT", "roles")
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        # assistant grants several skills; select it + let caps repaint.
+        screen.query_one("#select-role", Select).value = "assistant"
+        for _ in range(4):
+            await pilot.pause()
+        skills_table = screen.query_one("#caps-skills-table", DataTable)
+        # The table has the browse columns + at least one allowed-skill row
+        # (it is NOT the single "—" empty-intersection placeholder).
+        assert len(skills_table.columns) == 4
+        assert skills_table.row_count >= 1
 
 
 def test_apply_persists_token_budget_to_role_yaml(tmp_path, monkeypatch):

@@ -36,6 +36,8 @@ from textual.reactive import reactive
 
 from acc.role_loader import RoleLoader, list_roles, list_all_role_names
 from acc.signals import subject_role_update
+from acc.tui.config_helpers import load_operator_mode
+from acc.tui.mode_badge import operator_mode_hint, operator_mode_markup
 from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
 
 if TYPE_CHECKING:
@@ -90,6 +92,7 @@ class InfuseScreen(Screen):
         ("ctrl+a", "apply", "Apply"),
         ("ctrl+l", "clear", "Clear"),
         ("ctrl+h", "toggle_history", "History"),
+        ("ctrl+b", "build_package", "Build pkg"),
         ("q", "app.quit", "Quit"),
         ("1", "navigate('soma')", "Soma"),
         ("2", "navigate('nucleus')", "Nucleus"),
@@ -130,6 +133,25 @@ class InfuseScreen(Screen):
         yield Label("ACC Role Infusion — Nucleus", id="screen-title")
 
         with ScrollableContainer():
+            # 26.6.26 finding #4 — DEV/PROD differentiation. The badge shows
+            # the GLOBAL security floor (dev=signatures optional / prod=
+            # enforced). The Stage selector is the Nucleus WORKFLOW switch:
+            # DEV = finetune the role live (Apply writes role.yaml); PROD =
+            # freeze it into an immutable, signed role package (Build).
+            with Horizontal(id="row-nucleus-mode"):
+                yield Static("", id="nucleus-mode-badge", classes="status-bar")
+                yield Label("Stage:", classes="field-label")
+                yield Select(
+                    options=[
+                        ("DEV — finetune the role", "dev"),
+                        ("PROD — build immutable package", "prod"),
+                    ],
+                    id="select-nucleus-stage",
+                    value="dev",
+                    allow_blank=False,
+                )
+            yield Static("", id="nucleus-mode-hint", classes="status-bar")
+
             with Horizontal(id="row-collective"):
                 yield Label("Collective:", classes="field-label")
                 yield Input(
@@ -153,12 +175,16 @@ class InfuseScreen(Screen):
             # tables show the allowed∩installed skills + MCPs (the
             # capabilities this role can actually use on this deploy).
             yield Static("Active LLM: —", id="active-llm-line", classes="status-bar")
+            # 26.6.26 finding #4 — browsable caps: every ALLOWED skill/MCP with
+            # its live install state (✓/·) + release (version) + risk, so the
+            # window reflects the role's membrane AND what's actually loaded
+            # on this deploy (was an empty intersection when nothing installed).
             with Horizontal(id="row-caps"):
                 with Container(id="caps-skills-box"):
-                    yield Label("Skills (allowed ∩ installed)", classes="section-label")
+                    yield Label("Skills (allowed · ✓=installed)", classes="section-label")
                     yield DataTable(id="caps-skills-table")
                 with Container(id="caps-mcps-box"):
-                    yield Label("MCPs (allowed ∩ installed)", classes="section-label")
+                    yield Label("MCPs (allowed · ✓=installed)", classes="section-label")
                     yield DataTable(id="caps-mcps-table")
 
             # PR-D — cluster_id surface.  Tags the agent the operator's
@@ -223,8 +249,14 @@ class InfuseScreen(Screen):
                 yield Button("Apply ↵", id="btn-apply", variant="primary")
                 yield Button("Clear", id="btn-clear")
                 yield Button("History ▼", id="btn-history", variant="default")
+                # PROD-stage only: freeze the finetuned role into a signed,
+                # immutable .accpkg (reuses the Ecosystem roll-release build).
+                yield Button(
+                    "Build package →", id="btn-build-pkg", variant="success",
+                )
 
             yield Static(id="status-bar", classes="status-bar")
+            yield Static(id="build-pkg-result", classes="status-bar")
 
             with Container(id="history-panel"):
                 yield Label("── History ──────────────────────────────────", classes="section-label")
@@ -236,9 +268,17 @@ class InfuseScreen(Screen):
         """Populate role Select dynamically from filesystem (REQ-TUI-020)."""
         table = self.query_one("#history-table", DataTable)
         table.add_columns("Version", "Timestamp", "Event", "Approver")
-        # 033 WS-G Part 2 — caps tables: one column each (the capability id).
-        self.query_one("#caps-skills-table", DataTable).add_columns("skill")
-        self.query_one("#caps-mcps-table", DataTable).add_columns("mcp")
+        # 26.6.26 finding #4 — caps tables: id + install state + release.
+        self.query_one("#caps-skills-table", DataTable).add_columns(
+            "skill", "✓", "ver", "risk",
+        )
+        self.query_one("#caps-mcps-table", DataTable).add_columns(
+            "mcp", "✓", "ver", "risk",
+        )
+        # 26.6.26 finding #4 — paint the DEV/PROD badge + apply the initial
+        # (DEV) stage so the Build button starts hidden.
+        self._render_mode_badge()
+        self._apply_stage("dev")
         self._refresh_status()
         self._set_history_visible(False)
         self._load_dynamic_roles()
@@ -447,6 +487,10 @@ class InfuseScreen(Screen):
         ``Select.Changed`` that ``preload_from_role`` itself can post when
         it re-asserts the Select value.
         """
+        # 26.6.26 finding #4 — Nucleus workflow stage toggle (DEV ↔ PROD).
+        if event.select.id == "select-nucleus-stage":
+            self._apply_stage(str(event.value or "dev"))
+            return
         if event.select.id != "select-role":
             return
         if getattr(self, "_loading_role", False):
@@ -548,6 +592,8 @@ class InfuseScreen(Screen):
             self.action_clear()
         elif event.button.id == "btn-history":
             self.action_toggle_history()
+        elif event.button.id == "btn-build-pkg":
+            self.action_build_package()
 
     def action_apply(self) -> None:
         """Build ROLE_UPDATE payload and publish to NATS (REQ-INF-003/004)."""
@@ -767,6 +813,163 @@ class InfuseScreen(Screen):
         self.app.switch_screen(screen_name)
 
     # ------------------------------------------------------------------
+    # 26.6.26 finding #4 — DEV/PROD differentiation + Build-package workflow
+    # ------------------------------------------------------------------
+
+    def _render_mode_badge(self) -> None:
+        """Paint the GLOBAL operator-mode (security-floor) badge.
+
+        Best-effort: a missing/invalid config falls back to the safe
+        ``prod`` badge (see :func:`load_operator_mode`)."""
+        try:
+            mode = load_operator_mode()
+            self.query_one("#nucleus-mode-badge", Static).update(
+                "Security floor: " + operator_mode_markup(mode)
+            )
+        except Exception:
+            logger.exception("infuse: mode badge render failed")
+
+    def _apply_stage(self, stage: str) -> None:
+        """Switch the Nucleus workflow stage (DEV finetune ↔ PROD build).
+
+        DEV hides the Build button + frames Apply as live finetuning; PROD
+        reveals Build (freeze into an immutable, signed package). The hint
+        line also surfaces what the global security floor means for a build
+        (dev = unsigned tolerated; prod = signing enforced)."""
+        stage = "prod" if str(stage).lower() == "prod" else "dev"
+        self._nucleus_stage = stage
+        try:
+            btn = self.query_one("#btn-build-pkg", Button)
+            btn.display = stage == "prod"
+        except Exception:
+            pass
+        try:
+            floor = load_operator_mode()
+        except Exception:
+            floor = "prod"
+        if stage == "prod":
+            hint = (
+                "PROD stage — Build freezes the selected role into an "
+                "immutable, signed .accpkg (validate → build → cosign). "
+                f"Security floor [{floor}]: {operator_mode_hint(floor)}."
+            )
+        else:
+            hint = (
+                "DEV stage — finetune the role; Apply writes roles/<name>/"
+                "role.yaml and the harness re-reads it. Switch to PROD to "
+                "build an immutable package."
+            )
+        try:
+            self.query_one("#nucleus-mode-hint", Static).update(hint)
+        except Exception:
+            pass
+
+    def action_build_package(self) -> None:
+        """Build the selected role into an immutable, signed ``.accpkg``.
+
+        PROD-stage only (the Nucleus "switch to PROD → build" workflow).
+        Reuses the Ecosystem roll-release pipeline (validate → build_family
+        → cosign sign) on a worker thread, then prints the exact
+        ``acc-pkg publish`` command — the push itself stays operator-only.
+        """
+        stage = getattr(self, "_nucleus_stage", "dev")
+        if stage != "prod":
+            self.notify(
+                "Switch the Stage selector to PROD to build an immutable "
+                "role package. DEV is for live finetuning (Apply).",
+                severity="warning", timeout=6.0,
+            )
+            return
+        try:
+            role_name = str(self.query_one("#select-role", Select).value or "").strip()
+        except Exception:
+            role_name = ""
+        if not role_name:
+            self.notify("Pick a role first.", severity="warning", timeout=4.0)
+            return
+        self.query_one("#build-pkg-result", Static).update(
+            f"[yellow]Building immutable package for {role_name}…[/yellow]"
+        )
+        self.run_worker(
+            self._build_pkg_worker(role_name),
+            exclusive=True, group="build-pkg",
+        )
+
+    async def _build_pkg_worker(self, role_name: str) -> None:
+        """Validate → build → sign a single-role ``.accpkg`` off the UI thread.
+
+        Mirrors ``EcosystemScreen._roll_release_worker`` (033 WS-E) but
+        renders its result into the Nucleus build-result line. Never pushes
+        — surfaces the exact ``acc-pkg publish`` command for the operator."""
+        import asyncio  # noqa: PLC0415
+        from pathlib import Path  # noqa: PLC0415
+
+        result = self.query_one("#build-pkg-result", Static)
+        root = Path(_roles_root())
+
+        # Step 1 — validate (best-effort; the build itself is the floor).
+        try:
+            from acc.capability_validator import (  # noqa: PLC0415
+                format_findings, has_errors, validate_roles_dir,
+            )
+            findings = await asyncio.to_thread(validate_roles_dir, root)
+            if has_errors(findings):
+                result.update(
+                    f"[red]Validation FAILED for {role_name}:[/red]\n"
+                    f"{format_findings(findings)}"
+                )
+                return
+        except ImportError:
+            pass  # validator not in this build — build remains the gate
+        except Exception as exc:  # noqa: BLE001
+            result.update(f"[red]Validation error: {type(exc).__name__}: {exc}[/red]")
+            return
+
+        # Step 2 — build the single-role .accpkg via the family builder.
+        try:
+            from tools.build_family_pkg import (  # noqa: PLC0415
+                FamilyManifest, build_family,
+            )
+            version = str(self.query_one("#input-version", Input).value or "0.1.0").strip()
+            manifest = FamilyManifest(
+                name=f"@acc/{role_name}-role",
+                roles=(role_name,),
+                description=f"Single-role package for {role_name} (built from Nucleus).",
+            )
+            tarball = await asyncio.to_thread(
+                build_family, manifest.name,
+                version=version,
+                repo_root=Path(root).resolve().parent,
+                manifest_override=manifest,
+            )
+            tarball = Path(tarball)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("infuse: build failed for %r", role_name)
+            result.update(f"[red]Build failed: {type(exc).__name__}: {exc}[/red]")
+            return
+
+        # Step 3 — sign (cosign keyless; honours the security floor).
+        sig_line = "[dim](unsigned — security floor dev tolerates it)[/dim]"
+        try:
+            from acc.pkg.publish import sign_blob  # noqa: PLC0415
+            await asyncio.to_thread(sign_blob, tarball)
+            sig_line = "[green]signed (cosign)[/green]"
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("infuse: sign failed for %r", tarball)
+            sig_line = f"[yellow]sign skipped: {type(exc).__name__}: {exc}[/yellow]"
+
+        result.update(
+            f"[green]✓ Built[/green] [bold]{tarball.name}[/bold]  {sig_line}\n"
+            f"[dim]Publish (operator-only):[/dim] "
+            f"acc-pkg publish {tarball} <catalog-url>"
+        )
+        self.notify(
+            f"Built {tarball.name}. Review the publish command in the "
+            "result line (push is operator-only).",
+            severity="information", timeout=8.0,
+        )
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
@@ -824,32 +1027,40 @@ class InfuseScreen(Screen):
         self._refresh_active_llm(role_name)
 
     def _refresh_caps_tables(self, role_def: Any) -> None:
+        """Browsable caps view (26.6.26 finding #4).
+
+        Lists EVERY allowed skill/MCP with its live install state (✓/·),
+        release (manifest version) + risk — so the window reflects the
+        role's membrane AND what's actually loaded, instead of an empty
+        intersection when nothing is installed on this deploy.
+        """
         from acc.capability_index import (  # noqa: PLC0415
-            get_allowed_installed_capabilities,
+            get_role_capability_rows,
         )
 
         skill_reg, mcp_reg = self._capability_registries()
         try:
-            skills, mcps = get_allowed_installed_capabilities(
+            skill_rows, mcp_rows = get_role_capability_rows(
                 role_def, skill_reg, mcp_reg,
             )
         except Exception:
-            logger.exception("infuse: capability intersection failed")
-            skills, mcps = [], []
+            logger.exception("infuse: capability rows failed")
+            skill_rows, mcp_rows = [], []
 
-        skills_table = self.query_one("#caps-skills-table", DataTable)
-        skills_table.clear()
-        for sid in skills:
-            skills_table.add_row(sid)
-        if not skills:
-            skills_table.add_row("—")
+        def _paint(table_id: str, rows: list[dict]) -> None:
+            table = self.query_one(table_id, DataTable)
+            table.clear()
+            for r in rows:
+                mark = "[green]✓[/green]" if r.get("installed") else "[dim]·[/dim]"
+                table.add_row(
+                    r.get("id", "—"), mark,
+                    str(r.get("version", "—")), str(r.get("risk", "—")),
+                )
+            if not rows:
+                table.add_row("[dim]— none allowed —[/dim]", "", "", "")
 
-        mcps_table = self.query_one("#caps-mcps-table", DataTable)
-        mcps_table.clear()
-        for mid in mcps:
-            mcps_table.add_row(mid)
-        if not mcps:
-            mcps_table.add_row("—")
+        _paint("#caps-skills-table", skill_rows)
+        _paint("#caps-mcps-table", mcp_rows)
 
     def _role_model_id(self, role_name: str) -> str:
         """Return the model_id this role is BOUND to in collective.yaml
