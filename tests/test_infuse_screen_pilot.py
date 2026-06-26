@@ -113,21 +113,32 @@ async def test_caps_tables_render_intersection(monkeypatch):
         skills_table = screen.query_one("#caps-skills-table", DataTable)
         mcps_table = screen.query_one("#caps-mcps-table", DataTable)
 
-        skill_cells = [
+        # 26.6.26 finding #4 — the browse view lists EVERY allowed cap (not
+        # just allowed∩installed), with an install mark in column 1.
+        skill_ids = [
             str(skills_table.get_cell_at((r, 0)))
             for r in range(skills_table.row_count)
         ]
-        mcp_cells = [
+        skill_marks = {
+            str(skills_table.get_cell_at((r, 0))): str(skills_table.get_cell_at((r, 1)))
+            for r in range(skills_table.row_count)
+        }
+        # All allowed skills present (sorted), incl. the not-installed 'ghost'.
+        assert skill_ids == ["echo", "ghost", "git"]
+        assert "✓" in skill_marks["echo"] and "✓" in skill_marks["git"]
+        assert "✓" not in skill_marks["ghost"]   # allowed but not installed
+
+        mcp_ids = [
             str(mcps_table.get_cell_at((r, 0)))
             for r in range(mcps_table.row_count)
         ]
-        # allowed ∩ installed, sorted: skills {echo, git}; mcps {gh}.
-        assert skill_cells == ["echo", "git"]
-        assert mcp_cells == ["gh"]
+        assert mcp_ids == ["gh", "ghost_mcp"]
 
 
 @pytest.mark.asyncio
-async def test_caps_tables_show_dash_when_empty(monkeypatch):
+async def test_caps_tables_show_placeholder_when_no_allowed(monkeypatch):
+    """A role granting NO skills/MCPs shows a single placeholder row (not a
+    crash, not a bare dash that reads as 'unknown')."""
     app = _Harness()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -143,9 +154,9 @@ async def test_caps_tables_show_dash_when_empty(monkeypatch):
         skills_table = screen.query_one("#caps-skills-table", DataTable)
         mcps_table = screen.query_one("#caps-mcps-table", DataTable)
         assert skills_table.row_count == 1
-        assert str(skills_table.get_cell_at((0, 0))) == "—"
+        assert "none allowed" in str(skills_table.get_cell_at((0, 0)))
         assert mcps_table.row_count == 1
-        assert str(mcps_table.get_cell_at((0, 0))) == "—"
+        assert "none allowed" in str(mcps_table.get_cell_at((0, 0)))
 
 
 # ---------------------------------------------------------------------------

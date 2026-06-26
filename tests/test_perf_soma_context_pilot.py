@@ -356,3 +356,38 @@ async def test_dashboard_cluster_budget_empty_state():
 
         joined = "\n".join(captured)
         assert "No active agent clusters" in joined
+
+
+# ---------------------------------------------------------------------------
+# 26.6.26 — RECENT FAILURES carries task attribution (where + when)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failures_panel_shows_task_id_and_timestamp():
+    """A skill/MCP failure on the Performance pane must be traceable back to
+    the prompt/task that triggered it (26.6.26 finding: "I do not know where
+    and when the skill failures shown were triggered").  The RECENT FAILURES
+    line carries the task_id (where) and a full timestamp (when)."""
+    app = _PerfHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        widget = screen.query_one("#capability-failures-panel", Static)
+        captured = _capture_static(widget)
+
+        snap = CollectiveSnapshot(collective_id="sol-test")
+        snap.record_invocation(
+            {"kind": "skill", "target": "shell_exec", "ok": False,
+             "error": "SkillNotFound: shell_exec"},
+            agent_id="assistant-1", task_id="task-deadbeef99", ts=1_700_000_000.0,
+        )
+        screen.snapshot = snap
+        await pilot.pause()
+
+        joined = "\n".join(captured)
+        assert "task:task-deadbee" in joined, joined   # task_id[:12] (where)
+        assert "shell_exec" in joined
+        assert "SkillNotFound" in joined
+        # Full date stamp (when) — date present, not just H:M:S (TZ-robust).
+        assert "2023-11-1" in joined, joined

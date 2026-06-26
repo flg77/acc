@@ -31,7 +31,7 @@ role_definition:
     - publish_episode_nominate
     - publish_knowledge_share
   category_b_overrides:
-    token_budget: 3072
+    token_budget: 20480
     rate_limit_rpm: 15
   # PR-Z3 — write audit/reasoning docs to the trusted workspace; the
   # workspace_access flag auto-grants fs_read + fs_write (see

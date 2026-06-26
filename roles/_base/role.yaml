@@ -32,8 +32,10 @@ role_definition:
   # Cat-B setpoint overrides specific to this role.
   # Any key present here overrides the corresponding setpoint in data_rhoai.json
   # for this role only.
-  # Example: {token_budget: 2048, rate_limit_rpm: 60}
-  category_b_overrides: {}
+  # Default Cat-B floor inherited by every in-tree role (override per role).
+  # token_budget 20480 is the operator default (26.6.26) so a single prompt
+  # turn has ample headroom; roles may override key-by-key.
+  category_b_overrides: {token_budget: 20480, rate_limit_rpm: 60}
 
   # Semantic version of this role definition.  Bumped on every change.
   # The RoleLoader uses this to detect hot-reload changes.

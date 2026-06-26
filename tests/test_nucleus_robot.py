@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App
-from textual.widgets import Input, Select
+from textual.widgets import Button, Input, Select, Static
 
 from acc.tui.screens.infuse import InfuseScreen
 from acc.tui.models import AgentSnapshot, CollectiveSnapshot
@@ -49,8 +49,8 @@ async def test_role_select_sticks_under_snapshot_churn(monkeypatch):
             f"role select reverted to {sel.value!r} under snapshot churn"
         )
         tb = screen.query_one("#input-token-budget", Input).value
-        assert tb.startswith("4096"), (
-            f"token_budget should be assistant's 4096, got {tb!r}"
+        assert tb.startswith("20480"), (
+            f"token_budget should be the 20480 default, got {tb!r}"
         )
 
 
@@ -123,3 +123,96 @@ async def test_active_llm_falls_back_to_live_backend(monkeypatch):
         screen.apply_snapshot(snap)
         live = screen._live_backend_for_role("assistant")
         assert "vllm" in live and "llama-3.2-3B" in live and "(live)" in live, live
+
+
+@pytest.mark.asyncio
+async def test_nucleus_dev_prod_stage_gates_build_button(monkeypatch):
+    """26.6.26 finding #4 — Nucleus differentiates DEV/PROD: a security-floor
+    badge renders, and the Build-package button is hidden in the DEV
+    (finetune) stage, revealed only after switching the Stage selector to
+    PROD (build an immutable package)."""
+    monkeypatch.setenv("ACC_ROLES_ROOT", "roles")
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+
+        # The security-floor (DEV/PROD) badge is painted (capture the update
+        # — Static.renderable isn't reliably readable across Textual versions).
+        badge = screen.query_one("#nucleus-mode-badge", Static)
+        captured: list[str] = []
+        real = badge.update
+
+        def recording(content="", **kwargs):
+            captured.append(str(content))
+            return real(content, **kwargs)
+
+        badge.update = recording  # type: ignore[assignment]
+        screen._render_mode_badge()
+        assert any("Security floor" in c for c in captured), captured
+
+        # DEV stage (default): the Build button is hidden.
+        build_btn = screen.query_one("#btn-build-pkg", Button)
+        assert build_btn.display is False
+
+        # Switch the workflow stage to PROD → Build button revealed.
+        stage = screen.query_one("#select-nucleus-stage", Select)
+        stage.value = "prod"
+        for _ in range(4):
+            await pilot.pause()
+        assert build_btn.display is True
+        assert getattr(screen, "_nucleus_stage", "") == "prod"
+
+        # Back to DEV → hidden again.
+        stage.value = "dev"
+        for _ in range(4):
+            await pilot.pause()
+        assert build_btn.display is False
+
+
+@pytest.mark.asyncio
+async def test_nucleus_caps_tables_list_allowed_not_just_installed(monkeypatch):
+    """26.6.26 finding #4 — the Skills/MCP browse tables list the role's
+    ALLOWED capabilities (not the empty allowed∩installed intersection), so
+    they're informative even when nothing is installed on the deploy."""
+    from textual.widgets import DataTable
+
+    monkeypatch.setenv("ACC_ROLES_ROOT", "roles")
+    app = _Host()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        # assistant grants several skills; select it + let caps repaint.
+        screen.query_one("#select-role", Select).value = "assistant"
+        for _ in range(4):
+            await pilot.pause()
+        skills_table = screen.query_one("#caps-skills-table", DataTable)
+        # The table has the browse columns + at least one allowed-skill row
+        # (it is NOT the single "—" empty-intersection placeholder).
+        assert len(skills_table.columns) == 4
+        assert skills_table.row_count >= 1
+
+
+def test_apply_persists_token_budget_to_role_yaml(tmp_path, monkeypatch):
+    """26.6.26 — Nucleus Apply must WRITE the edited token_budget to
+    roles/<name>/role.yaml (tier-0) so it's durable + re-read by the harness,
+    not just a NATS ROLE_UPDATE the tier-0 file shadows on reload."""
+    import shutil
+    from acc.role_loader import RoleLoader
+
+    roles = tmp_path / "roles"
+    roles.mkdir()
+    shutil.copytree("roles/_base", roles / "_base")
+    shutil.copytree("roles/observer", roles / "observer")
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(roles))
+
+    rd = RoleLoader(str(roles), "observer").load()
+    merged = rd.model_dump()
+    merged["category_b_overrides"] = dict(merged.get("category_b_overrides") or {})
+    merged["category_b_overrides"]["token_budget"] = 99999
+
+    screen = InfuseScreen()
+    assert screen._persist_role_yaml("observer", merged) is True
+
+    reloaded = RoleLoader(str(roles), "observer").load()
+    assert (reloaded.category_b_overrides or {}).get("token_budget") == 99999

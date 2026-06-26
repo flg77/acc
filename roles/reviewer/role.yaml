@@ -36,7 +36,7 @@ role_definition:
     - publish_eval_outcome
     - publish_knowledge_share
   category_b_overrides:
-    token_budget: 4096
+    token_budget: 20480
     rate_limit_rpm: 30
   version: "1.0.0"
   domain_id: "general"

@@ -180,6 +180,61 @@ def get_allowed_installed_capabilities(
     return skills, mcps
 
 
+def _registry_manifests(registry: Any) -> dict:
+    """Best-effort ``registry.manifests()`` → dict (``{}`` on any failure)."""
+    getter = getattr(registry, "manifests", None)
+    if callable(getter):
+        try:
+            value = getter()
+        except Exception:  # noqa: BLE001 — registry read must not raise here
+            return {}
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def get_role_capability_rows(
+    role_def: Any,
+    skill_registry: Any,
+    mcp_registry: Any,
+) -> tuple[list[dict], list[dict]]:
+    """Per-capability *browse rows* for a role's ALLOWED skills + MCPs.
+
+    26.6.26 finding #4.  :func:`get_allowed_installed_capabilities` returns
+    only the intersection, so the Nucleus caps tables render EMPTY whenever
+    nothing is installed on the deploy (the operator's "Skill and MCP list
+    on nucleus page are empty" report).  This instead lists EVERY allowed
+    capability with its live availability + release, so the window always
+    reflects the role's full membrane and which parts are actually loaded.
+
+    Each row is ``{"id", "installed": bool, "version": str, "risk": str}``.
+    ``version`` / ``risk`` come from the installed registry manifest, else
+    ``"—"``.  Sorted by id; pure + side-effect free (safe for the TUI
+    render path and unit tests).
+    """
+    def _rows(allowed, registry, list_getter) -> list[dict]:
+        installed = set(_registry_installed(registry, list_getter, "manifests"))
+        manifests = _registry_manifests(registry)
+        rows: list[dict] = []
+        for cid in sorted(set(allowed or [])):
+            man = manifests.get(cid)
+            rows.append({
+                "id": cid,
+                "installed": cid in installed,
+                "version": str(getattr(man, "version", "") or "—") if man else "—",
+                "risk": str(getattr(man, "risk_level", "") or "—") if man else "—",
+            })
+        return rows
+
+    skill_rows = _rows(
+        getattr(role_def, "allowed_skills", []), skill_registry, "list_skill_ids",
+    )
+    mcp_rows = _rows(
+        getattr(role_def, "allowed_mcps", []), mcp_registry, "list_server_ids",
+    )
+    return skill_rows, mcp_rows
+
+
 # ---------------------------------------------------------------------------
 # Wire protocol — request/reply on ``subject_capability_query(cid)``
 # ---------------------------------------------------------------------------

@@ -182,6 +182,23 @@ class _PromptInput(TextArea):
                     self.text = f"/{name} "
                     self.move_cursor(self.document.end)
                     return
+        # 26.6.26 finding #2 — Up/Down recall previously SENT prompts
+        # (shell-style history). Only fires at the vertical edge of the
+        # buffer (top row for Up, bottom row for Down) so multi-line
+        # prompts still navigate normally; the screen owns the ring.
+        if event.key in ("up", "down"):
+            row, _col = self.cursor_location
+            last_row = self.document.line_count - 1
+            at_edge = (
+                (event.key == "up" and row == 0)
+                or (event.key == "down" and row == last_row)
+            )
+            if at_edge:
+                recall = getattr(self.screen, "_recall_sent_prompt", None)
+                if recall is not None and recall(event.key, self):
+                    event.prevent_default()
+                    event.stop()
+                    return
         await super()._on_key(event)
 
 
@@ -331,6 +348,14 @@ class PromptScreen(Screen):
         # carrying an explicit mode must win over the role-driven prefill
         # that the async Select.Changed would otherwise apply.
         self._external_mode_pending: str = ""
+        # 26.6.26 finding #2 — shell-style Up/Down recall of previously SENT
+        # prompts. _sent_prompts is the newest-last ring; _history_cursor
+        # indexes it while browsing (None = live buffer, not browsing);
+        # _history_draft stashes the live buffer so Down past the newest
+        # restores what the operator was mid-typing.
+        self._sent_prompts: list[str] = []
+        self._history_cursor: int | None = None
+        self._history_draft: str = ""
         # #162 — session save/detach/resume. Each Prompt screen owns a session
         # id; the transcript autosaves after every history append so a crash or
         # a dropped/again-detached TTY doesn't lose the conversation. main()
@@ -759,6 +784,60 @@ class PromptScreen(Screen):
 
         self.app.push_screen(WorkspaceSelectModal(), _on_pick)
 
+    # ------------------------------------------------------------------
+    # 26.6.26 finding #2 — Up/Down sent-prompt history (shell-style)
+    # ------------------------------------------------------------------
+
+    def _record_sent_prompt(self, text: str) -> None:
+        """Push a just-sent prompt onto the recall ring.
+
+        Collapses an immediate duplicate (re-sending the same prompt twice
+        doesn't bloat history) and caps at ``_MAX_HISTORY``.  A fresh send
+        always resets the browse cursor back to the bottom (live buffer).
+        """
+        text = text.rstrip("\n")
+        if text and (not self._sent_prompts or self._sent_prompts[-1] != text):
+            self._sent_prompts.append(text)
+            if len(self._sent_prompts) > _MAX_HISTORY:
+                self._sent_prompts = self._sent_prompts[-_MAX_HISTORY:]
+        self._history_cursor = None
+        self._history_draft = ""
+
+    def _recall_sent_prompt(self, key: str, textarea: TextArea) -> bool:
+        """Replace the buffer with an older/newer sent prompt.
+
+        Returns ``True`` when it consumed the key (set the buffer), ``False``
+        to let the :class:`TextArea` treat Up/Down as normal cursor movement
+        (e.g. Down when not browsing history).  ``Up`` walks toward older
+        entries; ``Down`` walks back toward newer ones and finally restores
+        the stashed live draft when stepping past the newest.
+        """
+        hist = self._sent_prompts
+        if not hist:
+            return False
+        if key == "up":
+            if self._history_cursor is None:
+                self._history_draft = textarea.text
+                self._history_cursor = len(hist) - 1
+            elif self._history_cursor > 0:
+                self._history_cursor -= 1
+            # else already at the oldest — consume without moving.
+            textarea.text = hist[self._history_cursor]
+            textarea.move_cursor(textarea.document.end)
+            return True
+        # key == "down"
+        if self._history_cursor is None:
+            return False
+        if self._history_cursor < len(hist) - 1:
+            self._history_cursor += 1
+            textarea.text = hist[self._history_cursor]
+        else:
+            # Stepped past the newest → restore the live draft, leave history.
+            self._history_cursor = None
+            textarea.text = self._history_draft
+        textarea.move_cursor(textarea.document.end)
+        return True
+
     def action_send(self) -> None:
         """Read the form, dispatch a task, await the reply in a worker.
 
@@ -774,6 +853,11 @@ class PromptScreen(Screen):
                 timeout=4.0,
             )
             return
+
+        # 26.6.26 finding #2 — remember the raw prompt for Up/Down recall
+        # (covers slash commands too, so the operator can resend the last
+        # palette command). Recorded before any goal-prefixing below.
+        self._record_sent_prompt(prompt)
 
         # PR-5 — slash command branch.
         if prompt.startswith("/"):
@@ -1123,6 +1207,17 @@ class PromptScreen(Screen):
         learn from typos without leaving the screen.
         """
         from acc import slash_commands as _sc  # noqa: PLC0415
+
+        # 26.6.26 finding #3 — echo the command into the trace FIRST, so a
+        # palette/slash execution is visible in the prompt-trace window (its
+        # result, error, or prod-lock follows as a system entry below). Fires
+        # for every path, including invalid/unknown/locked verbs.
+        self._append_history({
+            "role": "command",
+            "task_id": "",
+            "text": raw_input.strip(),
+            "ts": time.time(),
+        })
 
         intent = _sc.parse(raw_input)
 
@@ -2300,6 +2395,17 @@ class PromptScreen(Screen):
                     f"{label_str}"
                     f"{tok_str}"
                     f"{conf_str}"
+                )
+
+            elif role == "command":
+                # 26.6.26 finding #3 — echo the slash/palette command the
+                # operator ran so the execution itself shows in the trace;
+                # its result/error follows as the next system entry.
+                cmd = entry.get("text", "")
+                lines.append(
+                    f"[dim]{ts}[/dim]  "
+                    f"[bold blue]⌘ operator command[/bold blue]  "
+                    f"[bold]{cmd}[/bold]"
                 )
 
             else:  # system

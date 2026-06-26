@@ -280,7 +280,7 @@ role_definition:
     # 1.10 after 3 back-to-back tasks and started ALERT_ESCALATE
     # blocking.  4096 matches the doubled prompt size with headroom for
     # multi-turn context and the future Phase-2 JSON action block.
-    token_budget: 4096
+    token_budget: 20480
     rate_limit_rpm: 30
   version: "2.5.0"
   # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 6 — opt the

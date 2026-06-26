@@ -226,7 +226,9 @@ class TestInfuseScreen:
         monkeypatch.setenv("ACC_ROLES_ROOT", "roles")
         root = "roles"
 
-        # Two control roles that always exist and carry distinct budgets.
+        # Two control roles that always exist and carry distinct VERSIONS
+        # (token_budget is now a uniform 20480 default, so version is the
+        # discriminator that proves the form actually reloaded on select).
         pairs = []
         for name in ("observer", "reviewer"):
             rd = RoleLoader(root, name).load()
@@ -234,7 +236,7 @@ class TestInfuseScreen:
                 pytest.skip(f"control role {name!r} not present in roles/")
             pairs.append((name, str((rd.category_b_overrides or {}).get("token_budget", 2048)),
                           rd.version or "0.1.0"))
-        assert pairs[0][1] != pairs[1][1], "observer/reviewer must differ in budget"
+        assert pairs[0][2] != pairs[1][2], "observer/reviewer must differ in version"
 
         app = _make_app_for(InfuseScreen)
         async with app.run_test(headless=True) as pilot:

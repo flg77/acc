@@ -394,9 +394,11 @@ class PerformanceScreen(Screen):
     ) -> None:
         """Tail-render the most recent failures from ``invocation_log``.
 
-        Each line: ``ts  kind:target  agent_id  error``.  Successes are
-        excluded — operators come here to see what's going wrong, the
-        running totals above already convey throughput.
+        Each line: ``ts  kind:target  agent · task:<id>`` then the error.
+        ``ts`` answers *when* and ``task:<id>`` answers *where* (which
+        prompt/task triggered it) — the 26.6.26 ask was that a failure on
+        this pane be traceable back to the turn that caused it.  Successes
+        are excluded — the running totals above already convey throughput.
         """
         failures = [e for e in snap.invocation_log if not e.get("ok", False)]
         if not failures:
@@ -409,17 +411,19 @@ class PerformanceScreen(Screen):
         lines: list[str] = []
         for entry in reversed(failures[-10:]):
             ts_str = time.strftime(
-                "%H:%M:%S", time.localtime(entry.get("ts", 0)),
+                "%Y-%m-%d %H:%M:%S", time.localtime(entry.get("ts", 0)),
             )
             kind = entry.get("kind", "?")
             target = entry.get("target", "?")
-            agent = entry.get("agent_id", "")[:12] or "?"
+            agent = (entry.get("agent_id") or "")[:12] or "?"
+            task_id = (entry.get("task_id") or "")
+            task_str = f"  [dim]task:{task_id[:12]}[/dim]" if task_id else ""
             err = (entry.get("error", "") or "")[:50]
             kind_colour = "cyan" if kind == "skill" else "magenta"
             lines.append(
                 f"[dim]{ts_str}[/dim]  "
                 f"[{kind_colour}]{kind}[/{kind_colour}]:[bold]{target}[/bold]"
-                f"  [dim]{agent}[/dim]\n"
+                f"  [dim]{agent}[/dim]{task_str}\n"
                 f"    [red]{err}[/red]"
             )
         self.query_one("#capability-failures-panel", Static).update(
