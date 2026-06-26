@@ -252,6 +252,10 @@ role_definition:
     - arxiv
     - wikipedia
     - web_fetch
+    # Integrations pillar 2 (act) — Google Workspace, READ-FIRST, OAuth-brokered
+    # per operator. Writes are denied in the manifest (oversight-routed later).
+    # ACC-PR/Proposals/PR-PROPOSAL-B.
+    - google_workspace
   allowed_actions:
     - read_vector_db
     - read_scratchpad

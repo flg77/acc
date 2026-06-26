@@ -99,6 +99,14 @@ class MCPManifest(BaseModel):
     timeout_s: int = Field(default=30, ge=1, le=600)
     api_key_env: str = ""
 
+    # Auth mode (integrations pillar 2 — office suites). "" / "api_key" use the
+    # legacy static bearer from ``api_key_env``; "oauth" resolves a SHORT-LIVED,
+    # per-operator bearer at call time via acc.credentials.CredentialBroker
+    # (MCP OAuth 2.1 delegated auth). ``oauth_provider`` names the provider
+    # config (e.g. "google", "microsoft"). See ACC-PR/Proposals/PR-PROPOSAL-B.
+    auth: str = ""
+    oauth_provider: str = ""
+
     # Stdio transport fields (reserved)
     command: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
