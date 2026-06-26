@@ -415,3 +415,80 @@ def test_local_def_not_advertised_without_allow_unsigned():
     # _overlay_allow_unsigned defaults False → never reaches the prompt.
     prompt = core.build_system_prompt(_role())
     assert "tf_plan" not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Boot wiring — Agent._apply_overlay (role-scoped load onto the core)
+# ---------------------------------------------------------------------------
+
+
+class _CoreStub:
+    """Minimal stand-in for CognitiveCore's overlay attributes."""
+
+    def __init__(self):
+        self._overlay = None
+        self._overlay_local_skills: tuple[str, ...] = ()
+        self._overlay_local_mcps: tuple[str, ...] = ()
+        self._overlay_allow_unsigned = False
+
+
+def _apply(role_label: str) -> _CoreStub:
+    # _apply_overlay never touches ``self`` — call it with a throwaway receiver
+    # so the test doesn't have to construct a full Agent.
+    from acc.agent import Agent
+
+    core = _CoreStub()
+    Agent._apply_overlay(object(), core, role_label)
+    return core
+
+
+def test_boot_loads_role_scoped_overlay(tmp_path, monkeypatch):
+    roles_root = tmp_path / "roles"
+    rd = roles_root / "coding_agent"
+    rd.mkdir(parents=True)
+    (rd / "AGENTS.md").write_text(
+        "---\nenable_skills: [git_status]\n---\nThis repo.", encoding="utf-8"
+    )
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
+    monkeypatch.chdir(tmp_path)  # no collective.md → collective_dir None
+
+    core = _apply("coding_agent")
+    assert core._overlay is not None
+    assert any(s.layer == LAYER_AGENTS for s in core._overlay)
+
+
+def test_boot_no_overlay_files_leaves_core_untouched(tmp_path, monkeypatch):
+    roles_root = tmp_path / "roles"
+    (roles_root / "coding_agent").mkdir(parents=True)
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
+    monkeypatch.chdir(tmp_path)
+
+    core = _apply("coding_agent")
+    assert core._overlay is None
+    assert core._overlay_local_skills == ()
+
+
+def test_boot_discovers_local_caps_and_allow_unsigned_gate(tmp_path, monkeypatch):
+    roles_root = tmp_path / "roles"
+    rd = roles_root / "coding_agent"
+    (rd / "skills" / "tf_plan").mkdir(parents=True)
+    (rd / "AGENTS.md").write_text("enable_skills: [tf_plan]", encoding="utf-8")
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
+    monkeypatch.setenv("ACC_OVERLAY_ALLOW_UNSIGNED", "1")
+    monkeypatch.chdir(tmp_path)
+
+    core = _apply("coding_agent")
+    assert "tf_plan" in core._overlay_local_skills
+    assert core._overlay_allow_unsigned is True
+
+
+def test_boot_allow_unsigned_off_by_default(tmp_path, monkeypatch):
+    roles_root = tmp_path / "roles"
+    rd = roles_root / "coding_agent"
+    (rd / "skills" / "tf_plan").mkdir(parents=True)
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
+    monkeypatch.delenv("ACC_OVERLAY_ALLOW_UNSIGNED", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    core = _apply("coding_agent")
+    assert core._overlay_allow_unsigned is False

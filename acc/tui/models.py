@@ -54,6 +54,15 @@ class AgentSnapshot:
     role_version: str = "0.1.0"
     cat_c_rule_count: int = 0
 
+    # Personalization overlay summary (proposal ``agent-personalization-overlay``)
+    # — compact view the agent publishes in its HEARTBEAT so the Compliance
+    # "Role Overlay Profiles" panel can render which capabilities the overlay
+    # toggled, the user profile, and any local/dropped requests.  Empty dict
+    # when the role has no overlay files (the common case).  Shape:
+    # {user_profile, enabled: [skill_id], dropped: int, local_grants: [id],
+    #  layers: [filename]}.
+    overlay_summary: dict = field(default_factory=dict)
+
     # ACC-10: queue / backpressure / task-progress (REQ-TUI-013)
     queue_depth: int = 0
     backpressure_state: str = "OPEN"   # OPEN | THROTTLE | CLOSED

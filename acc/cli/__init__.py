@@ -9,6 +9,8 @@ Usage::
     acc-cli role list
     acc-cli role show <name>
     acc-cli role infuse <cid> <role>
+    acc-cli overlay validate <role>
+    acc-cli overlay show <role> [--format yaml] [--allow-unsigned]
     acc-cli nats sub '<pattern>'
     acc-cli nats pub <subject> '<json>'
     acc-cli llm test [--backend openai_compat]
@@ -70,6 +72,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from acc.cli import (  # noqa: PLC0415
         collective_cmd,
         e2e_cmd,
+        overlay_cmd,
         role_cmd,
         nats_cmd,
         llm_cmd,
@@ -79,6 +82,7 @@ def _build_parser() -> argparse.ArgumentParser:
         schedule_cmd,
     )
     role_cmd.register(sub)
+    overlay_cmd.register(sub)
     collective_cmd.register(sub)
     nats_cmd.register(sub)
     llm_cmd.register(sub)

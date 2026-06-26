@@ -511,6 +511,13 @@ class NATSObserver:
         snap.state = data.get("state", snap.state)
         snap.last_heartbeat_ts = data.get("ts", time.time())
         snap.role_version = data.get("role_version", snap.role_version)
+        # Personalization overlay summary (proposal agent-personalization-overlay)
+        # — copy the agent-published compact view straight through for the
+        # Compliance "Role Overlay Profiles" panel.  Default keeps roles
+        # without an overlay rendering as a dash.
+        ov = data.get("overlay_summary")
+        if isinstance(ov, dict):
+            snap.overlay_summary = ov
 
         # ACC-6a StressIndicators
         snap.drift_score = float(data.get("drift_score", snap.drift_score))

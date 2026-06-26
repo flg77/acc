@@ -421,6 +421,12 @@ class Agent:
             # Set right after construction so non-Assistant cores get
             # the same handle (harmless; gated by role check inside).
             self._cognitive_core._bus = self.backends.signaling
+            # Personalization overlay (proposal ``agent-personalization-overlay``,
+            # role-scoped per DRAFT §0) — load this role's user-editable
+            # soul.md / AGENTS.md (+ local skills/ / mcp/ candidates) from its
+            # role dir onto the core.  No overlay files → core untouched →
+            # legacy prompt unchanged.
+            self._apply_overlay(self._cognitive_core, self.config.agent.role)
 
         # Pending bridge delegations: task_id → asyncio.Future (ACC-9)
         # Keyed by the task_id embedded in the TASK_ASSIGN payload.
@@ -1114,6 +1120,9 @@ class Agent:
                 # Arbiter-only: full pending-item list for TUI rendering.
                 # Other roles publish [] (cheap, omitted on the wire).
                 "oversight_pending_items": oversight_pending_items,
+                # Personalization overlay summary (compact; {} when no overlay)
+                # → TUI Compliance "Role Overlay Profiles" panel.
+                "overlay_summary": self._overlay_summary(),
             }).encode()
             subject = subject_heartbeat(self.config.agent.collective_id)
             await self.backends.signaling.publish(subject, payload)
@@ -2116,6 +2125,12 @@ class Agent:
             # Set right after construction so non-Assistant cores get
             # the same handle (harmless; gated by role check inside).
             self._cognitive_core._bus = self.backends.signaling
+            # Personalization overlay (proposal ``agent-personalization-overlay``,
+            # role-scoped per DRAFT §0) — load this role's user-editable
+            # soul.md / AGENTS.md (+ local skills/ / mcp/ candidates) from its
+            # role dir onto the core.  No overlay files → core untouched →
+            # legacy prompt unchanged.
+            self._apply_overlay(self._cognitive_core, self.config.agent.role)
 
         # 4. operator-supplied tags propagate via env so the heartbeat
         # carries them per PR-D.
@@ -2300,6 +2315,121 @@ class Agent:
         except Exception:
             logger.debug("worker_reconcile: collective.yaml load failed", exc_info=True)
         return None
+
+    def _apply_overlay(self, core, role_label: str) -> None:
+        """Load this role's personalization overlay onto *core* (role-scoped, §0/§0.5).
+
+        Reads the user-editable ``soul.md`` / ``AGENTS.md`` from the role's own
+        directory (``<roles-root>/<role-label>/``), plus a ``collective.md``
+        beside ``collective.yaml`` in the CWD when present, and discovers any
+        role-local ``skills/`` / ``mcp/`` def ids.  Sets ``core._overlay`` (the
+        parsed sources) + ``core._overlay_local_skills`` / ``_overlay_local_mcps``
+        (local capability candidates) + ``core._overlay_allow_unsigned``.
+
+        ``_overlay_allow_unsigned`` gates whether a *user-added* (out-of-envelope)
+        local def may be granted for this one agent.  It is **operator-explicit,
+        off by default**, sourced from ``ACC_OVERLAY_ALLOW_UNSIGNED`` — never a
+        prod default; when on with local defs present we emit an audit log line.
+
+        Never raises — overlays are optional and must not break agent boot.  When
+        no overlay files / local defs exist, *core* is left untouched (legacy
+        prompt).
+        """
+        try:
+            import os as _os  # noqa: PLC0415
+            from pathlib import Path as _Path  # noqa: PLC0415
+
+            from acc.overlay import (  # noqa: PLC0415
+                discover_local_capabilities,
+                load_overlay_sources,
+            )
+            from acc.tui.path_resolution import (  # noqa: PLC0415
+                resolve_manifest_root,
+            )
+
+            roles_root = _Path(str(resolve_manifest_root("ACC_ROLES_ROOT", "roles")))
+            role_dir = roles_root / role_label
+            cwd = _Path.cwd()
+            collective_dir = cwd if (cwd / "collective.md").is_file() else None
+
+            sources = load_overlay_sources(role_dir, collective_dir=collective_dir)
+            local_skills, local_mcps = discover_local_capabilities(role_dir)
+            if not sources and not local_skills and not local_mcps:
+                return  # no overlay → leave the core (and the prompt) unchanged
+
+            allow_unsigned = _os.environ.get(
+                "ACC_OVERLAY_ALLOW_UNSIGNED", ""
+            ).strip().lower() in ("1", "true", "yes")
+
+            core._overlay = sources or None
+            core._overlay_local_skills = tuple(local_skills)
+            core._overlay_local_mcps = tuple(local_mcps)
+            core._overlay_allow_unsigned = allow_unsigned
+
+            if sources:
+                logger.info(
+                    "overlay: loaded %s for role %r",
+                    [s.layer for s in sources], role_label,
+                )
+            if allow_unsigned and (local_skills or local_mcps):
+                logger.warning(
+                    "overlay: ACC_OVERLAY_ALLOW_UNSIGNED is set — role %r may "
+                    "grant local UNSIGNED capabilities (skills=%s mcps=%s). "
+                    "This is operator-gated + audited; never use in prod.",
+                    role_label, list(local_skills), list(local_mcps),
+                )
+        except Exception:
+            logger.debug(
+                "overlay: load failed for role %r", role_label, exc_info=True
+            )
+
+    def _overlay_summary(self) -> dict:
+        """Compact overlay view for the HEARTBEAT (proposal agent-personalization-overlay).
+
+        Resolves this agent's overlay (the core's loaded sources + local-cap
+        candidates, against the active role) into a small dict the TUI's
+        Compliance "Role Overlay Profiles" panel renders:
+        ``{user_profile, enabled: [skill_id], dropped: int, local_grants: [id],
+        layers: [filename]}``.  ``{}`` when there is no overlay (the common
+        case) or on any error — never breaks the heartbeat.
+        """
+        core = getattr(self, "_cognitive_core", None)
+        role = getattr(self, "_active_role", None)
+        sources = getattr(core, "_overlay", None) if core is not None else None
+        if not sources or role is None:
+            return {}
+        try:
+            from acc.overlay import (  # noqa: PLC0415
+                LAYER_AGENTS,
+                LAYER_COLLECTIVE,
+                LAYER_SOUL,
+                resolve_overlay,
+            )
+
+            prof = resolve_overlay(
+                role,
+                sources,
+                local_skills=getattr(core, "_overlay_local_skills", ()),
+                local_mcps=getattr(core, "_overlay_local_mcps", ()),
+                allow_unsigned=getattr(core, "_overlay_allow_unsigned", False),
+            )
+            overlay_layers = {LAYER_COLLECTIVE, LAYER_AGENTS, LAYER_SOUL}
+            enabled = [
+                sid for sid, src in prof.provenance.items()
+                if src in overlay_layers
+            ]
+            return {
+                "user_profile": prof.user_profile,
+                "enabled": enabled,
+                "dropped": len(prof.dropped),
+                "local_grants": (
+                    prof.local_grant_skill_ids() + prof.local_grant_mcp_ids()
+                ),
+                "layers": list(prof.layers),
+            }
+        except Exception:
+            logger.debug("overlay: heartbeat summary failed", exc_info=True)
+            return {}
 
     def _role_definition_for(self, role_name: str) -> dict | None:
         """Resolve a role definition dict for the reconcile signer.

@@ -259,6 +259,17 @@ class ComplianceScreen(Screen):
                 with ScrollableContainer(id="violation-log-container"):
                     yield Static(id="violation-log")
 
+                # Personalization overlay (proposal agent-personalization-overlay)
+                # — read-only effective-profile view per agent, sourced purely
+                # from the HEARTBEAT-published ``overlay_summary`` on the
+                # snapshot (REQ-TUI-051: no business logic in the screen).
+                yield Label("ROLE OVERLAY PROFILES", classes="panel-label")
+                with Collapsible(
+                    title="Effective overlay profiles (per agent)",
+                    collapsed=True,
+                ):
+                    yield DataTable(id="overlay-profiles-table", classes="gov-table")
+
         yield Footer()
 
     def on_mount(self) -> None:
@@ -296,6 +307,13 @@ class ComplianceScreen(Screen):
         )
         pkg_proposals.cursor_type = "row"
         self._pkg_proposals_by_id: dict[str, dict] = {}
+
+        # Personalization overlay — effective-profile-per-agent table.
+        overlay_tbl = self.query_one("#overlay-profiles-table", DataTable)
+        overlay_tbl.add_columns(
+            "Agent", "Role", "Profile", "Enabled", "Local", "Dropped",
+        )
+        overlay_tbl.cursor_type = "row"
 
     def _populate_governance(self) -> None:
         """Fill the Cat-A/B/C tables + titles from the inventory loader."""
@@ -698,6 +716,7 @@ class ComplianceScreen(Screen):
         self._render_oversight_queue(snap)
         self._render_pkg_proposals(snap)
         self._render_violation_log(snap)
+        self._render_overlay_profiles(snap)
 
     # ------------------------------------------------------------------
     # Renderers
@@ -720,6 +739,39 @@ class ComplianceScreen(Screen):
                 f"[{colour}]{grade}[/{colour}]",
                 f"{pass_rate * 100:.0f}%",
                 desc,
+            )
+
+    def _render_overlay_profiles(self, snap: "CollectiveSnapshot") -> None:
+        """Render the per-agent effective-overlay table (read-only).
+
+        Sourced purely from each agent's HEARTBEAT-published
+        ``overlay_summary`` (proposal agent-personalization-overlay); agents
+        with no overlay (empty summary) are skipped, so the table lists only
+        roles an operator/project has actually personalised.
+        """
+        table = self.query_one("#overlay-profiles-table", DataTable)
+        table.clear()
+        for agent_id, agent in sorted(snap.agents.items()):
+            summary = getattr(agent, "overlay_summary", None) or {}
+            if not summary:
+                continue
+            enabled = summary.get("enabled") or []
+            local = summary.get("local_grants") or []
+            dropped = int(summary.get("dropped", 0) or 0)
+            profile = summary.get("user_profile") or "—"
+            enabled_txt = ", ".join(enabled) if enabled else "—"
+            local_txt = (
+                f"[yellow]{', '.join(local)}[/yellow]" if local else "—"
+            )
+            dropped_txt = f"[red]{dropped}[/red]" if dropped else "0"
+            table.add_row(
+                agent_id[:12],
+                agent.role or "—",
+                profile,
+                enabled_txt,
+                local_txt,
+                dropped_txt,
+                key=agent_id,
             )
 
     def _render_health_score(self, snap: "CollectiveSnapshot") -> None:
