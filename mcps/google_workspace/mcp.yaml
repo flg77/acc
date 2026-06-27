@@ -1,0 +1,53 @@
+# mcps/google_workspace/mcp.yaml — Google Workspace via a CONSUMED MCP server,
+# OAuth-brokered, READ-FIRST (gogcli safety posture).
+#
+# Integrations pillar 2 (act). We CONSUME a mature Google Workspace MCP server
+# (e.g. taylorwilsdon/google_workspace_mcp or the official Google CLI+MCP) and
+# wrap it in ACC governance: per-tool allowed_tools, risk level, and per-operator
+# OAuth 2.1 via acc.credentials.CredentialBroker (auth: oauth). Writes are
+# deliberately denied in this first cut → a follow-up routes them through the
+# oversight queue. See ACC-PR/Proposals/PR-PROPOSAL-B.
+
+purpose: |
+  Read Google Workspace (Calendar, Gmail, Drive, Sheets) on the operator's
+  behalf via a consumed MCP server, authenticated per-operator with brokered
+  OAuth 2.1. Read-first: mutating tools are denied in this slice.
+
+version:        "0.1.0"
+
+transport:      "http"
+url:            "http://acc-mcp-google:8080/rpc"   # operator deploys the consumed server
+timeout_s:      30
+
+# OAuth 2.1 delegated auth — the broker mints a short-lived, per-operator bearer
+# at call time (NOT a static api_key_env). oauth_provider selects the config.
+auth:           "oauth"
+oauth_provider: "google"
+
+# Read-heavy default grant (the membrane's per-tool sandbox).
+allowed_tools:
+  - "calendar_list_events"
+  - "calendar_get_event"
+  - "gmail_search"
+  - "gmail_get_message"
+  - "drive_list_files"
+  - "drive_get_file"
+  - "sheets_read_range"
+# Mutating tools excluded from the default grant (oversight-routed follow-up).
+denied_tools:
+  - "gmail_send"
+  - "drive_delete"
+  - "sheets_write_range"
+  - "calendar_delete_event"
+
+requires_actions: []
+risk_level:     "MEDIUM"
+domain_id:      "office"
+tags:           ["office", "google", "workspace", "oauth", "read-first"]
+
+description: |
+  Cat-A A-018 gates each invocation against the role's allowed_mcps +
+  max_mcp_risk_level; the allowed_tools/denied_tools lists are the per-tool
+  sandbox (writes denied here). Cat-A A-OFF-1 (data-egress) bounds what office
+  content may leave the cell. Tokens are per-operator, short-lived, encrypted at
+  rest, never committed; the human consents in Google's own screen.

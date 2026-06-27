@@ -256,6 +256,10 @@ role_definition:
     # is an MCP; the thin-REST messengers are in-process skills below.
     # ACC-PR/Proposals/PR-PROPOSAL-A.
     - signal
+    # Integrations pillar 2 (act) — Google Workspace, READ-FIRST, OAuth-brokered
+    # per operator. Writes are denied in the manifest (oversight-routed later).
+    # ACC-PR/Proposals/PR-PROPOSAL-B.
+    - google_workspace
   allowed_actions:
     - read_vector_db
     - read_scratchpad
