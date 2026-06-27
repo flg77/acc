@@ -1,0 +1,38 @@
+# skills/speech_transcribe/skill.yaml — local audio → text (Whisper).
+#
+# On-device STT (C2 sovereignty): audio never leaves the cell; only the
+# transcript text enters the normal governed prompt path. Runtime selected by
+# deploy mode (faster-whisper GPU / whisper.cpp edge). Needs the optional
+# [speech] extra at runtime. MEDIUM risk. ACC-PR/Proposals/PR-PROPOSAL-C.
+
+purpose:        "Transcribe a local audio file to text (Whisper, fully on-device)."
+version:        "0.1.0"
+adapter_class:  "SpeechTranscribeSkill"
+risk_level:     "MEDIUM"
+requires_actions: []
+domain_id:      "speech"
+tags:           ["speech", "stt", "whisper", "voice", "on-device"]
+
+input_schema:
+  type: object
+  properties:
+    audio_path:
+      type: string
+      minLength: 1
+      description: "Path to a local WAV/PCM audio file."
+    language:
+      type: string
+      description: "Optional ISO language hint (e.g. 'en'); omit for auto-detect."
+  required: ["audio_path"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    text: { type: string }
+  required: ["text"]
+  additionalProperties: false
+
+description: |
+  Delegates to acc.speech.stt.select_stt(). Audio stays local. Install the
+  runtime with `pip install 'acc[speech]'` (faster-whisper / pywhispercpp).
