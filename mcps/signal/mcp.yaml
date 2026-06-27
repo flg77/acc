@@ -1,0 +1,40 @@
+# mcps/signal/mcp.yaml — Signal messaging via a consumed signal-cli-rest-api.
+#
+# Signal has no official bot API; the canonical path is the dockerized
+# `bbernhard/signal-cli-rest-api` HTTP service (consume — never re-implement
+# the Signal protocol). An MCP (external service) is the right ACC mechanism
+# here, unlike the thin-REST messengers which are in-process skills.
+#
+# Deploy: run signal-cli-rest-api beside the collective, register a number,
+# point ACC_SIGNAL_API_URL at it. The most sovereign target — E2E-encrypted,
+# self-hosted. See ACC-PR/Proposals/PR-PROPOSAL-A.
+
+purpose: |
+  Send and receive Signal messages via a self-hosted signal-cli-rest-api.
+  The most sovereign messenger target (E2E encryption, no third-party server).
+
+version:        "0.1.0"
+
+transport:      "http"
+# Operator overrides at deploy time; the MCP client reads the manifest url.
+url:            "http://acc-signal-cli:8080/rpc"
+timeout_s:      30
+api_key_env:    ""        # signal-cli-rest-api is unauthenticated on the trusted net
+
+allowed_tools:
+  - "send"
+  - "receive"
+
+requires_actions:
+  - "send_message"
+risk_level:     "MEDIUM"
+domain_id:      "messaging"
+tags:           ["messaging", "signal", "sovereign", "e2e-encrypted", "self-hosted"]
+
+description: |
+  Wraps `bbernhard/signal-cli-rest-api`. `send` posts a message to a recipient
+  or group; `receive` drains pending messages (used by the inbound Signal
+  channel daemon). A dedicated phone number must be registered with the
+  signal-cli service first. Cat-A A-018 gates each invocation; outbound sends
+  also pass the messenger governance rules (operator-invoked / proactive-notify
+  + daily cap). Mutating tools never auto-run beyond the role's risk ceiling.
