@@ -398,7 +398,17 @@ async def test_send_posts_prompt_load_message():
         await pilot.pause()
 
         posted: list = []
-        screen.post_message = lambda m: posted.append(m)  # type: ignore
+        # Wrap + FORWARD (don't swallow): run_test teardown routes
+        # lifecycle messages through post_message, so a swallowing
+        # override deadlocks shutdown. Capture, then delegate to the real
+        # post_message so the app can still close cleanly.
+        _orig_post = screen.post_message
+
+        def _cap_post(m):
+            posted.append(m)
+            return _orig_post(m)
+
+        screen.post_message = _cap_post  # type: ignore
 
         screen.action_send()
         msgs = [m for m in posted if isinstance(m, PromptLoadMessage)]
@@ -422,7 +432,17 @@ async def test_send_with_empty_form_sets_status_not_message():
         screen = app.screen
         screen.query_one("#form-prompt", TextArea).text = ""
         posted: list = []
-        screen.post_message = lambda m: posted.append(m)  # type: ignore
+        # Wrap + FORWARD (don't swallow): run_test teardown routes
+        # lifecycle messages through post_message, so a swallowing
+        # override deadlocks shutdown. Capture, then delegate to the real
+        # post_message so the app can still close cleanly.
+        _orig_post = screen.post_message
+
+        def _cap_post(m):
+            posted.append(m)
+            return _orig_post(m)
+
+        screen.post_message = _cap_post  # type: ignore
         statuses: list[str] = []
         screen._set_status = lambda m: statuses.append(m)  # type: ignore
         screen.action_send()
