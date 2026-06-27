@@ -242,15 +242,19 @@ class DiagnosticsScreen(Screen):
     # ------------------------------------------------------------------
 
     def on_data_table_row_highlighted(self, event) -> None:
-        # Moving the cursor only updates the (read-only) detail panel.
-        # Loading into the editor is deferred to an EXPLICIT row select
+        # Moving the cursor updates the (read-only) detail panel AND the
+        # Form quick-send fields (proposal 033 WS-B) so the operator can
+        # highlight → Send without an extra select.  Loading into the
+        # MD/YAML *editor* stays deferred to an EXPLICIT row select
         # (Enter / click) so a background file-reload — which resets the
         # cursor — can never clobber the operator's unsaved editor edits.
         if getattr(event, "data_table", None) is None:
             return
         if event.data_table.id != "golden-table":
             return
-        self._render_detail(self._row_key_value(event.row_key))
+        name = self._row_key_value(event.row_key)
+        self._render_detail(name)
+        self._load_into_form(name)
 
     def on_data_table_row_selected(self, event) -> None:
         # Enter / click on a row: load it into the editor for tweaking.

@@ -94,10 +94,14 @@ class HTTPTransport:
             and ``server_id`` (for error messages).
     """
 
-    def __init__(self, manifest: MCPManifest) -> None:
+    def __init__(self, manifest: MCPManifest, *, bearer_resolver=None) -> None:
         self._manifest = manifest
+        # ``bearer_resolver`` (async () -> str) injects a fresh per-request OAuth
+        # bearer for ``auth: oauth`` manifests (office suites). None → legacy
+        # static ``api_key_env`` behaviour, fully backward-compatible.
+        self._bearer_resolver = bearer_resolver
         headers = {"Content-Type": "application/json"}
-        if manifest.api_key_env:
+        if manifest.auth != "oauth" and manifest.api_key_env:
             api_key = os.environ.get(manifest.api_key_env, "")
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
@@ -114,8 +118,14 @@ class HTTPTransport:
         )
 
     async def send_rpc(self, envelope: dict) -> dict:
+        # Per-request OAuth bearer (resolved fresh so an expired token refreshes).
+        req_headers: dict | None = None
+        if self._manifest.auth == "oauth" and self._bearer_resolver is not None:
+            token = await self._bearer_resolver()
+            if token:
+                req_headers = {"Authorization": f"Bearer {token}"}
         try:
-            response = await self._client.post("", json=envelope)
+            response = await self._client.post("", json=envelope, headers=req_headers)
         except httpx.TimeoutException as exc:
             raise MCPTransportError(
                 f"server_id={self._manifest.server_id!r}: timeout "

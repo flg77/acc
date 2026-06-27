@@ -1,0 +1,41 @@
+# skills/slack_post/skill.yaml — outbound Slack message (chat.postMessage).
+#
+# Reuses the SLACK_BOT_TOKEN the existing inbound Slack channel already uses,
+# so a deploy that has the Slack channel running gets outbound for free.
+# MEDIUM risk; gated by Cat-A A-017 + describe-not-invoke (send_message).
+
+purpose:        "Post a message to a Slack channel via the Web API chat.postMessage."
+version:        "0.1.0"
+adapter_class:  "SlackPostSkill"
+risk_level:     "MEDIUM"
+requires_actions:
+  - "send_message"
+domain_id:      "messaging"
+tags:           ["messaging", "slack", "outbound", "notify"]
+
+input_schema:
+  type: object
+  properties:
+    channel:
+      type: string
+      minLength: 1
+      description: "Channel id (C…) or #name the bot is a member of."
+    text:
+      type: string
+      minLength: 1
+      maxLength: 40000
+  required: ["channel", "text"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    ok: { type: boolean }
+    ts: { type: string }
+  required: ["ok", "ts"]
+  additionalProperties: false
+
+description: |
+  POSTs to `https://slack.com/api/chat.postMessage` with a bearer
+  `SLACK_BOT_TOKEN` (scope `chat:write`). Returns the message timestamp `ts`.
+  Missing token → recoverable SkillInvocationError (prod fail-closed).
