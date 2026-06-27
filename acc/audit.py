@@ -111,7 +111,16 @@ class FileAuditBackend:
         retention_days: int = 7,
     ) -> None:
         self._base = Path(base_path)
-        self._base.mkdir(parents=True, exist_ok=True)
+        # Audit must NEVER block task processing — tolerate an
+        # unwritable/uncreatable base path here (e.g. a bad mount or a
+        # path under a read-only root) and surface it lazily at write
+        # time, where AuditBroker.record swallows backend errors.
+        try:
+            self._base.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "FileAuditBackend: base mkdir failed for %r: %s", str(self._base), exc
+            )
         self._retention = retention_days
         self._current_date: str = ""
         self._current_file: Optional[Path] = None
