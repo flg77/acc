@@ -68,7 +68,7 @@ def test_reviewer_role_validates():
 
 def test_reviewer_collective_preset_loads():
     from acc.collective import load_collective
-    spec = load_collective("collective.reviewer.yaml")
+    spec = load_collective("collectives/collective.reviewer.yaml")
     by_role = {a.role: a for a in spec.agents}
     # Workers run a cheap model; the single reviewer runs a powerful one.
     assert by_role["reviewer"].model == "claude-sonnet"
@@ -88,7 +88,7 @@ def test_reviewer_preset_synthesizes_distinct_models(monkeypatch, tmp_path):
     )
     monkeypatch.setenv("ACC_MODELS_PATH", str(reg))
     from acc.collective import load_collective, roles_to_compose
-    spec = load_collective("collective.reviewer.yaml")
+    spec = load_collective("collectives/collective.reviewer.yaml")
     out = roles_to_compose(spec, image="img")
     envs = [s["environment"] for s in out["services"].values()]
     reviewer_env = next(e for e in envs if e["ACC_AGENT_ROLE"] == "reviewer")

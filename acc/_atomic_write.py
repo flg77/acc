@@ -35,20 +35,46 @@ logger = logging.getLogger("acc._atomic_write")
 
 @contextmanager
 def _file_lock(fh):
-    """`fcntl.flock` on POSIX; a no-op on platforms without it."""
+    """Best-effort advisory `fcntl.flock` on POSIX; no-op without fcntl.
+
+    Acquired NON-BLOCKING with a short bounded retry (~3s) rather than a
+    blocking ``LOCK_EX``: an interactive caller (the TUI role-yaml save
+    path) must never hang indefinitely on a contended, stale, or
+    self-held lock.  If the budget elapses we proceed WITHOUT the lock —
+    the atomic ``os.replace`` below still guarantees file integrity;
+    ``flock`` here is only cross-writer serialisation, so degrading to
+    last-writer-wins under contention is acceptable and matches the
+    Windows path (no ``fcntl``, never locked at all).
+    """
     try:
         import fcntl  # noqa: PLC0415 — POSIX-only stdlib
     except ImportError:
         yield
         return
+    import time  # noqa: PLC0415
+
+    acquired = False
+    for _ in range(30):  # ~3s at 0.1s/attempt
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+            break
+        except OSError:
+            time.sleep(0.1)
+    if not acquired:
+        logger.warning(
+            "atomic_write: advisory lock on %r busy after ~3s; proceeding "
+            "without it (atomic replace still applies).",
+            getattr(fh, "name", "<lock>"),
+        )
     try:
-        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         yield
     finally:
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
+        if acquired:
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
 
 
 def atomic_write_text(
