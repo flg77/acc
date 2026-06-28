@@ -113,3 +113,44 @@ async def test_voice_bridge_handles_empty_transcript():
     turn = await bridge.speak_turn(b"<silence>")
     assert turn.transcript == "" and turn.task_id == ""
     assert turn.reply_audio.startswith(b"WAV:")   # spoke a "didn't catch that" prompt
+
+
+# ---- PiperTTS API-compat (regression: piper-tts >= 1.3 changed synthesize) ----
+# No piper install needed — we inject a fake voice via the lazy ``_engine`` slot.
+
+def _write_min_wav(wf):
+    wf.setnchannels(1)
+    wf.setsampwidth(2)
+    wf.setframerate(16000)
+    wf.writeframes(b"\x00\x00" * 64)
+
+
+class _FakeVoiceNew:
+    """piper-tts >= 1.3: ``synthesize`` yields chunks; ``synthesize_wav`` writes a WAV."""
+    def synthesize_wav(self, text, wf):
+        _write_min_wav(wf)
+
+    def synthesize(self, text, *a, **k):
+        raise AssertionError("must use synthesize_wav when it exists (piper >= 1.3)")
+
+
+class _FakeVoiceOld:
+    """piper-tts 1.2.x: ``synthesize(text, wave_file)`` writes the WAV directly."""
+    def synthesize(self, text, wf):
+        _write_min_wav(wf)
+
+
+@pytest.mark.asyncio
+async def test_piper_prefers_synthesize_wav_on_modern_piper():
+    pt = PiperTTS()
+    pt._engine = _FakeVoiceNew()              # bypass the lazy piper import
+    out = await pt.synthesize("hello")
+    assert out[:4] == b"RIFF" and len(out) > 44   # a real WAV, not an empty buffer
+
+
+@pytest.mark.asyncio
+async def test_piper_falls_back_to_legacy_synthesize():
+    pt = PiperTTS()
+    pt._engine = _FakeVoiceOld()
+    out = await pt.synthesize("hello")
+    assert out[:4] == b"RIFF" and len(out) > 44
