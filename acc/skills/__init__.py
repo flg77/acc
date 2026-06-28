@@ -44,6 +44,7 @@ from acc.skills.skill_runtime import (
     SkillManifestError,
     SkillNotFoundError,
     SkillSchemaError,
+    resolve_argv,
 )
 
 __all__ = [
@@ -56,4 +57,5 @@ __all__ = [
     "SkillNotFoundError",
     "SkillRegistry",
     "SkillSchemaError",
+    "resolve_argv",
 ]

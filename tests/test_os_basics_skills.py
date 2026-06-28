@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from acc.skills import SkillSchemaError, resolve_argv
 from acc.skills.registry import SkillRegistry
 
 
@@ -190,3 +191,128 @@ class TestShellExec:
                 {"argv": [sys.executable, "-c", "import time; time.sleep(5)"],
                  "timeout_s": 1},
             )
+
+
+class TestResolveArgv:
+    """Unit tests for the shared argv/cmd resolver (``acc.skills.resolve_argv``).
+
+    The ``{"cmd": "<string>"}`` alias lets LLM callers that emit a single
+    command string drive the argv-shaped exec skills (shell_exec,
+    ssh_exec); it is :func:`shlex.split` to argv and NEVER handed to a
+    shell.  ``{"argv": [...]}`` stays the canonical form.
+    """
+
+    def test_cmd_splits_to_argv(self) -> None:
+        assert resolve_argv({"cmd": "git status"}, skill="shell_exec") == [
+            "git", "status",
+        ]
+
+    def test_cmd_equivalent_to_argv(self) -> None:
+        # The whole point: {"cmd": "git status"} resolves to the same
+        # argv as {"argv": ["git", "status"]}.
+        assert (
+            resolve_argv({"cmd": "git status"}, skill="shell_exec")
+            == resolve_argv({"argv": ["git", "status"]}, skill="shell_exec")
+            == ["git", "status"]
+        )
+
+    def test_cmd_honours_shell_quoting(self) -> None:
+        # shlex, not str.split — a quoted arg stays one token, quotes stripped.
+        assert resolve_argv(
+            {"cmd": 'git commit -m "fix: the thing"'}, skill="shell_exec",
+        ) == ["git", "commit", "-m", "fix: the thing"]
+
+    def test_rejects_both_forms(self) -> None:
+        with pytest.raises(ValueError, match="not both"):
+            resolve_argv({"argv": ["git"], "cmd": "git"}, skill="shell_exec")
+
+    def test_rejects_neither_form(self) -> None:
+        with pytest.raises(ValueError, match="either 'argv' or 'cmd'"):
+            resolve_argv({}, skill="shell_exec")
+
+    def test_rejects_empty_cmd(self) -> None:
+        with pytest.raises(ValueError, match="empty argv"):
+            resolve_argv({"cmd": "   "}, skill="shell_exec")
+
+    def test_rejects_unbalanced_quotes(self) -> None:
+        with pytest.raises(ValueError, match="could not parse"):
+            resolve_argv({"cmd": 'git commit -m "oops'}, skill="shell_exec")
+
+    def test_rejects_non_string_cmd(self) -> None:
+        with pytest.raises(ValueError, match="must be a string"):
+            resolve_argv({"cmd": 123}, skill="shell_exec")
+
+    def test_rejects_non_string_argv(self) -> None:
+        with pytest.raises(ValueError, match="non-empty list of strings"):
+            resolve_argv({"argv": [1, 2]}, skill="shell_exec")
+
+    def test_error_message_names_skill(self) -> None:
+        with pytest.raises(ValueError, match="ssh_exec:"):
+            resolve_argv({}, skill="ssh_exec")
+
+
+class TestShellExecCmdAlias:
+    """The ``{"cmd": "<string>"}`` alias on shell_exec.
+
+    The lighthouse e2e (2026-06-18) surfaced the gap this closes: a model
+    (qwen3-14b, dev+AUTO) emitted ``{"cmd": "git add ..."}`` and hit
+    ``SkillSchemaError: 'argv' is a required property``.  These pin that
+    the alias is now (a) accepted at the schema layer — the exact path
+    that raised — and (b) executes identically to the argv form.
+    """
+
+    def test_cmd_executes_identically_to_argv(self, reg: SkillRegistry) -> None:
+        if not shutil.which("git"):
+            pytest.skip("git not available")
+        a = _invoke(reg, "shell_exec", {"cmd": "git --version"})
+        b = _invoke(reg, "shell_exec", {"argv": ["git", "--version"]})
+        assert a["returncode"] == b["returncode"] == 0
+        assert a["stdout"] == b["stdout"]
+
+    def test_cmd_git_status_matches_argv(
+        self, reg: SkillRegistry, tmp_path: Path,
+    ) -> None:
+        # The literal example from the task: {"cmd": "git status"} must
+        # execute identically to {"argv": ["git", "status"]} in the same
+        # repo.
+        if not shutil.which("git"):
+            pytest.skip("git not available")
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        (repo / "new.txt").write_text("hi")
+        a = _invoke(
+            reg, "shell_exec", {"cmd": "git status", "cwd": str(repo)},
+        )
+        b = _invoke(
+            reg, "shell_exec", {"argv": ["git", "status"], "cwd": str(repo)},
+        )
+        assert a["returncode"] == b["returncode"] == 0
+        assert a["stdout"] == b["stdout"]
+        assert "new.txt" in a["stdout"]
+
+    def test_schema_accepts_cmd_form(self, reg: SkillRegistry) -> None:
+        # Goes through reg.invoke — the exact registry path (schema
+        # validation THEN adapter) that raised SkillSchemaError in the
+        # lighthouse run.  No raise == the gap is closed.
+        if not shutil.which("git"):
+            pytest.skip("git not available")
+        out = asyncio.run(reg.invoke("shell_exec", {"cmd": "git --version"}))
+        assert out["returncode"] == 0
+
+    def test_schema_rejects_both_forms(self, reg: SkillRegistry) -> None:
+        with pytest.raises(SkillSchemaError):
+            asyncio.run(
+                reg.invoke("shell_exec", {"argv": ["git"], "cmd": "git"})
+            )
+
+    def test_schema_rejects_neither_form(self, reg: SkillRegistry) -> None:
+        with pytest.raises(SkillSchemaError):
+            asyncio.run(reg.invoke("shell_exec", {"cwd": "."}))
+
+    def test_adapter_rejects_both_forms(self, reg: SkillRegistry) -> None:
+        # Defence in depth: even when the schema is bypassed (the minimal
+        # CLI image ships without jsonschema), the adapter still rejects
+        # ambiguous input.
+        with pytest.raises(ValueError, match="not both"):
+            _invoke(reg, "shell_exec", {"argv": ["git"], "cmd": "git"})

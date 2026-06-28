@@ -16,7 +16,8 @@ import pytest
 
 from acc.config import RoleDefinitionConfig
 from acc.governance_capabilities import CapabilityGuard
-from acc.skills.registry import SkillRegistry
+from acc.skills import SkillSchemaError
+from acc.skills.registry import SkillRegistry, _validate
 
 
 @pytest.fixture(scope="module")
@@ -124,3 +125,59 @@ class TestArgvHygiene:
     def test_rejects_non_string_argv(self, reg: SkillRegistry) -> None:
         with pytest.raises(ValueError):
             _invoke(reg, {"host": "localhost", "argv": [1, 2]})
+
+
+class TestCmdAlias:
+    """``ssh_exec`` shares the ``{"cmd": "<string>"}`` alias with
+    shell_exec (via ``acc.skills.resolve_argv``): a single command string
+    is shlex-split into the remote argv, then shlex-quoted onto the ssh
+    wire.  ``host`` stays separately required; argv/cmd are mutually
+    exclusive.
+    """
+
+    def test_cmd_resolves_like_argv(
+        self, reg: SkillRegistry, monkeypatch,
+    ) -> None:
+        # Allowlisted host + missing identity → the same "identity file"
+        # rejection the argv form gives, proving the cmd string was
+        # accepted and split into the remote argv (the adapter got past
+        # argv resolution + the host gate).
+        monkeypatch.setenv("ACC_SSH_HOST_ALLOWLIST", "build1.example.com")
+        with pytest.raises(ValueError, match="identity file"):
+            _invoke(reg, {
+                "host": "build1.example.com",
+                "cmd": "systemctl is-active sshd",
+                "identity_file": "/nonexistent/key",
+            })
+
+    def test_schema_accepts_host_plus_cmd(self, manifest) -> None:
+        # No raise == accepted.
+        _validate(
+            {"host": "localhost", "cmd": "echo hi"},
+            manifest.input_schema,
+            where="ssh_exec input",
+        )
+
+    def test_schema_rejects_both_forms(self, manifest) -> None:
+        with pytest.raises(SkillSchemaError):
+            _validate(
+                {"host": "localhost", "argv": ["echo"], "cmd": "echo"},
+                manifest.input_schema,
+                where="ssh_exec input",
+            )
+
+    def test_schema_still_requires_host(self, manifest) -> None:
+        with pytest.raises(SkillSchemaError):
+            _validate(
+                {"cmd": "echo hi"},
+                manifest.input_schema,
+                where="ssh_exec input",
+            )
+
+    def test_schema_rejects_neither_argv_nor_cmd(self, manifest) -> None:
+        with pytest.raises(SkillSchemaError):
+            _validate(
+                {"host": "localhost"},
+                manifest.input_schema,
+                where="ssh_exec input",
+            )
