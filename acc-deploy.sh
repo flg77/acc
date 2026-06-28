@@ -33,7 +33,7 @@
 #             permits unsigned dev packs).
 #   build     Build container images (must be done before first 'up')
 #   flavour <name> [--profile P | --features "a b"] [--packs "<packs>"]
-#             [--base IMG] [--registry R] [--push] [--dry-run]
+#             [--local-catalog] [--base IMG] [--registry R] [--push] [--dry-run]
 #             Build an immutable flavour image (base + chosen packs baked at
 #             build time; full governance/control-roles always baked — D1/D2).
 #             --profile/--features assemble integration pillars (043): pip extras
@@ -409,14 +409,18 @@ case "$COMMAND" in
         # deploy-time needs are emitted as <name>.env.required + a compose overlay.
         # Usage:
         #   acc-deploy.sh flavour <name> [--profile P | --features "a b"] \
-        #     [--packs "<@scope/name ...>"] [--base IMG] [--registry R] [--push] [--dry-run]
+        #     [--packs "<@scope/name ...>"] [--local-catalog] [--base IMG] \
+        #     [--registry R] [--push] [--dry-run]
+        # --local-catalog builds control-roles into .acc-localcat/ (unsigned) so
+        # the governance bake works on a bare host (dev/edge); release/CI stages
+        # the SIGNED pack instead (lab-gitops acc-release-pipeline handover).
         FNAME="${1:?usage: acc-deploy.sh flavour <name> [--profile P | --features \"a b\"] [--packs \"<packs>\"] [--base IMG] [--registry R] [--push] [--dry-run]}"
         shift || true
         FPACKS=""
         FBASE="${ACC_PYBASE:-registry.access.redhat.com/ubi10/python-312-minimal:latest}"
         FREG="${ACC_REGISTRY:-}"
         FPUSH=false
-        FPROFILE=""; FFEATURES=""; FDRYRUN=false
+        FPROFILE=""; FFEATURES=""; FDRYRUN=false; FLOCAL=false
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 --packs)    FPACKS="$2"; shift 2 ;;
@@ -426,6 +430,7 @@ case "$COMMAND" in
                 --profile)  FPROFILE="$2";  shift 2 ;;
                 --features) FFEATURES="$2"; shift 2 ;;
                 --dry-run)  FDRYRUN=true;   shift   ;;
+                --local-catalog) FLOCAL=true; shift ;;
                 *) echo "flavour: unknown arg '$1'" >&2; exit 1 ;;
             esac
         done
@@ -459,11 +464,31 @@ case "$COMMAND" in
             fi
         fi
 
+        # Local catalog path (043 §11): build the governance pack (control-roles)
+        # into .acc-localcat/ as an UNSIGNED file: pack so the flavour build bakes
+        # it without a remote signed catalog, and flip ACC_ALLOW_UNSIGNED for the
+        # build. (Release/CI stages the SIGNED pack + .sig instead + passes
+        # SIGNER_KEY — see the lab-gitops acc-release-pipeline handover.)
+        FUNSIGNED=""
+        if $FLOCAL; then
+            FUNSIGNED=1
+            echo "    local-catalog: @acc/control-roles → .acc-localcat/ (unsigned, dev)"
+            if ! $FDRYRUN; then
+                mkdir -p "$REPO_ROOT/.acc-localcat/acc"
+                (cd "$REPO_ROOT" && python tools/build_family_pkg.py \
+                    --manifest packaging/control-roles.yaml \
+                    --version 1.0.0 --repo-root . \
+                    --output "$REPO_ROOT/.acc-localcat/acc/control-roles-1.0.0.accpkg") \
+                  || { echo "ERROR: control-roles pack build failed" >&2; exit 1; }
+            fi
+        fi
+
         if $FDRYRUN; then
             echo "    DRY-RUN — would build:"
             echo "      podman build -f container/Containerfile.flavour \\"
             echo "        --build-arg PYBASE=$FBASE --build-arg PACKS=\"$FPACKS\" \\"
             echo "        --build-arg EXTRAS=\"$FEXTRAS\" --build-arg BAKE_MODELS=\"$FBAKE\" \\"
+            echo "        --build-arg ACC_ALLOW_UNSIGNED=\"$FUNSIGNED\" \\"
             echo "        -t $TAG ."
             [[ -n "$SIDE_OV" ]] && echo "    DRY-RUN — would deploy:" \
                 && echo "      podman-compose -f container/production/podman-compose.yml$SIDE_OV up -d"
@@ -476,6 +501,7 @@ case "$COMMAND" in
             --build-arg PACKS="$FPACKS" \
             --build-arg EXTRAS="$FEXTRAS" \
             --build-arg BAKE_MODELS="$FBAKE" \
+            --build-arg ACC_ALLOW_UNSIGNED="$FUNSIGNED" \
             -t "$TAG" \
             "$REPO_ROOT"
         echo "✓ Built $TAG"
