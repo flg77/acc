@@ -123,3 +123,34 @@ def test_base_cycle_detected():
     feats: dict[str, FeatureSpec] = {}
     with pytest.raises(ValueError, match="cycle"):
         resolve_profile("a", features=feats, profiles=profs)
+
+
+# ---------------------------------------------------------------------------
+# CLI seam (acc.features.main) — what the shell assembler calls
+# ---------------------------------------------------------------------------
+
+
+def test_cli_shellenv(capsys):
+    from acc.features import main
+    rc = main(["shellenv", "--profile", "fulltest"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'ACC_F_EXTRAS="speech"' in out
+    assert "signal-cli" in out and "mcp-google" in out      # sidecars
+    assert "ACC_SIGNAL_API_URL" in out                       # required env
+
+
+def test_cli_env_required(capsys):
+    from acc.features import main
+    rc = main(["env-required", "--features", "google_workspace"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "GOOGLE_OAUTH_CLIENT_ID=" in out                  # required, uncommented
+    assert "# GOOGLE_OAUTH_CLIENT_SECRET=" in out            # optional, commented
+
+
+def test_cli_unknown_exits_2(capsys):
+    from acc.features import main
+    rc = main(["shellenv", "--features", "nope"])
+    assert rc == 2
+    assert "unknown feature" in capsys.readouterr().out

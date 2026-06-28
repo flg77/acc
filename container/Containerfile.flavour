@@ -9,9 +9,16 @@
 # Build (CI / acc-deploy.sh flavour|new-stack):
 #   podman build -f container/Containerfile.flavour \
 #     --build-arg PACKS="@acc/capital-markets-roles@^0.1" \
-#     -t quay.io/flg77/acc-fsi:dev .
+#     --build-arg EXTRAS="speech" \
+#     --build-arg BAKE_MODELS="whisper-base piper-en_US-amy-low" \
+#     -t quay.io/flg77/acc-voice:dev .
 #
-# PACKS="" -> the plain base runtime (control roles only).
+# PACKS=""  -> the plain base runtime (control roles only).
+# EXTRAS="" -> base install; EXTRAS="speech,foo" -> `pip install .[speech,foo]`.
+# BAKE_MODELS="" -> no models baked (speech, if installed, pulls at first use).
+# EXTRAS/BAKE_MODELS are the feature-assembly seam (proposal 043): they're not
+# hand-enumerated — `acc-deploy.sh flavour --profile/--features` resolves them
+# from features/+profiles/ via `python -m acc.features shellenv`.
 # Air-gap: COPY a file: catalog into the builder + a .acc/catalogs.yaml that
 # points at it, and set ACC_ALLOW_UNSIGNED / a pinned key per D3.
 
@@ -21,6 +28,8 @@ ARG PYBASE=registry.access.redhat.com/ubi10/python-312-minimal:latest
 FROM ${PYBASE} AS builder
 ARG ACC_VERSION=0.3.0
 ARG PACKS=""
+ARG EXTRAS=""
+ARG BAKE_MODELS=""
 USER 0
 RUN microdnf install -y --nodocs gcc python3-devel \
  && microdnf clean all && rm -rf /var/cache/dnf
@@ -28,7 +37,29 @@ RUN microdnf install -y --nodocs gcc python3-devel \
 WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
 COPY acc/ /app/acc/
-RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir .
+# EXTRAS="" -> plain install; otherwise pull the named pip extras (e.g. speech).
+RUN pip install --no-cache-dir --upgrade pip \
+ && if [ -n "${EXTRAS}" ]; then pip install --no-cache-dir ".[${EXTRAS}]"; \
+    else pip install --no-cache-dir .; fi
+
+# ── Bake feature models (proposal 043; operator-chosen "bake voice models") ───
+# Build-time bytes, not deploy-time pulls. whisper → HF_HOME (faster-whisper
+# uses huggingface_hub, which honours it); the Piper voice → a fixed path the
+# runtime points ACC_SPEECH_TTS_VOICE at. Best-effort: a fetch hiccup warns and
+# the model pulls at first runtime use rather than failing the build.
+ENV HF_HOME=/app/models/hf
+RUN mkdir -p /app/models          # always present so the runtime COPY succeeds
+RUN if echo " ${BAKE_MODELS} " | grep -q " whisper-base "; then \
+      echo ">> baking whisper-base into ${HF_HOME}"; \
+      python -c "from faster_whisper import WhisperModel; WhisperModel('base')" \
+        || echo "WARN: whisper-base bake failed; will pull at runtime"; \
+    fi
+RUN if echo " ${BAKE_MODELS} " | grep -q " piper-en_US-amy-low "; then \
+      echo ">> baking piper en_US-amy-low into /app/models/piper"; \
+      mkdir -p /app/models/piper; \
+      python -c 'import urllib.request as u; b="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/amy/low/en_US-amy-low.onnx"; [u.urlretrieve(b+s, "/app/models/piper/en_US-amy-low.onnx"+s) for s in ("", ".json")]' \
+        || echo "WARN: piper voice bake failed; set ACC_SPEECH_TTS_VOICE to a present voice at runtime"; \
+    fi
 
 ENV ACC_PACKAGES_ROOT=/var/lib/acc/packages
 # D1: full governance is non-negotiable — always baked.
@@ -48,11 +79,23 @@ USER 0
 COPY --from=builder /opt/app-root /opt/app-root
 COPY --from=builder /app/acc /app/acc
 COPY --from=builder /var/lib/acc/packages /var/lib/acc/packages   # install-frozen
+# Baked feature models (empty dir when BAKE_MODELS="" — see builder stage).
+# chown so USER 1001 can use it both ways: read the baked whisper cache, and —
+# on a base (non-speech) image — still write the runtime-pulled embedding model
+# here (HF_HOME redirect must stay writable, else memory init fails).
+COPY --from=builder /app/models /app/models
+RUN chown -R 1001:0 /app/models && chmod -R g+rwX /app/models
 COPY regulatory_layer/ /app/regulatory_layer/
 # NOTE: tools/ (build_family_pkg, scaffold, classifiers), tests/, and dev deps
 # are deliberately NOT copied — runtime keeps only `acc-pkg` query/install verbs
 # + the agent. (The full toolchain lives in the separate acc-core-builder image.)
 ENV ACC_PACKAGES_ROOT=/var/lib/acc/packages
+# HF_HOME points faster-whisper (+ the base embedding stack) at the baked/writable
+# cache; ACC_SPEECH_TTS_VOICE points Piper at the baked voice (overridable).
+# Both harmless on non-speech images. For true air-gap add HF_HUB_OFFLINE=1 to
+# the deploy .env (the assembler emits it for voice/fulltest).
+ENV HF_HOME=/app/models/hf \
+    ACC_SPEECH_TTS_VOICE=/app/models/piper/en_US-amy-low.onnx
 WORKDIR /app
 USER 1001
 ENTRYPOINT ["python", "-m", "acc.agent"]
