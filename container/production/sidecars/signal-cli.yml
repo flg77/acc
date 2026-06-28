@@ -1,0 +1,29 @@
+# container/production/sidecars/signal-cli.yml — feature `signal` sidecar (043).
+#
+# Consumed image (never re-implement the Signal protocol). Brought up alongside
+# the base stack ONLY when a profile/bundle enables the `signal` feature:
+#   podman-compose -f podman-compose.yml -f sidecars/signal-cli.yml up -d
+# Set ACC_SIGNAL_API_URL=http://acc-signal-cli:8080 in .env; register a number
+# into the named volume first (see bbernhard/signal-cli-rest-api docs).
+#
+# NB: signal-cli-rest-api is a REST service; ACC's `signal` MCP manifest
+# (mcps/signal/mcp.yaml) expects a JSON-RPC endpoint — a thin REST↔MCP adapter
+# is the remaining wiring before send/receive round-trips (tracked, proposal A).
+networks:
+  acc-net:
+    driver: bridge
+volumes:
+  signal-cli-data:
+services:
+  acc-signal-cli:
+    image: docker.io/bbernhard/signal-cli-rest-api:latest
+    container_name: acc-signal-cli
+    environment:
+      MODE: ${ACC_SIGNAL_MODE:-native}      # native | normal | json-rpc
+    ports:
+      - "8081:8080"                          # host:container (host port for debugging)
+    volumes:
+      - signal-cli-data:/home/.local/share/signal-cli
+    networks:
+      - acc-net
+    restart: unless-stopped

@@ -32,9 +32,15 @@
 #             Installs land in the stack's packages root (ACC_ALLOW_UNSIGNED=1
 #             permits unsigned dev packs).
 #   build     Build container images (must be done before first 'up')
-#   flavour <name> --packs "<packs>" [--base IMG] [--registry R] [--push]
+#   flavour <name> [--profile P | --features "a b"] [--packs "<packs>"]
+#             [--base IMG] [--registry R] [--push] [--dry-run]
 #             Build an immutable flavour image (base + chosen packs baked at
 #             build time; full governance/control-roles always baked — D1/D2).
+#             --profile/--features assemble integration pillars (043): pip extras
+#             + baked models go INTO the image; sidecars + creds come OUT as
+#             <name>.env.required + a compose overlay (build-time vs deploy-time
+#             split — no per-tenant rebuilds). --dry-run previews without building.
+#             Profiles: nano standard voice edge · bundles: comms office · fulltest.
 #             Tags acc-<name>:dev (prefixed by --registry); --push to publish.
 #   new-stack <name> --packs "<packs>" [--agents r1,r2] [--profile P]
 #             [--registry R] [--push]
@@ -394,33 +400,89 @@ case "$COMMAND" in
     flavour)
         # D2 — build an immutable flavour image: base + chosen packs baked in.
         # Full governance (control-roles) is always baked by Containerfile.flavour (D1).
+        #
+        # 043 feature-assembly: --profile/--features resolve the build-time bytes
+        # (pip extras + baked models) AND the deploy-time needs (sidecars + creds)
+        # from features/+profiles/ via ONE resolver (`python -m acc.features`), so
+        # the release build, this dev path, and the assistant onboarding rollup all
+        # assemble identically — no config hell. Build-time bytes go into the image;
+        # deploy-time needs are emitted as <name>.env.required + a compose overlay.
         # Usage:
-        #   acc-deploy.sh flavour <name> --packs "<@scope/name ...>" \
-        #     [--base IMG] [--registry R] [--push]
-        FNAME="${1:?usage: acc-deploy.sh flavour <name> --packs \"<packs>\" [--base IMG] [--registry R] [--push]}"
+        #   acc-deploy.sh flavour <name> [--profile P | --features "a b"] \
+        #     [--packs "<@scope/name ...>"] [--base IMG] [--registry R] [--push] [--dry-run]
+        FNAME="${1:?usage: acc-deploy.sh flavour <name> [--profile P | --features \"a b\"] [--packs \"<packs>\"] [--base IMG] [--registry R] [--push] [--dry-run]}"
         shift || true
         FPACKS=""
         FBASE="${ACC_PYBASE:-registry.access.redhat.com/ubi10/python-312-minimal:latest}"
         FREG="${ACC_REGISTRY:-}"
         FPUSH=false
+        FPROFILE=""; FFEATURES=""; FDRYRUN=false
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 --packs)    FPACKS="$2"; shift 2 ;;
                 --base)     FBASE="$2";  shift 2 ;;
                 --registry) FREG="$2";   shift 2 ;;
                 --push)     FPUSH=true;  shift   ;;
+                --profile)  FPROFILE="$2";  shift 2 ;;
+                --features) FFEATURES="$2"; shift 2 ;;
+                --dry-run)  FDRYRUN=true;   shift   ;;
                 *) echo "flavour: unknown arg '$1'" >&2; exit 1 ;;
             esac
         done
+
+        # Resolve the feature selection (if any) → EXTRAS / BAKE_MODELS / sidecars.
+        FEXTRAS=""; FBAKE=""; FSIDE=""
+        if [[ -n "$FPROFILE" || -n "$FFEATURES" ]]; then
+            if [[ -n "$FPROFILE" ]]; then SEL=(--profile "$FPROFILE"); else SEL=(--features "$FFEATURES"); fi
+            SHELLENV="$(cd "$REPO_ROOT" && python -m acc.features shellenv "${SEL[@]}")" \
+                || { echo "ERROR: feature resolution failed (${FPROFILE:+profile=$FPROFILE}${FFEATURES:+features=[$FFEATURES]})" >&2; exit 1; }
+            eval "$SHELLENV"            # sets ACC_F_EXTRAS / ACC_F_MODELS / ACC_F_SIDECARS / ...
+            FEXTRAS="$ACC_F_EXTRAS"; FBAKE="$ACC_F_MODELS"; FSIDE="$ACC_F_SIDECARS"
+        fi
+
         TAG="${FREG:+$FREG/}acc-${FNAME}:dev"
-        echo "▶ Building flavour $TAG (packs: ${FPACKS:-<none, base+governance only>})"
+        echo "▶ flavour $TAG"
+        echo "    packs:    ${FPACKS:-<none, base+governance only>}"
+        [[ -n "$FPROFILE$FFEATURES" ]] && echo "    features: ${FPROFILE:+profile $FPROFILE → }${ACC_F_FEATURES:-$FFEATURES}"
+        [[ -n "$FEXTRAS" ]] && echo "    extras:   $FEXTRAS"
+        [[ -n "$FBAKE"   ]] && echo "    bake:     $FBAKE"
+        [[ -n "$FSIDE"   ]] && echo "    sidecars: $FSIDE  (compose overlay at deploy)"
+
+        # Emit the deploy-time creds template (keys only — never a value) so the
+        # operator/onboarding knows exactly what the baked features need to go live.
+        SIDE_OV=""
+        for s in $FSIDE; do SIDE_OV="$SIDE_OV -f container/production/sidecars/${s}.yml"; done
+        if [[ -n "$FPROFILE$FFEATURES" ]]; then
+            ENVREQ="$REPO_ROOT/${FNAME}.env.required"
+            if (cd "$REPO_ROOT" && python -m acc.features env-required "${SEL[@]}") > "$ENVREQ"; then
+                echo "    wrote:    ${FNAME}.env.required (deploy-time keys)"
+            fi
+        fi
+
+        if $FDRYRUN; then
+            echo "    DRY-RUN — would build:"
+            echo "      podman build -f container/Containerfile.flavour \\"
+            echo "        --build-arg PYBASE=$FBASE --build-arg PACKS=\"$FPACKS\" \\"
+            echo "        --build-arg EXTRAS=\"$FEXTRAS\" --build-arg BAKE_MODELS=\"$FBAKE\" \\"
+            echo "        -t $TAG ."
+            [[ -n "$SIDE_OV" ]] && echo "    DRY-RUN — would deploy:" \
+                && echo "      podman-compose -f container/production/podman-compose.yml$SIDE_OV up -d"
+            exit 0
+        fi
+
         podman build \
             -f "$REPO_ROOT/container/Containerfile.flavour" \
             --build-arg PYBASE="$FBASE" \
             --build-arg PACKS="$FPACKS" \
+            --build-arg EXTRAS="$FEXTRAS" \
+            --build-arg BAKE_MODELS="$FBAKE" \
             -t "$TAG" \
             "$REPO_ROOT"
         echo "✓ Built $TAG"
+        if [[ -n "$FSIDE" ]]; then
+            echo "ℹ Sidecars needed at deploy: $FSIDE — fill ${FNAME}.env.required, then:"
+            echo "  podman-compose -f container/production/podman-compose.yml$SIDE_OV up -d"
+        fi
         if $FPUSH; then
             echo "▶ Pushing $TAG"
             podman push "$TAG"

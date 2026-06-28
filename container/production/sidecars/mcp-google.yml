@@ -1,0 +1,31 @@
+# container/production/sidecars/mcp-google.yml — feature `google_workspace` sidecar (043).
+#
+# The CONSUMED Google Workspace MCP server (we govern it; we don't re-implement
+# the Google APIs). Brought up only when the `google_workspace`/`office` feature
+# is enabled:
+#   podman-compose -f podman-compose.yml -f sidecars/mcp-google.yml up -d
+# The assistant's google_workspace MCP points at http://acc-mcp-google:8080/rpc.
+#
+# Image is operator-selectable (taylorwilsdon/google_workspace_mcp or Google's
+# official CLI+MCP) via ACC_GOOGLE_MCP_IMAGE. Needs GOOGLE_OAUTH_CLIENT_ID +
+# ACC_CRED_KEY in .env and a one-time per-operator consent in Google's screen
+# (handled by acc.credentials.CredentialBroker). Read-first (writes denied in
+# the manifest).
+networks:
+  acc-net:
+    driver: bridge
+services:
+  acc-mcp-google:
+    image: ${ACC_GOOGLE_MCP_IMAGE:-ghcr.io/taylorwilsdon/google_workspace_mcp:latest}
+    container_name: acc-mcp-google
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+    ports:
+      - "8082:8080"
+    networks:
+      - acc-net
+    restart: unless-stopped
