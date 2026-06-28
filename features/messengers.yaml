@@ -1,0 +1,20 @@
+# features/messengers.yaml — outbound text messengers (Telegram / Slack / Mattermost).
+#
+# Integration pillar 1 (reach), thin-REST skills — in-process, edge-lean, no
+# sidecar and no pip extra. Each platform's token is OPTIONAL (a deploy may use
+# only one); a missing token makes that one skill fail closed (safe). Design:
+# ACC-PR/Proposals/PR-PROPOSAL-A. Activation: ACC Roles / "Activating the
+# assistant integrations".
+id: messengers
+summary: "Outbound text messengers — Telegram, Slack, Mattermost (thin-REST skills)."
+extras: []
+enables:
+  skills: [telegram_send, slack_post, mattermost_post]
+  actions: [send_message]
+sidecars: []
+requires_env: []          # none hard-required — enable per platform via its token
+optional_env:
+  TELEGRAM_BOT_TOKEN: "Telegram Bot API token (from @BotFather) — enables telegram_send"
+  SLACK_BOT_TOKEN: "Slack bot token, scope chat:write — enables slack_post"
+  MATTERMOST_URL: "Mattermost base URL — enables mattermost_post"
+  MATTERMOST_BOT_TOKEN: "Mattermost bot token — enables mattermost_post"

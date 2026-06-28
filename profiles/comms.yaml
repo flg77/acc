@@ -1,0 +1,5 @@
+# Integration bundle — all messengers incl. Signal (no full tier).
+kind: bundle
+base: ""
+features: [messengers, signal]
+description: "Comms bundle: Telegram/Slack/Mattermost + sovereign Signal. For users who want reach without a full tier."

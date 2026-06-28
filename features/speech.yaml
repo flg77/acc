@@ -1,0 +1,20 @@
+# features/speech.yaml — on-device speech I/O (Whisper STT + Piper TTS).
+#
+# Integration pillar 3 (interact). The ONLY feature with a real byte cost: the
+# [speech] pip extra (faster-whisper + piper) — ~0.2-0.6 GB — which is why it
+# belongs to the "voice" profile (PR-PROPOSAL-D), not the lean tiers. Everything
+# on-device (C2). Design: ACC-PR/Proposals/PR-PROPOSAL-C.
+id: speech
+summary: "On-device voice — Whisper STT + Piper TTS skills + the acc-channel-voice daemon."
+extras: [speech]
+enables:
+  skills: [speech_transcribe, speech_synthesize]
+  channels: [acc-channel-voice]
+sidecars: []
+requires_env: []          # all have defaults below
+optional_env:
+  ACC_SPEECH_STT_BACKEND: "auto|faster_whisper|whisper_cpp (default auto)"
+  ACC_SPEECH_STT_MODEL: "tiny|base|small|medium (default base)"
+  ACC_SPEECH_TTS_VOICE: "Piper voice id (default en_US-amy-low)"
+  ACC_VOICE_TARGET_ROLE: "role the voice daemon talks to (default assistant)"
+models: [whisper-base, piper-en_US-amy-low]

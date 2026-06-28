@@ -1,0 +1,5 @@
+# Daily driver — full memory + text integrations (PR-PROPOSAL-D).
+kind: profile
+base: ""
+features: [messengers, google_workspace]
+description: "The daily driver: acts, remembers, text everywhere (messengers + office)."

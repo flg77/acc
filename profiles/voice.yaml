@@ -1,0 +1,5 @@
+# Hands-free desktop — standard + on-device speech (PR-PROPOSAL-D).
+kind: profile
+base: standard
+features: [speech]
+description: "Hands-free desktop/DC assistant: everything in standard plus on-device voice (Whisper/Piper)."

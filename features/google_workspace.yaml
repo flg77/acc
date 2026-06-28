@@ -1,0 +1,19 @@
+# features/google_workspace.yaml — Google Workspace via a consumed MCP server,
+# OAuth-brokered (per-operator), read-first.
+#
+# Integration pillar 2 (act). Needs (1) the consumed Google Workspace MCP server
+# sidecar, (2) a Google OAuth client, (3) a Fernet token-store key. The operator
+# consents in Google's own screen; ACC stores only the encrypted refresh token.
+# Design: ACC-PR/Proposals/PR-PROPOSAL-B. End-state: an "office_assistant"
+# paperclip set (PR-PROPOSAL-E), not assistant-resident.
+id: google_workspace
+summary: "Google Workspace (Calendar/Gmail/Drive/Sheets) read-first, OAuth-brokered per operator."
+extras: []
+enables:
+  mcps: [google_workspace]
+sidecars: [mcp-google]
+requires_env: [GOOGLE_OAUTH_CLIENT_ID, ACC_CRED_KEY]
+optional_env:
+  GOOGLE_OAUTH_CLIENT_SECRET: "Google OAuth client secret (omit for pure PKCE clients)"
+  GOOGLE_OAUTH_SCOPES: "override scopes (default: read-only calendar/gmail/drive)"
+governance_ref: mcps/google_workspace/mcp.yaml

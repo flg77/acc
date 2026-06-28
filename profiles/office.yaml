@@ -1,0 +1,5 @@
+# Integration bundle — office suites (Google now; MS reserved).
+kind: bundle
+base: ""
+features: [google_workspace]
+description: "Office bundle: Google Workspace (read-first, OAuth-brokered). Microsoft 365 slot reserved (manifest lands separately)."
