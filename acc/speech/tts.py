@@ -43,7 +43,14 @@ class PiperTTS(TTSBackend):
             voice = self._load()
             buf = io.BytesIO()
             with wave.open(buf, "wb") as wf:
-                voice.synthesize(text, wf)
+                # piper-tts >= 1.3 changed the API: ``synthesize`` now yields
+                # AudioChunks and ``synthesize_wav`` writes a WAV; 1.2.x wrote
+                # the WAV directly from ``synthesize``. Support both (the pin is
+                # >=1.2,<2.0, so installs land on 1.4.x today).
+                if hasattr(voice, "synthesize_wav"):
+                    voice.synthesize_wav(text, wf)
+                else:
+                    voice.synthesize(text, wf)
             return buf.getvalue()
 
         return await asyncio.to_thread(_run)
