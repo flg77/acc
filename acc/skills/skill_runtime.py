@@ -19,6 +19,7 @@ Example::
 
 from __future__ import annotations
 
+import shlex
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -120,3 +121,69 @@ class Skill:
         raise NotImplementedError(
             f"{type(self).__name__} must override Skill.invoke()"
         )
+
+
+# ---------------------------------------------------------------------------
+# Shared argv resolution for argv-shaped exec skills (shell_exec, ssh_exec)
+# ---------------------------------------------------------------------------
+
+
+def resolve_argv(args: dict[str, Any], *, skill: str = "skill") -> list[str]:
+    """Resolve the canonical argv from an exec skill's args.
+
+    Argv-shaped skills accept the command in one of two mutually-exclusive
+    forms:
+
+      * ``{"argv": ["git", "status"]}`` — the canonical form.  Always a
+        list of strings; ``shell=False`` so nothing is word-split.
+      * ``{"cmd": "git status"}`` — a convenience alias for LLM callers
+        that emit a single command string.  It is :func:`shlex.split`
+        into argv (POSIX word-splitting + quote handling); it is NEVER
+        passed to a shell, so there is no expansion of globs, variables,
+        pipes, or redirects.
+
+    Exactly one of ``argv``/``cmd`` must be supplied.  The manifest's
+    JSON Schema already enforces this via ``oneOf`` for callers that go
+    through the registry; this function repeats the check so adapters
+    invoked directly (or under the minimal CLI image without
+    ``jsonschema``) fail with the same clear message.
+
+    Args:
+        args: The skill's input dict.
+        skill: Skill id, used only to prefix error messages.
+
+    Returns:
+        A non-empty list of string arguments.
+
+    Raises:
+        ValueError: Both forms given, neither given, or the resolved
+            argv is empty / contains a non-string.
+    """
+    has_argv = args.get("argv") is not None
+    has_cmd = args.get("cmd") is not None
+
+    if has_argv and has_cmd:
+        raise ValueError(
+            f"{skill}: provide exactly one of 'argv' or 'cmd', not both"
+        )
+    if not has_argv and not has_cmd:
+        raise ValueError(f"{skill}: provide either 'argv' or 'cmd'")
+
+    if has_cmd:
+        cmd = args["cmd"]
+        if not isinstance(cmd, str):
+            raise ValueError(f"{skill}: 'cmd' must be a string")
+        try:
+            argv = shlex.split(cmd)
+        except ValueError as exc:
+            # Unbalanced quotes etc. — surface a usable message instead
+            # of a bare shlex ValueError.
+            raise ValueError(f"{skill}: could not parse 'cmd': {exc}") from exc
+        if not argv:
+            raise ValueError(f"{skill}: 'cmd' split to an empty argv")
+        return argv
+
+    argv = list(args["argv"])
+    if not argv or not all(isinstance(x, str) for x in argv):
+        raise ValueError(f"{skill}: argv must be a non-empty list of strings")
+    return argv

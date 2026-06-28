@@ -1,8 +1,12 @@
 """shell_exec — opt-in HIGH-risk argv subprocess.
 
 OpenSpec `20260603-capability-pool` Phase 1.2.  No shell expansion,
-no string interpolation; argv list only.  Every call needs
-`requires_actions: [execute_shell]` on the role AND an approved
+no string interpolation: the process is always run via
+``subprocess.run(argv, shell=False, …)``.  Callers supply the command
+as either the canonical ``{"argv": ["git", "status"]}`` or the
+convenience alias ``{"cmd": "git status"}`` (shlex-split to argv by
+:func:`acc.skills.resolve_argv` — never handed to a shell).  Every call
+needs `requires_actions: [execute_shell]` on the role AND an approved
 oversight verdict (A-017 enforced upstream)."""
 
 from __future__ import annotations
@@ -12,14 +16,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from acc.skills import Skill
+from acc.skills import Skill, resolve_argv
 
 
 class ShellExecSkill(Skill):
     async def invoke(self, args: dict[str, Any]) -> dict[str, Any]:
-        argv = list(args["argv"])
-        if not argv or not all(isinstance(x, str) for x in argv):
-            raise ValueError("shell_exec: argv must be a non-empty list of strings")
+        argv = resolve_argv(args, skill="shell_exec")
         cwd_arg = args.get("cwd")
         if cwd_arg:
             cwd = Path(cwd_arg).resolve()

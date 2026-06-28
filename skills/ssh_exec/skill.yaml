@@ -51,7 +51,17 @@ input_schema:
       items: { type: string }
       minItems: 1
       maxItems: 64
-      description: "Remote argv.  shlex-quoted; never interpolated as a shell string."
+      description: >-
+        Canonical remote argv.  shlex-quoted; never interpolated as a
+        shell string.  Example: {"argv": ["systemctl", "is-active", "sshd"]}.
+    cmd:
+      type: string
+      minLength: 1
+      description: >-
+        Convenience alias for the remote command as a single string;
+        shlex-split into argv (then shlex-quoted onto the ssh wire).
+        Mutually exclusive with argv.
+        Example: {"cmd": "systemctl is-active sshd"}.
     port:
       type: integer
       minimum: 1
@@ -66,7 +76,10 @@ input_schema:
       minimum: 1
       maximum: 600
       description: "Total subprocess timeout (default 60, max 600)."
-  required: ["host", "argv"]
+  required: ["host"]
+  oneOf:
+    - required: ["argv"]
+    - required: ["cmd"]
   additionalProperties: false
 
 output_schema:

@@ -28,7 +28,17 @@ input_schema:
       items: { type: string }
       minItems: 1
       maxItems: 64
-      description: "Argument vector.  shell=False; no string passed to sh."
+      description: >-
+        Canonical argument vector.  shell=False; no string passed to sh.
+        Example: {"argv": ["git", "add", "-A"]}.
+    cmd:
+      type: string
+      minLength: 1
+      description: >-
+        Convenience alias for callers that emit a single command string;
+        shlex-split into argv (POSIX word-splitting + quote handling),
+        never handed to a shell.  Mutually exclusive with argv.
+        Example: {"cmd": "git add -A"} == {"argv": ["git", "add", "-A"]}.
     cwd:
       type: string
       description: "Working directory (must exist)."
@@ -37,7 +47,9 @@ input_schema:
       minimum: 1
       maximum: 600
       description: "Subprocess timeout in seconds (default 30, max 600)."
-  required: ["argv"]
+  oneOf:
+    - required: ["argv"]
+    - required: ["cmd"]
   additionalProperties: false
 
 output_schema:
@@ -52,7 +64,10 @@ output_schema:
 
 description: |
   Execute a process via subprocess.run(argv, shell=False, …).  Never
-  invokes a shell; no string expansion.  Every call is HIGH risk and
+  invokes a shell; no string expansion.  Supply the command as either
+  the canonical ``{"argv": ["git", "status"]}`` or the convenience
+  alias ``{"cmd": "git status"}`` (shlex-split to argv — still no
+  shell).  Provide exactly one of the two.  Every call is HIGH risk and
   requires both an operator-approved oversight queue verdict and the
   role's ``execute_shell`` action label.  Output capped at 64 KB
   stdout + 16 KB stderr.

@@ -1,10 +1,13 @@
 """ssh_exec — remote shell execution via SSH (HIGH risk, opt-in).
 
-OpenSpec follow-up to `20260603-capability-pool` Phase 1.  Argv-only,
+OpenSpec follow-up to `20260603-capability-pool` Phase 1.  Argv-shaped,
 key-auth-only, host-allowlist-only.  Built so agents can *verify* a
 remote outcome (an artefact landed, a service is healthy, a log
 contains the expected line) rather than provide a general-purpose
-remote shell.
+remote shell.  The remote command is supplied as either ``argv`` or the
+``cmd`` string alias (shlex-split locally via
+:func:`acc.skills.resolve_argv`, then shlex-quoted onto the ssh wire —
+never interpreted by a local shell).
 
 Safety rails:
   * `subprocess.run(argv, shell=False, …)` — never a shell string.
@@ -32,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from acc.skills import Skill
+from acc.skills import Skill, resolve_argv
 
 
 def _host_allowed(host: str) -> bool:
@@ -46,9 +49,7 @@ def _host_allowed(host: str) -> bool:
 class SshExecSkill(Skill):
     async def invoke(self, args: dict[str, Any]) -> dict[str, Any]:
         host = args["host"]
-        remote_argv = list(args["argv"])
-        if not remote_argv or not all(isinstance(x, str) for x in remote_argv):
-            raise ValueError("ssh_exec: argv must be a non-empty list of strings")
+        remote_argv = resolve_argv(args, skill="ssh_exec")
         if not _host_allowed(host):
             raise ValueError(
                 f"ssh_exec: host {host!r} not in ACC_SSH_HOST_ALLOWLIST "
