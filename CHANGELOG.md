@@ -9,7 +9,17 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
-## [Unreleased] — 0.3.1-dev cycle
+## [Unreleased]
+
+_Nothing yet — the entries below shipped across the 0.3.x–0.5.x line._
+
+## [0.3.1 – 0.5.16] — 2026-05-14 → 2026-06-28
+
+> These changes were published incrementally across the 0.3.x and 0.5.x
+> releases; the changelog was not carved per tag during that run. The
+> authoritative per-version boundaries are the annotated git tags
+> (`git tag`, `git show v0.5.16`) and the GitHub release notes. Latest
+> release: **v0.5.16** (2026-06-28).
 
 ### Removed
 
