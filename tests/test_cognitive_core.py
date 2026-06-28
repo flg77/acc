@@ -412,3 +412,132 @@ class TestCosineSimilarity:
 
     def test_zero_vector_returns_zero(self):
         assert _cosine_similarity(_zero_vector(5), _unit_vector(5)) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# B1 (proposal 044) — marker-or-retry guard
+# ---------------------------------------------------------------------------
+
+from acc.cognitive_core import _has_actionable_marker, _is_act_intent  # noqa: E402
+
+
+def _seq_llm(outputs: list[str], total_tokens: int = 100) -> MagicMock:
+    """An LLM mock whose ``complete`` returns each output in turn (per call)."""
+    llm = MagicMock()
+    llm.complete = AsyncMock(side_effect=[
+        {"content": o, "usage": {"total_tokens": total_tokens}}
+        for o in outputs
+    ])
+    llm.embed = AsyncMock(return_value=_unit_vector())
+    return llm
+
+
+def _assistant_role(**kw) -> RoleDefinitionConfig:
+    base = {"can_route": True, "reasoning_trace": True,
+            "perception_profile": "none"}
+    base.update(kw)
+    return _make_role(**base)
+
+
+class TestB1ActIntentHeuristic:
+    def test_act_verbs_are_act_intent(self):
+        for t in ("research the AI market", "infuse a coding team",
+                  "route this to the orchestrator", "build me a FastAPI app",
+                  "analyze NVDA risk", "implement the parser"):
+            assert _is_act_intent(t), t
+
+    def test_capability_questions_are_not_act_intent(self):
+        for t in ("what can you do?", "which skills do you have?",
+                  "who are you", "list your capabilities",
+                  "what tools do you have"):
+            assert not _is_act_intent(t), t
+
+    def test_describe_wins_over_act_verb(self):
+        # "explain ... build" mentions an act verb but is a describe phrasing.
+        assert not _is_act_intent("what can you do to build software?")
+
+    def test_empty_is_not_act_intent(self):
+        assert not _is_act_intent("")
+
+
+class TestB1HasActionableMarker:
+    def test_propose_route_is_actionable(self):
+        assert _has_actionable_marker("[PROPOSE_ROUTE:orchestrator:overview]")
+
+    def test_propose_infuse_is_actionable(self):
+        assert _has_actionable_marker(
+            "[PROPOSE_INFUSE:@acc/research-roles@^1.0:need researchers]")
+
+    def test_role_gap_and_delegate_are_actionable(self):
+        assert _has_actionable_marker("[ROLE_GAP:g1:{}]")
+        assert _has_actionable_marker("[DELEGATE:sub-01:hand off]")
+
+    def test_echo_skill_is_not_actionable(self):
+        assert not _has_actionable_marker('[SKILL: echo {"text": "hi"}]')
+
+    def test_plain_prose_is_not_actionable(self):
+        assert not _has_actionable_marker("Here is a detailed report ...")
+
+
+class TestB1MarkerOrRetry:
+    @pytest.mark.asyncio
+    async def test_retry_on_act_intent_no_marker(self):
+        # First reply dodges with echo; the retry emits the route marker.
+        llm = _seq_llm([
+            "I'll echo. [SKILL: echo]",
+            "[PROPOSE_ROUTE:orchestrator:needs a catalog overview]",
+        ])
+        core = _make_core(llm=llm, role_label="assistant")
+        result = await core.process_task(
+            {"content": "research the AI agent market", "operating_mode": "PLAN"},
+            role=_assistant_role(),
+        )
+        assert llm.complete.call_count == 2          # re-prompted once
+        assert "PROPOSE_ROUTE" in result.output      # the retry's marker won
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_describe_intent(self):
+        llm = _seq_llm(["I can run commands, query the catalog, and route tasks."])
+        core = _make_core(llm=llm, role_label="assistant")
+        result = await core.process_task(
+            {"content": "what can you do?"}, role=_assistant_role(),
+        )
+        assert llm.complete.call_count == 1          # no retry for a question
+        assert "did not take a concrete action" not in result.output
+
+    @pytest.mark.asyncio
+    async def test_no_retry_when_marker_present_first_try(self):
+        llm = _seq_llm(["[PROPOSE_ROUTE:orchestrator:route it]"])
+        core = _make_core(llm=llm, role_label="assistant")
+        result = await core.process_task(
+            {"content": "route this research task", "operating_mode": "PLAN"},
+            role=_assistant_role(),
+        )
+        assert llm.complete.call_count == 1
+        assert "PROPOSE_ROUTE" in result.output
+
+    @pytest.mark.asyncio
+    async def test_no_retry_for_non_assistant_role(self):
+        # A worker that can't route never gets the B1 retry, even act-intent.
+        llm = _seq_llm(["plain analysis prose with no marker"])
+        core = _make_core(llm=llm, role_label="analyst")
+        result = await core.process_task(
+            {"content": "research the market"}, role=_make_role(),
+        )
+        assert llm.complete.call_count == 1
+        assert result.output == "plain analysis prose with no marker"
+
+    @pytest.mark.asyncio
+    async def test_retry_still_no_marker_prepends_notice(self):
+        llm = _seq_llm([
+            "[SKILL: echo] dodging again",
+            "still just prose, no marker",
+        ])
+        core = _make_core(llm=llm, role_label="assistant")
+        result = await core.process_task(
+            {"content": "infuse a research team and route to it",
+             "operating_mode": "PLAN"},
+            role=_assistant_role(),
+        )
+        assert llm.complete.call_count == 2
+        assert result.output.startswith("⚠ I did not take a concrete action")

@@ -279,6 +279,15 @@ def test_pr4_catalog_model_parse():
     assert {"catalog", "model"} <= {c.name for c in sc.COMMANDS}
 
 
+def test_b6_model_all_flag_parse():
+    # B6 (044) — /model shows the Target role's model; /model --all the table.
+    assert sc.parse("/model").args == {"all": False}
+    assert sc.parse("/model --all").args == {"all": True}
+    assert sc.parse("/model -a").args == {"all": True}
+    assert sc.parse("/model all").args == {"all": True}
+    assert sc.parse("/model").kind == sc.KIND_MODEL == sc.parse("/model --all").kind
+
+
 def test_pr5_goal_parse():
     set_intent = sc.parse("/goal ship v2 by friday")
     assert set_intent.kind == sc.KIND_GOAL

@@ -136,7 +136,7 @@ COMMANDS: list[CommandSpec] = [
     CommandSpec("help", "List the available commands", category="general"),
     CommandSpec("loop", "Re-run a prompt on an interval", "<30s|5m|2h> <prompt> | stop", "control", prod_locked=True),
     CommandSpec("mode", "Set the operating mode", "<AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>", "control"),
-    CommandSpec("model", "List the models.yaml registry", category="query"),
+    CommandSpec("model", "Show the model for the Target role (--all: every role)", "[--all]", "query"),
     CommandSpec("new-agent", "Scaffold + launch a governed agentset from intent (signed A-BOM)", "<what the agent should do>", "control", prod_locked=True),
     CommandSpec(
         "oversight", "Review the oversight queue", category="oversight",
@@ -344,7 +344,10 @@ def parse(text: str) -> SlashIntent:
         return SlashIntent(kind=KIND_CATALOG, args={"filter": " ".join(rest)})
 
     if verb == "model":
-        return SlashIntent(kind=KIND_MODEL)
+        show_all = any(
+            r.lower() in ("--all", "-a", "all") for r in rest
+        )
+        return SlashIntent(kind=KIND_MODEL, args={"all": show_all})
 
     # Proposal 040 — guided "launch your agent": /new-agent [intent] opens the
     # acc-new-agent onboarding flow (deploy-class → prod-gated).

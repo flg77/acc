@@ -353,6 +353,115 @@ def _split_reasoning(text: str) -> tuple[str, str]:
     return reasoning, answer
 
 
+def _extract_output_text(response: dict) -> str:
+    """Backend-shape-tolerant extraction of the completion text.
+
+    Historical inconsistency: ``llm_openai_compat`` returns ``{"content": …}``
+    while the other backends return the parsed JSON object or ``{"text": …}``.
+    Accept all known shapes; fall back to a JSON dump so the operator at least
+    sees the dict rather than an empty reply.
+    """
+    output_text = (
+        response.get("content")
+        or response.get("text")
+        or response.get("response")
+        or response.get("message")
+        or ""
+    )
+    if not output_text and isinstance(response, dict) and response:
+        try:
+            output_text = json.dumps(response, ensure_ascii=False)
+        except Exception:
+            output_text = str(response)
+    return str(output_text)
+
+
+# ---------------------------------------------------------------------------
+# B1 (proposal 044) — marker-or-retry guard for the assistant
+# ---------------------------------------------------------------------------
+#
+# Live evidence (28.6.26): on a capable model the assistant REASONED the right
+# action ("route to the orchestrator") but emitted ``[SKILL: echo]`` instead of
+# ``[PROPOSE_ROUTE:…]`` — it planned to act yet fired the wrong token, so
+# nothing dispatched.  When the operator hands an *act-intent* task and the
+# completion carries NO actionable marker, re-prompt ONCE forcing a marker.
+
+# Verbs that imply the operator wants a concrete action / a specialist, not a
+# capability description.  Deliberately broad on the action side; the
+# describe-intent guard below wins first so "what can you do" never retries.
+_ACT_INTENT_RE = re.compile(
+    r"\b("
+    r"infus|install|spawn|route|delegat|deploy|provision|"
+    r"research|investigat|analy[sz]|implement|build|create|generat|"
+    r"write|draft|fix|debug|refactor|migrat|optimi[sz]|configur|"
+    r"set up|set-up|run|execute|summari[sz]|review|audit|"
+    r"compar|benchmark|design|plan out"
+    r")\w*",
+    re.IGNORECASE,
+)
+
+# Capability / identity / listing questions — answered IN PROSE, never retried.
+# Checked BEFORE the act-intent verbs so a describe phrasing always wins.
+_DESCRIBE_INTENT_RE = re.compile(
+    r"\b("
+    r"what can you|who are you|what are your|what do you|"
+    r"which (skills|tools|mcps|capabilities|roles|models)|"
+    r"list your|show your|help\b|how do i|what is|what's|"
+    r"explain yourself|describe yourself|your capabilities|tell me about (yourself|acc)"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_act_intent(text: str) -> bool:
+    """Whether the operator's request is *act-intent* (wants a concrete action /
+    specialist) vs *describe-intent* (a capability/identity question).
+
+    Conservative — a describe phrasing always wins, so a false-negative
+    (treat-as-describe → prose allowed) is preferred over a false-positive
+    (forcing a marker onto a question)."""
+    if not text:
+        return False
+    if _DESCRIBE_INTENT_RE.search(text):
+        return False
+    return bool(_ACT_INTENT_RE.search(text))
+
+
+def _has_actionable_marker(text: str) -> bool:
+    """Whether ``text`` carries an actionable assistant marker — a
+    ``[PROPOSE_*:…]`` proposal (spawn / route / infuse / role_update), a
+    cross-collective ``[DELEGATE:…]``, or a ``[ROLE_GAP:…]`` finding.
+
+    A no-op ``[SKILL: echo]`` is NOT actionable for an act-intent task — that
+    is the exact 28.6 failure this guard catches."""
+    if not text:
+        return False
+    try:
+        from acc.assistant_proposal import (  # noqa: PLC0415
+            parse_proposal_markers,
+        )
+        if parse_proposal_markers(text):
+            return True
+    except Exception:
+        pass
+    if _parse_delegation(text)[0]:
+        return True
+    return "[ROLE_GAP:" in text or "[DELEGATE:" in text
+
+
+_MARKER_RETRY_DIRECTIVE = (
+    "\n\n[SYSTEM — ACT NOW] Your previous reply did not take a concrete "
+    "action. The operator asked you to ACT. Emit EXACTLY ONE actionable "
+    "marker on its own line AFTER any </reasoning> block — do NOT describe "
+    "what you would do, and do NOT call a no-op skill like `echo`:\n"
+    "  [PROPOSE_ROUTE:<running_role>:<why>]            — hand the task to a running role\n"
+    "  [PROPOSE_SPAWN:<installed_role>:<cluster>:<why>] — bring an INSTALLED role online\n"
+    "  [PROPOSE_INFUSE:@scope/pack@constraint:<why>]    — install a role pack you lack\n"
+    "  [ROLE_GAP:<goal_id>:{json}]                      — no role fits; propose a remedy\n"
+    "Pick the single best one for THIS task and emit it now."
+)
+
+
 # ---------------------------------------------------------------------------
 # Persona style instructions
 # ---------------------------------------------------------------------------
@@ -936,31 +1045,11 @@ class CognitiveCore:
             _usage.get("cache_read_input_tokens", 0) or 0
         )
         self._stress.prompt_input_tokens += int(_usage.get("input_tokens", 0) or 0)
-        # Backend shape tolerance — historical inconsistency:
-        #   * ``acc.backends.llm_openai_compat.complete`` returns
-        #     ``{"content": <str>, "usage": {...}}``.
-        #   * ``acc.backends.llm_{vllm,anthropic,llama_stack,ollama}.complete``
-        #     return either the parsed JSON object (when the LLM emitted
-        #     valid JSON) or ``{"text": <str>}`` (raw text fallback).
-        # Reading ``response["content"]`` only worked for openai_compat;
-        # every other backend gave an empty string here, the agent
-        # published an empty TASK_COMPLETE, and the operator's Prompt
-        # window stayed silent.  Accept all three shapes:
-        output_text = (
-            response.get("content")
-            or response.get("text")
-            # JSON-shaped response — best-effort flatten of a known key,
-            # else stringify so the operator at least sees the dict.
-            or response.get("response")
-            or response.get("message")
-            or ""
-        )
-        if not output_text and isinstance(response, dict) and response:
-            try:
-                output_text = json.dumps(response, ensure_ascii=False)
-            except Exception:
-                output_text = str(response)
-        output_text = str(output_text)
+        # Backend shape tolerance (factored into _extract_output_text):
+        # openai_compat returns {"content": …}; the others return the parsed
+        # JSON object or {"text": …}.  Accept all shapes so the operator's
+        # Prompt window never stays silent on a non-openai_compat backend.
+        output_text = _extract_output_text(response)
 
         # PR-V3b — reasoning externalization.  When the role opted in, split the
         # <reasoning>…</reasoning> block out of the completion: the deliberation
@@ -972,6 +1061,60 @@ class CognitiveCore:
             reasoning_text, answer_text = _split_reasoning(output_text)
             if reasoning_text:
                 output_text = answer_text
+
+        # B1 (proposal 044) — MARKER-OR-RETRY guard.  When the assistant is
+        # handed an *act-intent* task but the completion carries NO actionable
+        # marker (the 28.6 case: reasoned "route to orchestrator" then emitted
+        # [SKILL: echo]), re-prompt ONCE forcing exactly one marker.  Gated to
+        # the assistant + a role that can actually act; describe-intent ("what
+        # can you do") never triggers a retry.  Best-effort: any failure keeps
+        # the first answer.
+        if (
+            self._role_label == "assistant"
+            and getattr(role, "can_route", False)
+            and _is_act_intent(user_content)
+            and not _has_actionable_marker(output_text)
+        ):
+            try:
+                logger.info(
+                    "cognitive_core: B1 marker-or-retry — act-intent with no "
+                    "marker (agent_id=%s); re-prompting once",
+                    self._agent_id,
+                )
+                retry_user = llm_user_content + _MARKER_RETRY_DIRECTIVE
+                r2, l2, t2 = await self._call_llm(system_prompt, retry_user)
+                latency_ms += l2
+                token_count += t2
+                out2 = _extract_output_text(r2)
+                reasoning2 = ""
+                if getattr(role, "reasoning_trace", False):
+                    reasoning2, ans2 = _split_reasoning(out2)
+                    if reasoning2:
+                        out2 = ans2
+                if _has_actionable_marker(out2):
+                    # The retry produced a marker — use it (the B1 fix).
+                    output_text = out2
+                    if reasoning2:
+                        reasoning_text = (
+                            (reasoning_text + "\n\n" + reasoning2).strip()
+                            if reasoning_text else reasoning2
+                        )
+                else:
+                    # Still no marker — surface a clear "didn't act" line
+                    # rather than letting a prose dodge read as a done task.
+                    # PREPEND (don't replace) so a genuine self-done answer
+                    # isn't destroyed by a conservative false-positive.
+                    output_text = (
+                        "⚠ I did not take a concrete action (no route / "
+                        "spawn / infuse marker). If you want me to act, tell "
+                        "me to route or infuse the right specialist. My "
+                        "analysis:\n\n" + (output_text or "").strip()
+                    )
+            except Exception:
+                logger.debug(
+                    "cognitive_core: B1 marker-or-retry failed (keeping first "
+                    "answer)", exc_info=True,
+                )
 
         # Update token utilisation.  Also stash the raw token count so the
         # pre-gate can recompute utilisation against the CURRENT budget on the

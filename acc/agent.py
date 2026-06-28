@@ -333,6 +333,24 @@ class Agent:
         # file (the TUI write-back updates env vars; load_config applies
         # them as the overlay on this file).
         self._config_path = config_path
+        # B6 (proposal 044) — overlay this agent's role→model mapping
+        # (models.yaml ``role_models``) onto the LLM env BEFORE load_config
+        # reads it, so the mapped model becomes the agent's default without a
+        # per-service compose hack.  A collective.yaml per-agent override
+        # (compose sets ACC_AGENT_MODEL_ID) still wins; precedence lives in
+        # acc.models.apply_role_model_env.  Best-effort: a missing registry
+        # leaves the global default untouched.
+        try:
+            from acc.models import apply_role_model_env  # noqa: PLC0415
+            _role_model_env = apply_role_model_env()
+            if _role_model_env:
+                logger.info(
+                    "models: role→model overlay applied for role=%s (%s)",
+                    os.environ.get("ACC_AGENT_ROLE", ""),
+                    ", ".join(sorted(_role_model_env)),
+                )
+        except Exception:
+            logger.debug("models: role→model overlay skipped", exc_info=True)
         self.config = load_config(config_path)
         self.backends = build_backends(self.config)
         self.agent_id: str = os.environ.get(
@@ -2528,6 +2546,25 @@ class Agent:
                 sorted(changes.keys()),
             )
             return
+
+        # B6 (proposal 044) — re-assert the role→model overlay UNLESS this
+        # reload explicitly changed an LLM model key.  An explicit operator
+        # hot-swap (e.g. push ACC_LLM_MODEL via config.reload) wins for this
+        # reload; otherwise a freshly-edited models.yaml ``role_models`` takes
+        # effect here too.
+        _MODEL_KEYS = {
+            "ACC_LLM_BACKEND", "ACC_LLM_MODEL", "ACC_LLM_BASE_URL",
+            "ACC_LLM_API_KEY_ENV", "ACC_ANTHROPIC_MODEL",
+            "ACC_OLLAMA_MODEL", "ACC_OLLAMA_BASE_URL",
+        }
+        if not (set(applied) & _MODEL_KEYS):
+            try:
+                from acc.models import apply_role_model_env  # noqa: PLC0415
+                apply_role_model_env()
+            except Exception:
+                logger.debug(
+                    "config.reload: role→model overlay skipped", exc_info=True
+                )
 
         # Rebuild only the LLM backend.  load_config() re-reads the
         # YAML and re-applies the env overlay so the result reflects

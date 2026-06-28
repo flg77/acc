@@ -1130,12 +1130,20 @@ class PromptScreen(Screen):
             "blocked": False,
         })
 
-    def _render_models(self) -> None:
-        """Proposal 039 (PR-4) — /model: list the models.yaml registry
-        (read-only; switching the active model is a follow-up)."""
+    def _render_models(self, show_all: bool = False) -> None:
+        """Proposal 039 (PR-4) + B6 (044) — /model: show the resolved model for
+        the currently-selected Target role (id, backend, base_url, source);
+        ``/model --all`` prints the full ``role_models`` mapping + the
+        models.yaml registry.  Read-only inspection of the visible mapping
+        (the ONE source of truth, per operator 2026-06-28)."""
         try:
-            from acc.models import load_models  # noqa: PLC0415
+            from acc.models import (  # noqa: PLC0415
+                get_model,
+                load_models,
+                load_role_models,
+            )
             models = load_models()
+            role_models = load_role_models()
         except Exception as exc:  # noqa: BLE001
             self._append_history({
                 "role": "system", "task_id": "",
@@ -1143,15 +1151,69 @@ class PromptScreen(Screen):
                 "ts": time.time(), "blocked": True,
             })
             return
-        if not models:
+
+        def _describe(model_id: str) -> str:
+            entry = get_model(model_id) if model_id else None
+            if entry is None:
+                # Mapped to an id the registry doesn't define — surface it
+                # rather than hiding the misconfiguration.
+                return f"{model_id} [unknown model_id — not in models.yaml]"
+            bits = [entry.model_id, f"backend={entry.backend}"]
+            if entry.model:
+                bits.append(f"model={entry.model}")
+            if entry.base_url:
+                bits.append(f"base_url={entry.base_url}")
+            return "  ".join(bits)
+
+        if not show_all:
+            role = "?"
+            try:
+                role = str(self.query_one("#select-target-role", Select).value)
+            except Exception:  # noqa: BLE001
+                pass
+            mapped = role_models.get(role)
+            if mapped:
+                text = (
+                    f"model for '{role}': {_describe(mapped)}\n"
+                    f"  source: models.yaml role_models"
+                )
+            else:
+                text = (
+                    f"model for '{role}': (global default — ACC_LLM_*)\n"
+                    f"  source: default  ·  pin it in models.yaml role_models, "
+                    f"or override per-agent in collective.yaml\n"
+                    f"  ('/model --all' lists every mapping)"
+                )
             self._append_history({
                 "role": "system", "task_id": "",
-                "text": "no models registered (models.yaml empty or absent)",
-                "ts": time.time(), "blocked": False,
+                "text": text, "ts": time.time(), "blocked": False,
             })
             return
-        lines = ["models (models.yaml):"]
-        lines += [f"  {m.model_id:<22} {m.backend:<14} {m.display()}" for m in models]
+
+        lines = ["model mapping (models.yaml role_models):"]
+        if role_models:
+            lines += [
+                f"  {r:<22} → {_describe(role_models[r])}"
+                for r in sorted(role_models)
+            ]
+        else:
+            lines.append(
+                "  (none — every role uses the global ACC_LLM_* default)"
+            )
+        lines.append("")
+        lines.append("registry (models.yaml models):")
+        if models:
+            lines += [
+                f"  {m.model_id:<22} {m.backend:<14} {m.display()}"
+                for m in models
+            ]
+        else:
+            lines.append("  (no models registered)")
+        lines.append("")
+        lines.append(
+            "precedence: collective.yaml per-agent model: > role_models > "
+            "global ACC_LLM_* default"
+        )
         self._append_history({
             "role": "system", "task_id": "",
             "text": "\n".join(lines), "ts": time.time(), "blocked": False,
@@ -1312,7 +1374,7 @@ class PromptScreen(Screen):
             return
 
         if intent.kind == _sc.KIND_MODEL:
-            self._render_models()
+            self._render_models(show_all=bool(intent.args.get("all")))
             return
 
         if intent.kind == _sc.KIND_GOAL:
