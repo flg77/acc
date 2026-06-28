@@ -99,6 +99,16 @@ workspaces/*
 .acc-apply/*
 !.acc-apply/.gitkeep
 
+# Local file: catalog staged by `acc-deploy.sh flavour --local-catalog` (built
+# unsigned control-roles/packs for dev/air-gap flavour builds). Runtime-built;
+# only the .gitkeep is tracked so Containerfile.flavour's COPY source exists.
+.acc-localcat/*
+!.acc-localcat/.gitkeep
+
+# Per-flavour deploy-time creds template emitted by `acc-deploy.sh flavour`
+# (keys only, but regenerated each build — not source).
+*.env.required
+
 # Local on-demand KServe test-model CRs (ServingRuntime + InferenceService).
 # Scratch for ad-hoc GPU model deploys during testing — synced by hand to acc1,
 # never committed.

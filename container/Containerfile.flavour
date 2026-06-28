@@ -30,6 +30,13 @@ ARG ACC_VERSION=0.3.0
 ARG PACKS=""
 ARG EXTRAS=""
 ARG BAKE_MODELS=""
+# Governance-bake catalog wiring (043 §11): packs are install-frozen from a
+# staged catalog dir (.acc-localcat/). ACC_ALLOW_UNSIGNED=1 → dev/air-gap file
+# install of self-built packs; SIGNER_KEY=<file-in-.acc-localcat> → verify the
+# `.sig` sidecar at build (release/CI). Neither set → signed install needs a key
+# and fails closed.
+ARG ACC_ALLOW_UNSIGNED=
+ARG SIGNER_KEY=
 USER 0
 RUN microdnf install -y --nodocs gcc python3-devel \
  && microdnf clean all && rm -rf /var/cache/dnf
@@ -62,11 +69,29 @@ RUN if echo " ${BAKE_MODELS} " | grep -q " piper-en_US-amy-low "; then \
     fi
 
 ENV ACC_PACKAGES_ROOT=/var/lib/acc/packages
-# D1: full governance is non-negotiable — always baked.
-# (control-roles + the chosen PACKS resolved from the configured catalog;
-#  CI wires the catalog/keys. ACC_ALLOW_UNSIGNED only for self-built test packs.)
-RUN acc-pkg install @acc/control-roles@^1.0 ${PACKS} \
- && acc-pkg -qa            # bake an SBOM line into the build log
+# D1: full governance is non-negotiable — control-roles (+ chosen PACKS) are
+# install-frozen here. They come as built `.accpkg` FILES staged in
+# `.acc-localcat/` (NB: `acc-pkg install` takes a file, not a catalog name):
+#   • dev/air-gap → `acc-deploy.sh flavour --local-catalog` builds the control-
+#     roles pack there + sets --build-arg ACC_ALLOW_UNSIGNED=1.
+#   • release/CI  → the lab-gitops pipeline stages the SIGNED pack + its `.sig`
+#     (+ a cosign pubkey) and sets --build-arg SIGNER_KEY=<pubkey-filename>.
+# Empty `.acc-localcat/` (clean checkout default) → fail closed with a pointer.
+COPY .acc-localcat/ /opt/acc-localcat/
+RUN set -e; \
+    if [ "${ACC_ALLOW_UNSIGNED}" = "1" ]; then VERIFY="--allow-unsigned"; \
+    elif [ -n "${SIGNER_KEY}" ]; then VERIFY="--key /opt/acc-localcat/${SIGNER_KEY}"; \
+    else VERIFY=""; fi; \
+    PKGS="$(find /opt/acc-localcat -name '*.accpkg' | sort)"; \
+    if [ -z "$PKGS" ]; then \
+      echo "ERROR: no .accpkg staged in .acc-localcat/ and no catalog wired."; \
+      echo "  dev:    acc-deploy.sh flavour <name> --profile <p> --local-catalog"; \
+      echo "  CI:     stage the signed control-roles pack + .sig (see lab-gitops"; \
+      echo "          docs/backlog acc-release-pipeline + 043 §11)."; \
+      exit 1; \
+    fi; \
+    for F in $PKGS; do echo ">> install $F"; acc-pkg install "$F" $VERIFY; done; \
+    acc-pkg list            # bake an installed-packages (SBOM) line into the build log
 
 # ── Stage 2 — runtime: stripped, packs frozen (D-rt) ──────────────────────────
 FROM ${PYBASE} AS runtime
@@ -78,7 +103,10 @@ USER 0
 # The installed Python env (incl. the acc-pkg query verbs) + the agent runtime.
 COPY --from=builder /opt/app-root /opt/app-root
 COPY --from=builder /app/acc /app/acc
-COPY --from=builder /var/lib/acc/packages /var/lib/acc/packages   # install-frozen
+# install-frozen — packs are baked at build, never fetched at runtime (D-rt).
+# (NB: a trailing inline `# comment` on a COPY line is parsed as extra source
+# args by buildah → keep instruction comments on their own line.)
+COPY --from=builder /var/lib/acc/packages /var/lib/acc/packages
 # Baked feature models (empty dir when BAKE_MODELS="" — see builder stage).
 # chown so USER 1001 can use it both ways: read the baked whisper cache, and —
 # on a base (non-speech) image — still write the runtime-pulled embedding model

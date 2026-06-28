@@ -113,11 +113,37 @@ CORE_BASELINE_SKILLS: frozenset[str] = frozenset(
         # pack.  acc/docstore.py + skills/doc_{ingest,retrieve}/.
         "doc_ingest",
         "doc_retrieve",
+        # Assistant (CONTROL role) operational skills — ship in the image
+        # (skills/<name>/), granted by the assistant's role caps, never in a
+        # pack: catalog query, python exec, role/skill authoring, release pipe.
+        "catalog_query",
+        "python_exec",
+        "role_author",
+        "skill_author",
+        "release_pipe",
+        # Integration pillars A + C (proposals A/C). The skill manifests +
+        # adapters ship in the image; ENABLEMENT is per-feature (messengers /
+        # [speech] extras + role caps), but packaging-wise they're core — the
+        # control-roles pack must not re-ship them (043 feature-assembly).
+        "telegram_send",
+        "slack_post",
+        "mattermost_post",
+        "speech_transcribe",
+        "speech_synthesize",
     }
 )
 
 CORE_BASELINE_MCPS: frozenset[str] = frozenset(
-    {"arxiv", "wikipedia", "semantic_scholar"}
+    {
+        "arxiv",
+        "wikipedia",
+        "semantic_scholar",
+        # Integration pillars A + B. The MCP manifests ship in the image
+        # (mcps/<name>/); the servers themselves are deploy-time sidecars. Core
+        # for packaging — not bundled in the control-roles pack (043).
+        "signal",
+        "google_workspace",
+    }
 )
 
 
