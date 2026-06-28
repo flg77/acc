@@ -89,3 +89,19 @@ models:
     base_url: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1"
     api_key_env: "MAAS_API_KEY"
     label: "RHDP MaaS Llama Scout 17B (coding agents)"
+
+# ── Role → model mapping (B6, proposal 044) ────────────────────────────────
+# The ONE visible source of truth for which model each ROLE runs on.  Each
+# value is a model_id from the `models:` list above.  An agent resolves its
+# model at boot (acc.models.apply_role_model_env): a collective.yaml per-agent
+# `model:` override wins, else this `role_models` mapping, else the global
+# ACC_LLM_* default in .env.  Inspect live with `/model` (the Target role) or
+# `/model --all`.  Roles omitted here use the global default — so this block is
+# inert until you uncomment + populate it.  Keep keys = role names.
+#
+# role_models:
+#   assistant: maas-qwen3-14b          # capable model for the gatekeeper
+#   orchestrator: maas-qwen3-14b       # routing needs reasoning
+#   reviewer: claude-sonnet            # strong critic
+#   research_synthesizer: claude-sonnet
+#   research_critic: claude-sonnet

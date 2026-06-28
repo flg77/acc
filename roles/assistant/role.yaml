@@ -294,7 +294,7 @@ role_definition:
     # multi-turn context and the future Phase-2 JSON action block.
     token_budget: 20480
     rate_limit_rpm: 30
-  version: "2.5.0"
+  version: "2.6.0"
   # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 6 — opt the
   # Assistant into SIP-P2's bandit learning.  Start conservative:
   # only `route_confidence_threshold` is un-pinned (the most
@@ -380,8 +380,11 @@ role_definition:
     # risk; needs the optional [speech] extra. ACC-PR/Proposals/PR-PROPOSAL-C.
     - speech_transcribe
     - speech_synthesize
+  # B1 (proposal 044) — echo is a no-op; leaving it OUT of the default set
+  # stops the model reaching for [SKILL: echo] on a real task (the 28.6
+  # failure: it reasoned "route to orchestrator" then emitted echo ×4).
+  # echo stays in allowed_skills for explicit test use.
   default_skills:
-    - echo
     - catalog_query
   # shell_exec is HIGH risk; raise the ceiling so A-017 admits it.
   max_skill_risk_level: HIGH

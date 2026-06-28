@@ -625,14 +625,23 @@ def roles_to_compose(
                 env["ACC_CLUSTER_ID"] = agent.cluster_id
             if agent.purpose:
                 env["ACC_AGENT_PURPOSE"] = agent.purpose
-            # PR-MM1 — multimodel: resolve the chosen model_id from the
-            # central registry into LLM env vars for this agent.  Applied
-            # BEFORE extra_env so an operator's explicit extra_env can
-            # still override.  Unknown/unset model_id → no env (the agent
-            # uses the collective default model).
+            # PR-MM1 / B6 (proposal 044) — multimodel: resolve the chosen
+            # model_id into LLM env vars for this agent.  Precedence:
+            # collective.yaml per-agent override (agent.model) > models.yaml
+            # role_models[role] > global default.  When there IS an explicit
+            # per-agent override, mark it (ACC_AGENT_MODEL_ID) so the agent's
+            # runtime overlay (apply_role_model_env) defers to it instead of
+            # re-resolving role_models.  Applied BEFORE extra_env so an
+            # operator's explicit extra_env can still override.
+            from acc.models import (  # noqa: PLC0415
+                model_env_for_id,
+                model_for_role,
+            )
+            resolved_model_id = agent.model or model_for_role(agent.role)
             if agent.model:
-                from acc.models import model_env_for_id  # noqa: PLC0415
-                env.update(model_env_for_id(agent.model))
+                env["ACC_AGENT_MODEL_ID"] = agent.model
+            if resolved_model_id:
+                env.update(model_env_for_id(resolved_model_id))
             # Operator-supplied extras win over the defaults above.
             env.update(agent.extra_env)
 

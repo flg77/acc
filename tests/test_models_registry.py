@@ -157,3 +157,119 @@ def test_no_model_means_no_llm_env(registry):
     out = roles_to_compose(spec, image="img")
     env = next(iter(out["services"].values()))["environment"]
     assert "ACC_LLM_BACKEND" not in env  # uses collective default
+
+
+# ---------------------------------------------------------------------------
+# B6 (proposal 044) — visible role→model mapping + runtime resolution
+# ---------------------------------------------------------------------------
+
+_REGISTRY_WITH_ROLES = _REGISTRY + """\
+role_models:
+  assistant: groq-70b
+  reviewer: claude-sonnet
+"""
+
+
+@pytest.fixture
+def registry_roles(tmp_path, monkeypatch):
+    p = tmp_path / "models.yaml"
+    p.write_text(_REGISTRY_WITH_ROLES, encoding="utf-8")
+    monkeypatch.setenv("ACC_MODELS_PATH", str(p))
+    return p
+
+
+def test_load_role_models(registry_roles):
+    from acc.models import load_role_models
+    assert load_role_models() == {"assistant": "groq-70b", "reviewer": "claude-sonnet"}
+
+
+def test_load_role_models_absent_block_is_empty(registry):
+    # The base _REGISTRY has no role_models block.
+    from acc.models import load_role_models
+    assert load_role_models() == {}
+
+
+def test_model_for_role(registry_roles):
+    from acc.models import model_for_role
+    assert model_for_role("assistant") == "groq-70b"
+    assert model_for_role("reviewer") == "claude-sonnet"
+    assert model_for_role("analyst") is None          # unmapped → global default
+    assert model_for_role("") is None
+    assert model_for_role(None) is None
+
+
+def test_resolve_role_model_id_precedence(registry_roles):
+    from acc.models import resolve_role_model_id
+    # collective override wins over role_models
+    assert resolve_role_model_id(
+        "assistant", override_model_id="claude-sonnet") == "claude-sonnet"
+    # no override → role_models mapping
+    assert resolve_role_model_id("assistant") == "groq-70b"
+    # unmapped + no override → None (global default)
+    assert resolve_role_model_id("analyst") is None
+    # blank override is ignored → falls through to role_models
+    assert resolve_role_model_id("assistant", override_model_id="  ") == "groq-70b"
+
+
+def test_apply_role_model_env_role_models(registry_roles):
+    """role_models OVERRIDES the global default in the target environ."""
+    from acc.models import apply_role_model_env
+    env = {
+        "ACC_AGENT_ROLE": "assistant",
+        # a pre-existing global default that role_models must override:
+        "ACC_LLM_BACKEND": "ollama",
+        "ACC_OLLAMA_MODEL": "llama3.2:3b",
+    }
+    applied = apply_role_model_env(environ=env)
+    assert applied["ACC_LLM_BACKEND"] == "openai_compat"   # groq-70b
+    assert applied["ACC_LLM_MODEL"] == "llama-3.3-70b-versatile"
+    assert env["ACC_LLM_BACKEND"] == "openai_compat"       # overlaid in place
+    assert env["ACC_LLM_API_KEY_ENV"] == "GROQ_API_KEY"
+
+
+def test_apply_role_model_env_collective_override_wins(registry_roles):
+    """ACC_AGENT_MODEL_ID (collective override) beats the role_models mapping."""
+    from acc.models import apply_role_model_env
+    env = {
+        "ACC_AGENT_ROLE": "assistant",          # role_models → groq-70b
+        "ACC_AGENT_MODEL_ID": "claude-sonnet",  # but collective pins sonnet
+    }
+    applied = apply_role_model_env(environ=env)
+    assert applied["ACC_LLM_BACKEND"] == "anthropic"
+    assert applied["ACC_ANTHROPIC_MODEL"] == "claude-sonnet-4-6"
+
+
+def test_apply_role_model_env_unmapped_is_noop(registry_roles):
+    """An unmapped role with no override leaves the global default untouched."""
+    from acc.models import apply_role_model_env
+    env = {"ACC_AGENT_ROLE": "analyst", "ACC_LLM_BACKEND": "ollama"}
+    assert apply_role_model_env(environ=env) == {}
+    assert env == {"ACC_AGENT_ROLE": "analyst", "ACC_LLM_BACKEND": "ollama"}
+
+
+def test_role_models_resolves_in_compose_when_no_agent_model(registry_roles):
+    """compose-gen applies role_models when AgentSpec.model is unset."""
+    from acc.collective import AgentSpec, CollectiveSpec, roles_to_compose
+    spec = CollectiveSpec(
+        collective_id="sol-01",
+        agents=[AgentSpec(role="reviewer", replicas=1)],  # no .model
+    )
+    out = roles_to_compose(spec, image="img")
+    env = next(iter(out["services"].values()))["environment"]
+    assert env["ACC_LLM_BACKEND"] == "anthropic"          # role_models → claude-sonnet
+    assert env["ACC_ANTHROPIC_MODEL"] == "claude-sonnet-4-6"
+    assert "ACC_AGENT_MODEL_ID" not in env                # no explicit override marker
+
+
+def test_agent_model_marks_override_in_compose(registry_roles):
+    """An explicit AgentSpec.model wins AND sets the ACC_AGENT_MODEL_ID marker."""
+    from acc.collective import AgentSpec, CollectiveSpec, roles_to_compose
+    spec = CollectiveSpec(
+        collective_id="sol-01",
+        # reviewer maps to claude-sonnet in role_models, but pin it to groq-70b:
+        agents=[AgentSpec(role="reviewer", replicas=1, model="groq-70b")],
+    )
+    out = roles_to_compose(spec, image="img")
+    env = next(iter(out["services"].values()))["environment"]
+    assert env["ACC_AGENT_MODEL_ID"] == "groq-70b"        # override marker
+    assert env["ACC_LLM_BACKEND"] == "openai_compat"      # groq-70b, not sonnet
