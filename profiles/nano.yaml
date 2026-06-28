@@ -1,0 +1,5 @@
+# Industrial-edge router — reach only, no memory/embedding stack (PR-PROPOSAL-D).
+kind: profile
+base: ""
+features: [messengers]
+description: "Industrial edge: a lean, memory-less router/gatekeeper that can reach out (messengers). Max RAM for the LLM."

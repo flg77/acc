@@ -1,0 +1,5 @@
+# Everything baked — for integration testing (heavy; dev/CI, not lean edge).
+kind: profile
+base: ""
+features: [messengers, signal, google_workspace, speech]
+description: "All integrations baked (incl. the [speech] extra) for end-to-end testing on lighthouse. Heavy by design."

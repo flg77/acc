@@ -1,0 +1,16 @@
+# features/signal.yaml — Signal messaging via a consumed signal-cli sidecar.
+#
+# Integration pillar 1 (reach), sovereign/E2E. Signal has no bot API → it needs
+# the bbernhard/signal-cli-rest-api sidecar → modelled as an MCP, not a skill.
+# If you enable signal you MUST point ACC_SIGNAL_API_URL at the sidecar (and
+# register a phone number with it first). Design: ACC-PR/Proposals/PR-PROPOSAL-A.
+id: signal
+summary: "Signal messaging (sovereign, E2E) via a consumed signal-cli-rest-api sidecar."
+extras: []
+enables:
+  mcps: [signal]
+  actions: [send_message]
+sidecars: [signal-cli]
+requires_env: [ACC_SIGNAL_API_URL]
+optional_env: {}
+governance_ref: mcps/signal/mcp.yaml

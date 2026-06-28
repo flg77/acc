@@ -1,0 +1,5 @@
+# Constrained edge — reach, lean (PR-PROPOSAL-D).
+kind: profile
+base: ""
+features: [messengers]
+description: "Constrained edge node: messengers for alerting; memory/vector trimmed (set via the memory knob, follow-on)."
