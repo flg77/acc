@@ -45,8 +45,11 @@ dependencies = [
     # Config
     "pydantic>=2.8,<3.0",
     "pyyaml>=6.0,<7.0",
-    # Cryptography (Ed25519 arbiter signature verification — Phase 0a)
-    "cryptography>=46.0.7,<47",
+    # Cryptography (Ed25519 arbiter signature verification — Phase 0a).
+    # Floor bumped to 48.0.1 for the GHSA fix (Dependabot #14/#23, two HIGH);
+    # the Ed25519 sign/verify API is stable across 46→48 (verified by the
+    # signature suite).  Operator "pin and bump": widen one major at a time.
+    "cryptography>=48.0.1,<49",
     # JWT-SVID verification for signing_mode=spiffe (proposal 011 PR-4).
     # Small pure-Python lib; reuses the cryptography dep above.
     "pyjwt>=2.8,<3.0",
