@@ -381,3 +381,50 @@ def test_cli_eval_invalid_yaml(tmp_path):
     })
     rc = main(["eval", str(tmp_path)])
     assert rc == EXIT_SCHEMA
+
+
+class TestGoldenToEvalPromotion:
+    """Proposal G P3 — golden-prompt → BehaviorEval promotion (role testing)."""
+
+    def test_from_golden_prompt_maps_rubric(self):
+        from acc.golden_prompts import GoldenPrompt
+        from acc.pkg.evals import BehaviorEval, from_golden_prompt
+        gp = GoldenPrompt(
+            name="webscraper", description="scrape test",
+            prompt="Write a scraper for IBM.", target_role="coding_agent",
+            expects={
+                "output_contains": ["IBM", "import"],
+                "output_matches_regex": "def ",
+                "latency_max_ms": 30000,
+            },
+        )
+        be = from_golden_prompt(gp)
+        assert isinstance(be, BehaviorEval)
+        assert be.name == "webscraper" and be.target_role == "coding_agent"
+        assert be.prompt == "Write a scraper for IBM."
+        assert be.rubric.output_contains == ["IBM", "import"]
+        assert be.rubric.output_matches_regex == "def "
+        assert be.rubric.latency_max_ms == 30000
+
+    def test_dump_behavior_eval_roundtrips_via_load_evals(self, tmp_path):
+        from acc.golden_prompts import GoldenPrompt
+        from acc.pkg.evals import (
+            dump_behavior_eval, from_golden_prompt, load_evals,
+        )
+        be = from_golden_prompt(
+            GoldenPrompt(name="rt", prompt="hi", target_role="analyst")
+        )
+        out = dump_behavior_eval(be, tmp_path / "evals" / "behavior")
+        assert out.is_file()
+        loaded = load_evals(tmp_path)
+        assert [b.name for b in loaded.behavior] == ["rt"]
+        assert loaded.behavior[0].prompt == "hi"
+
+    def test_from_golden_prompt_handles_no_expects(self):
+        from acc.golden_prompts import GoldenPrompt
+        from acc.pkg.evals import from_golden_prompt
+        be = from_golden_prompt(
+            GoldenPrompt(name="bare", prompt="ping", target_role="analyst")
+        )
+        assert be.rubric.output_contains == []
+        assert be.rubric.output_matches_regex == ""

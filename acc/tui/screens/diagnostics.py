@@ -171,6 +171,11 @@ class DiagnosticsScreen(Screen):
                         "Versions", id="btn-golden-versions",
                         variant="default",
                     )
+                    # Proposal G P3 — promote to a role's behavioral eval pack.
+                    yield Button(
+                        "→ Eval", id="btn-golden-promote-eval",
+                        variant="default",
+                    )
                 with Horizontal(id="golden-attach-row"):
                     yield Input(
                         placeholder=(
@@ -328,6 +333,11 @@ class DiagnosticsScreen(Screen):
             # Proposal G P2 — the per-task signals joined onto the run by
             # task_id: tokens, compliance, the model's self-verdict.
             lines.append(f"  {self._run_metrics_line(result)}")
+            # Proposal G P3 — deep link to this run's trace in MLflow (DC
+            # only; gated on ACC_MLFLOW_TRACKING_URI, absent on the edge).
+            link = self._mlflow_trace_link(result)
+            if link:
+                lines.append(f"  [dim]trace →[/dim] {link}")
             if result.error:
                 lines.append(f"  [red]ERROR: {result.error}[/red]")
             for f in result.failures:
@@ -402,6 +412,16 @@ class DiagnosticsScreen(Screen):
             parts.append(f"verdict {verdict}")
         return "[dim]" + "  ·  ".join(parts) + "[/dim]"
 
+    @staticmethod
+    def _mlflow_trace_link(result) -> str:
+        """Proposal G P3 — the MLflow trace URL for this run's task_id, or ""
+        when MLflow isn't configured (edge / unset tracking URI)."""
+        try:
+            from acc.backends.mlflow_runs import mlflow_trace_url  # noqa: PLC0415
+            return mlflow_trace_url(getattr(result, "task_id", "") or "") or ""
+        except Exception:
+            return ""
+
     def _definition_of_good(self, prompt, result) -> list[str]:
         """Proposal G P2 — the layered criteria a prompt is judged by:
         (1) the deterministic ``expects`` block; (2) the model's self-verdict.
@@ -437,6 +457,38 @@ class DiagnosticsScreen(Screen):
         if verdict:
             out.append(f"  [dim]model self-verdict:[/dim] {verdict}")
         return out
+
+    def _promote_to_eval_pack(self) -> None:
+        """Promote the editor's prompt into a role's behavioral eval suite
+        (proposal G P3) — the role-testing on-ramp.  Adapts the GoldenPrompt
+        to a BehaviorEval and writes it to the writable promoted-evals store,
+        keyed by target_role, ready to fold into a signed @acc/*-roles pack."""
+        import yaml  # noqa: PLC0415
+
+        from acc.golden_prompts import GoldenPrompt, writable_root  # noqa: PLC0415
+        from acc.pkg.evals import (  # noqa: PLC0415
+            dump_behavior_eval, from_golden_prompt,
+        )
+        try:
+            gp = GoldenPrompt.model_validate(
+                yaml.safe_load(self._editor().text) or {}
+            )
+        except Exception as exc:
+            self._set_status(f"[red]invalid prompt: {exc}[/red]")
+            return
+        be = from_golden_prompt(gp)
+        role = gp.target_role or "_norole"
+        # pkg-shaped layout (<root>/evals/behavior) so the promoted-evals/<role>
+        # dir loads back via acc.pkg.evals.load_evals → folds into a signed pack.
+        dest = writable_root() / "promoted-evals" / role / "evals" / "behavior"
+        try:
+            out = dump_behavior_eval(be, dest)
+        except OSError as exc:
+            self._set_status(f"[red]promote failed: {exc}[/red]")
+            return
+        self._set_status(
+            f"[green]✓ promoted to {role} eval pack[/green] [dim]{out}[/dim]"
+        )
 
     def _restore_previous_version(self) -> None:
         """Load the previous saved version of the highlighted prompt into
@@ -498,6 +550,8 @@ class DiagnosticsScreen(Screen):
             self._editor_paste()
         elif bid == "btn-golden-versions":
             self._restore_previous_version()
+        elif bid == "btn-golden-promote-eval":
+            self._promote_to_eval_pack()
         elif bid == "btn-golden-import":
             self._import_dir()
         elif bid == "btn-golden-export":

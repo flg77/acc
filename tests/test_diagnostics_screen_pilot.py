@@ -696,3 +696,66 @@ async def test_run_detail_shows_metrics_and_def_of_good(tmp_path, monkeypatch):
         assert "compliance 0.88" in joined
         assert "definition of good" in joined
         assert "GOOD" in joined
+
+
+@pytest.mark.asyncio
+async def test_promote_to_eval_pack_writes_loadable_eval(tmp_path, monkeypatch):
+    """Proposal G P3 — the → Eval action promotes the editor prompt into a
+    role's behavioral eval pack, pkg-shaped so load_evals reads it back."""
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#golden-editor", TextArea).text = (
+            "name: ep_promote\nprompt: scrape IBM\ntarget_role: coding_agent\n"
+            "expects:\n  output_contains: [IBM]\n"
+        )
+        screen._promote_to_eval_pack()
+        await pilot.pause()
+        root = tmp_path / "promoted-evals" / "coding_agent"
+        assert (root / "evals" / "behavior" / "ep_promote.yaml").is_file()
+        from acc.pkg.evals import load_evals
+        loaded = load_evals(root)
+        assert [b.name for b in loaded.behavior] == ["ep_promote"]
+        assert loaded.behavior[0].rubric.output_contains == ["IBM"]
+
+
+@pytest.mark.asyncio
+async def test_mlflow_trace_link_shows_only_when_configured(tmp_path, monkeypatch):
+    """Proposal G P3 — the run-detail shows an MLflow trace link only when
+    ACC_MLFLOW_TRACKING_URI is set (DC); absent on the edge."""
+    from acc.golden_prompts import GoldenResult
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        name = next(iter(screen._prompts))
+        screen._results[name] = GoldenResult(
+            name=name, passed=True, elapsed_ms=9, task_id="tk-xyz",
+        )
+        captured: list[str] = []
+        detail = screen.query_one("#diagnostics-detail", Static)
+        real = detail.update
+
+        def cap(content="", *a, **k):
+            captured.append(str(content))
+            return real(content, *a, **k)
+
+        detail.update = cap  # type: ignore[assignment]
+
+        # Unset → no trace link.
+        monkeypatch.delenv("ACC_MLFLOW_TRACKING_URI", raising=False)
+        screen._render_detail(name)
+        await pilot.pause()
+        assert "trace →" not in "\n".join(captured)
+
+        # Set → link appears with the task_id.
+        captured.clear()
+        monkeypatch.setenv("ACC_MLFLOW_TRACKING_URI", "https://mlflow.dc:5000")
+        screen._render_detail(name)
+        await pilot.pause()
+        joined = "\n".join(captured)
+        assert "trace →" in joined and "tk-xyz" in joined

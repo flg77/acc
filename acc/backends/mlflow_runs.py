@@ -240,3 +240,50 @@ def log_reasoning_depth(
     except Exception as exc:  # noqa: BLE001
         logger.warning("mlflow_runs: log_reasoning_depth failed (%s)", exc)
         return False
+
+
+# ---------------------------------------------------------------------------
+# Proposal G P3 — deep links into the MLflow UI.
+#
+# Gated on the tracking URI ONLY (not on the mlflow package): these are plain
+# browser URLs the operator opens, so a TUI/pod without the acc[mlflow] extra
+# can still surface them once the DC URI is configured.  Return None when no
+# tracking URI is set, so the eval-history pane shows the link only on the DC.
+# ---------------------------------------------------------------------------
+
+
+def tracking_uri() -> str:
+    """The configured MLflow tracking URI (``""`` when unset)."""
+    return os.environ.get(_ENV_TRACKING_URI, "").strip()
+
+
+def mlflow_trace_url(task_id: str) -> Optional[str]:
+    """Deep link to the MLflow **Traces** view filtered to this task's OTel
+    trace.  The agent stamps ``acc.task_id`` on the ``acc.task.process`` root
+    span; on the DC the collector fans traces to MLflow's ``/v1/traces``, so a
+    golden run's ``task_id`` resolves to its trace.  ``None`` when the tracking
+    URI is unset or *task_id* is empty.
+
+    URL shape targets MLflow 3.x trace search — the operator lands on the
+    Traces page filtered by the task; adjust the filter syntax per MLflow
+    version if it differs."""
+    base = tracking_uri()
+    if not base or not task_id:
+        return None
+    from urllib.parse import quote  # noqa: PLC0415
+
+    flt = quote(f'attributes.`acc.task_id` = "{task_id}"')
+    return f"{base.rstrip('/')}/#/traces?searchFilter={flt}"
+
+
+def mlflow_experiment_url(experiment: Optional[str] = None) -> Optional[str]:
+    """Deep link to the experiment that golden-suite runs log into (proposal
+    G P3).  ``None`` when the tracking URI is unset."""
+    base = tracking_uri()
+    if not base:
+        return None
+    from urllib.parse import quote  # noqa: PLC0415
+
+    return f"{base.rstrip('/')}/#/experiments?searchFilter=" + quote(
+        f'name = "{_experiment_name(experiment)}"'
+    )

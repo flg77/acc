@@ -180,3 +180,28 @@ def test_persist_results_noop_mlflow_when_disabled(monkeypatch, tmp_path):
     # Must not raise even though mlflow is unconfigured.
     persist_results(_results(), tmp_path / "g.jsonl", run_meta={"model": "m"})
     assert (tmp_path / "g.jsonl").is_file()
+
+
+def test_deep_links_none_when_unset(monkeypatch):
+    """Proposal G P3 — no tracking URI → no deep links (edge / unconfigured)."""
+    monkeypatch.delenv("ACC_MLFLOW_TRACKING_URI", raising=False)
+    assert mlflow_runs.tracking_uri() == ""
+    assert mlflow_runs.mlflow_trace_url("tk-1") is None
+    assert mlflow_runs.mlflow_experiment_url() is None
+
+
+def test_trace_url_built_when_set(monkeypatch):
+    monkeypatch.setenv("ACC_MLFLOW_TRACKING_URI", "https://mlflow.dc.svc:5000/")
+    url = mlflow_runs.mlflow_trace_url("tk-abc")
+    assert url is not None
+    assert url.startswith("https://mlflow.dc.svc:5000/#/traces")
+    assert "tk-abc" in url
+    # empty task_id → None even when configured
+    assert mlflow_runs.mlflow_trace_url("") is None
+
+
+def test_experiment_url_built_when_set(monkeypatch):
+    monkeypatch.setenv("ACC_MLFLOW_TRACKING_URI", "https://mlflow.dc.svc:5000")
+    url = mlflow_runs.mlflow_experiment_url()
+    assert url is not None
+    assert url.startswith("https://mlflow.dc.svc:5000/#/experiments")
