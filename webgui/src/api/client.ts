@@ -152,6 +152,47 @@ export const fetchProposals = () =>
 export const fetchGoldenPrompts = () =>
   getJSON<{ prompts: any[] }>("/api/diagnostics/golden");
 
+// --- diagnostics eval-history (proposal G WebGUI parity) -------------------
+
+export type GoldenRun = {
+  run_id: string;
+  prompt_name: string;
+  run_ts: number;
+  task_id: string;
+  passed: boolean;
+  elapsed_ms: number;
+  failures: string[];
+  error: string;
+  output_excerpt: string;
+  input_tokens: number;
+  cache_read_tokens: number;
+  compliance_health_score: number;
+  eval_verdict: string;
+  mlflow_trace_url: string | null;
+};
+
+export const fetchGoldenDetail = (name: string) =>
+  getJSON<{ prompt: any; definition_of_good: string[] }>(
+    `/api/diagnostics/golden/${encodeURIComponent(name)}`,
+  );
+
+export const fetchGoldenHistory = (name: string, limit = 20) =>
+  getJSON<{ name: string; runs: GoldenRun[]; versions: number[] }>(
+    `/api/diagnostics/golden/${encodeURIComponent(name)}/history?limit=${limit}`,
+  );
+
+export const runGolden = (name: string, cid: string, timeoutS = 180) =>
+  postJSON<GoldenRun>(`/api/diagnostics/golden/${encodeURIComponent(name)}/run`, {
+    collective_id: cid,
+    timeout_s: timeoutS,
+  });
+
+export const promoteGolden = (name: string) =>
+  postJSON<{ status: string; role: string; eval_name: string; path: string }>(
+    `/api/diagnostics/golden/${encodeURIComponent(name)}/promote`,
+    {},
+  );
+
 export const fetchModels = () => getJSON<{ models: any[] }>("/api/models");
 
 export const runGapScan = (frameworkId: string) =>

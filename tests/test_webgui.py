@@ -616,3 +616,96 @@ class TestAuthInfo:
         app = _htpasswd_app(monkeypatch, tmp_path, users={"alice": "pw"})
         with TestClient(app) as c:
             assert c.get("/api/auth-info").json()["mode"] == "htpasswd"
+
+
+class TestDiagnosticsEvalHistory:
+    """WebGUI parity for the proposal-G eval-history surface (run / history /
+    enrichment / MLflow deep-link / promote)."""
+
+    def test_golden_detail_and_def_of_good(self, client, monkeypatch, tmp_path):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        from acc.golden_prompts import GoldenPrompt, save_prompt
+        save_prompt(GoldenPrompt(
+            name="wd", prompt="scrape IBM", target_role="coding_agent",
+            expects={"output_contains": ["IBM"]},
+        ), root=tmp_path)
+        r = client.get("/api/diagnostics/golden/wd")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["prompt"]["name"] == "wd"
+        assert any("IBM" in c for c in body["definition_of_good"])
+
+    def test_golden_detail_404(self, client):
+        assert client.get("/api/diagnostics/golden/nope").status_code == 404
+
+    def test_history_enriched_with_mlflow_link(self, client, monkeypatch, tmp_path):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        monkeypatch.setenv("ACC_MLFLOW_TRACKING_URI", "https://mlflow.dc:5000")
+        from acc.golden_prompts import GoldenResult, append_run_record
+        append_run_record(GoldenResult(
+            name="wd", passed=True, elapsed_ms=12, task_id="tk-1",
+            compliance_health_score=1.0,
+        ), collective_id="sol-01")
+        r = client.get("/api/diagnostics/golden/wd/history")
+        assert r.status_code == 200
+        runs = r.json()["runs"]
+        assert runs and runs[0]["task_id"] == "tk-1"
+        assert "tk-1" in (runs[0]["mlflow_trace_url"] or "")
+
+    def test_history_no_mlflow_link_when_unset(self, client, monkeypatch, tmp_path):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        monkeypatch.delenv("ACC_MLFLOW_TRACKING_URI", raising=False)
+        from acc.golden_prompts import GoldenResult, append_run_record
+        append_run_record(GoldenResult(name="wd", passed=True, elapsed_ms=1,
+                                        task_id="tk-2"), collective_id="sol-01")
+        runs = client.get("/api/diagnostics/golden/wd/history").json()["runs"]
+        assert runs[0]["mlflow_trace_url"] is None
+
+    def test_run_returns_enriched_and_appends_history(
+        self, client, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        from acc.golden_prompts import GoldenPrompt, GoldenResult, save_prompt
+        save_prompt(GoldenPrompt(name="wd", prompt="hi", target_role="analyst"),
+                    root=tmp_path)
+        import acc.golden_prompts as gp
+
+        async def _fake_run_one(prompt, *, observer, collective_id):
+            return GoldenResult(
+                name=prompt.name, passed=True, elapsed_ms=5, task_id="tk-run",
+                input_tokens=42, compliance_health_score=0.9, eval_verdict="GOOD",
+            )
+
+        monkeypatch.setattr(gp, "run_one", _fake_run_one)
+        r = client.post("/api/diagnostics/golden/wd/run",
+                        json={"collective_id": "sol-01"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["task_id"] == "tk-run" and body["input_tokens"] == 42
+        assert body["compliance_health_score"] == 0.9
+        hist = client.get("/api/diagnostics/golden/wd/history").json()["runs"]
+        assert any(run["task_id"] == "tk-run" for run in hist)
+
+    def test_run_unknown_collective_404(self, client, monkeypatch, tmp_path):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        from acc.golden_prompts import GoldenPrompt, save_prompt
+        save_prompt(GoldenPrompt(name="wd", prompt="hi", target_role="analyst"),
+                    root=tmp_path)
+        r = client.post("/api/diagnostics/golden/wd/run",
+                        json={"collective_id": "ghost"})
+        assert r.status_code == 404
+
+    def test_promote_writes_loadable_eval_pack(self, client, monkeypatch, tmp_path):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        from acc.golden_prompts import GoldenPrompt, save_prompt
+        save_prompt(GoldenPrompt(
+            name="wd", prompt="scrape", target_role="coding_agent",
+            expects={"output_contains": ["IBM"]},
+        ), root=tmp_path)
+        r = client.post("/api/diagnostics/golden/wd/promote")
+        assert r.status_code == 200, r.text
+        assert r.json()["role"] == "coding_agent"
+        root = tmp_path / "promoted-evals" / "coding_agent"
+        assert (root / "evals" / "behavior" / "wd.yaml").is_file()
+        from acc.pkg.evals import load_evals
+        assert [b.name for b in load_evals(root).behavior] == ["wd"]
