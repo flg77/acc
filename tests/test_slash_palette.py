@@ -14,7 +14,7 @@ def test_rows_bare_slash_lists_all_alphabetical():
     rows = palette_rows("/")
     names = [n for n, _ in rows]
     assert names == sorted(names)
-    assert names[0] == "cancel"
+    assert names[0] == "allow"  # 044 B8 — /allow now sorts first alphabetically
     assert "oversight" in names and "wake" in names
     assert any("— Cancel a task" in label for _, label in rows)
 

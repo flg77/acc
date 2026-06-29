@@ -81,6 +81,10 @@ KIND_CATALOG = "catalog"
 KIND_MODEL = "model"
 # Proposal 039 (PR-5) — pinned objective.
 KIND_GOAL = "goal"
+# Proposal 044 (B8) — inline governance resolution (the GATE CARD).  Resolve a
+# pending compliance gate from the Prompt window itself.
+KIND_GATE_ALLOW = "gate_allow"
+KIND_GATE_DISALLOW = "gate_disallow"
 KIND_LOOP = "loop"
 KIND_SKILL = "skill"
 KIND_NEW_AGENT = "new_agent"
@@ -122,6 +126,7 @@ class CommandSpec:
 
 
 COMMANDS: list[CommandSpec] = [
+    CommandSpec("allow", "Approve a pending gate (the inline GATE CARD)", "[<oversight_id>]", "oversight"),
     CommandSpec("cancel", "Cancel a task or cluster", "<task_id|cluster_id>", "control"),
     CommandSpec("catalog", "Browse the role/package catalog", "[<@scope|filter>]", "query"),
     CommandSpec("clear", "Clear the transcript", category="control"),
@@ -132,6 +137,7 @@ COMMANDS: list[CommandSpec] = [
             ("kill <cid>", "cancel every cluster member"),
         ),
     ),
+    CommandSpec("disallow", "Reject a pending gate (the inline GATE CARD)", "[<oversight_id>]", "oversight"),
     CommandSpec("goal", "Set a pinned objective (prepended to prompts)", "[<text> | clear]", "control"),
     CommandSpec("help", "List the available commands", category="general"),
     CommandSpec("loop", "Re-run a prompt on an interval", "<30s|5m|2h> <prompt> | stop", "control", prod_locked=True),
@@ -348,6 +354,13 @@ def parse(text: str) -> SlashIntent:
             r.lower() in ("--all", "-a", "all") for r in rest
         )
         return SlashIntent(kind=KIND_MODEL, args={"all": show_all})
+
+    # Proposal 044 (B8) — resolve a pending gate inline.  The optional arg is an
+    # oversight_id; with no arg the screen targets the single pending gate (and
+    # asks the operator to disambiguate when several are pending).
+    if verb in ("allow", "disallow"):
+        kind = KIND_GATE_ALLOW if verb == "allow" else KIND_GATE_DISALLOW
+        return SlashIntent(kind=kind, args={"oversight_id": rest[0] if rest else ""})
 
     # Proposal 040 — guided "launch your agent": /new-agent [intent] opens the
     # acc-new-agent onboarding flow (deploy-class → prod-gated).
