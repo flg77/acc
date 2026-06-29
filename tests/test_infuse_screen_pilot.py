@@ -250,6 +250,46 @@ async def test_active_llm_falls_back_to_model_id(monkeypatch):
         assert captured and captured[-1] == "Active LLM: mystery-model"
 
 
+@pytest.mark.asyncio
+async def test_active_llm_falls_back_to_role_models_mapping(monkeypatch):
+    """O3 (proposal 044) — with NO collective.yaml override, the line surfaces
+    the models.yaml role_models[role] mapping (tagged ``(role_models)``), so a
+    role's bound model is visible in Nucleus instead of the global default."""
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        # No per-agent override in collective.yaml…
+        monkeypatch.setattr(screen, "_role_model_id", lambda role_name: "")
+        import acc.models as models_mod
+        # …but role_models maps reviewer → maas-qwen3-14b.
+        monkeypatch.setattr(
+            models_mod, "model_for_role",
+            lambda role, path=None: "maas-qwen3-14b" if role == "reviewer" else None,
+        )
+
+        class _Entry:
+            def display(self):
+                return "RHDP MaaS Qwen3 14B (powerful — reviewer)"
+
+        monkeypatch.setattr(models_mod, "get_model", lambda mid, path=None: _Entry())
+
+        captured: list[str] = []
+        line = screen.query_one("#active-llm-line", Static)
+        real = line.update
+
+        def rec(content="", **kw):
+            captured.append(str(content))
+            return real(content, **kw)
+
+        line.update = rec  # type: ignore[assignment]
+        screen._refresh_active_llm("reviewer")
+        await pilot.pause()
+        assert captured and captured[-1] == (
+            "Active LLM: RHDP MaaS Qwen3 14B (powerful — reviewer)  (role_models)"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Combined refresh path (what role selection drives)
 # ---------------------------------------------------------------------------

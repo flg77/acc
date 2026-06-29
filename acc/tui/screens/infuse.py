@@ -1098,6 +1098,24 @@ class InfuseScreen(Screen):
                 logger.exception("infuse: get_model failed for %r", model_id)
             line.update(f"Active LLM: {label}")
             return
+        # B6 / proposal 044 O3 — no collective.yaml override: fall back to the
+        # models.yaml ``role_models[role]`` mapping so the role's bound model is
+        # VISIBLE in Nucleus.  The 29.6 ask was that selecting a role shows its
+        # model (it was reading the global 3B default for every role, because
+        # this line never consulted role_models).
+        try:
+            from acc.models import get_model, model_for_role  # noqa: PLC0415
+            mapped_id = model_for_role(role_name) or ""
+            if mapped_id:
+                entry = get_model(mapped_id)
+                label = entry.display() if entry is not None else mapped_id
+                line.update(f"Active LLM: {label}  (role_models)")
+                return
+        except Exception:
+            logger.debug(
+                "infuse: role_models lookup failed for %r", role_name,
+                exc_info=True,
+            )
         # No per-role binding in collective.yaml — show what a RUNNING agent of
         # this role is ACTUALLY using (from the live snapshot), so the operator
         # sees the real agent→model mapping instead of a bare "—" (25.6-2.26
