@@ -50,6 +50,45 @@ def role_model_rows(spec: Any, models: Optional[list[Any]] = None) -> list[dict]
     return rows
 
 
+def resolved_role_model_rows(
+    spec: Any,
+    models: Optional[list[Any]] = None,
+    *,
+    role_models: Optional[dict[str, str]] = None,
+) -> list[dict]:
+    """Like :func:`role_model_rows`, but RESOLVES each role's model with the
+    B6 precedence and tags the SOURCE (proposal 044 O4).
+
+    For every distinct role in the collective: the model shown is the
+    collective.yaml ``AgentSpec.model`` override when set, else the
+    ``models.yaml`` ``role_models[role]`` mapping, else ``(default)`` — and
+    ``source`` is ``collective`` / ``role_models`` / ``default`` accordingly so
+    the Configuration pane can show the operator WHERE each role's model comes
+    from (the 29.6 ask: the mapping was invisible — every role read as the
+    global default).  Pure; ``role_models`` defaults to ``{}``."""
+    role_models = role_models or {}
+    labels = {m.model_id: getattr(m, "label", "") for m in (models or [])}
+    rows: list[dict] = []
+    for r in role_model_rows(spec, models):
+        role, ov = r["role"], r["model_id"]
+        if ov not in _UNSET:
+            mid, source = ov, "collective"          # explicit per-agent override
+        elif ov == "(mixed)":
+            mid, source = "(mixed)", "collective"
+        elif role_models.get(role):
+            mid, source = role_models[role], "role_models"
+        else:
+            mid, source = "(default)", "default"
+        rows.append({
+            "role": role,
+            "model_id": mid,
+            "source": source,
+            "label": labels.get(mid, "") or r.get("label", ""),
+            "n_agents": r["n_agents"],
+        })
+    return rows
+
+
 def assign_role_model(spec: Any, role: str, model_id: Optional[str]) -> int:
     """Set ``.model`` on every agent whose ``role`` matches.
 

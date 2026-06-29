@@ -726,8 +726,14 @@ class ConfigurationScreen(Screen):
             return None
 
     def _render_role_model(self) -> None:
-        """Repaint the ROLE → MODEL table + (re)populate the role/model dropdowns."""
-        from acc.role_model_map import role_model_rows  # noqa: PLC0415
+        """Repaint the ROLE → MODEL table + (re)populate the role/model dropdowns.
+
+        Proposal 044 O4 — each row shows the RESOLVED model + its SOURCE
+        (collective.yaml override > models.yaml role_models > global default),
+        so the operator sees every agentset role's actual model and where it
+        comes from (the 29.6 complaint: roles read as the global default
+        because role_models was never surfaced here)."""
+        from acc.role_model_map import resolved_role_model_rows  # noqa: PLC0415
         try:
             table = self.query_one("#role-model-table", DataTable)
         except Exception:
@@ -737,13 +743,24 @@ class ConfigurationScreen(Screen):
             models = load_models()
         except Exception:
             models = []
+        try:
+            from acc.models import load_role_models  # noqa: PLC0415
+            role_models = load_role_models()
+        except Exception:
+            role_models = {}
         spec = self._load_active_collective()
         roles: list[str] = []
         if spec is None or not getattr(spec, "agents", None):
             table.add_row("(no agents in collective.yaml — compose an agentset)", "—", "—", "—")
         else:
-            for r in role_model_rows(spec, models):
-                table.add_row(r["role"], r["model_id"], r["label"] or "—", str(r["n_agents"]))
+            for r in resolved_role_model_rows(spec, models, role_models=role_models):
+                if r["source"] == "role_models":
+                    model_cell = f"{r['model_id']}  (role_models)"
+                elif r["source"] == "default":
+                    model_cell = "(default)"
+                else:  # collective.yaml per-agent override
+                    model_cell = r["model_id"]
+                table.add_row(r["role"], model_cell, r["label"] or "—", str(r["n_agents"]))
                 roles.append(r["role"])
         try:
             self.query_one("#rolemodel-role", Select).set_options(
