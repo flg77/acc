@@ -174,6 +174,53 @@ class LoadedEvals:
 
 
 # ---------------------------------------------------------------------------
+# Proposal G P3 — golden-prompt → eval-pack promotion (role testing on-ramp)
+# ---------------------------------------------------------------------------
+
+
+def from_golden_prompt(gp: Any) -> BehaviorEval:
+    """Adapt a golden prompt (``acc.golden_prompts.GoldenPrompt``) into a
+    :class:`BehaviorEval` so an operator can graduate an ad-hoc prompt from
+    the Diagnostics pane into a role's *versioned* eval suite (proposal G P3).
+
+    The text rubric carries over 1:1 (``latency_max_ms`` / ``output_contains``
+    / ``output_matches_regex``).  ``reply_non_empty`` is implicit in a
+    behavioral eval, and the ``blocked`` / ``invocations_*`` asserts are
+    governance/dispatch concerns that have no text-rubric equivalent — they
+    are intentionally dropped (a behavioral eval scores the reply's content,
+    not the gate path).  Duck-typed on the prompt so this stays decoupled
+    from ``acc.golden_prompts``."""
+    ex = getattr(gp, "expects", None)
+    rubric = RubricCheck(
+        latency_max_ms=getattr(ex, "latency_max_ms", None) if ex else None,
+        output_contains=list(getattr(ex, "output_contains", []) or []) if ex else [],
+        output_matches_regex=(
+            (getattr(ex, "output_matches_regex", None) or "") if ex else ""
+        ),
+    )
+    return BehaviorEval(
+        name=str(getattr(gp, "name", "") or "eval"),
+        description=str(getattr(gp, "description", "") or ""),
+        prompt=str(getattr(gp, "prompt", "") or ""),
+        target_role=str(getattr(gp, "target_role", "") or ""),
+        rubric=rubric,
+    )
+
+
+def dump_behavior_eval(be: BehaviorEval, dest_dir: "Path | str") -> Path:
+    """Write *be* to ``<dest_dir>/<name>.yaml`` (proposal G P3).  Round-trips
+    through :func:`load_evals`'s ``behavior/`` loader.  Returns the path."""
+    d = Path(dest_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / f"{be.name}.yaml"
+    out.write_text(
+        yaml.safe_dump(be.model_dump(), sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Loader
 # ---------------------------------------------------------------------------
 
