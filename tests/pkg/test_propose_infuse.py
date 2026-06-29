@@ -225,12 +225,21 @@ def test_dispatch_calls_fetch_and_install():
     assert ok is True
     assert captured["name"] == "@acc/coding-roles"
     assert captured["constraint"] == "^1.0"
-    # Bus notification published
-    assert len(sig.published) == 1
-    subject, payload = sig.published[0]
-    assert payload["name"] == "@acc/coding-roles"
-    assert payload["version"] == "1.2.0"
-    assert payload["was_already_installed"] is False
+    # Bus notification published (the infuse-completed notice)…
+    notif = next(
+        p for _, p in sig.published if p.get("trigger") == "assistant_proposal"
+    )
+    assert notif["name"] == "@acc/coding-roles"
+    assert notif["version"] == "1.2.0"
+    assert notif["was_already_installed"] is False
+    # …plus the B4 (044 O1) continuation TASK_ASSIGN back to the Assistant.
+    cont = next(
+        p for _, p in sig.published if p.get("trigger") == "infuse_continuation"
+    )
+    assert cont["target_role"] == "assistant"
+    assert cont["task_id"] == "task-42"           # original goal ancestry preserved
+    assert "PROPOSE_SPAWN" in cont["content"]
+    assert "PROPOSE_ROUTE" in cont["content"]
 
 
 def test_dispatch_fetch_error_returns_false():
@@ -275,7 +284,53 @@ def test_dispatch_idempotent_install_logged():
     with patch("acc.pkg.fetch.fetch_and_install_closure", return_value=fake_result):
         ok = _run(dispatch_approved_proposal(sig, proposal))
     assert ok is True
-    assert sig.published[0][1]["was_already_installed"] is True
+    notif = next(
+        p for _, p in sig.published if p.get("trigger") == "assistant_proposal"
+    )
+    assert notif["was_already_installed"] is True
+    # B4 (044 O1) loop-guard: an idempotent re-install must NOT re-trigger a
+    # continuation (else a re-approve of an installed pack loops forever).
+    assert not any(
+        p.get("trigger") == "infuse_continuation" for _, p in sig.published
+    )
+
+
+# ---------------------------------------------------------------------------
+# B4 (proposal 044 O1) — infuse-continuation: finish the loop after install
+# ---------------------------------------------------------------------------
+
+
+def test_genuine_install_continuation_carries_goal_and_auto_mode():
+    """On a genuine first install the continuation TASK_ASSIGN restates the
+    original goal, runs under AUTO (confirm-once-then-drive), and is tagged so
+    it can't be mistaken for a fresh operator task."""
+    proposal = _make_infuse_proposal(goal_text="research multiagent systems")
+    sig = _FakeSignaling()
+    fake_install = type("InstallResult", (), {
+        "entry": type("E", (), {"name": "@acc/research-roles", "version": "1.1.0"})(),
+        "install_path": "/x", "was_already_installed": False,
+    })()
+    fake_result = type("FetchResult", (), {"install": fake_install})()
+    with patch("acc.pkg.fetch.fetch_and_install_closure", return_value=fake_result):
+        ok = _run(dispatch_approved_proposal(sig, proposal))
+    assert ok is True
+    cont = next(
+        p for _, p in sig.published if p.get("trigger") == "infuse_continuation"
+    )
+    assert cont["operating_mode"] == "AUTO"
+    assert cont["_continuation_of"] == proposal.proposal_id
+    assert cont["_infuse_completed"] == {"name": "@acc/research-roles", "version": "1.1.0"}
+    assert "research multiagent systems" in cont["content"]
+    assert "do not propose infusing it again" in cont["content"].lower()
+
+
+def test_goal_text_roundtrips():
+    p = AssistantProposal(
+        kind=PROPOSAL_INFUSE,
+        params={"name": "@acc/x", "constraint": "^1.0"},
+        goal_text="do the thing",
+    )
+    assert AssistantProposal.from_payload(p.to_payload()).goal_text == "do the thing"
 
 
 def test_dispatch_empty_constraint_defaults_to_match_any():
