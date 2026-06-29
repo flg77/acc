@@ -15,6 +15,10 @@ import {
   fetchFrameworks,
   fetchProposals,
   fetchGoldenPrompts,
+  fetchGoldenDetail,
+  fetchGoldenHistory,
+  runGolden,
+  promoteGolden,
   fetchModels,
   runGapScan,
   decideProposal,
@@ -31,7 +35,7 @@ import {
   putRoleMd,
   createRole,
 } from "./api/client";
-import type { MarketRow, CatalogRow, RoleRow } from "./api/client";
+import type { MarketRow, CatalogRow, RoleRow, GoldenRun } from "./api/client";
 
 const obj = (v: unknown): Record<string, any> =>
   v && typeof v === "object" ? (v as Record<string, any>) : {};
@@ -417,27 +421,185 @@ export function Configuration() {
   );
 }
 
-// 9 ── Diagnostics — golden-prompt suite (read-only list) ─────────────────
-//      Mirrors the acc-tui Diagnostics pane (PR-N/Y).  Running a prompt
-//      against the live stack happens via the Prompt screen / TUI; here
-//      we surface the suite (shipped + writable store + attached dirs).
+// 9 ── Diagnostics — golden-prompt EVAL-HISTORY (proposal G WebGUI parity) ──
+//      Mirrors the acc-tui Diagnostics pane: pick a golden prompt, run it
+//      against the live collective, and see the per-prompt run history
+//      enriched (tokens / compliance / model self-verdict) with an MLflow
+//      trace deep-link (DC only), the deterministic definition-of-good, and a
+//      → Eval-pack promotion.  Reuses the shipped runtime via the backend.
+function fmtRunTs(ts: number): string {
+  if (!ts) return "—";
+  try {
+    return new Date(ts * 1000).toLocaleString();
+  } catch {
+    return "—";
+  }
+}
+function fmtCompliance(c: number): string {
+  return c != null && c >= 0 ? c.toFixed(2) : "—";
+}
+
 export function Diagnostics() {
+  const { collectiveId } = useSnapshot();
   const [prompts, setPrompts] = useState<any[]>([]);
+  const [sel, setSel] = useState<string>("");
+  const [dog, setDog] = useState<string[]>([]);
+  const [runs, setRuns] = useState<GoldenRun[]>([]);
+  const [versions, setVersions] = useState<number[]>([]);
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
   useEffect(() => {
     fetchGoldenPrompts()
       .then((r) => setPrompts(r.prompts))
       .catch((e) => setErr(String(e)));
   }, []);
+
+  const loadHistory = (name: string) =>
+    fetchGoldenHistory(name)
+      .then((r) => {
+        setRuns(r.runs);
+        setVersions(r.versions);
+      })
+      .catch((e) => setErr(String(e)));
+
+  const select = async (name: string) => {
+    setSel(name);
+    setStatus("");
+    setErr("");
+    try {
+      const d = await fetchGoldenDetail(name);
+      setDog(d.definition_of_good);
+    } catch (e) {
+      setErr(String(e));
+    }
+    await loadHistory(name);
+  };
+
+  const run = async () => {
+    if (!sel) return;
+    setBusy(true);
+    setStatus(`▶ running ${sel} on ${collectiveId}…`);
+    try {
+      const r = await runGolden(sel, collectiveId);
+      setStatus(
+        `◀ ${r.passed ? "PASS" : "FAIL"} · ${r.elapsed_ms}ms · ` +
+          `tokens ${r.input_tokens || 0} · compliance ${fmtCompliance(
+            r.compliance_health_score,
+          )}${r.eval_verdict ? ` · ${r.eval_verdict}` : ""}`,
+      );
+      await loadHistory(sel);
+    } catch (e) {
+      setStatus(`✗ ${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const promote = async () => {
+    if (!sel) return;
+    try {
+      const r = await promoteGolden(sel);
+      setStatus(`✓ promoted to ${r.role} eval pack — ${r.path}`);
+    } catch (e) {
+      setStatus(`✗ ${e}`);
+    }
+  };
+
   return (
-    <Card title="Golden prompts">
-      {err && <p className="status">{err}</p>}
-      {prompts.length === 0 && !err && <Empty what="golden prompts" />}
-      <DataTable
-        columns={["name", "target_role", "operating_mode", "description"]}
-        rows={prompts}
-      />
-    </Card>
+    <div className="diagnostics">
+      <Card title="Golden prompts">
+        {err && <p className="status">{err}</p>}
+        {prompts.length === 0 && !err && <Empty what="golden prompts" />}
+        <ul className="select-list">
+          {prompts.map((p) => (
+            <li key={p.name}>
+              <button
+                style={{ fontWeight: p.name === sel ? 700 : 400 }}
+                onClick={() => select(p.name)}
+              >
+                {p.name}{" "}
+                <span style={{ opacity: 0.6 }}>{p.target_role}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Card>
+
+      <Card title={sel ? `Diagnostics — ${sel}` : "Diagnostics"}>
+        {!sel && <Empty what="a selected prompt" />}
+        {sel && (
+          <>
+            <div className="actions">
+              <button onClick={run} disabled={busy}>
+                ▶ Run
+              </button>
+              <button onClick={promote} disabled={busy}>
+                → Eval pack
+              </button>
+              {versions.length > 0 && (
+                <span style={{ opacity: 0.6 }}>
+                  versions: {versions.length}
+                </span>
+              )}
+            </div>
+            {status && <p className="status">{status}</p>}
+
+            <h4>Definition of good</h4>
+            <ul>
+              {dog.map((c, i) => (
+                <li key={i}>{c}</li>
+              ))}
+            </ul>
+
+            <h4>Run history</h4>
+            {runs.length === 0 ? (
+              <Empty what="runs" />
+            ) : (
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>when</th>
+                    <th>result</th>
+                    <th>latency</th>
+                    <th>tokens</th>
+                    <th>compliance</th>
+                    <th>verdict</th>
+                    <th>trace</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map((r) => (
+                    <tr key={r.run_id}>
+                      <td>{fmtRunTs(r.run_ts)}</td>
+                      <td>{r.passed ? "PASS" : "FAIL"}</td>
+                      <td>{r.elapsed_ms}ms</td>
+                      <td>{r.input_tokens || "—"}</td>
+                      <td>{fmtCompliance(r.compliance_health_score)}</td>
+                      <td>{r.eval_verdict || "—"}</td>
+                      <td>
+                        {r.mlflow_trace_url ? (
+                          <a
+                            href={r.mlflow_trace_url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            MLflow ↗
+                          </a>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </>
+        )}
+      </Card>
+    </div>
   );
 }
 
