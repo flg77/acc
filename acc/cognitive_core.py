@@ -1355,6 +1355,10 @@ class CognitiveCore:
                             task_payload.get("operator_id", "default")
                             or "default"
                         )
+                        # B4 (proposal 044 O1) — carry the originating request
+                        # text so an infuse-continuation can restate the goal
+                        # to the Assistant without a fresh prompt.
+                        p.goal_text = str(user_content or "")
                         action = decide_dispatch(mode, p.kind)
                         if action == DISPATCH_PLAN:
                             proposals_plan.append(

@@ -128,6 +128,10 @@ class AssistantProposal:
         agent_id:     Assistant agent emitting the proposal.
         task_id:      Prompt that produced the proposal (for credit-share
                       in SIP-P2's rail 1).
+        goal_text:    The originating operator request text (B4 / proposal
+                      044 O1) — carried so an infuse-continuation re-trigger
+                      can restate the goal to the Assistant without a fresh
+                      prompt or a turn-memory lookup.
     """
 
     proposal_id: str = ""
@@ -141,6 +145,7 @@ class AssistantProposal:
     collective_id: str = ""
     agent_id: str = ""
     task_id: str = ""
+    goal_text: str = ""
 
     def __post_init__(self) -> None:
         if not self.proposal_id:
@@ -160,7 +165,7 @@ class AssistantProposal:
         valid = {k: raw.get(k) for k in (
             "proposal_id", "kind", "params", "risk_level", "summary",
             "rationale", "operator_id", "proposed_at_ts",
-            "collective_id", "agent_id", "task_id",
+            "collective_id", "agent_id", "task_id", "goal_text",
         ) if k in raw}
         return cls(**valid)
 
@@ -594,7 +599,69 @@ async def _dispatch_infuse(signaling, cid: str, p: AssistantProposal) -> bool:
         payload["name"], payload["version"],
         " (idempotent)" if payload["was_already_installed"] else "",
     )
+    # B4 (proposal 044 O1) — finish the loop: on a GENUINE first install,
+    # re-trigger the Assistant so it CONTINUES the original goal (spawn the
+    # new role → route the task → summarise) without a fresh operator prompt.
+    # Gated on ``not already_satisfied`` so a re-approve / idempotent re-run of
+    # an already-installed pack can NEVER loop back into another continuation.
+    if not result.already_satisfied:
+        await _publish_infuse_continuation(signaling, cid, p, result)
     return True
+
+
+async def _publish_infuse_continuation(signaling, cid: str, p: AssistantProposal, result) -> None:
+    """B4 (proposal 044 O1) — re-trigger the Assistant after a successful infuse.
+
+    Publishes a synthetic ``TASK_ASSIGN`` targeted at the Assistant (which
+    ``is_wake_trigger`` wakes on ``target_role == "assistant"``), carrying the
+    original ``task_id`` + ``goal_text`` so it resumes the goal with context.
+    Runs the continuation under AUTO — the operator already confirmed the
+    infuse (the GATE CARD), so 044's "confirm-once-then-drive" says the
+    follow-on spawn/route should auto-execute.  Tagged ``trigger`` /
+    ``_continuation_of`` so it's never mistaken for a fresh operator task; the
+    prompt explicitly forbids re-infusing, and the ``already_satisfied`` gate in
+    the caller is the hard loop-breaker.  Best-effort: a bus failure logs and
+    leaves the install done (the operator can still drive manually)."""
+    from acc.signals import SIG_TASK_ASSIGN, subject_task_assign  # noqa: PLC0415
+
+    pkg = f"{result.name}@{result.version}"
+    prompt = (
+        f"[ACC CONTINUATION] The role pack {pkg} you proposed is now INSTALLED. "
+        f"Do NOT propose infusing it again. Continue the original goal to a real "
+        f"outcome: bring the needed role online with "
+        f"[PROPOSE_SPAWN:<role>:<cluster>:why], then hand the task over with "
+        f"[PROPOSE_ROUTE:<role>:why]; when the specialist replies, summarise the "
+        f"result for the user and propose the highest-value follow-ups."
+    )
+    goal = (getattr(p, "goal_text", "") or "").strip()
+    if goal:
+        prompt += f"\n\nOriginal goal: {goal}"
+    payload = {
+        "signal_type": SIG_TASK_ASSIGN,
+        "trigger": "infuse_continuation",
+        "target_role": "assistant",
+        "task_id": p.task_id or p.proposal_id,
+        "operator_id": p.operator_id,
+        "collective_id": cid,
+        "content": prompt,
+        # confirm-once-then-drive: the operator already approved the infuse, so
+        # the follow-on spawn/route auto-executes.
+        "operating_mode": "AUTO",
+        "_continuation_of": p.proposal_id,
+        "_infuse_completed": {"name": result.name, "version": result.version},
+        "ts": time.time(),
+    }
+    try:
+        await signaling.publish(subject_task_assign(cid), payload)
+        logger.info(
+            "assistant_proposal: infuse-continuation → assistant "
+            "(goal task_id=%s, pkg=%s)", payload["task_id"], pkg,
+        )
+    except Exception:  # noqa: BLE001 — install already succeeded; drive manually
+        logger.exception(
+            "assistant_proposal: infuse-continuation publish failed for %s",
+            p.proposal_id,
+        )
 
 
 async def _dispatch_route(signaling, cid: str, p: AssistantProposal) -> bool:

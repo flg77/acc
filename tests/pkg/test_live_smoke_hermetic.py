@@ -280,8 +280,14 @@ def test_assistant_propose_infuse_dispatches_via_same_seam(hermetic_chain):
     assert ok is True
     # Registry now contains the installed package
     assert Registry().find("@acc/movable-a", "0.1.0") is not None
-    # Bus notification carried the install result
-    assert _FakeSig.published[-1][1]["name"] == "@acc/movable-a"
+    # Bus notification carried the install result (B4 044 O1 adds a second
+    # publish — the infuse-continuation TASK_ASSIGN — so match the notification
+    # by its trigger rather than assuming it's the last publish).
+    notif = next(
+        p for _, p in _FakeSig.published
+        if p.get("trigger") == "assistant_proposal"
+    )
+    assert notif["name"] == "@acc/movable-a"
 
 
 # ---------------------------------------------------------------------------
