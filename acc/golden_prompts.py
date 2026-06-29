@@ -142,6 +142,13 @@ class GoldenResult(BaseModel):
     """Set when the runner couldn't even reach the reply phase (NATS
     timeout, channel exception).  Distinct from a reply that arrived
     but failed assertions (which lands in ``failures``)."""
+    task_id: str = ""
+    """The NATS task id this run dispatched (proposal G).  The universal
+    join key: tokens / compliance / invocations / the OTel trace are all
+    keyed off it, so persisting it on the run record is what lets a later
+    history view enrich the run with those signals."""
+    agent_id: str = ""
+    """The agent that executed the task, when the reply carries it."""
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +317,7 @@ async def run_one(
 
     channel = TUIPromptChannel(observer, collective_id=collective_id)
     started = time.time()
+    task_id = ""
     try:
         task_id = await channel.send(
             prompt=prompt.prompt,
@@ -324,6 +332,7 @@ async def run_one(
             passed=False,
             elapsed_ms=elapsed_ms,
             error=str(exc),
+            task_id=task_id,
         )
     finally:
         try:
@@ -340,7 +349,12 @@ async def run_one(
         "block_reason": getattr(reply, "block_reason", ""),
         "invocations": getattr(reply, "invocations", []) or [],
     }
-    return evaluate(prompt, reply_dict, elapsed_ms)
+    result = evaluate(prompt, reply_dict, elapsed_ms)
+    # Proposal G — stamp the join keys so the run can later be enriched
+    # (tokens / compliance / trace) by task_id.
+    result.task_id = task_id
+    result.agent_id = str(getattr(reply, "agent_id", "") or "")
+    return result
 
 
 async def run_all(
@@ -698,7 +712,14 @@ def append_save_history(name: str, content: str, *, action: str = "save") -> int
             fh.write(_json.dumps(row, ensure_ascii=False) + "\n")
     except OSError as exc:
         logger.warning("golden_prompts: save-history append failed: %s", exc)
-    return version_count(name)
+    n = version_count(name)
+    # Proposal G — keep the exact saved content as a restorable version blob
+    # (versions/<slug>/<n>.yaml) alongside the hash-log row.
+    try:
+        save_version_blob(name, content, n)
+    except OSError as exc:
+        logger.warning("golden_prompts: version blob write failed: %s", exc)
+    return n
 
 
 def export_store(dest: Path | str, *, root: Optional[Path] = None) -> int:
@@ -727,6 +748,135 @@ def import_store(src: Path | str, *, root: Optional[Path] = None) -> int:
     for p in prompts:
         save_prompt(p, Path(root))
     return len(prompts)
+
+
+# ---------------------------------------------------------------------------
+# Proposal G P1 — per-run execution history + version-controlled prompts
+# ---------------------------------------------------------------------------
+#
+# A golden run is no longer ephemeral: each execution appends a record to
+# run_history.jsonl carrying the ``task_id`` join key, so the Diagnostics
+# pane can show the outcomes of *repeated* runs and (P2) enrich each by
+# task_id with tokens / compliance / trace.  Saved prompts keep restorable
+# version blobs alongside the v0.5.24 save-history log.
+
+
+def run_history_path() -> Path:
+    """The append-only per-run execution history (proposal G)."""
+    return writable_root() / "run_history.jsonl"
+
+
+def append_run_record(
+    result: GoldenResult,
+    *,
+    collective_id: str = "",
+    run_id: str = "",
+    run_ts: float = 0.0,
+) -> str:
+    """Append one execution record for *result* and return its ``run_id``.
+
+    Carries the join keys (``task_id`` / ``agent_id``) so a run can later be
+    enriched by task_id.  Best-effort: a write failure logs, never raises."""
+    import json as _json  # noqa: PLC0415
+    import time as _time  # noqa: PLC0415
+    import uuid as _uuid  # noqa: PLC0415
+
+    rid = run_id or _uuid.uuid4().hex
+    row = {
+        "run_id": rid,
+        "prompt_name": result.name,
+        "run_ts": run_ts or _time.time(),
+        "task_id": result.task_id,
+        "agent_id": result.agent_id,
+        "collective_id": collective_id,
+        "passed": result.passed,
+        "elapsed_ms": result.elapsed_ms,
+        "failures": list(result.failures),
+        "error": result.error,
+        "output_excerpt": result.output_excerpt,
+    }
+    p = run_history_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("golden_prompts: run-history append failed: %s", exc)
+    return rid
+
+
+def read_run_history(
+    name: Optional[str] = None, *, limit: Optional[int] = None,
+) -> list[dict]:
+    """Read run_history.jsonl **newest-first**.  Filter to *name* when given;
+    cap at *limit*.  Tolerant: skips malformed rows, ``[]`` when absent."""
+    import json as _json  # noqa: PLC0415
+
+    rows: list[dict] = []
+    try:
+        text = run_history_path().read_text(encoding="utf-8")
+    except OSError:
+        return []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = _json.loads(line)
+        except ValueError:
+            continue
+        if name is not None and row.get("prompt_name") != name:
+            continue
+        rows.append(row)
+    rows.reverse()
+    if limit is not None:
+        rows = rows[:limit]
+    return rows
+
+
+def version_dir(name: str) -> Path:
+    """Directory holding restorable saved versions of prompt *name*."""
+    return writable_root() / "versions" / _slugify(name)
+
+
+def save_version_blob(name: str, content: str, version: int) -> Path:
+    """Persist the exact saved content as ``versions/<slug>/<n>.yaml`` so a
+    prior version can be diffed/restored (proposal G)."""
+    d = version_dir(name)
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"{version}.yaml"
+    p.write_text(content, encoding="utf-8")
+    return p
+
+
+def list_versions(name: str) -> list[int]:
+    """Sorted version numbers available for *name* (``[]`` when none)."""
+    d = version_dir(name)
+    if not d.is_dir():
+        return []
+    out: list[int] = []
+    for f in d.glob("*.yaml"):
+        try:
+            out.append(int(f.stem))
+        except ValueError:
+            continue
+    return sorted(out)
+
+
+def read_version(name: str, version: int) -> str:
+    """The stored content of a specific saved version (raises if absent)."""
+    return (version_dir(name) / f"{version}.yaml").read_text(encoding="utf-8")
+
+
+def diff_versions(name: str, a: int, b: int) -> str:
+    """Unified diff between two saved versions of *name* (``a`` → ``b``)."""
+    import difflib  # noqa: PLC0415
+
+    left = read_version(name, a).splitlines(keepends=True)
+    right = read_version(name, b).splitlines(keepends=True)
+    return "".join(difflib.unified_diff(
+        left, right, fromfile=f"{name} v{a}", tofile=f"{name} v{b}",
+    ))
 
 
 def format_summary(results: list[GoldenResult]) -> str:
