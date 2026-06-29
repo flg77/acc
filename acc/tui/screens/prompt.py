@@ -268,6 +268,15 @@ class PromptScreen(Screen):
         width: 1fr;
     }
 
+    PromptScreen #prompt-gate-cards {
+        height: auto;
+        max-height: 12;
+        margin: 0 1;
+        padding: 0 1;
+        border: round $warning;
+        background: $surface;
+        display: none;
+    }
     PromptScreen #prompt-cluster-panel {
         height: auto;
         max-height: 14;
@@ -330,6 +339,10 @@ class PromptScreen(Screen):
         super().__init__(**kwargs)
         # Track in-flight workers so screen unmount cancels them.
         self._workers: set[asyncio.Task] = set()
+        # Proposal 044 (B8) — pending GATE CARDs (parsed from the snapshot's
+        # oversight_pending_items); drives /allow, /disallow + the B14
+        # affirmation path. Refreshed every snapshot tick.
+        self._pending_gates: list = []
         # PR-U2b — selected trusted workspace, as a path RELATIVE to the
         # workspace mount root (e.g. "myproject").  None = no workspace
         # selected; agents then have no file-write target for the task.
@@ -420,6 +433,11 @@ class PromptScreen(Screen):
             # Populated at mount via load_operator_mode(); dev is shown
             # loudly because it relaxes the signing/auth/secret floors.
             yield Static(id="prompt-mode-badge")
+
+        # Proposal 044 (B8) — inline GATE CARD region. Hidden until a gate is
+        # pending; fed by watch_snapshot from snap.oversight_pending_items.
+        # Resolve right here: /allow [id], /disallow [id], or reply "yes".
+        yield Static("", id="prompt-gate-cards")
 
         # PR-4 — collapsible cluster topology panel.  Rendered above
         # the transcript so the operator can see active sub-agent
@@ -617,6 +635,39 @@ class PromptScreen(Screen):
             panel.render_now()
         except Exception:
             logger.exception("prompt: cluster panel render failed")
+        # Proposal 044 (B8) — refresh the inline GATE CARD region from the same
+        # oversight_pending_items the Compliance pane reads.
+        self._refresh_gate_cards(snap)
+
+    def _refresh_gate_cards(self, snap: "CollectiveSnapshot | None") -> None:
+        """Update the inline GATE CARD region (proposal 044 B8).
+
+        Reads ``snap.oversight_pending_items`` — the SAME arbiter-HEARTBEAT
+        source the Compliance pane uses — turns it into render-ready cards, and
+        stashes them on ``self._pending_gates`` so ``/allow`` / ``/disallow``
+        and the B14 affirmation path can resolve them.  Best-effort: any failure
+        leaves the region as-is (it never blocks a snapshot tick)."""
+        from acc.tui.gate_cards import (  # noqa: PLC0415
+            pending_gates,
+            render_gate_cards,
+        )
+        try:
+            widget = self.query_one("#prompt-gate-cards", Static)
+        except Exception:  # not mounted yet
+            return
+        items = (
+            list(getattr(snap, "oversight_pending_items", []) or [])
+            if snap else []
+        )
+        try:
+            target = str(self.query_one("#select-target-role", Select).value)
+        except Exception:  # noqa: BLE001
+            target = ""
+        cards = pending_gates(items, target_role=target)
+        self._pending_gates = cards
+        markup = render_gate_cards(cards)
+        widget.update(markup)
+        widget.display = bool(markup)
 
     # ------------------------------------------------------------------
     # Actions
@@ -863,6 +914,27 @@ class PromptScreen(Screen):
         if prompt.startswith("/"):
             self._dispatch_slash(prompt)
             self.query_one("#prompt-textarea", TextArea).clear()
+            return
+
+        # Proposal 044 (B14) — natural-language gate approval. When a gate is
+        # pending and the operator just says "yes"/"confirmed"/"do it", treat it
+        # as approving that gate (the 29.6 case: they typed "confirmed" and
+        # nothing consumed it). Only auto-resolves when EXACTLY one gate is
+        # pending; with several, point them at /allow <id> to disambiguate.
+        from acc.tui.gate_cards import is_affirmation  # noqa: PLC0415
+        _pending = list(getattr(self, "_pending_gates", []) or [])
+        if _pending and is_affirmation(prompt):
+            self.query_one("#prompt-textarea", TextArea).clear()
+            if len(_pending) == 1:
+                self._resolve_gate(_pending[0].oversight_id, approve=True)
+            else:
+                ids = ", ".join(g.oversight_id[:12] for g in _pending)
+                self._append_history({
+                    "role": "system", "task_id": "",
+                    "text": (f"{len(_pending)} gates pending — say which: "
+                             f"/allow <id> or /disallow <id>  (ids: {ids})"),
+                    "ts": time.time(), "blocked": False,
+                })
             return
 
         # Proposal 039 (PR-5) — pinned goal: prepend the objective so the agent
@@ -1130,6 +1202,35 @@ class PromptScreen(Screen):
             "blocked": False,
         })
 
+    def _resolve_gate(self, oversight_id: str, *, approve: bool) -> None:
+        """Resolve a pending gate inline (proposal 044 B8).
+
+        Posts the SAME ``_OversightAction`` message the Compliance pane uses, so
+        the existing app-level publisher + arbiter dispatch path handle it — the
+        GATE CARD is just a second, can't-miss surface for the oversight queue.
+        Audit-logged in the transcript; Compliance keeps the durable record."""
+        from acc.tui.screens.compliance import _OversightAction  # noqa: PLC0415
+        verb = "approve" if approve else "reject"
+        try:
+            self.app.post_message(
+                _OversightAction(action=verb, oversight_id=oversight_id)
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"gate {verb} failed: {exc}",
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": (
+                f"{'✅ allowed' if approve else '🚫 disallowed'} gate "
+                f"{oversight_id[:12]} — published OVERSIGHT_DECISION ({verb})"
+            ),
+            "ts": time.time(), "blocked": False,
+        })
+
     def _render_models(self, show_all: bool = False) -> None:
         """Proposal 039 (PR-4) + B6 (044) — /model: show the resolved model for
         the currently-selected Target role (id, backend, base_url, source);
@@ -1312,6 +1413,29 @@ class PromptScreen(Screen):
             return
         if intent.kind == _sc.KIND_UNKNOWN:
             _system(intent.error, blocked=True)
+            return
+
+        # Proposal 044 (B8) — resolve a pending gate inline (the GATE CARD).
+        if intent.kind in (_sc.KIND_GATE_ALLOW, _sc.KIND_GATE_DISALLOW):
+            approve = intent.kind == _sc.KIND_GATE_ALLOW
+            verb = "allow" if approve else "disallow"
+            pending = list(getattr(self, "_pending_gates", []) or [])
+            oid = (intent.args.get("oversight_id") or "").strip()
+            if oid:
+                match = [g for g in pending if g.oversight_id.startswith(oid)]
+                if len(match) == 1:
+                    oid = match[0].oversight_id
+            elif len(pending) == 1:
+                oid = pending[0].oversight_id
+            elif not pending:
+                _system("no pending gates to act on.")
+                return
+            else:
+                ids = ", ".join(g.oversight_id[:12] for g in pending)
+                _system(f"{len(pending)} gates pending — specify which: "
+                        f"/{verb} <id>  (ids: {ids})", blocked=True)
+                return
+            self._resolve_gate(oid, approve=approve)
             return
 
         if intent.kind == _sc.KIND_CANCEL:

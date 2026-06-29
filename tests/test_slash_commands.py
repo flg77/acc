@@ -279,6 +279,16 @@ def test_pr4_catalog_model_parse():
     assert {"catalog", "model"} <= {c.name for c in sc.COMMANDS}
 
 
+def test_b8_gate_allow_disallow_parse():
+    # Proposal 044 (B8) — inline gate resolution.
+    assert sc.parse("/allow").kind == sc.KIND_GATE_ALLOW
+    assert sc.parse("/allow").args == {"oversight_id": ""}
+    assert sc.parse("/allow ov-7c91a").args == {"oversight_id": "ov-7c91a"}
+    assert sc.parse("/disallow").kind == sc.KIND_GATE_DISALLOW
+    assert sc.parse("/disallow ov-7c91a").args == {"oversight_id": "ov-7c91a"}
+    assert {"allow", "disallow"} <= {c.name for c in sc.COMMANDS}
+
+
 def test_b6_model_all_flag_parse():
     # B6 (044) — /model shows the Target role's model; /model --all the table.
     assert sc.parse("/model").args == {"all": False}

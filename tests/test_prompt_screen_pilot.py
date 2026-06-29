@@ -1200,6 +1200,121 @@ async def test_record_sent_prompt_dedups_and_preserves_multiline_nav():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Proposal 044 (B8) — inline GATE CARD (governance resolution in the Prompt pane)
+# ---------------------------------------------------------------------------
+
+
+def _pending_snap(oid="ov-abc123def456", role="assistant"):
+    from types import SimpleNamespace
+    return SimpleNamespace(
+        cluster_topology={},
+        oversight_pending_items=[{
+            "oversight_id": oid,
+            "agent_role": role,
+            "kind": "PROPOSE_INFUSE",
+            "package": "@acc/research-roles@^1.1",
+            "status": "PENDING",
+        }],
+    )
+
+
+def _capture_oversight_actions(screen):
+    """Wrap app.post_message to record _OversightAction posts."""
+    posted: list = []
+    real = screen.app.post_message
+
+    def cap(msg):
+        if type(msg).__name__ == "_OversightAction":
+            posted.append(msg)
+        return real(msg)
+
+    screen.app.post_message = cap  # type: ignore[assignment]
+    return posted
+
+
+@pytest.mark.asyncio
+async def test_gate_card_renders_and_allow_posts_oversight_action():
+    """A PENDING infuse in oversight_pending_items renders the inline GATE
+    CARD and ``/allow`` posts the SAME _OversightAction the Compliance pane
+    uses (the 29.6 fix — the gate is now resolvable from the Prompt window)."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        posted = _capture_oversight_actions(screen)
+
+        screen._refresh_gate_cards(_pending_snap())
+        await pilot.pause()
+
+        assert len(screen._pending_gates) == 1
+        assert screen.query_one("#prompt-gate-cards", Static).display is True
+
+        screen._dispatch_slash("/allow")          # no id → the single gate
+        await pilot.pause()
+
+        assert posted, "no _OversightAction posted"
+        assert posted[0].action == "approve"
+        assert posted[0].oversight_id == "ov-abc123def456"
+
+
+@pytest.mark.asyncio
+async def test_disallow_posts_reject():
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        posted = _capture_oversight_actions(screen)
+        screen._refresh_gate_cards(_pending_snap())
+        await pilot.pause()
+        screen._dispatch_slash("/disallow ov-abc")   # prefix match
+        await pilot.pause()
+        assert posted and posted[0].action == "reject"
+        assert posted[0].oversight_id == "ov-abc123def456"
+
+
+@pytest.mark.asyncio
+async def test_natural_language_yes_resolves_pending_gate():
+    """B14 — when a single gate is pending, replying "confirmed" approves it
+    (the exact 29.6 case: the operator typed "confirmed" and nothing happened).
+    No TASK_ASSIGN is published — the affirmation is consumed by the gate."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        posted = _capture_oversight_actions(screen)
+        screen._refresh_gate_cards(_pending_snap())
+        await pilot.pause()
+
+        screen.query_one("#prompt-textarea", TextArea).text = "confirmed"
+        screen.action_send()
+        for _ in range(4):
+            await pilot.pause()
+
+        assert posted and posted[0].action == "approve"
+        # The affirmation must NOT have been dispatched as a task.
+        assert not any(s.endswith(".task.assign") for s, _ in app.observer.published)
+
+
+@pytest.mark.asyncio
+async def test_no_gate_means_affirmation_is_a_normal_prompt():
+    """With no pending gate, "yes" is just a prompt (publishes TASK_ASSIGN) —
+    the affirmation capture only triggers when a gate is actually pending."""
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._refresh_gate_cards(None)   # no gates
+        screen.query_one("#prompt-textarea", TextArea).text = "yes"
+        screen.action_send()
+        for _ in range(6):
+            await pilot.pause()
+            if app.observer.published:
+                break
+        assert app.observer.published, "no gate pending → 'yes' should send normally"
+        assert app.observer.published[0][0].endswith(".task.assign")
+
+
 @pytest.mark.asyncio
 async def test_slash_command_echoed_into_trace():
     """Running a slash/palette command appends a 'command' trace entry (the
