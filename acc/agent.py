@@ -2119,6 +2119,16 @@ class Agent:
             # If the underlying model is frozen, fall back to direct attr.
             object.__setattr__(self.config.agent, "role", str(role_name) if role_name else "worker")
 
+        # 2b. B4 / O3-runtime (proposal 044) — re-resolve this role's model.
+        # A dormant worker booted on the global ACC_LLM_* default; the B6
+        # overlay only runs at boot from ACC_AGENT_ROLE, so without this a
+        # promoted specialist keeps the default (3B) model and the routed work
+        # the Assistant just handed it runs on the wrong LLM — defeating the
+        # finished loop.  Done BEFORE the CognitiveCore is built so the new
+        # core (step 3) picks up the swapped backend; re-promotion swaps the
+        # live core's llm too.
+        self._reresolve_role_model(self.config.agent.role)
+
         # 3. build CognitiveCore if not present (dormant boot path).
         if self._cognitive_core is None:
             peer_collectives = list(self.config.agent.peer_collectives)
@@ -2165,6 +2175,49 @@ class Agent:
             "role_assign: promoted (agent_id=%s new_role=%s cluster_id=%r purpose=%r)",
             self.agent_id, self.config.agent.role, cluster_id, purpose,
         )
+
+    def _reresolve_role_model(self, role: str) -> None:
+        """Re-bind a (typically just-promoted) agent to its ``role_models``
+        model and hot-swap the LLM backend (proposal 044, B4 / O3-runtime).
+
+        Resolves the model with the locked precedence (collective override via
+        ACC_AGENT_MODEL_ID > models.yaml role_models[role] > the global default
+        already in env), overlays the resolved model's env, and rebuilds the
+        LLM via the same ``load_config`` → ``build_llm_backend`` path
+        ``config.reload`` uses.  No-op when the role is unmapped, the registry
+        is empty, or the agent is already on the resolved model.  Best-effort:
+        any failure logs and keeps the current backend."""
+        try:
+            from acc.models import (  # noqa: PLC0415
+                model_env_for_id,
+                resolve_role_model_id,
+            )
+            override = (os.environ.get("ACC_AGENT_MODEL_ID") or "").strip()
+            model_id = resolve_role_model_id(role, override_model_id=override)
+            if not model_id:
+                return  # unmapped → keep the global default
+            env = model_env_for_id(model_id)
+            if not env or all(os.environ.get(k) == v for k, v in env.items()):
+                return  # unknown model_id, or already on it → nothing to do
+            for k, v in env.items():
+                os.environ[k] = v
+            new_cfg = load_config(self._config_path)
+            new_llm = build_llm_backend(new_cfg)
+            self.backends.llm = new_llm
+            self.config = new_cfg
+            try:
+                self._cognitive_core.llm = new_llm  # live core (re-promotion)
+            except AttributeError:
+                pass  # core not built yet — step 3 will use the new backend
+            logger.info(
+                "role_assign: re-resolved model for role=%s → %s (%s)",
+                role, model_id, ", ".join(sorted(env)),
+            )
+        except Exception:
+            logger.exception(
+                "role_assign: model re-resolve failed for role=%s "
+                "(keeping current backend)", role,
+            )
 
     # ------------------------------------------------------------------
     # Worker-pool reconcile — arbiter side (PR-M, J-2)

@@ -414,3 +414,86 @@ def test_signal_constant_and_subject_helper_present():
     from acc.signals import SIG_ROLE_ASSIGN, subject_role_assign
     assert SIG_ROLE_ASSIGN == "ROLE_ASSIGN"
     assert subject_role_assign("sol-test") == "acc.sol-test.role_assign"
+
+
+# ---------------------------------------------------------------------------
+# B4 / O3-runtime (proposal 044) — promotion re-resolves the role's model
+# ---------------------------------------------------------------------------
+
+_REG_WITH_ROLE = """\
+models:
+  - model_id: maas-qwen3-14b
+    backend: openai_compat
+    model: qwen3-14b
+    base_url: https://maas/v1
+    api_key_env: MAAS_API_KEY
+role_models:
+  reviewer: maas-qwen3-14b
+"""
+
+
+class TestReresolveRoleModel:
+    def _registry(self, tmp_path, monkeypatch):
+        p = tmp_path / "models.yaml"
+        p.write_text(_REG_WITH_ROLE, encoding="utf-8")
+        monkeypatch.setenv("ACC_MODELS_PATH", str(p))
+        # Track the keys the overlay writes so monkeypatch restores them.
+        for k in ("ACC_LLM_BACKEND", "ACC_LLM_MODEL", "ACC_LLM_BASE_URL",
+                  "ACC_LLM_API_KEY_ENV"):
+            monkeypatch.setenv(k, "_baseline_")
+        monkeypatch.delenv("ACC_AGENT_MODEL_ID", raising=False)
+
+    def test_promotion_reresolves_mapped_model(self, tmp_path, monkeypatch):
+        """A promoted-from-dormant role bound in role_models gets its model
+        re-resolved + the LLM hot-swapped (so it isn't stuck on the global
+        3B default)."""
+        import os
+        import acc.agent as agent_mod
+        self._registry(tmp_path, monkeypatch)
+        agent = _make_agent_stub()
+        agent._config_path = "acc-config.yaml"
+        sentinel = MagicMock(name="rebuilt_llm")
+        monkeypatch.setattr(agent_mod, "load_config", lambda _p: agent.config)
+        monkeypatch.setattr(agent_mod, "build_llm_backend", lambda _c: sentinel)
+
+        agent._reresolve_role_model("reviewer")
+
+        assert agent.backends.llm is sentinel              # hot-swapped
+        assert os.environ["ACC_LLM_BACKEND"] == "openai_compat"
+        assert os.environ["ACC_LLM_MODEL"] == "qwen3-14b"
+        assert os.environ["ACC_LLM_API_KEY_ENV"] == "MAAS_API_KEY"
+
+    def test_unmapped_role_is_noop(self, tmp_path, monkeypatch):
+        """An unmapped role keeps the current backend and never rebuilds."""
+        import acc.agent as agent_mod
+        self._registry(tmp_path, monkeypatch)
+        agent = _make_agent_stub()
+        before = agent.backends.llm
+        calls = {"n": 0}
+        monkeypatch.setattr(
+            agent_mod, "build_llm_backend",
+            lambda _c: calls.__setitem__("n", calls["n"] + 1),
+        )
+        agent._reresolve_role_model("analyst")  # not in role_models
+        assert agent.backends.llm is before
+        assert calls["n"] == 0
+
+    def test_collective_override_wins_over_role_models(self, tmp_path, monkeypatch):
+        """ACC_AGENT_MODEL_ID (collective override) takes precedence over the
+        role_models mapping — same locked B6 precedence at promotion time."""
+        import os
+        import acc.agent as agent_mod
+        self._registry(tmp_path, monkeypatch)
+        # reviewer maps to maas-qwen3-14b, but the per-agent override pins the
+        # same registry's only other resolvable id — here reuse maas to keep
+        # the registry minimal but assert the override PATH is taken.
+        monkeypatch.setenv("ACC_AGENT_MODEL_ID", "maas-qwen3-14b")
+        agent = _make_agent_stub()
+        agent._config_path = "acc-config.yaml"
+        sentinel = MagicMock(name="rebuilt_llm")
+        monkeypatch.setattr(agent_mod, "load_config", lambda _p: agent.config)
+        monkeypatch.setattr(agent_mod, "build_llm_backend", lambda _c: sentinel)
+        # Even a role NOT in role_models resolves, because the override applies.
+        agent._reresolve_role_model("analyst")
+        assert agent.backends.llm is sentinel
+        assert os.environ["ACC_LLM_MODEL"] == "qwen3-14b"
