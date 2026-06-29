@@ -55,6 +55,10 @@ COPY acc/ /app/acc/
 
 # ── Layer 4: Default config (overridable via volume mount or env vars) ────
 COPY acc-config.yaml /app/acc-config.yaml
+# Model registry + role→model map (B6, proposal 044) — baked because agent
+# services don't mount it; acc.models reads it at boot. Override via mount or
+# ACC_MODELS_PATH.
+COPY models.yaml /app/models.yaml
 
 # ── Layer 5: App tree owned by 1001; start as root so entrypoint can chown
 #     a mounted named volume, then runuser(1) to UID 1001.

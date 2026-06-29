@@ -124,6 +124,14 @@ COPY regulatory_layer/ /app/regulatory_layer/
 # git_status, catalog_query, …) fails at runtime with SkillNotFoundError.
 COPY skills/ /app/skills/
 COPY mcps/ /app/mcps/
+# models.yaml — the model registry + role→model map (B6, proposal 044).  Like
+# skills/ + mcps/ above it is NOT mounted by the compose for agent services, so
+# it must be baked: acc.models.apply_role_model_env() reads it at boot to bind a
+# role to its mapped model.  Absent, the registry is empty, role_models never
+# applies, and the agent silently falls to the global ACC_LLM_* default (the
+# 29.6 lighthouse symptom: assistant stuck on the 3B model).  Operators can
+# still override via a volume mount at /app/models.yaml or ACC_MODELS_PATH.
+COPY models.yaml /app/models.yaml
 COPY container/production/entrypoint.sh /app/entrypoint.sh
 
 # cosign — the agent shells out to `cosign` to verify .accpkg signatures
