@@ -149,6 +149,15 @@ class GoldenResult(BaseModel):
     history view enrich the run with those signals."""
     agent_id: str = ""
     """The agent that executed the task, when the reply carries it."""
+    input_tokens: int = 0
+    """Prompt/input tokens the run consumed (proposal G P2); 0 if unreported."""
+    cache_read_tokens: int = 0
+    """Prompt-cache read tokens (proposal G P2)."""
+    compliance_health_score: float = -1.0
+    """Compliance-health score [0..1] at completion (proposal G P2).  ``-1.0``
+    = not reported (render "—", never a perfect score)."""
+    eval_verdict: str = ""
+    """The model's ``[EVAL_OUTCOME]`` self-verdict, when present (proposal G P2)."""
 
 
 # ---------------------------------------------------------------------------
@@ -350,10 +359,17 @@ async def run_one(
         "invocations": getattr(reply, "invocations", []) or [],
     }
     result = evaluate(prompt, reply_dict, elapsed_ms)
-    # Proposal G — stamp the join keys so the run can later be enriched
-    # (tokens / compliance / trace) by task_id.
+    # Proposal G — stamp the join keys + the per-task signals the reply now
+    # carries (P2: tokens / compliance / self-verdict) so the run record is
+    # self-contained for the eval-history pane.
     result.task_id = task_id
     result.agent_id = str(getattr(reply, "agent_id", "") or "")
+    result.input_tokens = int(getattr(reply, "input_tokens", 0) or 0)
+    result.cache_read_tokens = int(getattr(reply, "cache_read_tokens", 0) or 0)
+    result.compliance_health_score = float(
+        getattr(reply, "compliance_health_score", -1.0)
+    )
+    result.eval_verdict = str(getattr(reply, "eval_verdict", "") or "")
     return result
 
 
@@ -794,6 +810,11 @@ def append_run_record(
         "failures": list(result.failures),
         "error": result.error,
         "output_excerpt": result.output_excerpt,
+        # Proposal G P2 — per-run signals joined by task_id.
+        "input_tokens": result.input_tokens,
+        "cache_read_tokens": result.cache_read_tokens,
+        "compliance_health_score": result.compliance_health_score,
+        "eval_verdict": result.eval_verdict,
     }
     p = run_history_path()
     try:

@@ -193,3 +193,12 @@ class TestRedisKeyHelpers:
         coll = "gamma-99"
         assert coll in redis_role_key(coll, self.AGENT)
         assert coll in redis_collective_key(coll)
+
+
+def test_redis_task_compliance_key():
+    """Proposal G P2 — per-task compliance record key."""
+    from acc.signals import redis_task_compliance_key
+    assert (
+        redis_task_compliance_key("sol-01", "tk-123")
+        == "acc:sol-01:compliance:task:tk-123"
+    )

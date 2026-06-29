@@ -247,6 +247,12 @@ def _payload_to_response(task_id: str, data: dict) -> PromptResponse:
     invocations = data.get("invocations") or []
     if not isinstance(invocations, list):
         invocations = []
+    # Proposal G P2 — per-task token + compliance + self-verdict when the
+    # agent reported them.  compliance defaults to -1.0 ("not reported") so a
+    # missing field never reads as a perfect score.
+    eo = data.get("eval_outcome")
+    eval_verdict = str(eo.get("verdict", "") or "") if isinstance(eo, dict) else ""
+    raw_compliance = data.get("compliance_health_score")
     return PromptResponse(
         task_id=task_id,
         agent_id=str(data.get("agent_id", "")),
@@ -257,4 +263,10 @@ def _payload_to_response(task_id: str, data: dict) -> PromptResponse:
         latency_ms=float(data.get("latency_ms", 0.0) or 0.0),
         invocations=list(invocations),
         reasoning=str(data.get("reasoning", "")),
+        input_tokens=int(data.get("input_tokens", 0) or 0),
+        cache_read_tokens=int(data.get("cache_read_tokens", 0) or 0),
+        compliance_health_score=(
+            float(raw_compliance) if raw_compliance is not None else -1.0
+        ),
+        eval_verdict=eval_verdict,
     )

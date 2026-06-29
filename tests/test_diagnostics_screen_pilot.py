@@ -662,3 +662,37 @@ async def test_send_with_empty_form_sets_status_not_message():
         screen.action_send()
         assert not [m for m in posted if isinstance(m, PromptLoadMessage)]
         assert any("needs" in s.lower() for s in statuses)
+
+
+@pytest.mark.asyncio
+async def test_run_detail_shows_metrics_and_def_of_good(tmp_path, monkeypatch):
+    """Proposal G P2 — the detail panel shows the run-metrics line
+    (tokens/compliance/verdict) + the definition-of-good panel."""
+    from acc.golden_prompts import GoldenResult
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        name = next(iter(screen._prompts))
+        screen._results[name] = GoldenResult(
+            name=name, passed=True, elapsed_ms=10, task_id="tk-1",
+            input_tokens=222, cache_read_tokens=40,
+            compliance_health_score=0.88, eval_verdict="GOOD",
+        )
+        captured: list[str] = []
+        detail = screen.query_one("#diagnostics-detail", Static)
+        real = detail.update
+
+        def cap(content="", *a, **k):
+            captured.append(str(content))
+            return real(content, *a, **k)
+
+        detail.update = cap  # type: ignore[assignment]
+        screen._render_detail(name)
+        await pilot.pause()
+        joined = "\n".join(captured)
+        assert "tokens in 222" in joined
+        assert "compliance 0.88" in joined
+        assert "definition of good" in joined
+        assert "GOOD" in joined

@@ -1479,6 +1479,21 @@ class Agent:
                     }
                     for o in outcomes
                 ],
+                # Proposal G P2 — surface the per-task token + compliance
+                # numbers on the completion so the eval-history pane can show
+                # "what did this run cost / how compliant was it" without a
+                # Redis read (the TUI is NATS-only).  Sourced from the
+                # CognitiveResult stress counters; defensively defaulted.
+                "input_tokens": int(getattr(
+                    getattr(result, "stress", None), "prompt_input_tokens", 0,
+                ) or 0),
+                "cache_read_tokens": int(getattr(
+                    getattr(result, "stress", None), "cache_read_tokens", 0,
+                ) or 0),
+                "compliance_health_score": float(getattr(
+                    getattr(result, "stress", None),
+                    "compliance_health_score", 1.0,
+                ) or 0.0),
             }
             # PR-1 — echo cluster_id back when present so the cluster
             # fan-in aggregator (PR-4 TUI panel + arbiter PR-2) can
