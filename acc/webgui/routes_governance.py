@@ -20,6 +20,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from acc.webgui.auth import Principal, require_operator, require_viewer
+from acc.webgui.deps import get_hub
+from acc.webgui.observers import ObserverHub
 
 router = APIRouter(prefix="/api", tags=["governance"])
 
@@ -168,3 +170,130 @@ def proposal_decision(
     else:
         reject_proposal(proposal_id, by=by)
     return {"status": "ok", "decision": req.decision, "proposal_id": proposal_id}
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics — golden-prompt eval-history (WebGUI parity for proposal G)
+#
+# Mirrors the TUI Diagnostics pane on the RHOAI-facing surface: run a golden
+# prompt, see the per-prompt run history enriched (tokens / compliance /
+# verdict) with an MLflow trace deep-link, and promote a prompt into a role's
+# behavioral eval pack.  Reuses the shipped runtime functions verbatim —
+# ``run_one`` (which itself carries the P2 reply enrichment), ``read_run_history``,
+# ``from_golden_prompt``, ``mlflow_trace_url`` — so this is API surface, not new
+# engine code.
+# ---------------------------------------------------------------------------
+
+
+def _golden_def_of_good(g) -> list[str]:
+    """The deterministic ``expects`` criteria a golden prompt is judged by
+    (proposal G 'definition of good', layer 1)."""
+    ex = getattr(g, "expects", None)
+    crit: list[str] = []
+    if ex is not None:
+        if getattr(ex, "reply_non_empty", False):
+            crit.append("reply non-empty")
+        if getattr(ex, "blocked", False):
+            crit.append("expected blocked")
+        lat = getattr(ex, "latency_max_ms", None)
+        if lat:
+            crit.append(f"latency ≤ {lat}ms")
+        oc = list(getattr(ex, "output_contains", None) or [])
+        if oc:
+            crit.append("contains " + ", ".join(map(str, oc[:3])))
+        rx = getattr(ex, "output_matches_regex", None)
+        if rx:
+            crit.append(f"matches /{rx}/")
+        inv = list(getattr(ex, "invocations_kind_contains", None) or [])
+        inv += list(getattr(ex, "invocations_target_contains", None) or [])
+        if inv:
+            crit.append("invokes " + ", ".join(map(str, inv[:3])))
+    return crit or ["reply arrived"]
+
+
+def _find_golden(name: str):
+    from acc.golden_prompts import load_merged  # noqa: PLC0415
+    g = next((p for p in load_merged() if p.name == name), None)
+    if g is None:
+        raise HTTPException(404, f"golden prompt {name!r} not found")
+    return g
+
+
+@router.get("/diagnostics/golden/{name}", dependencies=[Depends(require_viewer)])
+def golden_detail(name: str) -> dict:
+    """One golden prompt's full definition + its 'definition of good'."""
+    g = _find_golden(name)
+    return {"prompt": g.model_dump(), "definition_of_good": _golden_def_of_good(g)}
+
+
+@router.get(
+    "/diagnostics/golden/{name}/history", dependencies=[Depends(require_viewer)],
+)
+def golden_history(name: str, limit: int = 20) -> dict:
+    """Per-prompt run history (newest-first) — each run enriched (tokens /
+    compliance / verdict) with an MLflow trace deep-link — plus saved versions."""
+    from acc.backends.mlflow_runs import mlflow_trace_url  # noqa: PLC0415
+    from acc.golden_prompts import (  # noqa: PLC0415
+        list_versions, read_run_history,
+    )
+    rows = read_run_history(name, limit=limit)
+    for r in rows:
+        r["mlflow_trace_url"] = mlflow_trace_url(r.get("task_id", "") or "")
+    return {"name": name, "runs": rows, "versions": list_versions(name)}
+
+
+class RunGoldenRequest(BaseModel):
+    collective_id: str
+    target_agent_id: str | None = None
+    timeout_s: float = 180.0
+
+
+@router.post("/diagnostics/golden/{name}/run")
+async def run_golden(
+    name: str,
+    req: RunGoldenRequest,
+    hub: ObserverHub = Depends(get_hub),
+    principal: Principal = Depends(require_operator),
+) -> dict:
+    """Run a golden prompt against the live collective and return the enriched
+    result + the MLflow trace link — the WebGUI's eval-execution path."""
+    from acc.backends.mlflow_runs import mlflow_trace_url  # noqa: PLC0415
+    from acc.golden_prompts import append_run_record, run_one  # noqa: PLC0415
+
+    obs = hub.observer(req.collective_id)
+    if obs is None:
+        raise HTTPException(404, f"collective {req.collective_id!r} not observed")
+    g = _find_golden(name)
+    updates: dict = {"timeout_s": req.timeout_s}
+    if req.target_agent_id:
+        updates["target_agent_id"] = req.target_agent_id
+    g = g.model_copy(update=updates)
+    result = await run_one(g, observer=obs, collective_id=req.collective_id)
+    append_run_record(result, collective_id=req.collective_id)
+    out = result.model_dump()
+    out["mlflow_trace_url"] = mlflow_trace_url(result.task_id)
+    return out
+
+
+@router.post("/diagnostics/golden/{name}/promote")
+def promote_golden(
+    name: str, principal: Principal = Depends(require_operator),
+) -> dict:
+    """Promote a golden prompt into its role's behavioral eval pack
+    (proposal G P3 — the role-testing on-ramp)."""
+    from acc.golden_prompts import writable_root  # noqa: PLC0415
+    from acc.pkg.evals import (  # noqa: PLC0415
+        dump_behavior_eval, from_golden_prompt,
+    )
+    g = _find_golden(name)
+    be = from_golden_prompt(g)
+    role = g.target_role or "_norole"
+    dest = writable_root() / "promoted-evals" / role / "evals" / "behavior"
+    try:
+        out = dump_behavior_eval(be, dest)
+    except OSError as exc:
+        raise HTTPException(500, f"promote failed: {exc}")
+    return {
+        "status": "promoted", "role": role,
+        "eval_name": be.name, "path": str(out),
+    }
