@@ -475,11 +475,43 @@ def test_boot_discovers_local_caps_and_allow_unsigned_gate(tmp_path, monkeypatch
     (rd / "AGENTS.md").write_text("enable_skills: [tf_plan]", encoding="utf-8")
     monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
     monkeypatch.setenv("ACC_OVERLAY_ALLOW_UNSIGNED", "1")
+    monkeypatch.setenv("ACC_OPERATOR_MODE", "dev")  # prod-guard honours dev only
     monkeypatch.chdir(tmp_path)
 
     core = _apply("coding_agent")
     assert "tf_plan" in core._overlay_local_skills
     assert core._overlay_allow_unsigned is True
+
+
+def test_boot_allow_unsigned_ignored_in_prod(tmp_path, monkeypatch):
+    # The env flag alone must NEVER grant in prod — the local cap is still
+    # discovered (so it can be reported/dropped), but allow_unsigned stays False.
+    roles_root = tmp_path / "roles"
+    rd = roles_root / "coding_agent"
+    (rd / "skills" / "tf_plan").mkdir(parents=True)
+    (rd / "AGENTS.md").write_text("enable_skills: [tf_plan]", encoding="utf-8")
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
+    monkeypatch.setenv("ACC_OVERLAY_ALLOW_UNSIGNED", "1")
+    monkeypatch.setenv("ACC_OPERATOR_MODE", "prod")
+    monkeypatch.chdir(tmp_path)
+
+    core = _apply("coding_agent")
+    assert "tf_plan" in core._overlay_local_skills
+    assert core._overlay_allow_unsigned is False
+
+
+def test_boot_allow_unsigned_ignored_when_mode_unset_defaults_prod(tmp_path, monkeypatch):
+    # No ACC_OPERATOR_MODE → _operator_mode_env() defaults to 'prod' → ignored.
+    roles_root = tmp_path / "roles"
+    rd = roles_root / "coding_agent"
+    (rd / "skills" / "tf_plan").mkdir(parents=True)
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
+    monkeypatch.setenv("ACC_OVERLAY_ALLOW_UNSIGNED", "1")
+    monkeypatch.delenv("ACC_OPERATOR_MODE", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    core = _apply("coding_agent")
+    assert core._overlay_allow_unsigned is False
 
 
 def test_boot_allow_unsigned_off_by_default(tmp_path, monkeypatch):
@@ -488,6 +520,7 @@ def test_boot_allow_unsigned_off_by_default(tmp_path, monkeypatch):
     (rd / "skills" / "tf_plan").mkdir(parents=True)
     monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
     monkeypatch.delenv("ACC_OVERLAY_ALLOW_UNSIGNED", raising=False)
+    monkeypatch.setenv("ACC_OPERATOR_MODE", "dev")  # even in dev, flag off → False
     monkeypatch.chdir(tmp_path)
 
     core = _apply("coding_agent")

@@ -2399,8 +2399,13 @@ class Agent:
 
         ``_overlay_allow_unsigned`` gates whether a *user-added* (out-of-envelope)
         local def may be granted for this one agent.  It is **operator-explicit,
-        off by default**, sourced from ``ACC_OVERLAY_ALLOW_UNSIGNED`` — never a
-        prod default; when on with local defs present we emit an audit log line.
+        off by default**, sourced from ``ACC_OVERLAY_ALLOW_UNSIGNED`` **and** hard-
+        gated to ``dev`` operator mode (``ACC_OPERATOR_MODE``) — granting an
+        unsigned capability is at least as privileged as a filesystem-mutating
+        INFUSE, which ``assistant_proposal`` already restricts to ``dev``, so the
+        env flag alone never grants in prod.  When the flag is set but ignored
+        because the mode isn't ``dev`` we WARN; when it is honoured with local
+        defs present we emit an audit log line.
 
         Never raises — overlays are optional and must not break agent boot.  When
         no overlay files / local defs exist, *core* is left untouched (legacy
@@ -2428,9 +2433,21 @@ class Agent:
             if not sources and not local_skills and not local_mcps:
                 return  # no overlay → leave the core (and the prompt) unchanged
 
-            allow_unsigned = _os.environ.get(
+            env_allow_unsigned = _os.environ.get(
                 "ACC_OVERLAY_ALLOW_UNSIGNED", ""
             ).strip().lower() in ("1", "true", "yes")
+            # Hard prod-guard: granting an UNSIGNED, out-of-envelope capability is
+            # at least as privileged as a filesystem-mutating INFUSE, which the
+            # security floor (``assistant_proposal._operator_mode_env``) restricts
+            # to ``dev``.  The env flag alone must never grant in prod.
+            try:
+                from acc.assistant_proposal import (  # noqa: PLC0415
+                    _operator_mode_env,
+                )
+                operator_mode = _operator_mode_env()
+            except Exception:  # default to the safe (prod) posture if unreadable
+                operator_mode = "prod"
+            allow_unsigned = env_allow_unsigned and operator_mode == "dev"
 
             core._overlay = sources or None
             core._overlay_local_skills = tuple(local_skills)
@@ -2442,11 +2459,19 @@ class Agent:
                     "overlay: loaded %s for role %r",
                     [s.layer for s in sources], role_label,
                 )
-            if allow_unsigned and (local_skills or local_mcps):
+            if env_allow_unsigned and not allow_unsigned and (local_skills or local_mcps):
                 logger.warning(
-                    "overlay: ACC_OVERLAY_ALLOW_UNSIGNED is set — role %r may "
-                    "grant local UNSIGNED capabilities (skills=%s mcps=%s). "
-                    "This is operator-gated + audited; never use in prod.",
+                    "overlay: ACC_OVERLAY_ALLOW_UNSIGNED is set but IGNORED for "
+                    "role %r — operator mode is %r, not 'dev'; unsigned local "
+                    "capabilities are NOT granted in prod (skills=%s mcps=%s).",
+                    role_label, operator_mode,
+                    list(local_skills), list(local_mcps),
+                )
+            elif allow_unsigned and (local_skills or local_mcps):
+                logger.warning(
+                    "overlay: ACC_OVERLAY_ALLOW_UNSIGNED is honoured (operator "
+                    "mode=dev) — role %r may grant local UNSIGNED capabilities "
+                    "(skills=%s mcps=%s); operator-gated + audited.",
                     role_label, list(local_skills), list(local_mcps),
                 )
         except Exception:

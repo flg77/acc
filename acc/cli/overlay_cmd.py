@@ -28,7 +28,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from acc.cli._common import roles_root
 
 
 # ---------------------------------------------------------------------------
@@ -83,10 +82,18 @@ def register(sub: argparse._SubParsersAction) -> None:
 
 
 def _load_role(name: str):
-    """Load a RoleDefinitionConfig + its role dir, or (None, err-printed)."""
-    from acc.role_loader import RoleLoader  # noqa: PLC0415
+    """Load a RoleDefinitionConfig + its role dir, or (None, err-printed).
 
-    roots = roles_root()
+    Resolves the roles-root with the SAME resolver the agent boot path uses
+    (``acc.tui.path_resolution.resolve_manifest_root``), not the plain
+    ``ACC_ROLES_ROOT``-or-``"roles"`` lookup — so ``overlay validate``/``show``
+    inspect exactly the directory the agent would load its overlay from when
+    ``ACC_ROLES_ROOT`` is unset (repo-anchored, then CWD-relative).
+    """
+    from acc.role_loader import RoleLoader  # noqa: PLC0415
+    from acc.tui.path_resolution import resolve_manifest_root  # noqa: PLC0415
+
+    roots = str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
     role_def = RoleLoader(roots, name).load()
     if role_def is None:
         print(f"role {name!r} not found under {roots!r}", file=sys.stderr)
