@@ -24,11 +24,14 @@ from acc.golden_prompts import (
     ExpectsBlock,
     GoldenPrompt,
     add_watch_dir,
+    append_save_history,
     attached_watch_dirs,
     candidate_from_task,
     dump_prompt,
     evaluate,
+    export_store,
     format_summary,
+    import_store,
     load_all,
     load_merged,
     load_one,
@@ -36,6 +39,7 @@ from acc.golden_prompts import (
     parse_markdown_prompt,
     save_candidate,
     save_prompt,
+    version_count,
 )
 
 
@@ -133,6 +137,114 @@ class TestWatchDirs:
         add_watch_dir(watch)
         add_watch_dir(watch)
         assert attached_watch_dirs().count(Path(watch)) == 1
+
+
+# ---------------------------------------------------------------------------
+# Proposal 044 O2 — save history (VC) + durable export/import
+# ---------------------------------------------------------------------------
+
+
+class TestSaveHistory:
+    def test_version_count_increments_per_save(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        assert version_count("p") == 0
+        assert append_save_history("p", "v1") == 1
+        assert append_save_history("p", "v2") == 2
+        # A different name has its own count.
+        assert append_save_history("other", "x") == 1
+        assert version_count("p") == 2
+
+    def test_history_row_has_hash_and_action(self, tmp_path, monkeypatch):
+        import hashlib
+        import json
+
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        append_save_history("p", "content", action="save")
+        rows = [
+            json.loads(ln)
+            for ln in (tmp_path / "history.jsonl").read_text(
+                encoding="utf-8"
+            ).splitlines() if ln.strip()
+        ]
+        assert rows[0]["name"] == "p"
+        assert rows[0]["action"] == "save"
+        assert rows[0]["sha256"] == hashlib.sha256(b"content").hexdigest()
+        assert rows[0]["bytes"] == len(b"content")
+
+    def test_history_write_failure_does_not_raise(self, tmp_path, monkeypatch):
+        # Point the writable root at a path whose parent is a FILE so the
+        # mkdir fails — append must swallow the OSError, not raise.
+        blocker = tmp_path / "afile"
+        blocker.write_text("x", encoding="utf-8")
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(blocker / "sub"))
+        # Returns 0 (count read also fails) but never raises.
+        assert append_save_history("p", "v1") == 0
+
+    def test_history_jsonl_not_loaded_as_a_prompt(self, tmp_path, monkeypatch):
+        """The history log lives in the writable root but must never be
+        picked up by the prompt loader (it's .jsonl, not .yaml/.md)."""
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        append_save_history("p", "v1")
+        save_prompt(
+            GoldenPrompt(name="real", prompt="hi", target_role="analyst"),
+            root=tmp_path,
+        )
+        merged = load_merged([tmp_path])
+        assert [m.name for m in merged] == ["real"]
+
+
+class TestExportImport:
+    def test_export_writes_every_writable_prompt(self, tmp_path):
+        store = tmp_path / "store"
+        store.mkdir()
+        save_prompt(GoldenPrompt(name="a", prompt="A", target_role="analyst"),
+                    root=store)
+        save_prompt(GoldenPrompt(name="b", prompt="B", target_role="analyst"),
+                    root=store)
+        dest = tmp_path / "backup"
+        n = export_store(dest, root=store)
+        assert n == 2
+        assert (dest / "a.yaml").is_file() and (dest / "b.yaml").is_file()
+
+    def test_export_skips_history_and_watch_config(self, tmp_path):
+        store = tmp_path / "store"
+        store.mkdir()
+        save_prompt(GoldenPrompt(name="a", prompt="A", target_role="analyst"),
+                    root=store)
+        (store / "history.jsonl").write_text('{"name":"a"}\n', encoding="utf-8")
+        (store / ".watch-dirs").write_text("/somewhere\n", encoding="utf-8")
+        dest = tmp_path / "backup"
+        export_store(dest, root=store)
+        names = sorted(p.name for p in dest.iterdir())
+        assert names == ["a.yaml"]
+
+    def test_import_copies_into_writable_store(self, tmp_path):
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "imported.md").write_text(
+            "---\ntarget_role: analyst\n---\nDo a thing.\n", encoding="utf-8",
+        )
+        store = tmp_path / "store"
+        store.mkdir()
+        n = import_store(src, root=store)
+        assert n == 1
+        # COPIED into the store as yaml — survives src going away.
+        assert (store / "imported.yaml").is_file()
+
+    def test_export_import_roundtrip(self, tmp_path):
+        store = tmp_path / "store"
+        store.mkdir()
+        save_prompt(GoldenPrompt(name="keep", prompt="KEEP",
+                                 target_role="analyst"), root=store)
+        backup = tmp_path / "backup"
+        export_store(backup, root=store)
+        # Simulate a volume reset: a brand-new empty store.
+        fresh = tmp_path / "fresh"
+        fresh.mkdir()
+        assert import_store(backup, root=fresh) == 1
+        restored = load_merged([fresh])
+        assert [p.name for p in restored] == ["keep"]
+        assert restored[0].prompt == "KEEP"
 
 
 # ---------------------------------------------------------------------------

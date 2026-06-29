@@ -632,6 +632,103 @@ def save_candidate(
     return dump_prompt(cand, target)
 
 
+# ---------------------------------------------------------------------------
+# Proposal 044 O2 — durable persistence (export/import) + save history (VC)
+# ---------------------------------------------------------------------------
+#
+# The writable store lives on a named volume, so captures + edits already
+# survive a normal restart.  But a volume reset (rebuild, `down -v`, fresh
+# host) loses them, and the operator asked for two more guarantees:
+#   * a way to get prompts OUT to a host directory and back IN (durable
+#     backup that survives even a volume wipe), and
+#   * "every save is basically a commit" — an append-only history so the
+#     operator can see what was saved when.
+
+
+def save_history_path() -> Path:
+    """The append-only save-history log (the golden-prompt "version
+    control").  One JSONL row per Save — durable + greppable."""
+    return writable_root() / "history.jsonl"
+
+
+def version_count(name: str) -> int:
+    """How many times *name* has been saved (rows in the history log)."""
+    import json as _json  # noqa: PLC0415
+
+    n = 0
+    try:
+        text = save_history_path().read_text(encoding="utf-8")
+    except OSError:
+        return 0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = _json.loads(line)
+        except ValueError:
+            continue
+        if row.get("name") == name:
+            n += 1
+    return n
+
+
+def append_save_history(name: str, content: str, *, action: str = "save") -> int:
+    """Append a save-history row for *name* and return its new version
+    count (1-based).  Row = ``{ts, name, action, sha256, bytes}``.
+
+    Best-effort: a write failure logs but never raises — the history
+    log must never block or fail a save."""
+    import hashlib  # noqa: PLC0415
+    import json as _json  # noqa: PLC0415
+    import time as _time  # noqa: PLC0415
+
+    raw = content.encode("utf-8")
+    row = {
+        "ts": _time.time(),
+        "name": name,
+        "action": action,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "bytes": len(raw),
+    }
+    p = save_history_path()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("golden_prompts: save-history append failed: %s", exc)
+    return version_count(name)
+
+
+def export_store(dest: Path | str, *, root: Optional[Path] = None) -> int:
+    """Copy every prompt in the writable store to *dest* as ``<name>.yaml``.
+
+    A durable backup so operator-authored + captured prompts survive a
+    volume reset.  Only ``*.yaml``/``*.md`` prompts are written — the
+    history log + ``.watch-dirs`` config stay behind.  Returns the count."""
+    root = root or writable_root()
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    prompts = load_merged([Path(root)])
+    for p in prompts:
+        dump_prompt(p, dest / f"{p.name}.yaml")
+    return len(prompts)
+
+
+def import_store(src: Path | str, *, root: Optional[Path] = None) -> int:
+    """Copy prompts from *src* into the writable store (persisted).
+
+    Distinct from attach/watch (:func:`add_watch_dir`): import COPIES the
+    prompts into the writable volume so they persist even if *src* later
+    goes away.  Returns the count imported."""
+    root = root or writable_root()
+    prompts = load_merged([Path(src)])
+    for p in prompts:
+        save_prompt(p, Path(root))
+    return len(prompts)
+
+
 def format_summary(results: list[GoldenResult]) -> str:
     """Render a one-line-per-prompt summary suitable for stdout."""
     if not results:

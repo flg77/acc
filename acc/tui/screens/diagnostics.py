@@ -159,13 +159,32 @@ class DiagnosticsScreen(Screen):
                     yield Button(
                         "Save", id="btn-golden-save", variant="primary",
                     )
+                    # Proposal 044 O2 — in-TUI copy/paste affordances.
+                    yield Button(
+                        "Copy", id="btn-golden-copy", variant="default",
+                    )
+                    yield Button(
+                        "Paste", id="btn-golden-paste", variant="default",
+                    )
                 with Horizontal(id="golden-attach-row"):
                     yield Input(
-                        placeholder="dir to watch, e.g. /host-home/golden",
+                        placeholder=(
+                            "dir to watch / import / export, "
+                            "e.g. /host-home/golden"
+                        ),
                         id="golden-attach-input",
                     )
                     yield Button(
                         "+ Add", id="btn-golden-add-dir", variant="default",
+                    )
+                    # Proposal 044 O2 — durable backup: import COPIES a
+                    # dir's prompts into the writable store; export writes
+                    # the store out to the dir (survives a volume reset).
+                    yield Button(
+                        "Import", id="btn-golden-import", variant="default",
+                    )
+                    yield Button(
+                        "Export", id="btn-golden-export", variant="default",
                     )
 
         yield Footer()
@@ -327,6 +346,14 @@ class DiagnosticsScreen(Screen):
             self._editor_save()
         elif bid == "btn-golden-add-dir":
             self._attach_dir()
+        elif bid == "btn-golden-copy":
+            self._editor_copy()
+        elif bid == "btn-golden-paste":
+            self._editor_paste()
+        elif bid == "btn-golden-import":
+            self._import_dir()
+        elif bid == "btn-golden-export":
+            self._export_dir()
         elif bid == "btn-golden-send":
             self.action_send()
 
@@ -521,9 +548,15 @@ class DiagnosticsScreen(Screen):
         self._set_status("[dim]New prompt template — edit + Save.[/dim]")
 
     def _editor_save(self) -> None:
-        """Validate the editor YAML and write it to the writable store."""
+        """Validate the editor YAML and write it to the writable store.
+
+        Each Save also appends a row to the save-history log so the
+        operator sees a version count — "every save is a commit"
+        (proposal 044 O2)."""
         import yaml  # noqa: PLC0415
-        from acc.golden_prompts import GoldenPrompt, save_prompt  # noqa: PLC0415
+        from acc.golden_prompts import (  # noqa: PLC0415
+            GoldenPrompt, append_save_history, save_prompt,
+        )
 
         try:
             raw = self._editor().text
@@ -540,9 +573,104 @@ class DiagnosticsScreen(Screen):
         except OSError as exc:
             self._set_status(f"[red]save failed: {exc}[/red]")
             return
-        self._set_status(f"[green]✓ saved[/green] [dim]{out}[/dim]")
+        ver = append_save_history(prompt.name, raw)
+        self._set_status(
+            f"[green]✓ saved (v{ver})[/green] [dim]{out}[/dim]"
+        )
         self._reload_prompts()
         self._files_sig = self._compute_files_sig()
+
+    # ------------------------------------------------------------------
+    # Proposal 044 O2 — copy/paste + durable import/export
+    # ------------------------------------------------------------------
+
+    def _editor_copy(self) -> None:
+        """Copy the editor's YAML to the system clipboard (OSC52 out)."""
+        try:
+            text = self._editor().text
+        except Exception:
+            return
+        try:
+            self.app.copy_to_clipboard(text)
+        except Exception:
+            logger.debug("diagnostics: copy failed", exc_info=True)
+            self._set_status(
+                "[yellow]copy unavailable in this terminal[/yellow]"
+            )
+            return
+        self._set_status(
+            f"[green]✓ copied[/green] [dim]{len(text)} chars[/dim]"
+        )
+
+    def _editor_paste(self) -> None:
+        """Insert the app clipboard at the editor cursor.
+
+        Pastes text copied within the TUI (Copy / Ctrl+C).  Pasting from
+        the HOST clipboard is the terminal's own paste (Ctrl+Shift+V /
+        right-click) — bracketed paste lands in the focused TextArea."""
+        try:
+            clip = self.app.clipboard or ""
+        except Exception:
+            clip = ""
+        if not clip:
+            self._set_status(
+                "[yellow]app clipboard empty — use the terminal's paste "
+                "(Ctrl+Shift+V) for host text[/yellow]"
+            )
+            return
+        try:
+            self._editor().insert(clip)
+        except Exception:
+            logger.debug("diagnostics: paste failed", exc_info=True)
+            return
+        self._set_status(
+            f"[green]✓ pasted[/green] [dim]{len(clip)} chars[/dim]"
+        )
+
+    def _attach_input_path(self) -> str:
+        try:
+            return self.query_one("#golden-attach-input", Input).value.strip()
+        except Exception:
+            return ""
+
+    def _export_dir(self) -> None:
+        """Export the writable store to the dir in the attach input."""
+        from acc.golden_prompts import export_store  # noqa: PLC0415
+
+        path = self._attach_input_path()
+        if not path:
+            self._set_status(
+                "[yellow]Enter a target directory to export to.[/yellow]"
+            )
+            return
+        try:
+            n = export_store(path)
+        except OSError as exc:
+            self._set_status(f"[red]export failed: {exc}[/red]")
+            return
+        self._set_status(
+            f"[green]✓ exported {n}[/green] [dim]→ {path}[/dim]"
+        )
+
+    def _import_dir(self) -> None:
+        """Import (copy) prompts from the attach-input dir into the store."""
+        from acc.golden_prompts import import_store  # noqa: PLC0415
+
+        path = self._attach_input_path()
+        if not path:
+            self._set_status(
+                "[yellow]Enter a source directory to import from.[/yellow]"
+            )
+            return
+        try:
+            n = import_store(path)
+        except OSError as exc:
+            self._set_status(f"[red]import failed: {exc}[/red]")
+            return
+        self._set_status(
+            f"[green]✓ imported {n}[/green] [dim]from {path}[/dim]"
+        )
+        self._reload_prompts()
 
     def _attach_dir(self) -> None:
         """Attach the directory in the input as a watched golden root."""
