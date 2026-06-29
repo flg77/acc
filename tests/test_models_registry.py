@@ -273,3 +273,21 @@ def test_agent_model_marks_override_in_compose(registry_roles):
     env = next(iter(out["services"].values()))["environment"]
     assert env["ACC_AGENT_MODEL_ID"] == "groq-70b"        # override marker
     assert env["ACC_LLM_BACKEND"] == "openai_compat"      # groq-70b, not sonnet
+
+
+def test_agent_core_containerfiles_bake_models_yaml():
+    """B6 regression guard (proposal 044, v0.5.18): the agent-core images MUST
+    bake ``models.yaml`` — agent services don't mount it, so without the COPY
+    apply_role_model_env() reads an empty registry and role_models never applies
+    (the 29.6 lighthouse symptom: assistant stuck on the global 3B default)."""
+    from pathlib import Path
+    repo = Path(__file__).resolve().parent.parent
+    for cf in (
+        repo / "container" / "production" / "Containerfile.agent-core",
+        repo / "container" / "beta" / "Containerfile.agent-core",
+    ):
+        text = cf.read_text(encoding="utf-8")
+        assert "COPY models.yaml /app/models.yaml" in text, (
+            f"{cf} must bake models.yaml (B6 role_models needs the registry "
+            f"baked; agent services do not mount it)"
+        )
