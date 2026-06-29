@@ -306,6 +306,112 @@ async def test_attach_dir_registers_and_loads(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Proposal 044 O2 — save history (VC), copy/paste, durable import/export
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_reports_version_count(tmp_path, monkeypatch):
+    """Each Save shows an incrementing version count ('every save is a
+    commit') and appends to the history log."""
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+        editor = screen.query_one("#golden-editor", TextArea)
+        editor.text = "name: vc_made\nprompt: hi\ntarget_role: analyst\n"
+        screen._editor_save()
+        screen._editor_save()
+        await pilot.pause()
+        assert any("(v1)" in s for s in statuses)
+        assert any("(v2)" in s for s in statuses)
+        assert (tmp_path / "history.jsonl").is_file()
+
+
+@pytest.mark.asyncio
+async def test_copy_button_writes_clipboard(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        copied: list[str] = []
+        monkeypatch.setattr(app, "copy_to_clipboard", copied.append)
+        screen.query_one("#golden-editor", TextArea).text = "name: c\n"
+        screen._editor_copy()
+        assert copied == ["name: c\n"]
+
+
+@pytest.mark.asyncio
+async def test_paste_button_inserts_app_clipboard(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        editor = screen.query_one("#golden-editor", TextArea)
+        editor.text = ""
+        app.copy_to_clipboard("PASTED")
+        await pilot.pause()
+        assert app.clipboard == "PASTED"
+        screen._editor_paste()
+        await pilot.pause()
+        assert "PASTED" in editor.text
+
+
+@pytest.mark.asyncio
+async def test_export_then_import_roundtrip(tmp_path, monkeypatch):
+    """Export the store to a host dir, then import it into a fresh store —
+    the durable backup path that survives a volume reset."""
+    from textual.widgets import Input, TextArea
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(store))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        # Author + save a prompt into the writable store.
+        screen.query_one("#golden-editor", TextArea).text = (
+            "name: portable\nprompt: keep me\ntarget_role: analyst\n"
+        )
+        screen._editor_save()
+        await pilot.pause()
+        # Export to a host dir.
+        backup = tmp_path / "backup"
+        screen.query_one("#golden-attach-input", Input).value = str(backup)
+        screen._export_dir()
+        await pilot.pause()
+        assert (backup / "portable.yaml").is_file()
+        # Import the backup back in (idempotent re-add).
+        screen.query_one("#golden-attach-input", Input).value = str(backup)
+        screen._import_dir()
+        await pilot.pause()
+        assert "portable" in screen._prompts
+
+
+@pytest.mark.asyncio
+async def test_export_without_dir_warns(tmp_path, monkeypatch):
+    from textual.widgets import Input
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+        screen.query_one("#golden-attach-input", Input).value = ""
+        screen._export_dir()
+        assert any("directory" in s.lower() for s in statuses)
+
+
+# ---------------------------------------------------------------------------
 # Proposal 033 WS-B — Form/MD subnav + role selector + Send
 # ---------------------------------------------------------------------------
 
