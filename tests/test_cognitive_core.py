@@ -541,3 +541,52 @@ class TestB1MarkerOrRetry:
         )
         assert llm.complete.call_count == 2
         assert result.output.startswith("⚠ I did not take a concrete action")
+
+
+class TestTaskComplianceRecord:
+    """Proposal G P2 — best-effort per-task compliance record (Redis)."""
+
+    def test_writes_record_keyed_by_task_id(self):
+        import json
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from acc.signals import redis_task_compliance_key
+        redis = MagicMock()
+        core = _make_core(redis_client=redis)
+        result = SimpleNamespace(
+            stress=SimpleNamespace(
+                compliance_health_score=0.9,
+                prompt_input_tokens=120,
+                cache_read_tokens=30,
+            ),
+            output="",
+        )
+        core._write_task_compliance_record({"task_id": "tk-1"}, result)
+        assert redis.set.called
+        args, kwargs = redis.set.call_args
+        assert args[0] == redis_task_compliance_key(COLLECTIVE_ID, "tk-1")
+        rec = json.loads(args[1])
+        assert rec["compliance_health_score"] == 0.9
+        assert rec["input_tokens"] == 120
+        assert rec["cache_read_tokens"] == 30
+        assert kwargs.get("ex") == 604800
+
+    def test_noop_without_redis(self):
+        from types import SimpleNamespace
+        core = _make_core(redis_client=None)
+        core._write_task_compliance_record(
+            {"task_id": "tk-1"},
+            SimpleNamespace(stress=SimpleNamespace(), output=""),
+        )  # must not raise
+
+    def test_noop_without_task_id(self):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+        redis = MagicMock()
+        core = _make_core(redis_client=redis)
+        core._write_task_compliance_record(
+            {"task_id": ""},
+            SimpleNamespace(stress=SimpleNamespace(), output=""),
+        )
+        assert not redis.set.called

@@ -219,3 +219,27 @@ async def test_supports_streaming_returns_true():
     obs = _StubObserver()
     channel = TUIPromptChannel(obs, collective_id="sol-test")
     assert channel.supports_streaming() is True
+
+
+def test_payload_to_response_parses_p2_fields():
+    """Proposal G P2 — _payload_to_response surfaces tokens / compliance /
+    self-verdict; a missing compliance score defaults to -1.0 ("not
+    reported"), never a perfect score."""
+    from acc.channels.tui import _payload_to_response
+
+    full = _payload_to_response("tk-1", {
+        "agent_id": "a1",
+        "input_tokens": 200,
+        "cache_read_tokens": 50,
+        "compliance_health_score": 0.91,
+        "eval_outcome": {"verdict": "GOOD"},
+    })
+    assert full.input_tokens == 200
+    assert full.cache_read_tokens == 50
+    assert full.compliance_health_score == 0.91
+    assert full.eval_verdict == "GOOD"
+
+    bare = _payload_to_response("tk-2", {"agent_id": "a1"})
+    assert bare.input_tokens == 0
+    assert bare.compliance_health_score == -1.0
+    assert bare.eval_verdict == ""

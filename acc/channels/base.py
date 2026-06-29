@@ -67,6 +67,18 @@ class PromptResponse:
     """Externalized deliberation from the agent's CognitiveCore when the role
     set ``reasoning_trace: true`` (PR-V3b).  Empty for roles that don't opt in.
     The clean answer is in ``output``; this is the "why" behind it."""
+    input_tokens: int = 0
+    """Prompt/input tokens this task consumed (proposal G P2).  ``0`` when the
+    agent didn't report it (older agent, or a blocked task)."""
+    cache_read_tokens: int = 0
+    """Prompt-cache read tokens (proposal G P2)."""
+    compliance_health_score: float = -1.0
+    """The agent's compliance-health score [0..1] at task completion (proposal
+    G P2).  ``-1.0`` means *not reported* (older agent) — render as "—", never
+    as a perfect score."""
+    eval_verdict: str = ""
+    """The model's ``[EVAL_OUTCOME]`` self-verdict when present
+    (GOOD/PARTIAL/NEEDS_REVISE/BAD) — reviewer tasks only (proposal G P2)."""
 
 
 @runtime_checkable

@@ -712,6 +712,14 @@ class CognitiveCore:
                     "blocked": bool(result.blocked),
                     "block_reason": result.block_reason or "",
                     "latency_ms": float(result.latency_ms or 0),
+                    # Proposal G P2 — per-task compliance + token usage on the
+                    # trace so the eval-history (and MLflow on the DC) can read
+                    # them by task_id.
+                    "compliance_health_score": float(
+                        result.stress.compliance_health_score,
+                    ),
+                    "input_tokens": int(result.stress.prompt_input_tokens),
+                    "cache_read_tokens": int(result.stress.cache_read_tokens),
                 })
                 # Phase 4 — reasoning trace as a span event so MLflow's
                 # Trace UI surfaces the agent's deliberation in the
@@ -748,7 +756,58 @@ class CognitiveCore:
                     "cognitive_core: root span finalisation failed",
                     exc_info=True,
                 )
+            # Proposal G P2 — best-effort per-task compliance record keyed by
+            # task_id (the (task_id → verdict) tuple the eval-history needs on
+            # the DC).  Fire-and-forget; never blocks or affects the reply.
+            self._write_task_compliance_record(task_payload, result)
             return result
+
+    def _write_task_compliance_record(
+        self, task_payload: dict, result: "CognitiveResult",
+    ) -> None:
+        """Persist ``{compliance, tokens, verdict}`` keyed by task_id to Redis
+        so the eval-history / MLflow can join a run to its compliance + cost by
+        task_id (proposal G P2).  No-op without a Redis client or task_id;
+        never raises — a write failure must not affect the reply."""
+        if self._redis is None:
+            return
+        task_id = str(task_payload.get("task_id", "") or "")
+        if not task_id:
+            return
+        try:
+            import json as _json  # noqa: PLC0415
+
+            from acc.signals import redis_task_compliance_key  # noqa: PLC0415
+            stress = getattr(result, "stress", None)
+            verdict = ""
+            try:
+                from acc.agent import _extract_eval_outcome  # noqa: PLC0415
+                _eo = _extract_eval_outcome(getattr(result, "output", "") or "")
+                if _eo:
+                    verdict = str(_eo.get("verdict", "") or "")
+            except Exception:
+                verdict = ""
+            record = {
+                "task_id": task_id,
+                "compliance_health_score": float(
+                    getattr(stress, "compliance_health_score", -1.0),
+                ),
+                "input_tokens": int(getattr(stress, "prompt_input_tokens", 0) or 0),
+                "cache_read_tokens": int(
+                    getattr(stress, "cache_read_tokens", 0) or 0,
+                ),
+                "eval_verdict": verdict,
+            }
+            self._redis.set(
+                redis_task_compliance_key(self._collective_id, task_id),
+                _json.dumps(record),
+                ex=604800,   # 7-day TTL — eval-history is a recent-window view
+            )
+        except Exception:  # pragma: no cover — best-effort
+            logger.debug(
+                "cognitive_core: task compliance record write failed",
+                exc_info=True,
+            )
 
     async def _process_task_body(
         self,

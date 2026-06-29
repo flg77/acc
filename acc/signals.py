@@ -971,3 +971,23 @@ def redis_oversight_item_key(collective_id: str, oversight_id: str) -> str:
         # → "acc:sol-01:oversight:item:ov-7c91a"
     """
     return f"acc:{collective_id}:oversight:item:{oversight_id}"
+
+
+def redis_task_compliance_key(collective_id: str, task_id: str) -> str:
+    """Return the Redis key for a single task's compliance + cost record
+    (proposal G P2).
+
+    Stored as JSON ``{task_id, compliance_health_score, input_tokens,
+    cache_read_tokens, eval_verdict}`` so the eval-history surface (and MLflow
+    on the DC) can join a golden-prompt run to its compliance + cost by
+    task_id.  Written best-effort by ``CognitiveCore`` at task end with a
+    recent-window TTL.
+
+    Key pattern: ``acc:{collective_id}:compliance:task:{task_id}``
+
+    Example::
+
+        redis_task_compliance_key("sol-01", "tk-123")
+        # → "acc:sol-01:compliance:task:tk-123"
+    """
+    return f"acc:{collective_id}:compliance:task:{task_id}"

@@ -766,3 +766,27 @@ class TestPersistResults:
         persist_results(
             [GoldenResult(name="a", passed=True, elapsed_ms=1)], bad_path,
         )
+
+
+class TestRunEnrichment:
+    """Proposal G P2 — per-run signals (tokens/compliance/verdict) flow onto
+    GoldenResult and into the run-history record."""
+
+    def test_record_carries_p2_signals(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        append_run_record(GoldenResult(
+            name="p", passed=True, elapsed_ms=12, task_id="tk-9",
+            input_tokens=140, cache_read_tokens=20,
+            compliance_health_score=0.92, eval_verdict="GOOD",
+        ), collective_id="sol-01")
+        row = read_run_history("p")[0]
+        assert row["input_tokens"] == 140
+        assert row["cache_read_tokens"] == 20
+        assert row["compliance_health_score"] == 0.92
+        assert row["eval_verdict"] == "GOOD"
+
+    def test_defaults_are_unreported_sentinels(self):
+        r = GoldenResult(name="x", passed=True, elapsed_ms=1)
+        assert r.input_tokens == 0
+        assert r.compliance_health_score == -1.0
+        assert r.eval_verdict == ""

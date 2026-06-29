@@ -325,6 +325,9 @@ class DiagnosticsScreen(Screen):
                 "[green]PASS[/green]" if result.passed else "[red]FAIL[/red]"
             )
             lines.append(f"[b]last run:[/b] {verdict}  {result.elapsed_ms}ms")
+            # Proposal G P2 — the per-task signals joined onto the run by
+            # task_id: tokens, compliance, the model's self-verdict.
+            lines.append(f"  {self._run_metrics_line(result)}")
             if result.error:
                 lines.append(f"  [red]ERROR: {result.error}[/red]")
             for f in result.failures:
@@ -333,6 +336,9 @@ class DiagnosticsScreen(Screen):
                 lines.append("")
                 lines.append("[b]reply excerpt[/b]")
                 lines.append(f"  {result.output_excerpt}")
+        # Proposal G P2 — "definition of good": the layered criteria this
+        # prompt is judged by (deterministic expects + model self-verdict).
+        lines.extend(self._definition_of_good(prompt, result))
         # Proposal G — per-prompt run history (outcomes of repeated runs) +
         # version control, both read from the writable store by prompt name.
         try:
@@ -351,9 +357,11 @@ class DiagnosticsScreen(Screen):
                 ms = row.get("elapsed_ms", 0)
                 nfail = len(row.get("failures") or [])
                 extra = f" · {nfail} failed" if nfail else ""
+                vd = row.get("eval_verdict") or ""
+                vtag = f"  [dim]{vd}[/dim]" if vd else ""
                 lines.append(
                     f"  {ok} {self._fmt_ts(row.get('run_ts', 0))}  "
-                    f"{ms}ms{extra}"
+                    f"{ms}ms{extra}{vtag}"
                 )
         if versions:
             prev = versions[-2] if len(versions) > 1 else versions[-1]
@@ -373,6 +381,62 @@ class DiagnosticsScreen(Screen):
             ).strftime("%m-%d %H:%M:%S")
         except (ValueError, OSError, OverflowError, TypeError):
             return "—"
+
+    @staticmethod
+    def _run_metrics_line(result) -> str:
+        """Proposal G P2 — one line: tokens · compliance · self-verdict.
+        Defensive (result may be a stub); compliance < 0 = unreported → "—"."""
+        toks = int(getattr(result, "input_tokens", 0) or 0)
+        cache = int(getattr(result, "cache_read_tokens", 0) or 0)
+        comp = getattr(result, "compliance_health_score", -1.0)
+        verdict = getattr(result, "eval_verdict", "") or ""
+        parts = ["tokens in " + str(toks) + (f" · cache {cache}" if cache else "")]
+        try:
+            parts.append(
+                f"compliance {comp:.2f}"
+                if comp is not None and comp >= 0 else "compliance —"
+            )
+        except (TypeError, ValueError):
+            parts.append("compliance —")
+        if verdict:
+            parts.append(f"verdict {verdict}")
+        return "[dim]" + "  ·  ".join(parts) + "[/dim]"
+
+    def _definition_of_good(self, prompt, result) -> list[str]:
+        """Proposal G P2 — the layered criteria a prompt is judged by:
+        (1) the deterministic ``expects`` block; (2) the model's self-verdict.
+        (The third layer — the role's consolidated ``memory_notes`` — is a
+        DC/MLflow surface; the TUI is NATS-only, so it's not shown here.)"""
+        crit: list[str] = []
+        expects = getattr(prompt, "expects", None)
+        if expects is not None:
+            if getattr(expects, "reply_non_empty", False):
+                crit.append("reply non-empty")
+            if getattr(expects, "blocked", False):
+                crit.append("expected blocked")
+            lat = getattr(expects, "latency_max_ms", None)
+            if lat:
+                crit.append(f"latency ≤ {lat}ms")
+            oc = list(getattr(expects, "output_contains", None) or [])
+            if oc:
+                crit.append("contains " + ", ".join(map(str, oc[:3])))
+            rx = getattr(expects, "output_matches_regex", None)
+            if rx:
+                crit.append(f"matches /{rx}/")
+            inv = list(getattr(expects, "invocations_kind_contains", None) or [])
+            inv += list(getattr(expects, "invocations_target_contains", None) or [])
+            if inv:
+                crit.append("invokes " + ", ".join(map(str, inv[:3])))
+        out = [
+            "",
+            "[b]definition of good[/b]",
+            "  [dim]asserts:[/dim] "
+            + ("; ".join(crit) if crit else "reply arrived"),
+        ]
+        verdict = getattr(result, "eval_verdict", "") if result is not None else ""
+        if verdict:
+            out.append(f"  [dim]model self-verdict:[/dim] {verdict}")
+        return out
 
     def _restore_previous_version(self) -> None:
         """Load the previous saved version of the highlighted prompt into
