@@ -412,6 +412,114 @@ async def test_export_without_dir_warns(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Proposal G P1 — per-prompt run history + version control
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_history_timeline_renders(tmp_path, monkeypatch):
+    """After runs accrue, selecting a prompt shows a run-history timeline
+    (outcomes of repeated runs) on the right."""
+    from acc.golden_prompts import GoldenResult, append_run_record
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        name = next(iter(screen._prompts))
+        append_run_record(GoldenResult(
+            name=name, passed=True, elapsed_ms=11, task_id="t1"))
+        append_run_record(GoldenResult(
+            name=name, passed=False, elapsed_ms=22, task_id="t2",
+            failures=["x"]))
+
+        captured: list[str] = []
+        detail = screen.query_one("#diagnostics-detail", Static)
+        real = detail.update
+
+        def cap(content="", *a, **k):
+            captured.append(str(content))
+            return real(content, *a, **k)
+
+        detail.update = cap  # type: ignore[assignment]
+        screen._render_detail(name)
+        await pilot.pause()
+        joined = "\n".join(captured)
+        assert "run history" in joined
+        assert "22ms" in joined and "1 failed" in joined
+
+
+@pytest.mark.asyncio
+async def test_run_recorded_to_history_on_run(tmp_path, monkeypatch):
+    """A completed run appends to run_history.jsonl with its task_id +
+    collective_id (mocked run_one)."""
+    import acc.golden_prompts as gp
+    from acc.golden_prompts import GoldenResult, read_run_history
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        app._observers = [MagicMock()]
+        app._active_collective_idx = 0
+        app._collective_ids = ["sol-x"]
+        name = next(iter(screen._prompts))
+
+        async def _fake_run_one(prompt, *, observer, collective_id):
+            return GoldenResult(
+                name=prompt.name, passed=True, elapsed_ms=5, task_id="tk-1")
+
+        monkeypatch.setattr(gp, "run_one", _fake_run_one)
+        await screen._run_prompts([name])
+        await pilot.pause()
+
+        rows = read_run_history(name)
+        assert rows and rows[0]["task_id"] == "tk-1"
+        assert rows[0]["collective_id"] == "sol-x"
+
+
+@pytest.mark.asyncio
+async def test_versions_button_restores_previous(tmp_path, monkeypatch):
+    """Save v1 then v2, then the Versions button loads v1 back into the
+    editor (proposal G — restore)."""
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        editor = screen.query_one("#golden-editor", TextArea)
+        editor.text = "name: rt\nprompt: one\ntarget_role: analyst\n"
+        screen._editor_save()
+        editor.text = "name: rt\nprompt: two\ntarget_role: analyst\n"
+        screen._editor_save()
+        await pilot.pause()
+
+        screen._current_name = "rt"
+        screen._restore_previous_version()
+        await pilot.pause()
+        assert "one" in editor.text and "two" not in editor.text
+
+
+@pytest.mark.asyncio
+async def test_versions_button_warns_when_single_version(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        editor = screen.query_one("#golden-editor", TextArea)
+        editor.text = "name: solo\nprompt: x\ntarget_role: analyst\n"
+        screen._editor_save()
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+        screen._current_name = "solo"
+        screen._restore_previous_version()
+        assert any("no earlier version" in s for s in statuses)
+
+
+# ---------------------------------------------------------------------------
 # Proposal 033 WS-B — Form/MD subnav + role selector + Send
 # ---------------------------------------------------------------------------
 

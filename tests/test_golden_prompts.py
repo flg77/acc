@@ -23,20 +23,26 @@ import yaml
 from acc.golden_prompts import (
     ExpectsBlock,
     GoldenPrompt,
+    GoldenResult,
     add_watch_dir,
+    append_run_record,
     append_save_history,
     attached_watch_dirs,
     candidate_from_task,
+    diff_versions,
     dump_prompt,
     evaluate,
     export_store,
     format_summary,
     import_store,
+    list_versions,
     load_all,
     load_merged,
     load_one,
     load_one_md,
     parse_markdown_prompt,
+    read_run_history,
+    read_version,
     save_candidate,
     save_prompt,
     version_count,
@@ -245,6 +251,86 @@ class TestExportImport:
         restored = load_merged([fresh])
         assert [p.name for p in restored] == ["keep"]
         assert restored[0].prompt == "KEEP"
+
+
+# ---------------------------------------------------------------------------
+# Proposal G P1 — per-run execution history + prompt version control
+# ---------------------------------------------------------------------------
+
+
+class TestRunHistory:
+    def test_result_carries_join_keys(self):
+        r = GoldenResult(
+            name="x", passed=True, elapsed_ms=1, task_id="t-1", agent_id="a-1",
+        )
+        assert r.task_id == "t-1" and r.agent_id == "a-1"
+
+    def test_append_and_read_newest_first(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        append_run_record(
+            GoldenResult(name="p", passed=True, elapsed_ms=10, task_id="t1"),
+            collective_id="sol-01",
+        )
+        append_run_record(GoldenResult(
+            name="p", passed=False, elapsed_ms=20, task_id="t2",
+            failures=["latency"],
+        ))
+        rows = read_run_history("p")
+        assert [r["task_id"] for r in rows] == ["t2", "t1"]   # newest-first
+        assert rows[0]["passed"] is False and rows[0]["failures"] == ["latency"]
+        assert rows[1]["collective_id"] == "sol-01"
+
+    def test_read_filters_by_name_and_limit(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        for i in range(3):
+            append_run_record(GoldenResult(name="a", passed=True, elapsed_ms=i))
+        append_run_record(GoldenResult(name="b", passed=True, elapsed_ms=9))
+        assert len(read_run_history("a")) == 3
+        assert len(read_run_history("a", limit=2)) == 2
+        assert len(read_run_history()) == 4          # no filter → all
+
+    def test_read_empty_when_absent(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        assert read_run_history("nope") == []
+
+    def test_append_returns_run_id(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        rid = append_run_record(GoldenResult(name="p", passed=True, elapsed_ms=1))
+        assert rid and read_run_history("p")[0]["run_id"] == rid
+
+
+class TestPromptVersions:
+    def test_save_creates_restorable_version_blobs(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        assert append_save_history("vc", "name: vc\nv: 1\n") == 1
+        assert append_save_history("vc", "name: vc\nv: 2\n") == 2
+        assert list_versions("vc") == [1, 2]
+        assert "v: 1" in read_version("vc", 1)
+        assert "v: 2" in read_version("vc", 2)
+
+    def test_diff_versions(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        append_save_history("d", "line1\nline2\n")
+        append_save_history("d", "line1\nCHANGED\n")
+        diff = diff_versions("d", 1, 2)
+        assert "-line2" in diff and "+CHANGED" in diff
+
+    def test_version_blobs_not_loaded_as_prompts(self, tmp_path, monkeypatch):
+        """Version blobs live in a versions/<slug>/ subdir, so the top-level
+        prompt loader must never pick them up as prompts."""
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        append_save_history(
+            "real", "name: real\nprompt: hi\ntarget_role: analyst\n",
+        )
+        save_prompt(
+            GoldenPrompt(name="real", prompt="hi", target_role="analyst"),
+            root=tmp_path,
+        )
+        assert [m.name for m in load_merged([tmp_path])] == ["real"]
+
+    def test_list_versions_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        assert list_versions("never") == []
 
 
 # ---------------------------------------------------------------------------

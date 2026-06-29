@@ -166,6 +166,11 @@ class DiagnosticsScreen(Screen):
                     yield Button(
                         "Paste", id="btn-golden-paste", variant="default",
                     )
+                    # Proposal G — restore a previous saved version.
+                    yield Button(
+                        "Versions", id="btn-golden-versions",
+                        variant="default",
+                    )
                 with Horizontal(id="golden-attach-row"):
                     yield Input(
                         placeholder=(
@@ -328,7 +333,84 @@ class DiagnosticsScreen(Screen):
                 lines.append("")
                 lines.append("[b]reply excerpt[/b]")
                 lines.append(f"  {result.output_excerpt}")
+        # Proposal G — per-prompt run history (outcomes of repeated runs) +
+        # version control, both read from the writable store by prompt name.
+        try:
+            from acc.golden_prompts import (  # noqa: PLC0415
+                list_versions, read_run_history,
+            )
+            history = read_run_history(name, limit=8)
+            versions = list_versions(name)
+        except Exception:
+            history, versions = [], []
+        if history:
+            lines.append("")
+            lines.append(f"[b]run history[/b] [dim](last {len(history)})[/dim]")
+            for row in history:
+                ok = "[green]✓[/green]" if row.get("passed") else "[red]✗[/red]"
+                ms = row.get("elapsed_ms", 0)
+                nfail = len(row.get("failures") or [])
+                extra = f" · {nfail} failed" if nfail else ""
+                lines.append(
+                    f"  {ok} {self._fmt_ts(row.get('run_ts', 0))}  "
+                    f"{ms}ms{extra}"
+                )
+        if versions:
+            prev = versions[-2] if len(versions) > 1 else versions[-1]
+            lines.append("")
+            lines.append(
+                f"[b]versions[/b] {len(versions)} "
+                f"[dim](latest v{versions[-1]}; Versions ↺ restores v{prev})[/dim]"
+            )
         panel.update("\n".join(line for line in lines if line is not None))
+
+    @staticmethod
+    def _fmt_ts(ts) -> str:
+        import datetime as _dt  # noqa: PLC0415
+        try:
+            return _dt.datetime.fromtimestamp(
+                float(ts)
+            ).strftime("%m-%d %H:%M:%S")
+        except (ValueError, OSError, OverflowError, TypeError):
+            return "—"
+
+    def _restore_previous_version(self) -> None:
+        """Load the previous saved version of the highlighted prompt into
+        the editor (proposal G — restore).  The detail panel lists every
+        saved version; this recovers the one before the latest save so a
+        bad edit can be rolled back, then re-Saved to keep."""
+        from acc.golden_prompts import (  # noqa: PLC0415
+            diff_versions, list_versions, read_version,
+        )
+        name = self._current_name
+        if not name:
+            self._set_status("[yellow]Select a prompt first.[/yellow]")
+            return
+        versions = list_versions(name)
+        if len(versions) < 2:
+            self._set_status(
+                f"[yellow]no earlier version to restore "
+                f"({len(versions)} saved)[/yellow]"
+            )
+            return
+        prev, cur = versions[-2], versions[-1]
+        try:
+            content = read_version(name, prev)
+            ndiff = sum(
+                1 for ln in diff_versions(name, prev, cur).splitlines()
+                if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+            )
+        except OSError as exc:
+            self._set_status(f"[red]restore failed: {exc}[/red]")
+            return
+        try:
+            self._editor().text = content
+        except Exception:
+            return
+        self._set_status(
+            f"[green]✓ restored v{prev}[/green] "
+            f"[dim](was v{cur}; {ndiff} changed lines — Save to keep)[/dim]"
+        )
 
     # ------------------------------------------------------------------
     # Actions
@@ -350,6 +432,8 @@ class DiagnosticsScreen(Screen):
             self._editor_copy()
         elif bid == "btn-golden-paste":
             self._editor_paste()
+        elif bid == "btn-golden-versions":
+            self._restore_previous_version()
         elif bid == "btn-golden-import":
             self._import_dir()
         elif bid == "btn-golden-export":
@@ -785,6 +869,17 @@ class DiagnosticsScreen(Screen):
                     self._set_status(f"[red]{name}: {exc}[/red]")
                     continue
                 self._results[name] = result
+                # Proposal G — record this run to the per-prompt history
+                # (carries task_id for later enrichment). Best-effort.
+                try:
+                    from acc.golden_prompts import (  # noqa: PLC0415
+                        append_run_record,
+                    )
+                    append_run_record(result, collective_id=cid)
+                except Exception:
+                    logger.debug(
+                        "diagnostics: run-record append failed", exc_info=True,
+                    )
                 if result.passed:
                     passed += 1
                 self._update_row(name, result)
