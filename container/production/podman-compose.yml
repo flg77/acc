@@ -27,7 +27,7 @@
 
 version: "3.9"
 
-x-acc-version: &acc-version "0.2.0"
+x-acc-version: &acc-version "${ACC_VERSION:-0.2.0}"
 
 networks:
   acc-net:
@@ -137,7 +137,7 @@ services:
       dockerfile: container/production/Containerfile.agent-core
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-agent-core:0.2.0
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-ingester
     depends_on:
       nats:
@@ -172,7 +172,7 @@ services:
 
   # ── Agent: Analyst ────────────────────────────────────────────────────────
   acc-agent-analyst:
-    image: localhost/acc-agent-core:0.2.0
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-analyst
     depends_on:
       nats:
@@ -207,7 +207,7 @@ services:
 
   # ── Agent: Arbiter ────────────────────────────────────────────────────────
   acc-agent-arbiter:
-    image: localhost/acc-agent-core:0.2.0
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-arbiter
     depends_on:
       nats:
@@ -246,7 +246,7 @@ services:
   # prompt times out at 180s.  Ships as baseline so `./acc-deploy.sh up`
   # brings the gatekeeper live by default.
   acc-agent-assistant:
-    image: localhost/acc-agent-core:0.2.0
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-assistant
     depends_on:
       nats:
@@ -286,7 +286,7 @@ services:
   # the TUI dropdown resolve).  The multi-replica peer pool stays available
   # behind the `coding-split` profile below.
   acc-agent-coding-agent:
-    image: localhost/acc-agent-core:0.2.0
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-coding-agent
     depends_on:
       nats:
@@ -325,7 +325,7 @@ services:
   # mutations).  Gated on the agent.role Literal in acc/config.py including
   # `compliance_officer` — fix shipped alongside this PR.
   acc-agent-compliance-officer:
-    image: localhost/acc-agent-core:0.2.0
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-compliance-officer
     depends_on:
       nats:
@@ -373,7 +373,7 @@ services:
   acc-coding-1:
     profiles:
       - coding-split
-    image: localhost/acc-agent-core:0.2.0
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-coding-1
     depends_on:
       nats:
@@ -411,7 +411,7 @@ services:
   acc-coding-2:
     profiles:
       - coding-split
-    image: localhost/acc-agent-core:0.2.0
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-coding-2
     depends_on:
       nats:
@@ -449,7 +449,7 @@ services:
   acc-coding-3:
     profiles:
       - coding-split
-    image: localhost/acc-agent-core:0.2.0
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-coding-3
     depends_on:
       nats:
@@ -497,7 +497,7 @@ services:
       dockerfile: container/production/Containerfile.cli
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-cli:0.2.0
+    image: localhost/acc-cli:${ACC_VERSION:-0.2.0}
     container_name: acc-cli
     # The CLI is one-shot: print help and exit.  Any real invocation goes
     # through `./acc-cli.sh <subcommand>` from the host.
@@ -525,7 +525,7 @@ services:
       dockerfile: container/production/Containerfile.echo-mcp-server
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-mcp-echo:0.2.0
+    image: localhost/acc-mcp-echo:${ACC_VERSION:-0.2.0}
     container_name: acc-mcp-echo
     environment:
       ACC_MCP_ECHO_HOST: "0.0.0.0"
@@ -652,7 +652,7 @@ services:
       dockerfile: container/production/Containerfile.tui
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-tui:0.2.0
+    image: localhost/acc-tui:${ACC_VERSION:-0.2.0}
     container_name: acc-tui
     # PR-S — the userns remap that lets the Configuration screen write
     # back to /app/.env is NOT set here.  ``keep-id`` is incompatible
@@ -779,7 +779,7 @@ services:
       dockerfile: container/production/Containerfile.webgui
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-webgui:0.2.0
+    image: localhost/acc-webgui:${ACC_VERSION:-0.2.0}
     container_name: acc-webgui
     depends_on:
       nats:

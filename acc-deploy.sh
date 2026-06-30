@@ -120,6 +120,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$SCRIPT_DIR"
 
+# ── Resolve the ACC code version (semantic, from git tags) ─────────────────────
+# Image tags + the deploy banner track the actual CODE release rather than a
+# hardcoded literal. `git describe` yields the release on a tagged commit
+# (vX.Y.Z), or <tag>-<n>-g<sha>[-dirty] when ahead/modified, or a short SHA when
+# no tag is reachable — all valid container tags. Override ACC_VERSION=... for a
+# reproducible/CI tag. Exported so podman-compose interpolates it into the
+# compose `image:` tags and the ACC_VERSION build arg.
+if [[ -z "${ACC_VERSION:-}" ]]; then
+    ACC_VERSION="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null | sed 's/^v//')"
+    ACC_VERSION="${ACC_VERSION:-0.0.0-unknown}"
+fi
+export ACC_VERSION
+
 # ── Parse options ──────────────────────────────────────────────────────────────
 COMMAND="${1:-up}"
 shift 2>/dev/null || true   # remaining args passed directly to podman-compose
@@ -165,7 +178,7 @@ if [[ "$COMMAND" == "cli" ]]; then
         exit 1
     fi
 
-    CLI_IMAGE="${ACC_CLI_IMAGE:-localhost/acc-cli:0.2.0}"
+    CLI_IMAGE="${ACC_CLI_IMAGE:-localhost/acc-cli:$ACC_VERSION}"
     CLI_NETWORK="${ACC_CLI_NETWORK:-host}"
     CLI_NATS_URL="${ACC_NATS_URL:-nats://localhost:4222}"
     CLI_COLLECTIVE="${ACC_COLLECTIVE_ID:-sol-01}"
@@ -220,7 +233,7 @@ case "$STACK" in
         ;;
     production)
         COMPOSE_FILE="$REPO_ROOT/container/production/podman-compose.yml"
-        STACK_LABEL="ACC Production (0.2.0 — UBI10 base)"
+        STACK_LABEL="ACC Production ($ACC_VERSION — UBI10 base)"
         ;;
 esac
 
@@ -1178,6 +1191,26 @@ case "$COMMAND" in
     status | ps)
         echo "Running ACC containers:"
         podman ps --filter "name=acc-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+        ;;
+
+    version | image | images)
+        # Surface the resolved code release + the image refs this build tags and
+        # runs, so an operator can see at a glance whether a deployment is current
+        # (vs the old hardcoded :0.2.0 that never tracked the code).
+        echo "ACC code version (git): $ACC_VERSION"
+        echo ""
+        echo "Images for this version (localhost/acc-<svc>:$ACC_VERSION):"
+        for _svc in agent-core tui webgui cli mcp-echo; do
+            _ref="localhost/acc-$_svc:$ACC_VERSION"
+            if podman image exists "$_ref" 2>/dev/null; then
+                _built="$(podman image inspect "$_ref" --format '{{.Created}}' 2>/dev/null | cut -c1-19)"
+                printf '  %-46s built %s\n' "$_ref" "$_built"
+            else
+                printf '  %-46s (not built — run ./acc-deploy.sh build)\n' "$_ref"
+            fi
+        done
+        echo ""
+        echo "Override with ACC_VERSION=<tag> for a reproducible/CI build."
         ;;
 
     *)
