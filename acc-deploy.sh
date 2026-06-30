@@ -33,7 +33,10 @@
 #             permits unsigned dev packs).
 #   build     Build container images (must be done before first 'up')
 #   flavour <name> [--profile P | --features "a b"] [--packs "<packs>"]
-#             [--local-catalog] [--base IMG] [--registry R] [--push] [--dry-run]
+#             [--local-catalog | --signer-key <pubkey>] [--base IMG]
+#             [--registry R] [--push] [--dry-run]
+#             --local-catalog = unsigned dev bake; --signer-key = verify staged
+#             SIGNED packs' .sig at build (release/CI; backlog 008).
 #             Build an immutable flavour image (base + chosen packs baked at
 #             build time; full governance/control-roles always baked — D1/D2).
 #             --profile/--features assemble integration pillars (043): pip extras
@@ -414,13 +417,13 @@ case "$COMMAND" in
         # --local-catalog builds control-roles into .acc-localcat/ (unsigned) so
         # the governance bake works on a bare host (dev/edge); release/CI stages
         # the SIGNED pack instead (lab-gitops acc-release-pipeline handover).
-        FNAME="${1:?usage: acc-deploy.sh flavour <name> [--profile P | --features \"a b\"] [--packs \"<packs>\"] [--base IMG] [--registry R] [--push] [--dry-run]}"
+        FNAME="${1:?usage: acc-deploy.sh flavour <name> [--profile P | --features \"a b\"] [--packs \"<packs>\"] [--local-catalog | --signer-key <pubkey>] [--base IMG] [--registry R] [--push] [--dry-run]}"
         shift || true
         FPACKS=""
         FBASE="${ACC_PYBASE:-registry.access.redhat.com/ubi10/python-312-minimal:latest}"
         FREG="${ACC_REGISTRY:-}"
         FPUSH=false
-        FPROFILE=""; FFEATURES=""; FDRYRUN=false; FLOCAL=false
+        FPROFILE=""; FFEATURES=""; FDRYRUN=false; FLOCAL=false; FSIGNER=""
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 --packs)    FPACKS="$2"; shift 2 ;;
@@ -431,9 +434,19 @@ case "$COMMAND" in
                 --features) FFEATURES="$2"; shift 2 ;;
                 --dry-run)  FDRYRUN=true;   shift   ;;
                 --local-catalog) FLOCAL=true; shift ;;
+                # Release/CI signed-pack path (backlog 008): the packs were staged
+                # SIGNED (+ .sig) into .acc-localcat/ together with this cosign
+                # pubkey FILE; verify the .sig at build (acc-pkg install --key)
+                # instead of the unsigned --local-catalog dev path. Mutually
+                # exclusive with --local-catalog.
+                --signer-key) FSIGNER="$2"; shift 2 ;;
                 *) echo "flavour: unknown arg '$1'" >&2; exit 1 ;;
             esac
         done
+        if $FLOCAL && [[ -n "$FSIGNER" ]]; then
+            echo "flavour: --local-catalog (unsigned dev) and --signer-key (signed release) are mutually exclusive" >&2
+            exit 1
+        fi
 
         # Resolve the feature selection (if any) → EXTRAS / BAKE_MODELS / sidecars.
         FEXTRAS=""; FBAKE=""; FSIDE=""
@@ -483,12 +496,18 @@ case "$COMMAND" in
             fi
         fi
 
+        # Signed-pack release path (backlog 008): packs were staged SIGNED into
+        # .acc-localcat/ (by the lab-gitops acc-release role) with the cosign
+        # pubkey FILE named by --signer-key; pass it through so Containerfile.flavour
+        # verifies each .sig (acc-pkg install --key /opt/acc-localcat/<name>).
+        [[ -n "$FSIGNER" ]] && echo "    signer-key: .acc-localcat/$FSIGNER (verify .sig at build — signed release)"
+
         if $FDRYRUN; then
             echo "    DRY-RUN — would build:"
             echo "      podman build -f container/Containerfile.flavour \\"
             echo "        --build-arg PYBASE=$FBASE --build-arg PACKS=\"$FPACKS\" \\"
             echo "        --build-arg EXTRAS=\"$FEXTRAS\" --build-arg BAKE_MODELS=\"$FBAKE\" \\"
-            echo "        --build-arg ACC_ALLOW_UNSIGNED=\"$FUNSIGNED\" \\"
+            echo "        --build-arg ACC_ALLOW_UNSIGNED=\"$FUNSIGNED\" --build-arg SIGNER_KEY=\"$FSIGNER\" \\"
             echo "        -t $TAG ."
             [[ -n "$SIDE_OV" ]] && echo "    DRY-RUN — would deploy:" \
                 && echo "      podman-compose -f container/production/podman-compose.yml$SIDE_OV up -d"
@@ -502,6 +521,7 @@ case "$COMMAND" in
             --build-arg EXTRAS="$FEXTRAS" \
             --build-arg BAKE_MODELS="$FBAKE" \
             --build-arg ACC_ALLOW_UNSIGNED="$FUNSIGNED" \
+            --build-arg SIGNER_KEY="$FSIGNER" \
             -t "$TAG" \
             "$REPO_ROOT"
         echo "✓ Built $TAG"

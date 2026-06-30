@@ -40,6 +40,11 @@ ARG SIGNER_KEY=
 USER 0
 RUN microdnf install -y --nodocs gcc python3-devel \
  && microdnf clean all && rm -rf /var/cache/dnf
+# cosign — the SIGNER_KEY (signed-release) path verifies each staged pack's .sig
+# at build (acc-pkg install --key → cosign verify-blob). Pinned to 2.4.x (acc's
+# detached-signature dialect). Unused/harmless on the --local-catalog dev path.
+COPY --from=ghcr.io/sigstore/cosign/cosign:v2.4.3 /ko-app/cosign /usr/local/bin/cosign
+ENV ACC_COSIGN_BIN=/usr/local/bin/cosign
 
 WORKDIR /app
 COPY pyproject.toml /app/pyproject.toml
