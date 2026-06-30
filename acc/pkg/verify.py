@@ -174,6 +174,13 @@ def verify(
                 f"keypair-mode catalog points at missing pubkey: {key}"
             )
         cmd += ["--key", str(key)]
+        # Keypair mode is the air-gap / no-egress tier: the public key IS the
+        # identity, and the signer publishes with `--tlog-upload=false`, so
+        # there is no Rekor entry to find.  Without this, cosign 2.x fails with
+        # "signature not found in transparency log" on every offline keypair
+        # install (backlog 006 documents keypair as the `--insecure-ignore-tlog`
+        # path).  Keyless mode is untouched — it still requires the tlog.
+        cmd += ["--insecure-ignore-tlog"]
         signer_identity = f"keypair:{key.name}"
     else:
         cmd += [

@@ -85,10 +85,14 @@ class CatalogUploadFailed(PublishError):
 
 @dataclass(frozen=True)
 class SignArtefacts:
-    """Output of :func:`sign_blob`."""
+    """Output of :func:`sign_blob`.
+
+    ``certificate_path`` is ``None`` in keypair mode (``cosign sign-blob --key``
+    emits no Fulcio cert); keyless mode always sets it.
+    """
 
     signature_path: Path
-    certificate_path: Path
+    certificate_path: Optional[Path]
     rekor_log_index: Optional[int] = None
 
 
@@ -152,29 +156,34 @@ def sign_blob(
     output_dir: Optional[Path] = None,
     oidc_issuer: str = "https://oauth2.sigstore.dev/auth",
     identity_token: Optional[str] = None,
+    key_path: Optional[str] = None,
 ) -> SignArtefacts:
-    """Sign ``tarball_path`` keylessly via Fulcio; record in Rekor.
+    """Sign ``tarball_path`` and return the artefact paths.
 
-    Writes ``<tarball>.sig`` and ``<tarball>.pem`` next to the
-    tarball (or in ``output_dir`` if provided).  Returns the two
-    artefact paths + the Rekor log index (parsed from cosign's
-    output if present).
+    Two modes, mirroring :func:`acc.pkg.verify.verify`:
+
+    * **keyless** (default): Fulcio + Rekor.  Writes ``<tarball>.sig`` and
+      ``<tarball>.pem`` (the short-lived cert) and records the Rekor index.
+    * **keypair** (``key_path`` set, or the ``COSIGN_PRIVATE_KEY`` env var):
+      ``cosign sign-blob --key <priv> --tlog-upload=false`` — air-gap / no-egress
+      friendly (the internal-lab path for thread 12 / backlog 006).  Writes only
+      ``<tarball>.sig``; no Fulcio cert, no Rekor entry.  The key's password is
+      read by cosign from ``COSIGN_PASSWORD``.
 
     Parameters
     ----------
     tarball_path
         Path to the ``.accpkg`` tarball to sign.
     output_dir
-        Where to write the ``.sig`` + ``.pem`` (default: alongside
-        the tarball).
+        Where to write the ``.sig`` (+ ``.pem`` in keyless mode); default is
+        alongside the tarball.
     oidc_issuer
-        Sigstore OIDC issuer URL.  Defaults to the public Sigstore
-        OAuth endpoint; air-gap operators substitute their own
-        Trusted Artifact Signer instance via this kwarg or the
-        ``SIGSTORE_OIDC_ISSUER`` env var.
+        Sigstore OIDC issuer URL (keyless only).
     identity_token
-        Pre-fetched OIDC token.  When ``None``, cosign discovers via
-        its own conventions (env + GHA + interactive).
+        Pre-fetched OIDC token (keyless only).  ``None`` ⇒ cosign discovers it.
+    key_path
+        cosign **private** key PEM for keypair mode.  Falls back to the
+        ``COSIGN_PRIVATE_KEY`` env var; when neither is set, keyless is used.
     """
     tarball_path = tarball_path.resolve()
     if not tarball_path.is_file():
@@ -186,6 +195,10 @@ def sign_blob(
     cert_path = output_dir / (tarball_path.name + ".pem")
 
     cosign = _cosign_bin()
+
+    key = (key_path or os.environ.get("COSIGN_PRIVATE_KEY", "").strip()) or None
+    if key:
+        return _sign_blob_keypair(cosign, tarball_path, sig_path, key)
     issuer = os.environ.get("SIGSTORE_OIDC_ISSUER", "").strip() or oidc_issuer
     cmd = [
         cosign, "sign-blob",
@@ -236,6 +249,45 @@ def sign_blob(
     )
 
 
+def _sign_blob_keypair(
+    cosign: str, tarball_path: Path, sig_path: Path, key: str
+) -> SignArtefacts:
+    """``cosign sign-blob --key`` (keypair mode) — no Fulcio cert, no Rekor.
+
+    ``--tlog-upload=false`` keeps it air-gap friendly (the internal-lab path).
+    cosign reads the key password from ``COSIGN_PASSWORD``.
+    """
+    if not Path(key).is_file():
+        raise PublishError(f"keypair signing key not found: {key}")
+    cmd = [
+        cosign, "sign-blob",
+        "--yes",
+        "--key", key,
+        "--tlog-upload=false",
+        "--output-signature", str(sig_path),
+        str(tarball_path),
+    ]
+    logger.debug("publish: running %s", " ".join(cmd))
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        raise PublishError(f"failed to exec cosign: {exc}") from exc
+    if result.returncode != 0:
+        raise CosignSignFailed(
+            f"cosign sign-blob --key failed (rc={result.returncode})",
+            cosign_stderr=result.stderr,
+        )
+    logger.info(
+        "publish: signed %s with keypair (signature=%s)",
+        tarball_path.name, sig_path.name,
+    )
+    return SignArtefacts(
+        signature_path=sig_path,
+        certificate_path=None,
+        rekor_log_index=None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # publish — sign + upload to catalog endpoint
 # ---------------------------------------------------------------------------
@@ -248,35 +300,38 @@ def publish(
     token: Optional[str] = None,
     output_dir: Optional[Path] = None,
     oidc_issuer: str = "https://oauth2.sigstore.dev/auth",
+    key_path: Optional[str] = None,
 ) -> PublishResult:
-    """Sign the tarball + upload tarball/signature/cert to ``catalog_url``.
+    """Sign the tarball + upload tarball/signature(/cert) to ``catalog_url``.
 
     The catalog endpoint must accept authenticated PUT requests at:
 
-    * ``<catalog_url>/upload/<scope>/<name>-<version>.accpkg``
-    * ``<catalog_url>/upload/<scope>/<name>-<version>.accpkg.sig``
-    * ``<catalog_url>/upload/<scope>/<name>-<version>.accpkg.pem``
+    * ``<catalog_url>/upload/<name>-<version>.accpkg``
+    * ``<catalog_url>/upload/<name>-<version>.accpkg.sig``
+    * ``<catalog_url>/upload/<name>-<version>.accpkg.pem`` (keyless only)
 
-    ``token`` is sent as ``Authorization: Bearer <token>`` if
-    supplied (operator-controlled per catalog).
+    ``token`` is sent as ``Authorization: Bearer <token>`` if supplied
+    (operator-controlled per catalog).  ``key_path`` (or ``COSIGN_PRIVATE_KEY``)
+    selects keypair signing — the internal-lab path for thread 12 / backlog 006;
+    in that mode there is no Fulcio cert, so only the tarball + signature are
+    uploaded.
 
-    Returns the URLs the catalog now serves the package + signature
-    from (the operator publishes these in the catalog's
-    ``index.json``).
+    Returns the URLs the catalog now serves the package + signature from.
     """
     artefacts = sign_blob(
         tarball_path, output_dir=output_dir,
-        oidc_issuer=oidc_issuer,
+        oidc_issuer=oidc_issuer, key_path=key_path,
     )
 
     base = catalog_url.rstrip("/") + "/upload/"
     tarball_url = base + tarball_path.name
     signature_url = base + artefacts.signature_path.name
-    cert_url = base + artefacts.certificate_path.name
 
     _http_put(tarball_url, tarball_path.read_bytes(), token=token)
     _http_put(signature_url, artefacts.signature_path.read_bytes(), token=token)
-    _http_put(cert_url, artefacts.certificate_path.read_bytes(), token=token)
+    if artefacts.certificate_path is not None and artefacts.certificate_path.is_file():
+        cert_url = base + artefacts.certificate_path.name
+        _http_put(cert_url, artefacts.certificate_path.read_bytes(), token=token)
 
     return PublishResult(
         tarball_url=tarball_url,

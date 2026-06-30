@@ -124,6 +124,14 @@ webgui = [
     "authlib>=1.3,<2.0",
     "bcrypt>=4.1,<5.0",
 ]
+catalog = [
+    # acc-catalog — the writable, cosign-verifying package-catalog endpoint
+    # (marketplace P0, thread 12).  A thin FastAPI server over
+    # acc.catalog.store; cosign is a runtime *binary* dependency (the deploy
+    # image bakes it), not a pip package.  Verification reuses acc.pkg.verify.
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.30,<1.0",
+]
 speech = [
     # Integrations pillar 3 — local, on-device STT/TTS for the assistant's
     # voice interface. OPT-IN: NOT in the base install, so the 2 GB edge memory
@@ -140,6 +148,7 @@ acc-agent = "acc.agent:main"
 acc-tui = "acc.tui.app:main"
 acc-cli = "acc.cli:main"
 acc-webgui = "acc.webgui.app:main"
+acc-catalog = "acc.catalog.server:main"
 acc-pkg = "acc.pkg.cli:main"
 # Slack channel daemon — operator runs `pip install 'acc[slack]'` first
 # so slack_bolt is on the PYTHONPATH before this entry point is invoked.

@@ -1,0 +1,74 @@
+# acc-catalog — the writable, cosign-verifying package catalog endpoint.
+#
+# Marketplace P0 (thread 12).  A long-running FastAPI service (NOT the one-shot
+# acc-pkg runner) that accepts `acc-pkg publish` uploads, cosign-verifies them
+# against the catalog's RequiredSigner BEFORE listing, and serves a tier-tagged
+# index.json + the signed .accpkg artefacts.  See acc/catalog/.
+#
+# Dep surface (acc/catalog/* imports): pydantic + pyyaml (via acc.pkg.*) +
+# fastapi + uvicorn (the `catalog` extra).  cosign is a binary dependency
+# (ACC_COSIGN_BIN), pinned to 2.4.x to match acc's detached-signature flow.
+#
+# Build (on acc1, from an acc-spearhead checkout):
+#   podman build -f container/production/Containerfile.acc-catalog \
+#     --build-arg ACC_VERSION=0.3.34 \
+#     -t quay.ic3net.internal:8443/flg/acc-catalog:<tag> .
+# Push is operator-gated (the agent exfil classifier blocks private-source
+# pushes — run `podman push` from your own `!` pane).
+#
+# Run:
+#   podman run --rm -p 8080:8080 \
+#     -e ACC_CATALOG_TOKEN=... -e ACC_CATALOG_PUBKEY=/etc/acc-catalog/keys/cosign.pub \
+#     -v cosign.pub:/etc/acc-catalog/keys/cosign.pub:ro \
+#     -v acc-catalog-data:/var/lib/acc-catalog \
+#     quay.ic3net.internal:8443/flg/acc-catalog:<tag>
+
+FROM registry.access.redhat.com/ubi10/python-312-minimal:latest
+
+ARG ACC_VERSION=0.3.34
+ARG COSIGN_VERSION=v2.4.3
+
+LABEL org.opencontainers.image.title="acc-catalog" \
+      org.opencontainers.image.description="Writable cosign-verifying ACC package catalog (marketplace P0)" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.base.name="registry.access.redhat.com/ubi10/python-312-minimal"
+
+USER 0
+
+# cosign — verifies every upload's signature before it is listed.  Pinned to
+# 2.4.x (acc's detached-signature dialect); keep COSIGN_VERSION + the --from tag
+# in lock-step (build args can't interpolate into --from).
+COPY --from=ghcr.io/sigstore/cosign/cosign:v2.4.3 /ko-app/cosign /usr/local/bin/cosign
+
+WORKDIR /app
+COPY pyproject.toml /app/pyproject.toml
+
+# catalog deps: acc.pkg.* (pyyaml + pydantic) + the `catalog` extra
+# (fastapi + uvicorn).  pip directly (not a subprocess shim) — see acc-pkg note.
+RUN pip install --no-cache-dir \
+      "pyyaml>=6.0,<7.0" \
+      "pydantic>=2.8,<3.0" \
+      "fastapi>=0.115,<1.0" \
+      "uvicorn[standard]>=0.30,<1.0"
+
+COPY acc/ /app/acc/
+
+RUN pip install --no-cache-dir --no-deps . \
+ && echo "acc:x:1001:0:ACC catalog:/app:/bin/sh" >> /etc/passwd \
+ && mkdir -p /var/lib/acc-catalog /etc/acc-catalog/keys \
+ && chown -R 1001:0 /app /var/lib/acc-catalog /etc/acc-catalog \
+ && chmod -R g=u /app /var/lib/acc-catalog /etc/acc-catalog
+
+USER 1001
+
+ENV ACC_COSIGN_BIN=/usr/local/bin/cosign \
+    ACC_CATALOG_ROOT=/var/lib/acc-catalog \
+    ACC_CATALOG_HOST=0.0.0.0 \
+    ACC_CATALOG_PORT=8080 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+EXPOSE 8080
+
+ENTRYPOINT ["acc-catalog"]

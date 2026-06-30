@@ -633,7 +633,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("login", help="report OIDC token + issuer readiness for publish")
 
     # publish (Stage 1.3 — sign + upload to catalog endpoint)
-    pub = sub.add_parser("publish", help="OIDC-keyless sign + upload a .accpkg to a catalog")
+    pub = sub.add_parser("publish", help="sign (keyless or keypair) + upload a .accpkg to a catalog")
     pub.add_argument("package", help="path to the .accpkg file")
     pub.add_argument("--catalog-url", required=True,
                      help="base URL of the catalog upload endpoint")
@@ -641,6 +641,9 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="bearer token for the catalog endpoint (optional)")
     pub.add_argument("--issuer",
                      help="OIDC issuer URL (default: public Sigstore)")
+    pub.add_argument("--key",
+                     help="cosign private key for keypair signing "
+                          "(else keyless; or set COSIGN_PRIVATE_KEY)")
 
     # list
     l = sub.add_parser("list", help="list installed packages or catalog availability")
@@ -774,6 +777,7 @@ def _cmd_publish(args: argparse.Namespace, out: _Output) -> int:
             pkg, args.catalog_url,
             token=args.token,
             oidc_issuer=args.issuer or "https://oauth2.sigstore.dev/auth",
+            key_path=args.key,
         )
     except CosignSignFailed as exc:
         print(f"error: {exc}\n{exc.cosign_stderr}", file=sys.stderr)
