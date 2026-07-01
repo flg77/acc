@@ -9,17 +9,34 @@ USER layer only); tested with tmp ``catalogs.yaml`` files via the
 
 from __future__ import annotations
 
+import io
+import json
 from pathlib import Path
 
 import pytest
 import yaml
 
 from acc.pkg.catalog import (
+    KNOWN_CATALOG_ALIASES,
     Catalog,
+    IndexFetchError,
+    add_catalog_from_url,
     add_user_catalog,
     catalog_entries,
+    fetch_catalog_descriptor,
     list_catalogs,
+    resolve_catalog_alias,
 )
+
+
+class _FakeResp(io.BytesIO):
+    """Minimal urlopen() stand-in: a context-manager BytesIO."""
+
+    def __enter__(self) -> "_FakeResp":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
 
 def _write_catalog_yaml(path: Path, entries: list[dict]) -> None:
@@ -142,3 +159,90 @@ def test_catalog_entries_best_effort_empty_on_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cat_mod, "fetch_index", _boom)
     assert catalog_entries(cat) == []
+
+
+# ---------------------------------------------------------------------------
+# Dynamic signer discovery — /catalog add <url> (045 3a)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_catalog_alias():
+    assert (
+        resolve_catalog_alias("acc-ecosystem")
+        == KNOWN_CATALOG_ALIASES["acc-ecosystem"]
+    )
+    # A URL (or anything not an alias) passes through unchanged.
+    assert resolve_catalog_alias("https://x.test/cat") == "https://x.test/cat"
+    assert resolve_catalog_alias("  ACC-Ecosystem ") == KNOWN_CATALOG_ALIASES["acc-ecosystem"]
+
+
+def test_fetch_catalog_descriptor_parses(monkeypatch):
+    descriptor = {
+        "id": "acc-ecosystem", "tier": "community", "description": "canonical",
+        "required_signer": {
+            "issuer": "https://token.actions.githubusercontent.com",
+            "subject_pattern": ".*acc-ecosystem.*",
+        },
+    }
+    captured = {}
+
+    def _fake_urlopen(url, timeout=10):
+        captured["url"] = url
+        return _FakeResp(json.dumps(descriptor).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    d = fetch_catalog_descriptor("https://flg77.github.io/acc-ecosystem")
+    assert captured["url"].endswith("/catalog.json")
+    assert d.id == "acc-ecosystem"
+    assert d.required_signer.subject_pattern == ".*acc-ecosystem.*"
+
+
+def test_fetch_catalog_descriptor_raises_on_failure(monkeypatch):
+    def _boom(url, timeout=10):
+        raise OSError("no network")
+
+    monkeypatch.setattr("urllib.request.urlopen", _boom)
+    with pytest.raises(IndexFetchError):
+        fetch_catalog_descriptor("https://x.test/cat")
+
+
+def test_add_catalog_from_url_discovers_signer(tmp_path, monkeypatch):
+    _isolate_layers(tmp_path, monkeypatch)
+    monkeypatch.setenv("ACC_USER_CATALOG", str(tmp_path / ".acc" / "catalogs.yaml"))
+    descriptor = {
+        "id": "eco", "tier": "trusted",
+        "required_signer": {"issuer": "iss", "subject_pattern": "sub.*"},
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda url, timeout=10: _FakeResp(json.dumps(descriptor).encode()),
+    )
+    cat = add_catalog_from_url("https://x.test/cat")
+    # Signer + tier come from the DESCRIPTOR (discovered), not a default.
+    assert cat.id == "eco"
+    assert cat.tier == "trusted"
+    assert cat.required_signer.issuer == "iss"
+    assert cat.required_signer.subject_pattern == "sub.*"
+    # And it's now discoverable.
+    assert "eco" in [c.id for c in list_catalogs()]
+
+
+def test_add_catalog_from_url_alias_still_fetches_descriptor(tmp_path, monkeypatch):
+    """The one-word alias resolves the URL but the signer is STILL discovered
+    from that URL's descriptor (the alias is convenience, not trust)."""
+    _isolate_layers(tmp_path, monkeypatch)
+    monkeypatch.setenv("ACC_USER_CATALOG", str(tmp_path / ".acc" / "catalogs.yaml"))
+    seen = {}
+
+    def _fake_urlopen(url, timeout=10):
+        seen["url"] = url
+        return _FakeResp(json.dumps({
+            "id": "acc-ecosystem", "tier": "community",
+            "required_signer": {"issuer": "gh", "subject_pattern": ".*"},
+        }).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+    cat = add_catalog_from_url("acc-ecosystem")
+    # Fetched the aliased URL's descriptor.
+    assert seen["url"].startswith(KNOWN_CATALOG_ALIASES["acc-ecosystem"])
+    assert cat.id == "acc-ecosystem"

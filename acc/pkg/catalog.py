@@ -645,3 +645,80 @@ def add_user_catalog(
     )
     logger.info("add_user_catalog: added %s (%s) → %s", id, url, path)
     return cat
+
+
+# Known one-word aliases for ``/catalog add <alias>`` — convenience only.  The
+# signer is ALWAYS discovered from the resolved URL's descriptor (never from
+# this table), so an alias is a shortcut to a URL, not a trust decision.
+KNOWN_CATALOG_ALIASES: dict[str, str] = {
+    "acc-ecosystem": "https://flg77.github.io/acc-ecosystem",
+}
+
+
+def resolve_catalog_alias(token: str) -> str:
+    """Map a known one-word alias to its URL; pass a URL (or anything else)
+    through unchanged."""
+    t = (token or "").strip()
+    return KNOWN_CATALOG_ALIASES.get(t.lower(), t)
+
+
+class CatalogDescriptor(BaseModel):
+    """A catalog's self-description at ``<url>/catalog.json`` (proposal 045 3a).
+
+    Lets ``/catalog add <url>`` **discover the catalog's declared signer
+    dynamically** — the operator confirms the add after seeing this, and that
+    confirmation is the trust anchor.  ``extra="ignore"`` so a newer descriptor
+    (with extra fields) still parses.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(..., min_length=1)
+    tier: Tier = "community"
+    description: str = ""
+    required_signer: RequiredSigner
+
+
+def fetch_catalog_descriptor(url: str) -> CatalogDescriptor:
+    """Fetch + parse ``<url>/catalog.json`` — the catalog's self-description.
+
+    RAISES :class:`IndexFetchError` on any network / parse / validation failure
+    so ``/catalog add`` surfaces exactly why discovery failed instead of falling
+    back to an insecure default signer.
+    """
+    desc_url = url.rstrip("/") + "/catalog.json"
+    try:
+        with urllib.request.urlopen(desc_url, timeout=10) as response:
+            raw = response.read().decode("utf-8")
+    except Exception as exc:  # noqa: BLE001 — any network/URL error → uniform error
+        raise IndexFetchError(f"could not fetch {desc_url}: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except Exception as exc:  # noqa: BLE001
+        raise IndexFetchError(f"malformed catalog.json at {desc_url}: {exc}") from exc
+    try:
+        return CatalogDescriptor.model_validate(data)
+    except Exception as exc:  # noqa: BLE001 — pydantic ValidationError → IndexFetchError
+        raise IndexFetchError(f"invalid catalog.json at {desc_url}: {exc}") from exc
+
+
+def add_catalog_from_url(token: str, *, priority: int = 100) -> Catalog:
+    """High-level ``/catalog add``: resolve an alias→URL, **discover** the
+    catalog's declared signer from ``<url>/catalog.json``, then add it to the
+    user layer with that signer.
+
+    Raises :class:`IndexFetchError` (discovery failed) or ``ValueError``
+    (duplicate id / invalid catalog).  The caller shows the operator the
+    discovered id / tier / signer (transparency) + the outcome.
+    """
+    url = resolve_catalog_alias(token)
+    desc = fetch_catalog_descriptor(url)
+    return add_user_catalog(
+        id=desc.id,
+        url=url,
+        tier=desc.tier,
+        signer_issuer=desc.required_signer.issuer,
+        signer_subject=desc.required_signer.subject_pattern,
+        signer_key_path=desc.required_signer.key_path,
+        priority=priority,
+    )

@@ -1356,6 +1356,125 @@ class PromptScreen(Screen):
             "ts": time.time(), "blocked": False,
         })
 
+    def _render_catalog_list(self) -> None:
+        """045 Slice 2 — ``/catalog list``: a numbered list of configured
+        catalogs (id, tier, mode, url/path) so the operator can drill into #num
+        with ``/catalog <num> --list-roles``."""
+        try:
+            from acc.pkg.catalog import list_catalogs  # noqa: PLC0415
+            cats = list_catalogs()
+        except Exception as exc:  # noqa: BLE001
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"catalog list unavailable: {exc}",
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        if not cats:
+            body = (
+                "catalogs: (none configured)\n"
+                "  add one with: /catalog add <url|alias>  "
+                "(e.g. /catalog add acc-ecosystem)"
+            )
+        else:
+            rows = [
+                f"  {i}. {c.id}  [{c.tier}] {c.mode}  {c.url or c.path}"
+                for i, c in enumerate(cats, start=1)
+            ]
+            body = (
+                "catalogs (drill in: /catalog <num> --list-roles):\n"
+                + "\n".join(rows)
+            )
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": body, "ts": time.time(), "blocked": False,
+        })
+
+    def _render_catalog_roles(self, index: int) -> None:
+        """045 Slice 2 — ``/catalog <num> --list-roles``: the packs catalog
+        #num advertises (package-granular; install a pack to enumerate its
+        roles)."""
+        try:
+            from acc.pkg.catalog import (  # noqa: PLC0415
+                catalog_entries, list_catalogs,
+            )
+            cats = list_catalogs()
+        except Exception as exc:  # noqa: BLE001
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"catalog unavailable: {exc}",
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        if index < 1 or index > len(cats):
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": (
+                    f"no catalog #{index} (there are {len(cats)}; "
+                    "run /catalog list)"
+                ),
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        cat = cats[index - 1]
+        entries = catalog_entries(cat)
+        if not entries:
+            body = (
+                f"catalog {cat.id}: no packs advertised "
+                "(unreachable, empty, or nothing signed yet)"
+            )
+        else:
+            latest: dict[str, str] = {}
+            for e in entries:
+                latest.setdefault(e.name, e.version)
+            rows = [f"  {name}@{ver}" for name, ver in sorted(latest.items())]
+            body = (
+                f"catalog {cat.id} [{cat.tier}] — {len(rows)} pack(s) "
+                "(install a pack to enumerate its roles):\n" + "\n".join(rows)
+            )
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": body, "ts": time.time(), "blocked": False,
+        })
+
+    def _add_catalog(self, target: str) -> None:
+        """045 Slice 2 — ``/catalog add <url|alias>``: discover the catalog's
+        declared signer from its ``<url>/catalog.json``, add it to the user
+        layer, and show the operator the signer it trusts (transparency — the
+        add is the trust anchor; packs still verify against it at install)."""
+        if not target:
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": "usage: /catalog add <url|alias>",
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        try:
+            from acc.pkg.catalog import add_catalog_from_url  # noqa: PLC0415
+            cat = add_catalog_from_url(target)
+        except Exception as exc:  # noqa: BLE001
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"could not add catalog {target!r}: {exc}",
+                "ts": time.time(), "blocked": True,
+            })
+            return
+        signer = cat.required_signer
+        who = (
+            f"keypair:{signer.key_path}" if signer.key_path
+            else f"{signer.issuer} ~ {signer.subject_pattern}"
+        )
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": (
+                f"added catalog {cat.id} [{cat.tier}] {cat.url}\n"
+                f"  packages must be signed by: {who}\n"
+                "  (packs still verify against this signer at install; "
+                "remove via ~/.acc/catalogs.yaml)"
+            ),
+            "ts": time.time(), "blocked": False,
+        })
+
     # ------------------------------------------------------------------
     # PR-5 — slash command dispatch
     # ------------------------------------------------------------------
@@ -1494,7 +1613,15 @@ class PromptScreen(Screen):
             return
 
         if intent.kind == _sc.KIND_CATALOG:
-            self._render_catalog(intent.args.get("filter", ""))
+            action = intent.args.get("action", "view")
+            if action == "list":
+                self._render_catalog_list()
+            elif action == "roles":
+                self._render_catalog_roles(int(intent.args.get("index", 0)))
+            elif action == "add":
+                self._add_catalog(intent.args.get("target", ""))
+            else:
+                self._render_catalog(intent.args.get("filter", ""))
             return
 
         if intent.kind == _sc.KIND_MODEL:

@@ -128,7 +128,15 @@ class CommandSpec:
 COMMANDS: list[CommandSpec] = [
     CommandSpec("allow", "Approve a pending gate (the inline GATE CARD)", "[<oversight_id>]", "oversight"),
     CommandSpec("cancel", "Cancel a task or cluster", "<task_id|cluster_id>", "control"),
-    CommandSpec("catalog", "Browse the role/package catalog", "[<@scope|filter>]", "query"),
+    CommandSpec(
+        "catalog", "Browse catalogs + their roles", category="query",
+        subforms=(
+            ("list", "numbered list of configured catalogs"),
+            ("<num> --list-roles", "roles/packs advertised by catalog #num"),
+            ("add <url|alias>", "add a catalog by URL (signer discovered from it)"),
+            ("[<@scope|filter>]", "installed roles + available packages"),
+        ),
+    ),
     CommandSpec("clear", "Clear the transcript", category="control"),
     CommandSpec(
         "cluster", "Inspect or kill a cluster", category="query",
@@ -347,7 +355,28 @@ def parse(text: str) -> SlashIntent:
         return SlashIntent(kind=KIND_MODE, args={"mode": m})
 
     if verb == "catalog":
-        return SlashIntent(kind=KIND_CATALOG, args={"filter": " ".join(rest)})
+        # 045 Slice 2 — discovery subforms.  Bare `/catalog [filter]` keeps its
+        # legacy installed-roles + available-packages view for back-compat.
+        if rest and rest[0].lower() == "list":
+            return SlashIntent(kind=KIND_CATALOG, args={"action": "list"})
+        if rest and rest[0].lower() == "add":
+            if len(rest) < 2:
+                return SlashIntent(
+                    kind=KIND_INVALID,
+                    error="usage: /catalog add <url|alias>  (e.g. /catalog add acc-ecosystem)",
+                )
+            return SlashIntent(
+                kind=KIND_CATALOG, args={"action": "add", "target": rest[1]},
+            )
+        if rest and rest[0].isdigit():
+            # `/catalog <num> [--list-roles]` → drill into catalog #num's packs.
+            return SlashIntent(
+                kind=KIND_CATALOG, args={"action": "roles", "index": int(rest[0])},
+            )
+        return SlashIntent(
+            kind=KIND_CATALOG,
+            args={"action": "view", "filter": " ".join(rest)},
+        )
 
     if verb == "model":
         show_all = any(

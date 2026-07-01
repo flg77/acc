@@ -258,3 +258,59 @@ def build_catalog_view(
         available_packages=tuple(available),
         control_roles=tuple(sorted(CONTROL_ROLES)),
     )
+
+
+# ---------------------------------------------------------------------------
+# Proposal 045 Slice 2 — catalog discovery for the assistant (parity with the
+# operator's /catalog list + /catalog <num> --list-roles).  The assistant
+# discovers catalogs → drills into a catalog's packs → proposes an infuse.
+# ---------------------------------------------------------------------------
+
+
+def list_catalog_sources(*, workspace: Optional[Path] = None) -> list[dict]:
+    """The configured catalogs (id / tier / mode / url) as plain dicts.
+
+    Best-effort: ``[]`` if the catalog layer can't be read.  Mirrors the
+    operator's ``/catalog list`` so the assistant sees the same numbered set.
+    """
+    try:
+        from acc.pkg.catalog import list_catalogs  # noqa: PLC0415
+        return [
+            {
+                "id": c.id, "tier": c.tier, "mode": c.mode,
+                "url": c.url or c.path, "priority": c.priority,
+            }
+            for c in list_catalogs(workspace=workspace)
+        ]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("catalog_view: list_catalog_sources failed (%s)", exc)
+        return []
+
+
+def roles_for_catalog(
+    catalog_id: str, *, workspace: Optional[Path] = None,
+) -> list[dict]:
+    """The packs one catalog advertises (package-granular), as plain dicts.
+
+    Lets the assistant inspect a specific catalog's offering before proposing an
+    infuse.  Best-effort ``[]``; an unknown ``catalog_id`` → ``[]``.  Roles are
+    pack-granular (a pack advertises one entry, not its roles) — installing the
+    pack is what enumerates its roles.
+    """
+    try:
+        from acc.pkg.catalog import (  # noqa: PLC0415
+            catalog_entries, list_catalogs,
+        )
+        cat = next(
+            (c for c in list_catalogs(workspace=workspace) if c.id == catalog_id),
+            None,
+        )
+        if cat is None:
+            return []
+        latest: dict[str, str] = {}
+        for e in catalog_entries(cat):
+            latest.setdefault(e.name, e.version)
+        return [{"package": n, "version": v} for n, v in sorted(latest.items())]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("catalog_view: roles_for_catalog failed (%s)", exc)
+        return []

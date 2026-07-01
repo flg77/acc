@@ -274,9 +274,26 @@ def test_pr3_verbs_in_registry_and_help():
 
 def test_pr4_catalog_model_parse():
     assert sc.parse("/catalog").kind == sc.KIND_CATALOG
-    assert sc.parse("/catalog @acc").args == {"filter": "@acc"}
+    # 045 Slice 2 — bare `/catalog [filter]` keeps the legacy package view under
+    # the explicit "view" action (back-compat).
+    assert sc.parse("/catalog @acc").args == {"action": "view", "filter": "@acc"}
     assert sc.parse("/model").kind == sc.KIND_MODEL
     assert {"catalog", "model"} <= {c.name for c in sc.COMMANDS}
+
+
+def test_catalog_discovery_subforms_parse():
+    # 045 Slice 2 — list / drill-in / add.
+    assert sc.parse("/catalog list").args == {"action": "list"}
+    assert sc.parse("/catalog 2 --list-roles").args == {"action": "roles", "index": 2}
+    assert sc.parse("/catalog 2").args == {"action": "roles", "index": 2}
+    assert sc.parse("/catalog add acc-ecosystem").args == {
+        "action": "add", "target": "acc-ecosystem",
+    }
+    assert sc.parse("/catalog add https://x.test/cat").args == {
+        "action": "add", "target": "https://x.test/cat",
+    }
+    # `add` with no target is a usage error, not a silent no-op.
+    assert sc.parse("/catalog add").kind == sc.KIND_INVALID
 
 
 def test_b8_gate_allow_disallow_parse():
