@@ -1034,6 +1034,29 @@ class DiagnosticsScreen(Screen):
             self._set_status(
                 f"[b]{passed}/{len(names)} passed[/b]"
             )
+            # Log the whole suite execution as one MLFlow run — no-op unless
+            # ACC_MLFLOW_TRACKING_URI is set + acc[mlflow] installed. The TUI
+            # keeps its own per-prompt history via append_run_record above, so
+            # path=None: this adds only the experiment run + the `trace →`
+            # deep links the detail panel already renders.
+            try:
+                from acc.backends.mlflow_runs import (  # noqa: PLC0415
+                    base_run_meta,
+                )
+                from acc.golden_prompts import (  # noqa: PLC0415
+                    persist_results,
+                )
+                persist_results(
+                    [self._results[n] for n in names if n in self._results],
+                    None,
+                    run_meta=base_run_meta(
+                        collective_id=cid, source="tui-diagnostics",
+                    ),
+                )
+            except Exception:
+                logger.debug(
+                    "diagnostics: mlflow suite-log skipped", exc_info=True,
+                )
         finally:
             self._running = False
 

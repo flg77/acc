@@ -282,11 +282,18 @@ async def _cmd_run(args: argparse.Namespace) -> int:
             )
             return 2
 
-        if args.history:
-            persist_results(
-                results, args.history,
-                run_meta={"collective_id": cid, "nats_url": nats_url},
-            )
+        # Always record the run: persist_results writes the JSONL history
+        # only when --history is given (path=None otherwise) and logs an
+        # MLFlow run whenever ACC_MLFLOW_TRACKING_URI is configured — so the
+        # DC suite lights up the experiment without also mandating a history
+        # file.  Both are best-effort no-ops when unconfigured.
+        from acc.backends.mlflow_runs import base_run_meta  # noqa: PLC0415
+        persist_results(
+            results, args.history,
+            run_meta=base_run_meta(
+                collective_id=cid, nats_url=nats_url, source="e2e-cli",
+            ),
+        )
         if args.json:
             print(json.dumps([r.model_dump() for r in results], indent=2))
         else:

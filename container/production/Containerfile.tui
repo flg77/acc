@@ -102,7 +102,12 @@ RUN pip install --no-cache-dir \
     "pyyaml>=6.0,<7.0" \
     "cryptography>=42,<45" \
     "redis>=5.0,<6.0" \
-    "msgpack>=1.1,<2.0"
+    "msgpack>=1.1,<2.0" \
+    "mlflow-skinny>=2.14,<3.0"
+# mlflow-skinny is the client-only MLFlow (no server) — lets the Diagnostics
+# pane log golden-suite runs to the acc-golden-prompts experiment when
+# ACC_MLFLOW_TRACKING_URI is set.  No-op (import-guarded) when it is not, so
+# this only adds a lightweight client, never a runtime dependency.
 
 # ── Layer 3: Application source ──────────────────────────────────────────────
 COPY acc/ /app/acc/

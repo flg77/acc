@@ -20,7 +20,10 @@ runtime degrades cleanly (no deep-links; everything else works).
   `acc:{cid}:compliance:task:{task_id}` (`cognitive_core._write_task_compliance_record`,
   7-day TTL) — the DC-side `(task_id → verdict/cost)` join.
 - **Suite runs** — `acc/backends/mlflow_runs.py` (`log_golden_results`, opt-in)
-  logs a golden-suite execution as one MLflow run when configured.
+  logs a golden-suite execution as one MLflow run when configured. Emitted from
+  the **TUI Diagnostics "Run all"** (`_run_prompts`) and the **`acc-cli e2e run`**
+  CLI (both via `golden_prompts.persist_results`, `run_meta` seeded by
+  `mlflow_runs.base_run_meta` → git_sha + host). No `--history` file required.
 
 ## Wiring (operator)
 
@@ -37,8 +40,28 @@ ACC_MLFLOW_EXPERIMENT   = acc-golden-prompts              # optional (default)
   URI** — not the `mlflow` python package — because they're browser URLs the
   operator opens. So the Diagnostics pane shows "trace →" links as soon as the
   URI is set, even on a TUI without the `acc[mlflow]` extra.
-- **Run logging** (`log_golden_results`) additionally needs the `acc[mlflow]`
-  extra installed in the runner/agent image.
+- **Run logging** (`log_golden_results`) additionally needs the `mlflow`
+  client. The **acc-tui image bundles `mlflow-skinny`** (`Containerfile.tui`),
+  so Diagnostics "Run all" logs runs out of the box once the URI is set; other
+  runners need the `acc[mlflow]` extra.
+
+### 1b. Local / compose activation (no cluster)
+
+The acc-tui compose service reads `ACC_MLFLOW_TRACKING_URI` from `./.env` — set
+it and restart, no compose edit:
+
+```
+# ./.env
+ACC_MLFLOW_TRACKING_URI=https://mlflow.example/     # cluster route, or a
+                                                    # standalone `podman run mlflow`
+```
+
+```
+./acc-deploy.sh restart          # rolls the TUI onto the env (down + up --force-recreate)
+```
+
+Empty / unset = no-op (edge default). Then Diagnostics "Run all" populates the
+`acc-golden-prompts` experiment and the pane's `trace →` links resolve.
 
 ### 2. Fan agent traces to MLflow (DC only)
 

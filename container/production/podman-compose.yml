@@ -685,6 +685,14 @@ services:
       # WebBridge HTTP port — 0 = disabled; set to 8765 and enable port below (REQ-TUI-041)
       ACC_TUI_WEB_PORT: "0"
       ACC_ROLES_ROOT: /app/roles
+      # MLFlow run-logging + Diagnostics `trace →` deep links. OFF unless set.
+      # Activate by pointing at any MLFlow in ./.env (no compose edit):
+      #   ACC_MLFLOW_TRACKING_URI=https://mlflow.example/   (cluster route, or a
+      #   standalone `podman run ... ghcr.io/mlflow/mlflow server`).
+      # The acc-tui image bundles mlflow-skinny, so Diagnostics "Run all" then
+      # logs the suite to the acc-golden-prompts experiment; empty = no-op.
+      ACC_MLFLOW_TRACKING_URI: ${ACC_MLFLOW_TRACKING_URI:-}
+      ACC_MLFLOW_EXPERIMENT: ${ACC_MLFLOW_EXPERIMENT:-acc-golden-prompts}
       # File log destination — keeps log lines out of the Textual canvas.
       # Override with ACC_TUI_LOG_DIR; default falls back to ./acc-tui-logs
       # if /app/logs is not writable.

@@ -397,17 +397,23 @@ async def run_all(
 
 def persist_results(
     results: list[GoldenResult],
-    path: "str | Path",
+    path: "str | Path | None" = None,
     *,
     run_meta: "Optional[dict]" = None,
 ) -> None:
-    """Append one JSONL row per result to *path* (PR-O, K-3).
+    """Record a suite execution: JSONL history (when *path* is given) +
+    an MLFlow run (when configured).
 
-    The scheduled maintenance-agent runner calls this after each
-    cron tick so a history accrues at ``<repo>/test/history/golden.jsonl``
-    (or wherever the operator points ``--history``).  Each row is a
-    self-contained JSON object: the GoldenResult fields plus a
-    shared ``run_ts`` and any ``run_meta`` (host, model, git sha…).
+    The scheduled maintenance-agent runner passes *path* so a history
+    accrues at ``<repo>/test/history/golden.jsonl`` (or wherever the
+    operator points ``--history``).  Each row is a self-contained JSON
+    object: the GoldenResult fields plus a shared ``run_ts`` and any
+    ``run_meta`` (host, model, git sha…).
+
+    *path* is optional so the TUI / CLI can log the MLFlow run WITHOUT
+    writing a JSONL file (the TUI keeps its own per-prompt history via
+    ``append_run_record``): ``path=None`` skips the JSONL write and still
+    logs to MLFlow.
 
     Mirrors the JSONL-history pattern the operator's
     ``acc-llm-test-history`` skill uses so the two archives are
@@ -418,23 +424,20 @@ def persist_results(
     import json as _json  # noqa: PLC0415
     import time as _time  # noqa: PLC0415
 
-    p = Path(path)
-    try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-    except OSError:
-        logger.warning("golden_prompts: cannot create history dir %s", p.parent)
-        return
     run_ts = _time.time()
     meta = dict(run_meta or {})
-    try:
-        with p.open("a", encoding="utf-8") as fh:
-            for r in results:
-                row = r.model_dump()
-                row["run_ts"] = run_ts
-                row.update(meta)
-                fh.write(_json.dumps(row, ensure_ascii=False) + "\n")
-    except OSError as exc:
-        logger.warning("golden_prompts: history append failed: %s", exc)
+    if path is not None:
+        p = Path(path)
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as fh:
+                for r in results:
+                    row = r.model_dump()
+                    row["run_ts"] = run_ts
+                    row.update(meta)
+                    fh.write(_json.dumps(row, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            logger.warning("golden_prompts: history append failed: %s", exc)
 
     # Proposal 020 WS-D — also log the suite execution as an MLFlow run
     # when configured (ACC_MLFLOW_TRACKING_URI set + acc[mlflow] installed).

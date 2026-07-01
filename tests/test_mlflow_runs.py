@@ -205,3 +205,43 @@ def test_experiment_url_built_when_set(monkeypatch):
     url = mlflow_runs.mlflow_experiment_url()
     assert url is not None
     assert url.startswith("https://mlflow.dc.svc:5000/#/experiments")
+
+
+# ---------------------------------------------------------------------------
+# base_run_meta + path-less persist (run-logging activation, v0.5.x)
+# ---------------------------------------------------------------------------
+
+
+def test_base_run_meta_seeds_git_sha_host_and_merges_extra(monkeypatch):
+    monkeypatch.setenv("ACC_VERSION", "0.5.34-2-gdeadbee")
+    meta = mlflow_runs.base_run_meta(collective_id="sol-01", model=None,
+                                     source="e2e-cli")
+    assert meta["git_sha"] == "0.5.34-2-gdeadbee"   # from ACC_VERSION
+    assert meta["host"]                              # gethostname, non-empty
+    assert meta["collective_id"] == "sol-01"
+    assert meta["source"] == "e2e-cli"
+    assert "model" not in meta                       # None values dropped
+
+
+def test_base_run_meta_falls_back_to_package_version(monkeypatch):
+    monkeypatch.delenv("ACC_VERSION", raising=False)
+    from acc import __version__
+    assert mlflow_runs.base_run_meta()["git_sha"] == __version__
+
+
+def test_persist_results_path_none_logs_mlflow_without_jsonl(fake_mlflow, tmp_path):
+    """TUI/CLI activation path: log the MLFlow run but write NO history file."""
+    from acc.golden_prompts import persist_results
+    target = tmp_path / "should-not-exist.jsonl"
+    persist_results(_results(), None,
+                    run_meta=mlflow_runs.base_run_meta(source="tui-diagnostics"))
+    assert not target.exists()                       # no JSONL written
+    assert fake_mlflow.runs_started                   # an mlflow run was logged
+    assert fake_mlflow.params.get("source") == "tui-diagnostics"
+
+
+def test_persist_results_path_none_noop_when_disabled(monkeypatch):
+    monkeypatch.delenv("ACC_MLFLOW_TRACKING_URI", raising=False)
+    from acc.golden_prompts import persist_results
+    # No path, no mlflow — must be a clean no-op, never raises.
+    persist_results(_results(), None, run_meta={"source": "x"})

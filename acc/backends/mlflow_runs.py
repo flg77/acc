@@ -72,6 +72,36 @@ def _experiment_name(override: Optional[str]) -> str:
     )
 
 
+def _acc_version() -> str:
+    try:
+        from acc import __version__  # noqa: PLC0415
+        return __version__
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def base_run_meta(**extra: Any) -> dict[str, Any]:
+    """Build a ``run_meta`` dict identifying an MLFlow run.
+
+    Seeds ``git_sha`` (the deployed ACC release — ``ACC_VERSION`` if the
+    container/CI set it, else the package ``__version__``) and ``host``,
+    then merges any caller-supplied ``extra`` (collective_id, model,
+    source…), dropping ``None`` values.  Callers pass the result straight
+    to :func:`acc.golden_prompts.persist_results` so the run name
+    (``golden-<model>-<git_sha>``) and logged params are meaningful
+    instead of the bare ``golden-model-`` fallback.  Cheap; never raises."""
+    meta: dict[str, Any] = {
+        "git_sha": os.environ.get("ACC_VERSION", "").strip() or _acc_version(),
+    }
+    try:
+        import socket  # noqa: PLC0415
+        meta["host"] = socket.gethostname()
+    except Exception:  # noqa: BLE001
+        pass
+    meta.update({k: v for k, v in extra.items() if v is not None})
+    return meta
+
+
 def _clip(value: Any, limit: int) -> str:
     s = str(value)
     return s if len(s) <= limit else s[: limit - 1] + "…"
