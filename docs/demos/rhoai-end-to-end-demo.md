@@ -33,33 +33,46 @@ Three shipped demos (`collectives/`):
 
 ⚠️ **The operator's default agent image is stale.** `AgentCorpus.spec.version`
 defaults to **`0.1.0`** (`operator/api/v1alpha1/agentcorpus_webhook.go`), which is
-~16 runtime versions behind current spearhead (**v0.5.27**). Deploying as-is runs
+~17 runtime versions behind current spearhead (**v0.5.28**). Deploying as-is runs
 agents **without** eval-history, role→model mapping, integrations, or overlay —
 the demo would showcase ancient behaviour.
 
-**To run the demo on current code, first publish + pin the v0.5.27 agent image.**
+**To run the demo on current code, first publish + pin the v0.5.28 agent + webgui images.**
 This is **operator/human-gated** (the Quay push is classifier-blocked for agents):
 
 ```bash
-# 1. Build the agent image at the release tag (Linux podman host: acc1 / bb3).
-cd <agentic-cell-corpus @ v0.5.27>
+# 1. Build BOTH images at the release tag (any Linux podman host: lighthouse / acc1 / bb3 —
+#    both Containerfiles are self-contained multi-stage, so only podman is needed).
+cd <agentic-cell-corpus @ v0.5.28>
 podman build -f container/production/Containerfile.agent-core \
-  -t quay.io/flg77/acc_images:acc-agent-core-0.5.27 .
+  --build-arg ACC_VERSION=0.5.28 \
+  -t quay.io/flg77/acc_images:acc-agent-core-0.5.28 .
+podman build -f container/production/Containerfile.webgui \
+  --build-arg ACC_VERSION=0.5.28 \
+  -t quay.io/flg77/acc_images:acc-webgui-0.5.28 .
 
-# 2. Push to the private registry  ← HUMAN ONLY (operator's `!` pane, podman-login'd).
-podman push quay.io/flg77/acc_images:acc-agent-core-0.5.27
+# 2. Push to the private registry  ← HUMAN ONLY (operator's `!` pane, podman-login'd as
+#    the robot account). BOTH are needed: the operator's WebGUIReconciler pulls acc-webgui-<ver>.
+podman push quay.io/flg77/acc_images:acc-agent-core-0.5.28
+podman push quay.io/flg77/acc_images:acc-webgui-0.5.28
 
 # 3. Pin the demo AgentCorpus at that version (per-CR override — no operator rebuild needed):
 #      spec:
-#        version: "0.5.27"
+#        version: "0.5.28"
 #        imageRepository: "quay.io/flg77/acc_images"
 ```
 
-**Co-requisite:** the agent-pod SCC bug (`runAsUser:1001`, acc-spearhead **PR #79**)
-must be merged + the operator redeployed, or pods won't start regardless of image.
-Bumping the operator's *default* `spec.version` to a current stable (vs the per-CR
-override above) is the durable fix — an operator bundle bump + catalog redeploy
-(see `operator/docs/WS-A-olm-bundle-runbook.md`).
+**SCC co-requisite — already satisfied by the shipped operator.** The agent-pod SCC
+bug (a hardcoded `runAsUser:1001` that OpenShift restricted-v2 rejects at admission —
+ReplicaSets `FailedCreate`, zero agents start) was fixed in acc-spearhead **PR #79**
+(`8c44f3f`): it drops the pinned UID so the SCC injects the namespace range, keeping
+`runAsNonRoot` + a `RuntimeDefault` seccomp profile. **That fix is in operator 0.2.12**
+(commit `3a5425b`, verified by ancestry + the live `AgentPodSecurityContext` /
+`AgentContainerSecurityContext` helpers), so a current deployment needs **no operator
+rebuild** — the per-CR `spec.version` bump above is sufficient. Only an operator
+**older than 0.2.0** still needs the bundle bump + catalog redeploy (see
+`operator/docs/WS-A-olm-bundle-runbook.md`); bumping the operator's *default*
+`spec.version` remains a durable convenience but is optional.
 
 > Until Step 0 lands, you can still rehearse the full flow **on the edge**
 > (lighthouse, `deployMode=edge`) where the local image is built from the current
@@ -90,7 +103,7 @@ are the alternative per `models.yaml` `maas-*`.
 
 ```bash
 # ACC corpus + infrastructure (wave 4) — NATS, Redis, vector store, OTel.
-oc apply -f .../wave4-acc/agentcorpus-rhoai.yaml     # set spec.version: "0.5.27" (Step 0)
+oc apply -f .../wave4-acc/agentcorpus-rhoai.yaml     # set spec.version: "0.5.28" (Step 0)
 
 # MLflow tracking server (wave 5 base) — LIVE (lab-gitops backlog 009).
 oc apply -k .../wave5-demo/base/                     # mlflow + dspa + namespace
@@ -161,8 +174,8 @@ the regression on-ramp.
 
 | Check | How |
 |---|---|
-| Agents are current | `oc get acccorpus -o yaml` → `spec.version: 0.5.27`; agent pod image tag = `acc-agent-core-0.5.27` |
-| Pods healthy | `oc get pods -n <ns>` all Running (watch the SCC bug, PR #79) |
+| Agents are current | `oc get acccorpus -o yaml` → `spec.version: 0.5.28`; agent pod image tag = `acc-agent-core-0.5.28` |
+| Pods healthy | `oc get pods -n <ns>` all Running (SCC fix shipped in operator ≥0.2.0 / #79) |
 | A run completes | Diagnostics run-all → PASS rows with tokens/compliance |
 | MLflow trace resolves | run-detail "trace →" link opens the task's trace in MLflow |
 | Suite run in MLflow | the `acc-golden-prompts` experiment gains a run |
@@ -172,7 +185,7 @@ the regression on-ramp.
 ## Troubleshooting
 
 - **Agents on old behaviour** → image is stale; redo Step 0 (`spec.version`).
-- **Pods CrashLoopBackOff `runAsUser`** → operator SCC bug (PR #79); merge + redeploy.
+- **Pods never created / ReplicaSet `FailedCreate` citing `runAsUser`** → operator older than 0.2.0 (pre-#79); upgrade the operator bundle. Operator ≥0.2.0 (incl. the deployed 0.2.12) already drops the pinned UID.
 - **No "trace →" link** → `ACC_MLFLOW_TRACKING_URI` unset (edge/unconfigured) — correct on edge; on DC set it + `mlflowEndpoint`.
 - **MLflow 403 on writes** → empty CORS allowlist (`MLFLOW_SERVER_CORS_ALLOWED_ORIGINS`) — see lab-gitops backlog 001/009.
 - **Model unreachable cross-ns** → the wave3 NetworkPolicy must allow the demo ns → `acc-system`.
