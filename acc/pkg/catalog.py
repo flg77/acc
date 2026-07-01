@@ -553,3 +553,95 @@ def list_available(
             if name is None or entry.name == name:
                 out.append((catalog, entry))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Discovery — proposal 045 Slice 2 (the `/catalog list` UX + assistant query)
+# ---------------------------------------------------------------------------
+
+
+def list_catalogs(workspace: Path | None = None) -> list[Catalog]:
+    """Every configured catalog, de-duplicated by id, in a stable order.
+
+    The discovery list behind ``/catalog list`` + the assistant's
+    catalog-query: one row per distinct catalog across the system / user /
+    workspace layers, the narrower layer winning on an id clash (workspace >
+    user > system), then ordered priority-desc, id-asc — a stable numbering the
+    ``/catalog <num> --list-roles`` drill-in can index into.
+
+    Pure config read (no index fetch, no network) — cheap + always available.
+    """
+    out: list[Catalog] = []
+    seen: set[str] = set()
+    for catalog in _iter_layered(workspace):  # workspace-first → narrower wins
+        if catalog.id in seen:
+            continue
+        seen.add(catalog.id)
+        out.append(catalog)
+    out.sort(key=lambda c: (-c.priority, c.id))
+    return out
+
+
+def catalog_entries(catalog: Catalog) -> list[CatalogIndexEntry]:
+    """The packages one catalog advertises (best-effort: [] if unreachable).
+
+    Thin wrapper over :func:`fetch_index` so the discovery UX +
+    ``/catalog <num> --list-roles`` enumerate a single catalog's packs without
+    walking every layer.  Roles are package-granular (a pack advertises one
+    index entry, not its roles) — installing the pack is what enumerates its
+    roles, so this is honest about the pack-level granularity.
+    """
+    try:
+        return fetch_index(catalog)
+    except Exception as exc:  # noqa: BLE001 — unreachable catalog → empty, not raise
+        logger.warning("catalog %s: entry list failed (%s)", catalog.id, exc)
+        return []
+
+
+def add_user_catalog(
+    *,
+    id: str,
+    url: str,
+    signer_issuer: str,
+    signer_subject: str,
+    tier: str = "community",
+    signer_key_path: str = "",
+    priority: int = 100,
+) -> Catalog:
+    """Append an https catalog to the USER layer (``~/.acc/catalogs.yaml``).
+
+    The ``/catalog add <url>`` UX writes here so an operator (or the assistant,
+    on the operator's behalf) can point ACC at a remote catalog — e.g. the
+    acc-ecosystem Pages catalog — at runtime, closing the "empty catalog" edge
+    gap without a rebuild.
+
+    Trust is unchanged: this adds a **source** only; every package still
+    verifies against ``required_signer`` at install (the signing floor), so a
+    signer identity is REQUIRED (no insecure default).  Default ``tier`` is
+    ``community`` (deepest install-time policy — proposal 045 Q1).
+
+    Refuses a duplicate id in the user layer; creates the file + parent dir if
+    absent; only ever touches the user layer (never system/workspace).  Returns
+    the added Catalog.  Raises ``ValueError`` on a dup id or invalid catalog
+    (Pydantic — e.g. a non-http(s) url or a bad signer regex).
+    """
+    path = user_catalog_path()
+    existing = _load_one(path)
+    if any(c.id == id for c in existing):
+        raise ValueError(f"catalog id {id!r} already exists in {path}")
+    cat = Catalog(
+        id=id, tier=tier, mode="https", url=url, priority=priority,
+        required_signer=RequiredSigner(
+            issuer=signer_issuer,
+            subject_pattern=signer_subject,
+            key_path=signer_key_path,
+        ),
+    )
+    updated = CatalogFile(catalogs=[*existing, cat])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(updated.model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
+    logger.info("add_user_catalog: added %s (%s) → %s", id, url, path)
+    return cat
