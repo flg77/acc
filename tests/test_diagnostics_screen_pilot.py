@@ -794,3 +794,60 @@ async def test_mlflow_trace_link_shows_only_when_configured(tmp_path, monkeypatc
         await pilot.pause()
         joined = "\n".join(captured)
         assert "trace →" in joined and "tk-xyz" in joined
+
+
+@pytest.mark.asyncio
+async def test_export_as_pack_named(tmp_path, monkeypatch):
+    """→ Pack builds a named @scope/* .accpkg from the writable store."""
+    from textual.widgets import Input, TextArea
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(store))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+        screen.query_one("#golden-editor", TextArea).text = (
+            "name: portable\nprompt: keep me\ntarget_role: analyst\n"
+        )
+        screen._editor_save()
+        await pilot.pause()
+        # @scope/name@version drives the pack identity + output filename.
+        screen.query_one("#golden-attach-input", Input).value = "@you/uc@0.2.0"
+        screen._export_as_pack()
+        await pilot.pause()
+        pkg = store / "_packs" / "you-uc-0.2.0.accpkg"
+        assert pkg.is_file(), statuses
+        assert any("packed @you/uc@0.2.0" in s for s in statuses), statuses
+
+
+@pytest.mark.asyncio
+async def test_export_as_pack_derives_default_name(tmp_path, monkeypatch):
+    """With no @scope/name in the input, → Pack derives @local/<cid>-golden."""
+    from textual.widgets import Input, TextArea
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(store))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+        screen.query_one("#golden-editor", TextArea).text = (
+            "name: portable\nprompt: keep me\ntarget_role: analyst\n"
+        )
+        screen._editor_save()
+        await pilot.pause()
+        screen.query_one("#golden-attach-input", Input).value = ""
+        screen._export_as_pack()
+        await pilot.pause()
+        packs = (
+            list((store / "_packs").glob("*.accpkg"))
+            if (store / "_packs").exists() else []
+        )
+        assert packs, statuses
+        assert any("packed @local/" in s and "golden@0.1.0" in s
+                   for s in statuses), statuses

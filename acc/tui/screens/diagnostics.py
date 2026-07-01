@@ -208,8 +208,8 @@ class DiagnosticsScreen(Screen):
             with Horizontal(id="golden-attach-row"):
                 yield Input(
                     placeholder=(
-                        "dir to watch / import / export, "
-                        "e.g. /host-home/golden"
+                        "dir to watch / import / export "
+                        "(e.g. /host-home/golden) · or @scope/name for → Pack"
                     ),
                     id="golden-attach-input",
                 )
@@ -224,6 +224,12 @@ class DiagnosticsScreen(Screen):
                 )
                 yield Button(
                     "Export", id="btn-golden-export", variant="default",
+                )
+                # Gap #5 — export the whole store as a signed-able @scope/*
+                # .accpkg (acc-pkg golden-pack).  Reads @scope/name[@version]
+                # from the input, else derives a default.
+                yield Button(
+                    "→ Pack", id="btn-golden-pack", variant="default",
                 )
 
         yield Footer()
@@ -585,6 +591,8 @@ class DiagnosticsScreen(Screen):
             self._import_dir()
         elif bid == "btn-golden-export":
             self._export_dir()
+        elif bid == "btn-golden-pack":
+            self._export_as_pack()
         elif bid == "btn-golden-send":
             self.action_send()
 
@@ -881,6 +889,54 @@ class DiagnosticsScreen(Screen):
             return
         self._set_status(
             f"[green]✓ exported {n}[/green] [dim]→ {path}[/dim]"
+        )
+
+    def _export_as_pack(self) -> None:
+        """Export the writable golden store as an ``@scope/*`` ``.accpkg``
+        (gap #5 — ``acc-pkg golden-pack``).
+
+        The attach input, when it starts with ``@``, is the pack name with
+        an optional ``@version`` suffix (``@you/uc`` or ``@you/uc@0.2.0``);
+        otherwise a default ``@local/<collective>-golden@0.1.0`` is derived.
+        The built pack lands under the writable store's ``_packs/`` dir (a
+        durable volume); publish it with ``acc-pkg publish``.  Installed on a
+        corpus, its prompts auto-load at boot (golden_roots discovery)."""
+        import re  # noqa: PLC0415
+
+        from acc.golden_prompts import writable_root  # noqa: PLC0415
+        from acc.pkg.golden_pack import build_golden_pack  # noqa: PLC0415
+
+        raw = self._attach_input_path()
+        if raw.startswith("@"):
+            body = raw[1:]
+            if "@" in body:
+                nm, version = body.rsplit("@", 1)
+                name = "@" + nm
+            else:
+                name, version = "@" + body, "0.1.0"
+        else:
+            cid = self._active_collective_id() or "local"
+            slug = re.sub(r"[^a-z0-9-]+", "-", cid.lower()).strip("-") or "local"
+            name, version = f"@local/{slug}-golden", "0.1.0"
+
+        try:
+            out_dir = writable_root() / "_packs"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            pslug = name.lstrip("@").replace("/", "-")
+            out = out_dir / f"{pslug}-{version}.accpkg"
+            result = build_golden_pack(name, version, output_path=out)
+        except ValueError as exc:  # empty store
+            self._set_status(f"[yellow]{exc}[/yellow]")
+            return
+        except Exception as exc:  # invalid name/version, build error
+            logger.debug("diagnostics: pack export failed", exc_info=True)
+            self._set_status(f"[red]pack failed: {exc}[/red]")
+            return
+        self._set_status(
+            f"[green]✓ packed {result.manifest.name}@"
+            f"{result.manifest.version}[/green] "
+            f"[dim]→ {out}   publish: acc-pkg publish {out} "
+            f"--catalog-url …[/dim]"
         )
 
     def _import_dir(self) -> None:
