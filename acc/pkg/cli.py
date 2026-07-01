@@ -645,6 +645,27 @@ def _build_parser() -> argparse.ArgumentParser:
                      help="cosign private key for keypair signing "
                           "(else keyless; or set COSIGN_PRIVATE_KEY)")
 
+    # golden-pack (use-case portability — export the golden store as a pack)
+    gp = sub.add_parser(
+        "golden-pack",
+        help="build (+ optionally publish) the golden-prompt store as a "
+             "@scope/* pack (auto-loaded on install via golden/)")
+    gp.add_argument("name", help="scoped package name, e.g. @you/my-usecase")
+    gp.add_argument("--version", required=True, help="exact semver X.Y.Z")
+    gp.add_argument("--from", dest="prompts_root",
+                    help="prompt store dir (default: the writable golden store)")
+    gp.add_argument("-o", "--output",
+                    help="output .accpkg path "
+                         "(default: <scope-name>-<version>.accpkg)")
+    gp.add_argument("--description", default="", help="pack description")
+    gp.add_argument("--catalog-url",
+                    help="if set, sign + publish to this catalog after building")
+    gp.add_argument("--key",
+                    help="cosign private key for keypair signing (publish)")
+    gp.add_argument("--token",
+                    help="bearer token for the catalog endpoint (publish)")
+    gp.add_argument("--issuer", help="OIDC issuer URL (keyless publish)")
+
     # list
     l = sub.add_parser("list", help="list installed packages or catalog availability")
     l.add_argument("--available", action="store_true",
@@ -798,8 +819,66 @@ def _cmd_publish(args: argparse.Namespace, out: _Output) -> int:
     return EXIT_OK
 
 
+def _cmd_golden_pack(args: argparse.Namespace, out: _Output) -> int:
+    """Build (+ optionally publish) the golden-prompt store as a pack."""
+    from acc.pkg.golden_pack import build_golden_pack  # noqa: PLC0415
+
+    try:
+        result = build_golden_pack(
+            args.name, args.version,
+            prompts_root=Path(args.prompts_root) if args.prompts_root else None,
+            output_path=Path(args.output) if args.output else None,
+            description=args.description,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    except ValidationError as exc:
+        print(f"error: manifest invalid:\n{exc}", file=sys.stderr)
+        return EXIT_SCHEMA
+
+    payload: dict = {
+        "ok": True,
+        "name": result.manifest.name,
+        "version": result.manifest.version,
+        "output": str(result.output_path),
+        "tarball_sha256": result.tarball_sha256,
+    }
+
+    # Optional publish (sign + upload) — reuses the acc-pkg publish path.
+    if args.catalog_url:
+        from acc.pkg.publish import (  # noqa: PLC0415
+            CatalogUploadFailed,
+            CosignSignFailed,
+            PublishError,
+            publish,
+        )
+        try:
+            pub = publish(
+                result.output_path, args.catalog_url,
+                token=args.token,
+                oidc_issuer=args.issuer or "https://oauth2.sigstore.dev/auth",
+                key_path=args.key,
+            )
+        except CosignSignFailed as exc:
+            print(f"error: {exc}\n{exc.cosign_stderr}", file=sys.stderr)
+            return EXIT_SIGNATURE
+        except (CatalogUploadFailed, PublishError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return EXIT_USER_ERROR
+        payload.update({
+            "published": True,
+            "tarball_url": pub.tarball_url,
+            "signature_url": pub.signature_url,
+        })
+
+    out.emit(payload)
+    return EXIT_OK
+
+
 _HANDLERS = {
     "build": _cmd_build,
+    "golden-pack": _cmd_golden_pack,
     "install": _cmd_install,
     "verify": _cmd_verify,
     "inspect": _cmd_inspect,
