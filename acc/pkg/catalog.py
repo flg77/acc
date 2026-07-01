@@ -553,3 +553,172 @@ def list_available(
             if name is None or entry.name == name:
                 out.append((catalog, entry))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Discovery — proposal 045 Slice 2 (the `/catalog list` UX + assistant query)
+# ---------------------------------------------------------------------------
+
+
+def list_catalogs(workspace: Path | None = None) -> list[Catalog]:
+    """Every configured catalog, de-duplicated by id, in a stable order.
+
+    The discovery list behind ``/catalog list`` + the assistant's
+    catalog-query: one row per distinct catalog across the system / user /
+    workspace layers, the narrower layer winning on an id clash (workspace >
+    user > system), then ordered priority-desc, id-asc — a stable numbering the
+    ``/catalog <num> --list-roles`` drill-in can index into.
+
+    Pure config read (no index fetch, no network) — cheap + always available.
+    """
+    out: list[Catalog] = []
+    seen: set[str] = set()
+    for catalog in _iter_layered(workspace):  # workspace-first → narrower wins
+        if catalog.id in seen:
+            continue
+        seen.add(catalog.id)
+        out.append(catalog)
+    out.sort(key=lambda c: (-c.priority, c.id))
+    return out
+
+
+def catalog_entries(catalog: Catalog) -> list[CatalogIndexEntry]:
+    """The packages one catalog advertises (best-effort: [] if unreachable).
+
+    Thin wrapper over :func:`fetch_index` so the discovery UX +
+    ``/catalog <num> --list-roles`` enumerate a single catalog's packs without
+    walking every layer.  Roles are package-granular (a pack advertises one
+    index entry, not its roles) — installing the pack is what enumerates its
+    roles, so this is honest about the pack-level granularity.
+    """
+    try:
+        return fetch_index(catalog)
+    except Exception as exc:  # noqa: BLE001 — unreachable catalog → empty, not raise
+        logger.warning("catalog %s: entry list failed (%s)", catalog.id, exc)
+        return []
+
+
+def add_user_catalog(
+    *,
+    id: str,
+    url: str,
+    signer_issuer: str,
+    signer_subject: str,
+    tier: str = "community",
+    signer_key_path: str = "",
+    priority: int = 100,
+) -> Catalog:
+    """Append an https catalog to the USER layer (``~/.acc/catalogs.yaml``).
+
+    The ``/catalog add <url>`` UX writes here so an operator (or the assistant,
+    on the operator's behalf) can point ACC at a remote catalog — e.g. the
+    acc-ecosystem Pages catalog — at runtime, closing the "empty catalog" edge
+    gap without a rebuild.
+
+    Trust is unchanged: this adds a **source** only; every package still
+    verifies against ``required_signer`` at install (the signing floor), so a
+    signer identity is REQUIRED (no insecure default).  Default ``tier`` is
+    ``community`` (deepest install-time policy — proposal 045 Q1).
+
+    Refuses a duplicate id in the user layer; creates the file + parent dir if
+    absent; only ever touches the user layer (never system/workspace).  Returns
+    the added Catalog.  Raises ``ValueError`` on a dup id or invalid catalog
+    (Pydantic — e.g. a non-http(s) url or a bad signer regex).
+    """
+    path = user_catalog_path()
+    existing = _load_one(path)
+    if any(c.id == id for c in existing):
+        raise ValueError(f"catalog id {id!r} already exists in {path}")
+    cat = Catalog(
+        id=id, tier=tier, mode="https", url=url, priority=priority,
+        required_signer=RequiredSigner(
+            issuer=signer_issuer,
+            subject_pattern=signer_subject,
+            key_path=signer_key_path,
+        ),
+    )
+    updated = CatalogFile(catalogs=[*existing, cat])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        yaml.safe_dump(updated.model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
+    logger.info("add_user_catalog: added %s (%s) → %s", id, url, path)
+    return cat
+
+
+# Known one-word aliases for ``/catalog add <alias>`` — convenience only.  The
+# signer is ALWAYS discovered from the resolved URL's descriptor (never from
+# this table), so an alias is a shortcut to a URL, not a trust decision.
+KNOWN_CATALOG_ALIASES: dict[str, str] = {
+    "acc-ecosystem": "https://flg77.github.io/acc-ecosystem",
+}
+
+
+def resolve_catalog_alias(token: str) -> str:
+    """Map a known one-word alias to its URL; pass a URL (or anything else)
+    through unchanged."""
+    t = (token or "").strip()
+    return KNOWN_CATALOG_ALIASES.get(t.lower(), t)
+
+
+class CatalogDescriptor(BaseModel):
+    """A catalog's self-description at ``<url>/catalog.json`` (proposal 045 3a).
+
+    Lets ``/catalog add <url>`` **discover the catalog's declared signer
+    dynamically** — the operator confirms the add after seeing this, and that
+    confirmation is the trust anchor.  ``extra="ignore"`` so a newer descriptor
+    (with extra fields) still parses.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = Field(..., min_length=1)
+    tier: Tier = "community"
+    description: str = ""
+    required_signer: RequiredSigner
+
+
+def fetch_catalog_descriptor(url: str) -> CatalogDescriptor:
+    """Fetch + parse ``<url>/catalog.json`` — the catalog's self-description.
+
+    RAISES :class:`IndexFetchError` on any network / parse / validation failure
+    so ``/catalog add`` surfaces exactly why discovery failed instead of falling
+    back to an insecure default signer.
+    """
+    desc_url = url.rstrip("/") + "/catalog.json"
+    try:
+        with urllib.request.urlopen(desc_url, timeout=10) as response:
+            raw = response.read().decode("utf-8")
+    except Exception as exc:  # noqa: BLE001 — any network/URL error → uniform error
+        raise IndexFetchError(f"could not fetch {desc_url}: {exc}") from exc
+    try:
+        data = json.loads(raw)
+    except Exception as exc:  # noqa: BLE001
+        raise IndexFetchError(f"malformed catalog.json at {desc_url}: {exc}") from exc
+    try:
+        return CatalogDescriptor.model_validate(data)
+    except Exception as exc:  # noqa: BLE001 — pydantic ValidationError → IndexFetchError
+        raise IndexFetchError(f"invalid catalog.json at {desc_url}: {exc}") from exc
+
+
+def add_catalog_from_url(token: str, *, priority: int = 100) -> Catalog:
+    """High-level ``/catalog add``: resolve an alias→URL, **discover** the
+    catalog's declared signer from ``<url>/catalog.json``, then add it to the
+    user layer with that signer.
+
+    Raises :class:`IndexFetchError` (discovery failed) or ``ValueError``
+    (duplicate id / invalid catalog).  The caller shows the operator the
+    discovered id / tier / signer (transparency) + the outcome.
+    """
+    url = resolve_catalog_alias(token)
+    desc = fetch_catalog_descriptor(url)
+    return add_user_catalog(
+        id=desc.id,
+        url=url,
+        tier=desc.tier,
+        signer_issuer=desc.required_signer.issuer,
+        signer_subject=desc.required_signer.subject_pattern,
+        signer_key_path=desc.required_signer.key_path,
+        priority=priority,
+    )

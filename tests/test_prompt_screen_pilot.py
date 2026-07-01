@@ -1347,3 +1347,68 @@ async def test_slash_command_echoed_into_trace():
         screen._render_transcript()
         body = "\n".join(captured)
         assert "operator command" in body and "/help" in body, body
+
+
+# ---------------------------------------------------------------------------
+# 045 Slice 2 — /catalog discovery handlers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_catalog_list_slash_renders(tmp_path, monkeypatch):
+    """`/catalog list` renders a numbered list of configured catalogs."""
+    import yaml as _yaml
+    monkeypatch.setenv("ACC_SYSTEM_CATALOG", str(tmp_path / "sys.yaml"))
+    monkeypatch.setenv("ACC_USER_CATALOG", str(tmp_path / "user.yaml"))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "user.yaml").write_text(_yaml.safe_dump({"catalogs": [{
+        "id": "acc-canonical", "tier": "trusted", "mode": "https",
+        "url": "https://example.test/cat", "priority": 100,
+        "required_signer": {"issuer": "i", "subject_pattern": ".*"},
+    }]}), encoding="utf-8")
+
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._dispatch_slash("/catalog list")
+        await pilot.pause()
+        texts = "\n".join(e.get("text", "") for e in screen.history)
+        assert "acc-canonical" in texts
+        assert "1." in texts  # numbered so `/catalog <num>` can index it
+
+
+@pytest.mark.asyncio
+async def test_catalog_add_slash_discovers_signer_and_renders(tmp_path, monkeypatch):
+    """`/catalog add <url>` discovers the catalog's declared signer and shows
+    it (transparency) — the add is the trust anchor."""
+    import io as _io
+    import json as _json
+
+    class _R(_io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self.close()
+
+    monkeypatch.setenv("ACC_SYSTEM_CATALOG", str(tmp_path / "sys.yaml"))
+    monkeypatch.setenv("ACC_USER_CATALOG", str(tmp_path / ".acc" / "catalogs.yaml"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda url, timeout=10: _R(_json.dumps({
+            "id": "eco", "tier": "community",
+            "required_signer": {"issuer": "gh-actions", "subject_pattern": ".*eco.*"},
+        }).encode()),
+    )
+
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._dispatch_slash("/catalog add https://x.test/cat")
+        await pilot.pause()
+        texts = "\n".join(e.get("text", "") for e in screen.history)
+        assert "added catalog eco" in texts
+        assert "gh-actions" in texts  # discovered signer surfaced to the operator

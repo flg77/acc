@@ -722,6 +722,41 @@ async def test_promote_to_eval_pack_writes_loadable_eval(tmp_path, monkeypatch):
         assert loaded.behavior[0].rubric.output_contains == ["IBM"]
 
 
+# ---------------------------------------------------------------------------
+# 045 G1 — eval-history controls stay ON SCREEN (1.7.26 lighthouse finding)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_eval_history_controls_onscreen_at_edge_size():
+    """045 G1 — the eval-history action rows (New/Save/Copy/Paste/Versions/
+    → Eval and the Import/Export row) must stay fully ON SCREEN at a realistic
+    small edge terminal, not scroll below the fold.
+
+    The 1.7.26 lighthouse test showed these controls pushed off the bottom of
+    the right column (no CSS → the detail scroller + Form/MD editor grew
+    unbounded).  The DEFAULT_CSS fix makes those two regions the only flexible
+    (1fr) rows so the fixed-height action rows always render on screen.  This
+    would FAIL before the fix at this size (buttons below the fold)."""
+    app = _Harness()
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen_region = app.screen.region
+        for bid in (
+            "btn-golden-new", "btn-golden-save", "btn-golden-versions",
+            "btn-golden-promote-eval", "btn-golden-import", "btn-golden-export",
+        ):
+            btn = screen.query_one(f"#{bid}", Button)
+            assert btn.region.height > 0, (
+                f"{bid} has zero height — not laid out on screen"
+            )
+            assert screen_region.contains_region(btn.region), (
+                f"{bid} at {btn.region} is not fully within the "
+                f"{screen_region} screen (scrolled below the fold)"
+            )
+
+
 @pytest.mark.asyncio
 async def test_mlflow_trace_link_shows_only_when_configured(tmp_path, monkeypatch):
     """Proposal G P3 — the run-detail shows an MLflow trace link only when

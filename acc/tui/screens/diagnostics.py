@@ -58,6 +58,30 @@ _OPERATING_MODES = ("PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS", "AUTO")
 class DiagnosticsScreen(Screen):
     """Pane #9 — run the golden-prompt suite against the live stack."""
 
+    # 045 G1 — eval-history reachability.  With no CSS the right column's
+    # detail scroller + Form/MD editor grow unbounded and push the
+    # eval-history action rows (New/Save/Copy/Paste/Versions/→ Eval and
+    # Import/Export) BELOW the visible fold — the 1.7.26 lighthouse finding.
+    # Fix: the two content regions are the only flexible (1fr) rows and yield
+    # space; the action rows keep their natural height, so they are ALWAYS on
+    # screen (the 1fr regions shrink first).  Pure layout — no compose change.
+    DEFAULT_CSS = """
+    DiagnosticsScreen #diagnostics-main { height: 1fr; }
+    DiagnosticsScreen #diagnostics-detail-container { height: 1fr; min-height: 3; }
+    DiagnosticsScreen #golden-edit-tabs { height: 1fr; min-height: 5; }
+    /* Full-width action toolbar under both columns.  Compact buttons
+       (width:auto) so the whole eval-history row fits on one line instead of
+       running off the right edge as it did nested in the half-width column. */
+    DiagnosticsScreen #diagnostics-actions { height: auto; }
+    DiagnosticsScreen #golden-editor-actions { height: auto; }
+    DiagnosticsScreen #golden-attach-row { height: auto; }
+    DiagnosticsScreen #golden-editor-actions Button { width: auto; min-width: 6; margin-right: 1; }
+    DiagnosticsScreen #golden-attach-row Button { width: auto; min-width: 6; margin-right: 1; }
+    /* The attach Input flexes so the +Add/Import/Export buttons keep their
+       place instead of being shoved off the right edge by the long placeholder. */
+    DiagnosticsScreen #golden-attach-input { width: 1fr; min-width: 12; }
+    """
+
     BINDINGS = [
         ("q", "app.quit", "Quit"),
         ("1", "navigate('soma')", "Soma"),
@@ -154,48 +178,53 @@ class DiagnosticsScreen(Screen):
                         yield TextArea(
                             "", id="golden-editor", language="yaml",
                         )
-                with Horizontal(id="golden-editor-actions"):
-                    yield Button("New", id="btn-golden-new", variant="default")
-                    yield Button(
-                        "Save", id="btn-golden-save", variant="primary",
-                    )
-                    # Proposal 044 O2 — in-TUI copy/paste affordances.
-                    yield Button(
-                        "Copy", id="btn-golden-copy", variant="default",
-                    )
-                    yield Button(
-                        "Paste", id="btn-golden-paste", variant="default",
-                    )
-                    # Proposal G — restore a previous saved version.
-                    yield Button(
-                        "Versions", id="btn-golden-versions",
-                        variant="default",
-                    )
-                    # Proposal G P3 — promote to a role's behavioral eval pack.
-                    yield Button(
-                        "→ Eval", id="btn-golden-promote-eval",
-                        variant="default",
-                    )
-                with Horizontal(id="golden-attach-row"):
-                    yield Input(
-                        placeholder=(
-                            "dir to watch / import / export, "
-                            "e.g. /host-home/golden"
-                        ),
-                        id="golden-attach-input",
-                    )
-                    yield Button(
-                        "+ Add", id="btn-golden-add-dir", variant="default",
-                    )
-                    # Proposal 044 O2 — durable backup: import COPIES a
-                    # dir's prompts into the writable store; export writes
-                    # the store out to the dir (survives a volume reset).
-                    yield Button(
-                        "Import", id="btn-golden-import", variant="default",
-                    )
-                    yield Button(
-                        "Export", id="btn-golden-export", variant="default",
-                    )
+        # 045 G1 — the eval-history action toolbar spans the FULL screen width
+        # below both columns.  It was nested inside the ~half-width right column,
+        # where the 6-button row (New/Save/Copy/Paste/Versions/→ Eval) ran off
+        # the right edge and became unreachable — the 1.7.26 lighthouse finding.
+        with Vertical(id="diagnostics-actions"):
+            with Horizontal(id="golden-editor-actions"):
+                yield Button("New", id="btn-golden-new", variant="default")
+                yield Button(
+                    "Save", id="btn-golden-save", variant="primary",
+                )
+                # Proposal 044 O2 — in-TUI copy/paste affordances.
+                yield Button(
+                    "Copy", id="btn-golden-copy", variant="default",
+                )
+                yield Button(
+                    "Paste", id="btn-golden-paste", variant="default",
+                )
+                # Proposal G — restore a previous saved version.
+                yield Button(
+                    "Versions", id="btn-golden-versions",
+                    variant="default",
+                )
+                # Proposal G P3 — promote to a role's behavioral eval pack.
+                yield Button(
+                    "→ Eval", id="btn-golden-promote-eval",
+                    variant="default",
+                )
+            with Horizontal(id="golden-attach-row"):
+                yield Input(
+                    placeholder=(
+                        "dir to watch / import / export, "
+                        "e.g. /host-home/golden"
+                    ),
+                    id="golden-attach-input",
+                )
+                yield Button(
+                    "+ Add", id="btn-golden-add-dir", variant="default",
+                )
+                # Proposal 044 O2 — durable backup: import COPIES a
+                # dir's prompts into the writable store; export writes
+                # the store out to the dir (survives a volume reset).
+                yield Button(
+                    "Import", id="btn-golden-import", variant="default",
+                )
+                yield Button(
+                    "Export", id="btn-golden-export", variant="default",
+                )
 
         yield Footer()
 
