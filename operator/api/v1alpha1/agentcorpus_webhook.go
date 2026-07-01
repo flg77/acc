@@ -114,9 +114,17 @@ func (d *AgentCorpusCustomDefaulter) Default(ctx context.Context, obj runtime.Ob
 	// the in-cluster Collector the operator deploys (<name>-otel-collector:4317),
 	// so observability.backend=otel works out of the box (and the validator,
 	// which requires otelCollector.endpoint for otel, passes).
-	if r.Spec.Observability.Backend == MetricsBackendOTel && r.Spec.Observability.OTelCollector == nil {
-		r.Spec.Observability.OTelCollector = &OTelCollectorSpec{
-			Endpoint: fmt.Sprintf("%s-otel-collector:4317", r.Name),
+	// Backfill the endpoint whenever it is empty — not only when the whole
+	// OTelCollector block is nil. The OpenShift "Create AgentCorpus" form (and
+	// any partial manifest that sets, e.g., only mlflowEndpoint) submits the
+	// block present with endpoint:"", which the old `== nil` guard skipped,
+	// leaving endpoint:"" to be rejected by the CRD minLength:1 (G1).
+	if r.Spec.Observability.Backend == MetricsBackendOTel {
+		if r.Spec.Observability.OTelCollector == nil {
+			r.Spec.Observability.OTelCollector = &OTelCollectorSpec{}
+		}
+		if r.Spec.Observability.OTelCollector.Endpoint == "" {
+			r.Spec.Observability.OTelCollector.Endpoint = fmt.Sprintf("%s-otel-collector:4317", r.Name)
 		}
 	}
 	if r.Spec.UpgradePolicy.Mode == "" {
@@ -185,12 +193,16 @@ func (r *AgentCorpus) ValidateDelete() (admission.Warnings, error) {
 func (r *AgentCorpus) validateAgentCorpus() error {
 	var allErrs field.ErrorList
 
-	// rhoai mode requires Milvus URI
-	if r.Spec.DeployMode == DeployModeRHOAI {
+	// Milvus URI is required only when Milvus is the selected vector backend.
+	// rhoai defaults to turbovec (in-pod, no external vector DB) since proposal
+	// 024, so the old "required for all rhoai" rule wrongly rejected TurboVec
+	// corpora (G2). vectorBackend defaults are applied at reconcile, so an
+	// empty value here means "operator default" (turbovec on rhoai) — not milvus.
+	if r.Spec.Infrastructure.VectorBackend == "milvus" {
 		if r.Spec.Infrastructure.Milvus == nil || r.Spec.Infrastructure.Milvus.URI == "" {
 			allErrs = append(allErrs, field.Required(
 				field.NewPath("spec", "infrastructure", "milvus", "uri"),
-				"milvus.uri is required when deployMode=rhoai",
+				"milvus.uri is required when vectorBackend=milvus",
 			))
 		}
 	}
