@@ -510,10 +510,27 @@ def add_watch_dir(path: Path | str) -> None:
 def golden_roots() -> list[Path]:
     """All load roots, lowest-precedence first.
 
-    shipped suite < writable store < attached dirs.  ``load_merged``
-    walks them in order so a later root's prompt (same ``name``)
-    overrides an earlier one."""
-    return [_default_root(), writable_root(), *attached_watch_dirs()]
+    shipped suite < installed packs < writable store < attached dirs.
+    ``load_merged`` walks them in order so a later root's prompt (same
+    ``name``) overrides an earlier one.
+
+    Installed-pack ``golden/`` dirs make a use-case portable: a corpus that
+    installs a ``@scope/*`` pack carrying golden prompts picks them up
+    automatically at boot — no config — via the same dual-source discovery
+    (``installed_capability_dirs``) the skill/MCP registries use.  They sit
+    above the shipped baseline but below the operator's own writable store
+    and explicitly-attached dirs, so local authoring always wins a name
+    collision.  Best-effort: unavailable in a minimal env (no ``acc.pkg``)
+    → skipped, never breaks loading."""
+    packs: list[Path] = []
+    try:
+        from acc.pkg.registry import (  # noqa: PLC0415
+            installed_capability_dirs,
+        )
+        packs = installed_capability_dirs("golden")
+    except Exception:  # noqa: BLE001 — discovery must never break loading
+        packs = []
+    return [_default_root(), *packs, writable_root(), *attached_watch_dirs()]
 
 
 _FRONT_MATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)

@@ -790,3 +790,55 @@ class TestRunEnrichment:
         assert r.input_tokens == 0
         assert r.compliance_health_score == -1.0
         assert r.eval_verdict == ""
+
+
+class TestGoldenRootsPackAutodetect:
+    """Installed-pack `golden/` dirs are auto-discovered by golden_roots()
+    (use-case portability — a corpus that installs a @scope/* pack carrying
+    golden prompts loads them at boot with no config)."""
+
+    def test_installed_pack_golden_dir_discovered_and_loaded(
+        self, tmp_path, monkeypatch,
+    ):
+        from acc.golden_prompts import (
+            GoldenPrompt, dump_prompt, golden_roots, load_merged, writable_root,
+        )
+        import acc.pkg.registry as _reg
+
+        pack_golden = tmp_path / "pack" / "golden"
+        pack_golden.mkdir(parents=True)
+        dump_prompt(
+            GoldenPrompt(name="pack_case", prompt="hi",
+                         target_role="coding_agent"),
+            pack_golden / "pack_case.yaml",
+        )
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path / "store"))
+        monkeypatch.setattr(
+            _reg, "installed_capability_dirs",
+            lambda kind, registry=None: (
+                [pack_golden] if kind == "golden" else []
+            ),
+        )
+
+        roots = golden_roots()
+        assert pack_golden in roots
+        # ordering: above the shipped baseline, below the writable store.
+        assert roots.index(pack_golden) < roots.index(writable_root())
+
+        merged = load_merged()
+        assert any(p.name == "pack_case" for p in merged), merged
+
+    def test_golden_roots_best_effort_when_registry_unavailable(
+        self, tmp_path, monkeypatch,
+    ):
+        from acc.golden_prompts import golden_roots
+        import acc.pkg.registry as _reg
+
+        def _boom(kind, registry=None):
+            raise RuntimeError("no registry")
+
+        monkeypatch.setattr(_reg, "installed_capability_dirs", _boom)
+        monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+        # Discovery must never break loading.
+        roots = golden_roots()
+        assert isinstance(roots, list) and roots
