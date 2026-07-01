@@ -1412,3 +1412,56 @@ async def test_catalog_add_slash_discovers_signer_and_renders(tmp_path, monkeypa
         texts = "\n".join(e.get("text", "") for e in screen.history)
         assert "added catalog eco" in texts
         assert "gh-actions" in texts  # discovered signer surfaced to the operator
+
+
+@pytest.mark.asyncio
+async def test_blocked_send_still_persists_operator_prompt(tmp_path, monkeypatch):
+    """Regression (v0.3.23 `81f5ad7`): a send REFUSED because the target
+    role has no ACTIVE agent must still persist the operator's typed
+    prompt.  The autonomous-infusion workflow deliberately targets a role
+    the collective is not yet staffed with — exactly the blocked branch —
+    so before this fix those test prompts vanished from the session
+    transcript (and never reached the golden-candidate capture)."""
+    from acc.tui import session_store as _ss  # noqa: PLC0415
+    from acc.tui.models import AgentSnapshot, CollectiveSnapshot  # noqa: PLC0415
+
+    monkeypatch.setenv("ACC_SESSIONS_DIR", str(tmp_path / "sessions"))
+
+    app = _PromptHarness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, PromptScreen)
+
+        # A collective staffed ONLY with 'analyst' — no 'coding_agent'.
+        snap = CollectiveSnapshot(collective_id="sol-test")
+        snap.agents["analyst-1"] = AgentSnapshot(
+            agent_id="analyst-1", role="analyst", state="ACTIVE",
+        )
+        screen.snapshot = snap
+        await pilot.pause()
+
+        from textual.widgets import Select  # noqa: PLC0415
+        screen.query_one("#select-target-role", Select).value = "coding_agent"
+        screen.query_one("#prompt-textarea", TextArea).text = (
+            "Infuse an adequate role and draft the migration plan"
+        )
+        screen.action_send()
+        for _ in range(4):
+            await pilot.pause()
+
+        # The send is refused — nothing published to NATS...
+        assert app.observer.published == []
+        # ...but the operator prompt is recorded (blocked) in the transcript.
+        op_entries = [e for e in screen.history if e.get("role") == "operator"]
+        assert op_entries, screen.history
+        last = op_entries[-1]
+        assert last["blocked"] is True
+        assert last["target_role"] == "coding_agent"
+        assert "migration plan" in last["text"]
+
+        # ...and autosaved to disk so it survives exit/redeploy.
+        saved = _ss.load_session(screen._session_id)
+        assert saved is not None
+        texts = [e.get("text", "") for e in saved.get("history", [])]
+        assert any("migration plan" in t for t in texts), saved

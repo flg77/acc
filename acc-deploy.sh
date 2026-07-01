@@ -54,9 +54,13 @@
 #             rebuild every image with --no-cache --pull.  Use after a
 #             merge to main when you need fresh container layers AND fresh
 #             base images.  Does NOT restart the stack — run
-#             `./acc-deploy.sh down && ./acc-deploy.sh up` afterwards to
-#             roll the running containers onto the new images.
+#             `./acc-deploy.sh restart` afterwards to roll the running
+#             containers onto the new images.
 #   up        Start the stack (default)
+#   restart   Roll the stack onto the current images (down + up
+#             --force-recreate).  Use this after `build`/`rebuild`: a plain
+#             `podman restart` (or `up` on an unchanged image tag) reuses
+#             the OLD image, so a freshly-built change never goes live.
 #   down      Stop and remove containers; -v also removes volumes
 #   logs      Tail logs from all services (or pass a service name).
 #             Special: `logs acc-tui` tails the acc-tui-logs volume file
@@ -1060,8 +1064,7 @@ case "$COMMAND" in
         echo "✓ Rebuild complete."
         echo ""
         echo "  Roll the running stack onto the new images:"
-        echo "      ./acc-deploy.sh down"
-        echo "      ./acc-deploy.sh up"
+        echo "      ./acc-deploy.sh restart"
         ;;
 
     up)
@@ -1153,6 +1156,26 @@ case "$COMMAND" in
             fi
         fi
         echo "✓ Stack stopped."
+        ;;
+
+    restart)
+        # Roll the running stack onto the CURRENT images — the correct
+        # follow-up to `build`/`rebuild`.  `podman restart` (and a plain
+        # `up` when the image tag is unchanged) reuse the container's
+        # existing image, so a freshly-built change silently never goes
+        # live — the "rebuilt but nothing updated" trap.  `down` removes
+        # the containers; `up --force-recreate` then re-creates them from
+        # whatever the image tag now points at.  Passes extra args through
+        # (profile flags like --webgui) to both halves.
+        echo "▶ Restarting stack (down + up --force-recreate)..."
+        # --webgui is stripped into $WEBGUI before the case, so re-forward
+        # it to both halves (a `restart --webgui` must re-create the
+        # optional frontend too).  DETACH defaults true, so `up` detaches
+        # without an explicit -d.
+        _RS_FLAGS=()
+        [[ "${WEBGUI:-}" == "true" ]] && _RS_FLAGS+=(--webgui)
+        "$0" down ${_RS_FLAGS[@]+"${_RS_FLAGS[@]}"} "$@"
+        "$0" up --force-recreate ${_RS_FLAGS[@]+"${_RS_FLAGS[@]}"} "$@"
         ;;
 
     logs)

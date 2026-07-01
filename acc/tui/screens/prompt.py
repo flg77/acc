@@ -1016,6 +1016,28 @@ class PromptScreen(Screen):
                 # to wait out the 180 s timeout.  An operator who really
                 # knows an agent is seconds away from registering can
                 # re-press Send the moment the heartbeat lands.
+                #
+                # Persist the typed prompt BEFORE returning, marked
+                # blocked=True.  The only durable write of the operator's
+                # prompt is the role:"operator" echo inside
+                # _dispatch_and_await — which a bare `return` here skips,
+                # so the prompt vanished from the session transcript AND
+                # never reached _capture_golden_candidate (v0.3.23
+                # regression).  This bites the autonomous-infusion workflow
+                # hardest: it deliberately targets a role the collective is
+                # not yet staffed with (no ACTIVE agent) — exactly the
+                # blocked branch — so precisely those test prompts were
+                # lost.  Recording it (via _append_history → _autosave_session)
+                # keeps the intent on disk so it survives exit/redeploy.
+                self._append_history({
+                    "role": "operator",
+                    "task_id": "",
+                    "text": prompt,
+                    "ts": time.time(),
+                    "blocked": True,
+                    "target_role": target_role,
+                    "target_agent_id": target_aid or "",
+                })
                 return
 
         self._spawn_dispatch(

@@ -48,6 +48,9 @@ volumes:
   # named volume (mounted :U) is writable by the uid-1001 TUI without
   # the host-uid mismatch a bind mount would hit.
   acc-golden-data:
+  # #162 — Prompt-screen session transcripts (autosave/detach/resume),
+  # named volume (:U) so operator test sessions survive a redeploy.
+  acc-session-data:
   # PR-Z2 — imported compliance framework catalogs (BSI / custom) +
   # generated gap-analysis audit reports.  Named volumes (:U) so the
   # uid-1001 TUI can write them.
@@ -700,6 +703,12 @@ services:
       # captured executed prompts).  Merged with the shipped suite +
       # any attached watch dirs at load time.
       ACC_GOLDEN_WRITABLE_ROOT: /app/.acc-golden
+      # #162 — Prompt-screen session transcripts (autosave / detach /
+      # resume).  Default is $HOME/.acc/sessions = /app/.acc/sessions on
+      # the container's EPHEMERAL layer, so a down/up or image rebuild
+      # dropped every saved session.  Pin it to a named volume like the
+      # golden store so operator test transcripts survive a redeploy.
+      ACC_SESSIONS_DIR: /app/.acc-sessions
       # PR-Z1 — governance policy root the Compliance pane browses.
       ACC_REGULATORY_ROOT: /app/regulatory_layer
       # PR-Z2 — imported framework catalogs + gap-analysis report store.
@@ -746,6 +755,10 @@ services:
       # PR-Y-2 -- writable golden-prompt store (named volume, :U so the
       # uid-1001 TUI can write without a host-uid mismatch).
       - acc-golden-data:/app/.acc-golden:U,z
+      # #162 -- Prompt-screen session transcripts (named volume, :U) so
+      # saved sessions survive a down/up / image rebuild (was on the
+      # ephemeral container layer under /app/.acc/sessions).
+      - acc-session-data:/app/.acc-sessions:U,z
       # PR-Z1 -- governance policy files (read-only) so the Compliance
       # pane can show + browse the loaded Cat-A/B/C rules.
       - ../../regulatory_layer:/app/regulatory_layer:ro
