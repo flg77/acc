@@ -1315,16 +1315,40 @@ class DiagnosticsScreen(Screen):
         self._reload_prompts()
 
     def _attach_dir(self) -> None:
-        """Attach the directory in the input as a watched golden root."""
-        from acc.golden_prompts import add_watch_dir  # noqa: PLC0415
-
+        """Attach a watched golden root.  047 G10 — a typed path attaches
+        directly; an empty path opens the SAME directory picker the Prompt
+        window's ``+`` uses (MC-style host-root browser, PR-U2b)."""
+        typed = self._attach_input_path()
+        if typed:
+            self._do_attach(typed)
+            return
         try:
-            path = self.query_one("#golden-attach-input", Input).value.strip()
+            from acc.tui.widgets.workspace_select_modal import (  # noqa: PLC0415
+                WorkspaceSelectModal,
+            )
         except Exception:
-            path = ""
-        if not path:
             self._set_status("[yellow]Enter a directory to attach.[/yellow]")
             return
+
+        def _on_pick(chosen) -> None:
+            if not chosen:
+                return
+            try:
+                self.query_one("#golden-attach-input", Input).value = str(chosen)
+            except Exception:
+                pass
+            self._do_attach(str(chosen))
+
+        try:
+            self.app.push_screen(WorkspaceSelectModal(), _on_pick)
+        except Exception:
+            logger.debug("diagnostics: dir picker unavailable", exc_info=True)
+            self._set_status(
+                "[yellow]Picker unavailable — type a directory path.[/yellow]"
+            )
+
+    def _do_attach(self, path: str) -> None:
+        from acc.golden_prompts import add_watch_dir  # noqa: PLC0415
         try:
             add_watch_dir(path)
         except OSError as exc:

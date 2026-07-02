@@ -1295,3 +1295,22 @@ async def test_tui_json_roundtrip_by_extension(tmp_path, monkeypatch):
         screen._import_dir()          # .json import back (idempotent)
         await pilot.pause()
         assert "jsonp" in screen._prompts
+
+
+@pytest.mark.asyncio
+async def test_attach_empty_input_opens_dir_picker(tmp_path, monkeypatch):
+    """047 G10 — the watch '+' with no typed path opens the same directory
+    picker the Prompt window uses (WorkspaceSelectModal)."""
+    from acc.tui.widgets.workspace_select_modal import WorkspaceSelectModal
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        pushed: list = []
+        monkeypatch.setattr(
+            app, "push_screen", lambda scr, cb=None: pushed.append(scr),
+        )
+        screen.query_one("#golden-attach-input", Input).value = ""
+        screen._attach_dir()
+        assert any(isinstance(s, WorkspaceSelectModal) for s in pushed)
