@@ -38,6 +38,7 @@ from textual.widgets import (
     Footer,
     Input,
     Label,
+    OptionList,
     Select,
     Static,
     TabbedContent,
@@ -58,28 +59,38 @@ _OPERATING_MODES = ("PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS", "AUTO")
 class DiagnosticsScreen(Screen):
     """Pane #9 — run the golden-prompt suite against the live stack."""
 
-    # 045 G1 — eval-history reachability.  With no CSS the right column's
-    # detail scroller + Form/MD editor grow unbounded and push the
-    # eval-history action rows (New/Save/Copy/Paste/Versions/→ Eval and
-    # Import/Export) BELOW the visible fold — the 1.7.26 lighthouse finding.
-    # Fix: the two content regions are the only flexible (1fr) rows and yield
-    # space; the action rows keep their natural height, so they are ALWAYS on
-    # screen (the 1fr regions shrink first).  Pure layout — no compose change.
+    # 047 Slice 1 — ground-up layout.  THREE full-width areas stacked
+    # vertically (① List · ② Workspace · ③ Form), replacing the cramped
+    # 2-column grid the 2.6.26 findings flagged.  Focus-driven resize: the
+    # focused area absorbs the height (≥80% via an 8fr weight); the other two
+    # collapse toward their header + action bar.  Inside every area the CONTENT
+    # is 1fr (shrinks first) and the ACTION BARS are auto (pinned) with a
+    # per-area min-height, so the controls are ALWAYS on screen — the 045 G1
+    # "eval-history controls reachable" invariant, now enforced per-area.
     DEFAULT_CSS = """
-    DiagnosticsScreen #diagnostics-main { height: 1fr; }
-    DiagnosticsScreen #diagnostics-detail-container { height: 1fr; min-height: 3; }
-    DiagnosticsScreen #golden-edit-tabs { height: 1fr; min-height: 5; }
-    /* Full-width action toolbar under both columns.  Compact buttons
-       (width:auto) so the whole eval-history row fits on one line instead of
-       running off the right edge as it did nested in the half-width column. */
-    DiagnosticsScreen #diagnostics-actions { height: auto; }
+    DiagnosticsScreen #gp-stack { height: 1fr; }
+    DiagnosticsScreen #gp-list { width: 100%; height: 1fr; min-height: 6; }
+    DiagnosticsScreen #gp-workspace { width: 100%; height: 1fr; min-height: 6; }
+    DiagnosticsScreen #gp-form { width: 100%; height: 1fr; min-height: 9; }
+    DiagnosticsScreen.focus-list #gp-list { height: 8fr; }
+    DiagnosticsScreen.focus-workspace #gp-workspace { height: 8fr; }
+    DiagnosticsScreen.focus-form #gp-form { height: 8fr; }
+    /* content flexes to nothing; action bars stay pinned (auto) */
+    DiagnosticsScreen #golden-table { height: 1fr; min-height: 3; }
+    DiagnosticsScreen #diagnostics-detail-container { height: 1fr; min-height: 0; }
+    DiagnosticsScreen #golden-edit-tabs { height: 1fr; min-height: 0; }
+    DiagnosticsScreen #gp-form-fields { height: 1fr; min-height: 0; }
+    DiagnosticsScreen #gp-versions { height: auto; max-height: 5; display: none; }
+    DiagnosticsScreen.show-versions #gp-versions { display: block; }
+    DiagnosticsScreen #gp-run { height: auto; }
     DiagnosticsScreen #golden-editor-actions { height: auto; }
+    DiagnosticsScreen #form-actions { height: auto; }
     DiagnosticsScreen #golden-attach-row { height: auto; }
     DiagnosticsScreen #golden-editor-actions Button { width: auto; min-width: 6; margin-right: 1; }
+    DiagnosticsScreen #form-actions Button { width: auto; min-width: 6; margin-right: 1; }
     DiagnosticsScreen #golden-attach-row Button { width: auto; min-width: 6; margin-right: 1; }
-    /* The attach Input flexes so the +Add/Import/Export buttons keep their
-       place instead of being shoved off the right edge by the long placeholder. */
     DiagnosticsScreen #golden-attach-input { width: 1fr; min-width: 12; }
+    DiagnosticsScreen .panel-label { text-style: bold; }
     """
 
     BINDINGS = [
@@ -95,9 +106,18 @@ class DiagnosticsScreen(Screen):
         ("9", "navigate('diagnostics')", "Diagnostics"),
         Binding("r", "run_selected", "Run selected", priority=True),
         Binding("a", "run_all", "Run all", priority=True),
+        # 047 Slice 1 — collapse the expanded area back to the list view.
+        Binding("escape", "collapse_to_list", "Back to list"),
     ]
 
     snapshot: reactive["Any | None"] = reactive(None, layout=True)
+
+    # 047 Slice 1 — which of the three stacked areas is expanded to ~80%.
+    focus_area: reactive[str] = reactive("list")
+
+    # 7-column table (No|Title|Description|Role|Mode|Version|Last): the
+    # "Last" cell that a completed run rewrites is column index 6.
+    _COL_LAST = 6
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -117,12 +137,17 @@ class DiagnosticsScreen(Screen):
         yield Label(
             "ACC Diagnostics — Golden Prompt Suite", id="diagnostics-title",
         )
-
-        with Horizontal(id="diagnostics-main"):
-            with Vertical(id="diagnostics-left"):
-                yield Label("GOLDEN PROMPTS", classes="panel-label")
+        # 047 Slice 1 — three full-width areas stacked vertically.  Focus one
+        # (Tab / click / Enter) and it grows to ~80%; the other two collapse
+        # to their header + action bar.  Esc returns to the list.
+        with Vertical(id="gp-stack"):
+            # ── ① List ──────────────────────────────────────────────────
+            with Vertical(id="gp-list"):
+                yield Label("① GOLDEN PROMPTS", classes="panel-label")
                 yield DataTable(id="golden-table")
-                with Horizontal(id="diagnostics-actions"):
+                # Slice 2 turns Enter into a version picker here; hidden now.
+                yield OptionList(id="gp-versions")
+                with Horizontal(id="gp-run"):
                     yield Button(
                         "Run selected", id="btn-run-selected",
                         variant="primary",
@@ -130,8 +155,9 @@ class DiagnosticsScreen(Screen):
                     yield Button("Run all", id="btn-run-all", variant="default")
                 yield Static("", id="diagnostics-status")
 
-            with Vertical(id="diagnostics-right"):
-                yield Label("RESULT DETAIL", classes="panel-label")
+            # ── ② Workspace (rendered detail + the MD/YAML editor) ───────
+            with Vertical(id="gp-workspace"):
+                yield Label("② WORKSPACE", classes="panel-label")
                 with ScrollableContainer(id="diagnostics-detail-container"):
                     yield Static(
                         "[dim]Select a prompt to see its definition; "
@@ -139,98 +165,83 @@ class DiagnosticsScreen(Screen):
                         "detail.[/dim]",
                         id="diagnostics-detail",
                     )
-                # PR-Y-2 + proposal 033 WS-B — Form/MD subnav.  The
-                # MD (YAML) tab is the authoritative editor (highlight a
-                # row → its YAML loads here; Save validates + writes to
-                # the writable store; New starts a template).  The Form
-                # tab is a human-readable projection of the important
-                # fields (role / agent / mode / timeout / prompt) with a
-                # Send button that dispatches the (possibly retargeted)
-                # prompt to a live agent.  Switching to Form re-derives
-                # its fields from the YAML so the Form reflects the MD.
-                yield Label("EDIT / SEND", classes="panel-label")
+                # The MD (YAML) tab is the power-user editor (operator-kept,
+                # 047 §8): highlight a row → its YAML loads here; Save
+                # validates + writes to the writable store; New starts a
+                # template.  (Slice 2 adds View/Edit tabs alongside it.)
                 with TabbedContent(id="golden-edit-tabs"):
-                    with TabPane("Form", id="tab-golden-form"):
-                        yield Label("Target role")
-                        yield Select(
-                            [], id="form-role", prompt="select role",
-                            allow_blank=True,
-                        )
-                        yield Label("Target agent (optional)")
-                        yield Input(
-                            placeholder="agent_id or blank", id="form-agent",
-                        )
-                        yield Label("Mode")
-                        yield Select(
-                            [(m, m) for m in _OPERATING_MODES],
-                            id="form-mode", value="AUTO", allow_blank=False,
-                        )
-                        yield Label("Timeout (s)")
-                        yield Input(value="60", id="form-timeout")
-                        yield Label("Prompt")
-                        yield TextArea("", id="form-prompt")
-                        with Horizontal(id="form-actions"):
-                            yield Button(
-                                "Send", id="btn-golden-send",
-                                variant="success",
-                            )
                     with TabPane("MD (YAML)", id="tab-golden-md"):
                         yield TextArea(
                             "", id="golden-editor", language="yaml",
                         )
-        # 045 G1 — the eval-history action toolbar spans the FULL screen width
-        # below both columns.  It was nested inside the ~half-width right column,
-        # where the 6-button row (New/Save/Copy/Paste/Versions/→ Eval) ran off
-        # the right edge and became unreachable — the 1.7.26 lighthouse finding.
-        with Vertical(id="diagnostics-actions"):
-            with Horizontal(id="golden-editor-actions"):
-                yield Button("New", id="btn-golden-new", variant="default")
-                yield Button(
-                    "Save", id="btn-golden-save", variant="primary",
-                )
-                # Proposal 044 O2 — in-TUI copy/paste affordances.
-                yield Button(
-                    "Copy", id="btn-golden-copy", variant="default",
-                )
-                yield Button(
-                    "Paste", id="btn-golden-paste", variant="default",
-                )
-                # Proposal G — restore a previous saved version.
-                yield Button(
-                    "Versions", id="btn-golden-versions",
-                    variant="default",
-                )
-                # Proposal G P3 — promote to a role's behavioral eval pack.
-                yield Button(
-                    "→ Eval", id="btn-golden-promote-eval",
-                    variant="default",
-                )
-            with Horizontal(id="golden-attach-row"):
-                yield Input(
-                    placeholder=(
-                        "dir to watch / import / export "
-                        "(e.g. /host-home/golden) · or @scope/name for → Pack"
-                    ),
-                    id="golden-attach-input",
-                )
-                yield Button(
-                    "+ Add", id="btn-golden-add-dir", variant="default",
-                )
-                # Proposal 044 O2 — durable backup: import COPIES a
-                # dir's prompts into the writable store; export writes
-                # the store out to the dir (survives a volume reset).
-                yield Button(
-                    "Import", id="btn-golden-import", variant="default",
-                )
-                yield Button(
-                    "Export", id="btn-golden-export", variant="default",
-                )
-                # Gap #5 — export the whole store as a signed-able @scope/*
-                # .accpkg (acc-pkg golden-pack).  Reads @scope/name[@version]
-                # from the input, else derives a default.
-                yield Button(
-                    "→ Pack", id="btn-golden-pack", variant="default",
-                )
+                # Eval-history controls (natural height, always on screen —
+                # 045 G1).  Copy/Paste buttons dropped (047 G9 — copy/paste
+                # is terminal-native: mark + Ctrl+Shift+C/V or middle-click).
+                with Horizontal(id="golden-editor-actions"):
+                    yield Button("New", id="btn-golden-new", variant="default")
+                    yield Button("Save", id="btn-golden-save", variant="primary")
+                    # Proposal G — restore a previous saved version.
+                    yield Button(
+                        "Versions", id="btn-golden-versions", variant="default",
+                    )
+                    # Proposal G P3 — promote to a role's behavioral eval pack.
+                    yield Button(
+                        "→ Eval", id="btn-golden-promote-eval",
+                        variant="default",
+                    )
+
+            # ── ③ Form (always visible — Send lives here now) ────────────
+            with Vertical(id="gp-form"):
+                yield Label("③ FORM", classes="panel-label")
+                with ScrollableContainer(id="gp-form-fields"):
+                    yield Label("Target role")
+                    yield Select(
+                        [], id="form-role", prompt="select role",
+                        allow_blank=True,
+                    )
+                    yield Label("Target agent (optional)")
+                    yield Input(
+                        placeholder="agent_id or blank", id="form-agent",
+                    )
+                    yield Label("Mode")
+                    yield Select(
+                        [(m, m) for m in _OPERATING_MODES],
+                        id="form-mode", value="AUTO", allow_blank=False,
+                    )
+                    yield Label("Timeout (s)")
+                    yield Input(value="60", id="form-timeout")
+                    yield Label("Prompt")
+                    yield TextArea("", id="form-prompt")
+                # 047 G7 — Send is its own always-visible bar (it used to hide
+                # inside the Form tab → "Send disappeared" in the findings).
+                with Horizontal(id="form-actions"):
+                    yield Button(
+                        "Send", id="btn-golden-send", variant="success",
+                    )
+                with Horizontal(id="golden-attach-row"):
+                    yield Input(
+                        placeholder=(
+                            "dir to watch / import / export "
+                            "(e.g. /host-home/golden) · or @scope/name for → Pack"
+                        ),
+                        id="golden-attach-input",
+                    )
+                    yield Button(
+                        "+ Add", id="btn-golden-add-dir", variant="default",
+                    )
+                    # Durable backup: import COPIES a dir's prompts into the
+                    # store; export writes the store out (survives a reset).
+                    yield Button(
+                        "Import", id="btn-golden-import", variant="default",
+                    )
+                    yield Button(
+                        "Export", id="btn-golden-export", variant="default",
+                    )
+                    # Gap #5 — export the store as a signed-able @scope/*
+                    # .accpkg (kept in Slice 1; 048 supersedes with role packs).
+                    yield Button(
+                        "→ Pack", id="btn-golden-pack", variant="default",
+                    )
 
         yield Footer()
 
@@ -242,7 +253,12 @@ class DiagnosticsScreen(Screen):
         # detail panel stayed blank and prompts could not be loaded into the
         # editor (the pilot test masked it by calling the handler directly).
         table.cursor_type = "row"
-        table.add_columns("Name", "Role", "Mode", "Last")
+        # 047 G3 — full column set: No/Version/Last are system-assigned +
+        # persisted; Title/Description/Role/Mode are the editable fields.
+        table.add_columns(
+            "No", "Title", "Description", "Role", "Mode", "Version", "Last",
+        )
+        self.add_class("focus-list")  # the list is the default work area
         self._reload_prompts()
         self._populate_role_options()
         # PR-Y-2 — live-reload: poll the load roots' file mtimes every
@@ -257,6 +273,36 @@ class DiagnosticsScreen(Screen):
 
     def action_navigate(self, screen_name: str) -> None:
         self.app.switch_screen(screen_name)
+
+    # ------------------------------------------------------------------
+    # 047 Slice 1 — focus-driven resize (List / Workspace / Form)
+    # ------------------------------------------------------------------
+
+    _AREAS = ("list", "workspace", "form")
+
+    def watch_focus_area(self, area: str) -> None:
+        """Toggle the screen class that expands the focused area (TCSS
+        sizes ``.focus-<area> #gp-<area>`` to 8fr; the others collapse)."""
+        for a in self._AREAS:
+            self.set_class(a == area, f"focus-{a}")
+
+    def on_descendant_focus(self, event) -> None:
+        """Grow whichever area now holds keyboard focus (Tab moves it)."""
+        node = getattr(event, "widget", None)
+        while node is not None:
+            nid = getattr(node, "id", None)
+            if nid in ("gp-list", "gp-workspace", "gp-form"):
+                self.focus_area = nid.split("-", 1)[1]
+                return
+            node = getattr(node, "parent", None)
+
+    def action_collapse_to_list(self) -> None:
+        """Esc — collapse the expanded area and return to the list view."""
+        self.focus_area = "list"
+        try:
+            self.query_one("#golden-table", DataTable).focus()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Loading
@@ -284,15 +330,49 @@ class DiagnosticsScreen(Screen):
             )
             return
 
-        for p in prompts:
+        for i, p in enumerate(prompts, start=1):
             self._prompts[p.name] = p
-            last = self._results.get(p.name)
-            last_cell = self._format_last(last)
             table.add_row(
-                p.name, p.target_role, p.operating_mode, last_cell,
+                str(i),                                   # No (system)
+                p.name,                                   # Title (editable)
+                (p.description or "").strip()[:40],       # Description
+                p.target_role,                            # Role
+                p.operating_mode,                         # Mode
+                self._version_cell(p.name),               # Version (system)
+                self._last_cell(p.name),                  # Last (system)
                 key=p.name,
             )
         self._set_status(f"[dim]{len(prompts)} prompt(s) loaded.[/dim]")
+
+    @staticmethod
+    def _version_cell(name: str) -> str:
+        """047 G3 — saved-version count for the Version column ('—' if none)."""
+        try:
+            from acc.golden_prompts import version_count  # noqa: PLC0415
+            n = version_count(name)
+            return str(n) if n else "—"
+        except Exception:
+            return "—"
+
+    def _last_cell(self, name: str) -> str:
+        """047 G3 — the Last column: an in-session result wins; else the most
+        recent persisted run (this is what the 2.6.26 findings saw as '—')."""
+        result = self._results.get(name)
+        if result is not None:
+            return self._format_last(result)
+        try:
+            from acc.golden_prompts import read_run_history  # noqa: PLC0415
+            hist = read_run_history(name, limit=8)
+            if hist:
+                row = max(hist, key=lambda r: r.get("run_ts", 0) or 0)
+                ok = (
+                    "[green]PASS[/green]" if row.get("passed")
+                    else "[red]FAIL[/red]"
+                )
+                return f"{ok} {self._fmt_ts(row.get('run_ts', 0))}"
+        except Exception:
+            pass
+        return "—"
 
     @staticmethod
     def _format_last(result) -> str:
@@ -330,6 +410,9 @@ class DiagnosticsScreen(Screen):
         self._render_detail(name)
         self._load_into_editor(name)
         self._load_into_form(name)
+        # 047 G4 — selecting a prompt makes the Workspace the work window
+        # (it expands to ~80%; Esc collapses back to the list).
+        self.focus_area = "workspace"
         if name in self._prompts:
             self._set_status(
                 f"[dim]loaded[/dim] [b]{name}[/b] "
@@ -1124,7 +1207,8 @@ class DiagnosticsScreen(Screen):
             for idx, rk in enumerate(rows):
                 if self._row_key_value(rk) == name:
                     table.update_cell_at(
-                        Coordinate(idx, 3), self._format_last(result),
+                        Coordinate(idx, self._COL_LAST),
+                        self._format_last(result),
                     )
                     break
         except Exception:
@@ -1137,6 +1221,28 @@ class DiagnosticsScreen(Screen):
     def _set_status(self, markup: str) -> None:
         try:
             self.query_one("#diagnostics-status", Static).update(markup)
+        except Exception:
+            pass
+        self._maybe_toast(markup)
+
+    def _maybe_toast(self, markup: str) -> None:
+        """047 G8 — fire a Textual toast for a discrete OUTCOME so New/Save/
+        Send visibly do something (the 2.6.26 "blinks, no proof" finding).
+        Transient/dim status ('running…', 'loaded…') stays status-only."""
+        import re as _re  # noqa: PLC0415
+        if "✓" in markup:
+            severity = "information"
+        elif markup.startswith("[red]"):
+            severity = "error"
+        elif markup.startswith("[yellow]"):
+            severity = "warning"
+        else:
+            return
+        plain = _re.sub(r"\[/?[^\]]*\]", "", markup).strip()
+        if not plain:
+            return
+        try:
+            self.notify(plain, severity=severity, timeout=4)
         except Exception:
             pass
 

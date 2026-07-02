@@ -34,8 +34,8 @@ async def test_screen_composes_and_loads_prompts():
         screen = app.screen
         assert isinstance(screen, DiagnosticsScreen)
         table = screen.query_one("#golden-table", DataTable)
-        # 4 columns: Name, Role, Mode, Last.
-        assert len(table.columns) == 4
+        # 047 G3 — 7 columns: No, Title, Description, Role, Mode, Version, Last.
+        assert len(table.columns) == 7
         # The 6 shipped golden prompts should load.
         assert table.row_count >= 1
         assert screen._prompts, "expected prompts loaded into _prompts"
@@ -525,17 +525,27 @@ async def test_versions_button_warns_when_single_version(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_form_and_md_tabs_present():
-    from textual.widgets import TabbedContent
+async def test_form_area_and_md_editor_present():
+    """047 Slice 1 — the Form is now its own always-visible area (#gp-form),
+    no longer a tab; the MD (YAML) editor stays as the Workspace power-user
+    tab (operator kept it, 047 §8)."""
+    from textual.containers import Vertical
+    from textual.widgets import Select, TabbedContent, TextArea
 
     app = _Harness()
     async with app.run_test(size=(160, 50)) as pilot:
         await pilot.pause()
         screen = app.screen
+        # MD editor remains a tab in the Workspace.
         tabbed = screen.query_one("#golden-edit-tabs", TabbedContent)
-        ids = [t.id for t in tabbed.query("TabPane")]
-        assert "tab-golden-form" in ids
-        assert "tab-golden-md" in ids
+        assert "tab-golden-md" in [t.id for t in tabbed.query("TabPane")]
+        # The three stacked areas exist, full-width.
+        for aid in ("gp-list", "gp-workspace", "gp-form"):
+            screen.query_one(f"#{aid}", Vertical)
+        # The Form fields live in the dedicated Form area now.
+        form = screen.query_one("#gp-form", Vertical)
+        assert form.query_one("#form-role", Select) is not None
+        assert form.query_one("#form-prompt", TextArea) is not None
 
 
 @pytest.mark.asyncio
@@ -851,3 +861,148 @@ async def test_export_as_pack_derives_default_name(tmp_path, monkeypatch):
         assert packs, statuses
         assert any("packed @local/" in s and "golden@0.1.0" in s
                    for s in statuses), statuses
+
+
+# ---------------------------------------------------------------------------
+# 047 Slice 1 — stacked focus-resize layout + wired columns + Send + toasts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_three_areas_stacked_full_width():
+    """The pane is three FULL-WIDTH areas stacked vertically (List /
+    Workspace / Form) — the 2.6.26 "cramped 2-column" finding."""
+    from textual.containers import Vertical
+
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        stack_w = screen.query_one("#gp-stack", Vertical).region.width
+        areas = [
+            screen.query_one(f"#{a}", Vertical)
+            for a in ("gp-list", "gp-workspace", "gp-form")
+        ]
+        for a in areas:
+            assert a.region.width == stack_w, f"{a.id} not full-width"
+        ys = [a.region.y for a in areas]
+        assert ys == sorted(ys), "areas are not stacked top-to-bottom"
+
+
+@pytest.mark.asyncio
+async def test_focus_resize_expands_active_area():
+    """Focusing an area expands it (≥80%) and collapses the others."""
+    from textual.containers import Vertical
+
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.focus_area = "list"
+        await pilot.pause()
+        list_big = screen.query_one("#gp-list", Vertical).region.height
+        screen.focus_area = "workspace"
+        await pilot.pause()
+        list_small = screen.query_one("#gp-list", Vertical).region.height
+        ws_big = screen.query_one("#gp-workspace", Vertical).region.height
+        assert list_small < list_big, "unfocused list should collapse"
+        assert ws_big > list_small, "focused workspace should dominate"
+
+
+@pytest.mark.asyncio
+async def test_version_column_wires_after_save(tmp_path, monkeypatch):
+    """047 G3 — the Version cell (col 5) reflects the saved-version count
+    (was absent entirely in the findings)."""
+    from textual.widgets import TextArea
+    from acc.golden_prompts import version_count
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#golden-editor", TextArea).text = (
+            "name: colcheck\nprompt: hi\ntarget_role: analyst\n"
+        )
+        screen._editor_save()
+        await pilot.pause()
+        table = screen.query_one("#golden-table", DataTable)
+        row = table.get_row("colcheck")
+        vc = version_count("colcheck")
+        assert str(row[5]) == (str(vc) if vc else "—")
+        assert vc >= 1, "a save should register at least one version"
+
+
+@pytest.mark.asyncio
+async def test_last_column_updates_after_run_at_col6(monkeypatch):
+    """047 G3 — a completed run rewrites the Last cell at the NEW index (6),
+    not the old 4-column index (3)."""
+    import acc.golden_prompts as gp
+    from acc.golden_prompts import GoldenResult
+
+    app = _Harness()
+    async with app.run_test(size=(140, 40)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        app._observers = [MagicMock()]
+        app._active_collective_idx = 0
+        app._collective_ids = ["sol-test"]
+        name = next(iter(screen._prompts))
+
+        async def _fake(prompt, *, observer, collective_id):
+            return GoldenResult(name=prompt.name, passed=True, elapsed_ms=77)
+
+        monkeypatch.setattr(gp, "run_one", _fake)
+        await screen._run_prompts([name])
+        await pilot.pause()
+        row = screen.query_one("#golden-table", DataTable).get_row(name)
+        assert "PASS" in str(row[6]) and "77ms" in str(row[6]), row
+
+
+@pytest.mark.asyncio
+async def test_send_button_in_form_area_always_visible():
+    """047 G7 — Send lives in the always-visible Form area (it used to hide
+    inside the Form tab → "Send disappeared" in the findings)."""
+    from textual.containers import Vertical
+
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        form = screen.query_one("#gp-form", Vertical)
+        send = form.query_one("#btn-golden-send", Button)
+        assert send.region.height > 0
+        assert app.screen.region.contains_region(send.region)
+
+
+@pytest.mark.asyncio
+async def test_copy_paste_buttons_removed():
+    """047 G9 — the misleading Copy/Paste buttons are gone (copy/paste is
+    terminal-native: mark + Ctrl+Shift+C/V or middle-click)."""
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert not screen.query("#btn-golden-copy")
+        assert not screen.query("#btn-golden-paste")
+
+
+@pytest.mark.asyncio
+async def test_save_fires_a_toast(tmp_path, monkeypatch):
+    """047 G8 — a Save fires an unmissable toast, not only the status line
+    (the 2.6.26 "blinks, no proof" finding)."""
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        toasts: list = []
+        monkeypatch.setattr(
+            screen, "notify", lambda m, **k: toasts.append(m),
+        )
+        screen.query_one("#golden-editor", TextArea).text = (
+            "name: toasted\nprompt: hi\ntarget_role: analyst\n"
+        )
+        screen._editor_save()
+        await pilot.pause()
+        assert any("saved" in m.lower() for m in toasts), toasts
