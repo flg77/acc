@@ -1006,3 +1006,99 @@ async def test_save_fires_a_toast(tmp_path, monkeypatch):
         screen._editor_save()
         await pilot.pause()
         assert any("saved" in m.lower() for m in toasts), toasts
+
+
+# ---------------------------------------------------------------------------
+# 047 Slice 2a — version picker (Enter → dropdown below the list)
+# ---------------------------------------------------------------------------
+
+
+class _OptSelEvent:
+    """Minimal stand-in for OptionList.OptionSelected (avoids Textual event
+    ctor variance)."""
+    class option_list:  # noqa: N801
+        id = "gp-versions"
+
+    class option:  # noqa: N801
+        id = "1"
+
+
+@pytest.mark.asyncio
+async def test_enter_opens_version_picker_when_versions_exist(tmp_path, monkeypatch):
+    from textual.widgets import OptionList, TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        ed = screen.query_one("#golden-editor", TextArea)
+        ed.text = "name: picktest\nprompt: one\ntarget_role: analyst\n"
+        screen._editor_save()
+        ed.text = "name: picktest\nprompt: two\ntarget_role: analyst\n"
+        screen._editor_save()
+        await pilot.pause()
+        assert screen._open_version_picker("picktest") is True
+        await pilot.pause()
+        assert screen.has_class("show-versions")
+        assert screen.query_one("#gp-versions", OptionList).option_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_version_pick_loads_blob_into_editor(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        ed = screen.query_one("#golden-editor", TextArea)
+        ed.text = "name: pl\nprompt: one\ntarget_role: analyst\n"
+        screen._editor_save()
+        ed.text = "name: pl\nprompt: two\ntarget_role: analyst\n"
+        screen._editor_save()
+        await pilot.pause()
+        screen._open_version_picker("pl")
+        screen.on_option_list_option_selected(_OptSelEvent())  # picks v1
+        await pilot.pause()
+        assert "one" in ed.text and "two" not in ed.text
+        assert not screen.has_class("show-versions")
+        assert screen.focus_area == "workspace"
+
+
+@pytest.mark.asyncio
+async def test_esc_cancels_version_picker(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        ed = screen.query_one("#golden-editor", TextArea)
+        ed.text = "name: escp\nprompt: one\ntarget_role: analyst\n"
+        screen._editor_save()
+        await pilot.pause()
+        screen._open_version_picker("escp")
+        assert screen.has_class("show-versions")
+        screen.action_collapse_to_list()      # Esc
+        assert not screen.has_class("show-versions")
+
+
+@pytest.mark.asyncio
+async def test_enter_no_versions_loads_editor_directly():
+    """A shipped prompt with no saved versions: Enter loads it straight into
+    the workspace editor (no picker)."""
+    from textual.widgets import TextArea
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        table = screen.query_one("#golden-table", DataTable)
+        key = list(table.rows.keys())[0]
+        name = screen._row_key_value(key)
+        screen.on_data_table_row_selected(
+            DataTable.RowSelected(data_table=table, cursor_row=0, row_key=key)
+        )
+        await pilot.pause()
+        assert not screen.has_class("show-versions")
+        assert name in screen.query_one("#golden-editor", TextArea).text
+        assert screen.focus_area == "workspace"

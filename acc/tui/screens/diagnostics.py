@@ -46,6 +46,8 @@ from textual.widgets import (
     TextArea,
 )
 
+from textual.widgets.option_list import Option
+
 from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar
 
 logger = logging.getLogger("acc.tui.diagnostics")
@@ -297,7 +299,16 @@ class DiagnosticsScreen(Screen):
             node = getattr(node, "parent", None)
 
     def action_collapse_to_list(self) -> None:
-        """Esc — collapse the expanded area and return to the list view."""
+        """Esc — close the version picker if open (G4), else collapse the
+        expanded area back to the list view."""
+        if self.has_class("show-versions"):
+            self.remove_class("show-versions")
+            self._set_status("[dim]version pick cancelled[/dim]")
+            try:
+                self.query_one("#golden-table", DataTable).focus()
+            except Exception:
+                pass
+            return
         self.focus_area = "list"
         try:
             self.query_one("#golden-table", DataTable).focus()
@@ -408,10 +419,13 @@ class DiagnosticsScreen(Screen):
             return
         name = self._row_key_value(event.row_key)
         self._render_detail(name)
-        self._load_into_editor(name)
         self._load_into_form(name)
-        # 047 G4 — selecting a prompt makes the Workspace the work window
-        # (it expands to ~80%; Esc collapses back to the list).
+        # 047 G4 — Enter opens the version picker when saved versions exist
+        # (max 3 visible + scroll; Enter loads one, Esc cancels).  With no
+        # saved versions the Workspace just becomes the work window.
+        if self._open_version_picker(name):
+            return
+        self._load_into_editor(name)
         self.focus_area = "workspace"
         if name in self._prompts:
             self._set_status(
@@ -419,6 +433,75 @@ class DiagnosticsScreen(Screen):
                 f"[dim]into editor — tweak + Save (writes to your "
                 f"writable store as a copy).[/dim]"
             )
+
+    # ------------------------------------------------------------------
+    # 047 Slice 2 — version picker (Enter → dropdown below the list)
+    # ------------------------------------------------------------------
+
+    def _open_version_picker(self, name: str) -> bool:
+        """Populate + reveal the full-width version dropdown below the list
+        (newest first).  Returns True when it opened (≥1 saved version)."""
+        try:
+            from acc.golden_prompts import list_versions  # noqa: PLC0415
+            versions = list_versions(name)
+        except Exception:
+            versions = []
+        if not versions:
+            return False
+        try:
+            ol = self.query_one("#gp-versions", OptionList)
+        except Exception:
+            return False
+        ol.clear_options()
+        self._versions_for = name
+        for v in sorted(versions, reverse=True):
+            ol.add_option(Option(f"v{v}", id=str(v)))
+        self.add_class("show-versions")
+        try:
+            ol.focus()
+        except Exception:
+            pass
+        self._set_status(
+            f"[dim]{len(versions)} version(s) of [b]{name}[/b] — "
+            f"Enter to load, Esc to cancel[/dim]"
+        )
+        return True
+
+    def on_option_list_option_selected(self, event) -> None:
+        """Enter on a version → load that saved blob into the editor."""
+        if getattr(event, "option_list", None) is None:
+            return
+        if event.option_list.id != "gp-versions":
+            return
+        from acc.golden_prompts import read_version  # noqa: PLC0415
+        name = getattr(self, "_versions_for", "")
+        try:
+            ver = int(event.option.id)
+        except (TypeError, ValueError):
+            return
+        try:
+            content = read_version(name, ver)
+        except Exception:
+            self._set_status("[red]could not read that version[/red]")
+            return
+        try:
+            self._editor().text = content
+        except Exception:
+            pass
+        self._current_name = name
+        self.remove_class("show-versions")
+        # Move focus INTO the workspace (hiding the OptionList otherwise
+        # auto-moves focus to the table → on_descendant_focus flips us to
+        # 'list'); focusing the editor lands focus in the workspace last.
+        try:
+            self._editor().focus()
+        except Exception:
+            pass
+        self.focus_area = "workspace"
+        self._set_status(
+            f"[green]✓ loaded v{ver}[/green] "
+            f"[dim]{name} — edit + Save[/dim]"
+        )
 
     @staticmethod
     def _row_key_value(row_key) -> str:
