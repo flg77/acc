@@ -273,6 +273,95 @@ def log_reasoning_depth(
 
 
 # ---------------------------------------------------------------------------
+# 047 Slice 4 — golden-prompt DEFINITION round-trip (edge → DC → edge).
+#
+# log_prompt records a prompt's YAML as an MLflow run artifact so a DC MLflow
+# sees edge authoring; pull_prompts reads them back so DC-refined prompts flow
+# to the edge.  Both no-op (disabled/error) so a missing server never breaks a
+# save.  Distinct from the RUN logging above (results/metrics): here the
+# artifact IS the prompt definition, tagged for retrieval.
+# ---------------------------------------------------------------------------
+
+_PROMPT_TAG = "acc.artifact"
+_PROMPT_TAG_VALUE = "golden_prompt"
+_PROMPT_NAME_TAG = "acc.prompt_name"
+_PROMPT_ARTIFACT = "golden_prompt.yaml"
+
+
+def log_prompt(
+    name: str,
+    yaml_text: str,
+    *,
+    run_meta: Optional[dict[str, Any]] = None,
+    experiment: Optional[str] = None,
+) -> bool:
+    """Log a golden-prompt DEFINITION to MLflow (edge → DC) — the prompt YAML
+    as a run artifact, tagged for :func:`pull_prompts` retrieval.  Best-effort;
+    no-op when disabled.  Returns True when a run was logged."""
+    if not enabled() or not (name or "").strip():
+        return False
+    meta = dict(run_meta or {})
+    meta.setdefault("prompt_name", name)
+    try:
+        import mlflow  # noqa: PLC0415
+
+        with mlflow_run(
+            experiment=experiment,
+            run_name=f"prompt-{name}",
+            params=meta,
+            tags={_PROMPT_TAG: _PROMPT_TAG_VALUE, _PROMPT_NAME_TAG: name},
+        ) as run:
+            if run is None:
+                return False
+            mlflow.log_text(yaml_text or "", _PROMPT_ARTIFACT)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mlflow_runs: log_prompt failed (%s)", exc)
+        return False
+
+
+def pull_prompts(*, experiment: Optional[str] = None) -> list[tuple[str, str]]:
+    """Read golden-prompt DEFINITIONS back from MLflow (DC → edge) — the latest
+    run per prompt name tagged by :func:`log_prompt`.  Returns ``[(name,
+    yaml_text), …]`` (newest first, deduped by name).  Best-effort; ``[]`` when
+    disabled or on error (a missing server never raises)."""
+    if not enabled():
+        return []
+    try:
+        import mlflow  # noqa: PLC0415
+
+        client = mlflow.MlflowClient()
+        exp = client.get_experiment_by_name(_experiment_name(experiment))
+        if exp is None:
+            return []
+        runs = client.search_runs(
+            [exp.experiment_id],
+            filter_string=f"tags.`{_PROMPT_TAG}` = '{_PROMPT_TAG_VALUE}'",
+            order_by=["attribute.start_time DESC"],
+        )
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for run in runs:
+            nm = (getattr(run.data, "tags", None) or {}).get(_PROMPT_NAME_TAG, "")
+            if not nm or nm in seen:
+                continue
+            try:
+                path = mlflow.artifacts.download_artifacts(
+                    run_id=run.info.run_id, artifact_path=_PROMPT_ARTIFACT,
+                )
+                with open(path, encoding="utf-8") as fh:
+                    text = fh.read()
+            except Exception:
+                continue
+            seen.add(nm)
+            out.append((nm, text))
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("mlflow_runs: pull_prompts failed (%s)", exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Proposal G P3 — deep links into the MLflow UI.
 #
 # Gated on the tracking URI ONLY (not on the mlflow package): these are plain

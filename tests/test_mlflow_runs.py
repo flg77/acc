@@ -245,3 +245,76 @@ def test_persist_results_path_none_noop_when_disabled(monkeypatch):
     from acc.golden_prompts import persist_results
     # No path, no mlflow — must be a clean no-op, never raises.
     persist_results(_results(), None, run_meta={"source": "x"})
+
+
+# ---------------------------------------------------------------------------
+# 047 Slice 4 — golden-prompt DEFINITION round-trip (log_prompt / pull_prompts)
+# ---------------------------------------------------------------------------
+
+
+def test_log_prompt_disabled_noop(monkeypatch):
+    monkeypatch.delenv("ACC_MLFLOW_TRACKING_URI", raising=False)
+    assert mlflow_runs.log_prompt("p", "name: p\n") is False
+
+
+def test_log_prompt_records_artifact_and_tags(fake_mlflow):
+    logged: dict[str, str] = {}
+    fake_mlflow.log_text = lambda text, path: logged.update({path: text})
+    ok = mlflow_runs.log_prompt("myp", "name: myp\nprompt: hi\n")
+    assert ok is True
+    assert logged["golden_prompt.yaml"] == "name: myp\nprompt: hi\n"
+    assert fake_mlflow.tags.get("acc.artifact") == "golden_prompt"
+    assert fake_mlflow.tags.get("acc.prompt_name") == "myp"
+
+
+def test_log_prompt_requires_name(fake_mlflow):
+    fake_mlflow.log_text = lambda *a, **k: None
+    assert mlflow_runs.log_prompt("", "x") is False
+
+
+def test_pull_prompts_disabled_noop(monkeypatch):
+    monkeypatch.delenv("ACC_MLFLOW_TRACKING_URI", raising=False)
+    assert mlflow_runs.pull_prompts() == []
+
+
+def test_pull_prompts_reads_latest_per_name(fake_mlflow, tmp_path):
+    art = tmp_path / "golden_prompt.yaml"
+    art.write_text("name: pulled\nprompt: from-dc\n", encoding="utf-8")
+
+    class _Run:
+        def __init__(self, name, rid):
+            self.data = type("D", (), {"tags": {"acc.prompt_name": name}})()
+            self.info = type("I", (), {"run_id": rid})()
+
+    class _Client:
+        def get_experiment_by_name(self, n):
+            return type("E", (), {"experiment_id": "exp1"})()
+
+        def search_runs(self, ids, filter_string="", order_by=None):
+            # newest first: two 'pulled' runs → latest wins (deduped)
+            return [_Run("pulled", "r2"), _Run("pulled", "r1")]
+
+    fake_mlflow.MlflowClient = lambda: _Client()
+    fake_mlflow.artifacts = type("A", (), {
+        "download_artifacts": staticmethod(
+            lambda run_id, artifact_path: str(art)
+        ),
+    })()
+
+    out = mlflow_runs.pull_prompts()
+    assert out == [("pulled", "name: pulled\nprompt: from-dc\n")]
+
+
+def test_pull_prompts_no_experiment_returns_empty(fake_mlflow):
+    fake_mlflow.MlflowClient = lambda: type(
+        "C", (), {"get_experiment_by_name": lambda self, n: None},
+    )()
+    assert mlflow_runs.pull_prompts() == []
+
+
+def test_pull_prompts_resilient_on_error(fake_mlflow):
+    def _boom():
+        raise RuntimeError("mlflow down")
+
+    fake_mlflow.MlflowClient = _boom   # MlflowClient() raises
+    assert mlflow_runs.pull_prompts() == []

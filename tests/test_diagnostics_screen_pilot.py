@@ -1314,3 +1314,64 @@ async def test_attach_empty_input_opens_dir_picker(tmp_path, monkeypatch):
         screen.query_one("#golden-attach-input", Input).value = ""
         screen._attach_dir()
         assert any(isinstance(s, WorkspaceSelectModal) for s in pushed)
+
+
+# ---------------------------------------------------------------------------
+# 047 Slice 4 — golden-prompt edge↔DC round-trip via MLflow (log-on-save + pull)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_logs_prompt_to_dc(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        calls: list[str] = []
+        monkeypatch.setattr(
+            screen, "_log_prompt_to_dc",
+            lambda name, yml: calls.append(name),
+        )
+        screen.query_one("#golden-editor", TextArea).text = (
+            "name: dcp\nprompt: hi\ntarget_role: analyst\n"
+        )
+        screen._editor_save()
+        await pilot.pause()
+        assert "dcp" in calls
+
+
+@pytest.mark.asyncio
+async def test_pull_from_dc_imports_prompts(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    import acc.backends.mlflow_runs as mr
+    monkeypatch.setattr(mr, "enabled", lambda: True)
+    monkeypatch.setattr(
+        mr, "pull_prompts",
+        lambda **k: [(
+            "dcpull",
+            "name: dcpull\nprompt: from dc\ntarget_role: analyst\n",
+        )],
+    )
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._pull_from_dc()
+        await pilot.pause()
+        assert "dcpull" in screen._prompts
+
+
+@pytest.mark.asyncio
+async def test_pull_from_dc_noop_when_unconfigured(monkeypatch):
+    import acc.backends.mlflow_runs as mr
+    monkeypatch.setattr(mr, "enabled", lambda: False)
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+        screen._pull_from_dc()
+        assert any("not configured" in s.lower() for s in statuses)

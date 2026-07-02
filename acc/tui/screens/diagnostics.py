@@ -270,6 +270,11 @@ class DiagnosticsScreen(Screen):
                     yield Button(
                         "→ Pack", id="btn-golden-pack", variant="default",
                     )
+                    # 047 Slice 4 — pull DC-refined prompts (MLflow → store);
+                    # no-op status on the edge (no ACC_MLFLOW_TRACKING_URI).
+                    yield Button(
+                        "⇊ DC", id="btn-form-pull-dc", variant="default",
+                    )
 
         yield Footer()
 
@@ -823,6 +828,8 @@ class DiagnosticsScreen(Screen):
             self._form_save()
         elif bid == "btn-form-export":
             self._form_export()
+        elif bid == "btn-form-pull-dc":
+            self._pull_from_dc()
 
     # ------------------------------------------------------------------
     # PR-Y-2 — in-pane editor + attach/watch
@@ -1071,16 +1078,15 @@ class DiagnosticsScreen(Screen):
         except OSError as exc:
             self._set_status(f"[red]save failed: {exc}[/red]")
             return
-        ver = append_save_history(
-            prompt.name,
-            yaml.safe_dump(prompt.model_dump(), sort_keys=False),
-        )
+        raw = yaml.safe_dump(prompt.model_dump(), sort_keys=False)
+        ver = append_save_history(prompt.name, raw)
         self._current_name = prompt.name
         self._set_status(
             f"[green]✓ saved (v{ver})[/green] [dim]{out}[/dim]"
         )
         self._reload_prompts()
         self._files_sig = self._compute_files_sig()
+        self._log_prompt_to_dc(prompt.name, raw)  # 047 S4 — edge → DC
 
     def _form_export(self) -> None:
         """Export the Form's prompt as a single YAML to the attach dir."""
@@ -1104,6 +1110,60 @@ class DiagnosticsScreen(Screen):
             self._set_status(f"[red]export failed: {exc}[/red]")
             return
         self._set_status(f"[green]✓ exported[/green] [dim]→ {out}[/dim]")
+
+    # ------------------------------------------------------------------
+    # 047 Slice 4 — golden-prompt edge↔DC round-trip via MLflow
+    # (no-op unless ACC_MLFLOW_TRACKING_URI is set — safe on the edge)
+    # ------------------------------------------------------------------
+
+    def _log_prompt_to_dc(self, name: str, yaml_text: str) -> None:
+        """Best-effort log the saved prompt to a DC MLflow (edge → DC)."""
+        try:
+            from acc.backends.mlflow_runs import (  # noqa: PLC0415
+                base_run_meta, log_prompt,
+            )
+            if log_prompt(name, yaml_text, run_meta=base_run_meta(
+                collective_id=self._active_collective_id(),
+                source="tui-diagnostics",
+            )):
+                logger.info("diagnostics: logged prompt %r to MLflow", name)
+        except Exception:
+            logger.debug("diagnostics: mlflow log_prompt skipped", exc_info=True)
+
+    def _pull_from_dc(self) -> None:
+        """Pull DC-refined prompts from MLflow into the writable store as new
+        versions (DC → edge).  Clear status when unconfigured."""
+        import yaml  # noqa: PLC0415
+        from acc.backends.mlflow_runs import (  # noqa: PLC0415
+            enabled, pull_prompts,
+        )
+        from acc.golden_prompts import (  # noqa: PLC0415
+            GoldenPrompt, save_prompt,
+        )
+        if not enabled():
+            self._set_status(
+                "[yellow]MLflow not configured "
+                "(ACC_MLFLOW_TRACKING_URI) — nothing to pull.[/yellow]"
+            )
+            return
+        try:
+            pulled = pull_prompts()
+        except Exception as exc:
+            self._set_status(f"[red]pull failed: {exc}[/red]")
+            return
+        n = 0
+        for name, text in pulled:
+            try:
+                save_prompt(GoldenPrompt.model_validate(yaml.safe_load(text) or {}))
+                n += 1
+            except Exception:
+                logger.debug("diagnostics: skip invalid DC prompt %r", name)
+        self._set_status(
+            f"[green]✓ pulled {n} from DC[/green] [dim]MLflow → store[/dim]"
+        )
+        if n:
+            self._reload_prompts()
+            self._files_sig = self._compute_files_sig()
 
     def _editor_new(self) -> None:
         try:
@@ -1154,6 +1214,7 @@ class DiagnosticsScreen(Screen):
         )
         self._reload_prompts()
         self._files_sig = self._compute_files_sig()
+        self._log_prompt_to_dc(prompt.name, raw)  # 047 S4 — edge → DC
 
     # ------------------------------------------------------------------
     # Proposal 044 O2 — copy/paste + durable import/export
