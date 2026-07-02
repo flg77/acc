@@ -1242,3 +1242,56 @@ async def test_form_export_writes_yaml(tmp_path, monkeypatch):
         screen._form_export()
         await pilot.pause()
         assert (dest / "expp.yaml").is_file()
+
+
+# ---------------------------------------------------------------------------
+# 047 Slice 3 — CSV (human) + JSON (agentic) import/export by extension
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tui_export_csv_by_extension(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(store))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#golden-editor", TextArea).text = (
+            "name: csvp\nprompt: hi\ntarget_role: analyst\n"
+        )
+        screen._editor_save()
+        await pilot.pause()
+        csv_file = tmp_path / "out.csv"
+        screen.query_one("#golden-attach-input", Input).value = str(csv_file)
+        screen._export_dir()          # .csv → CSV branch
+        await pilot.pause()
+        assert csv_file.is_file()
+        assert "csvp" in csv_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_tui_json_roundtrip_by_extension(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(store))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#golden-editor", TextArea).text = (
+            "name: jsonp\nprompt: hi\ntarget_role: analyst\n"
+        )
+        screen._editor_save()
+        await pilot.pause()
+        js = tmp_path / "out.json"
+        screen.query_one("#golden-attach-input", Input).value = str(js)
+        screen._export_dir()          # .json → JSON branch
+        await pilot.pause()
+        assert js.is_file()
+        screen._import_dir()          # .json import back (idempotent)
+        await pilot.pause()
+        assert "jsonp" in screen._prompts

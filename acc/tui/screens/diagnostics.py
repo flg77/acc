@@ -249,8 +249,8 @@ class DiagnosticsScreen(Screen):
                 with Horizontal(id="golden-attach-row"):
                     yield Input(
                         placeholder=(
-                            "dir to watch / import / export "
-                            "(e.g. /host-home/golden) · or @scope/name for → Pack"
+                            "dir (watch/import/export) · .csv / .json file · "
+                            "@scope/name for → Pack"
                         ),
                         id="golden-attach-input",
                     )
@@ -1209,22 +1209,32 @@ class DiagnosticsScreen(Screen):
             return ""
 
     def _export_dir(self) -> None:
-        """Export the writable store to the dir in the attach input."""
-        from acc.golden_prompts import export_store  # noqa: PLC0415
-
+        """Export the store.  047 Slice 3 — a ``.csv`` path exports CSV
+        (human/Excel-Sheets), ``.json`` exports JSON (agentic interchange),
+        anything else is the dir md/yaml backup."""
+        from acc.golden_prompts import (  # noqa: PLC0415
+            export_store, export_store_csv, export_store_json,
+        )
         path = self._attach_input_path()
         if not path:
             self._set_status(
-                "[yellow]Enter a target directory to export to.[/yellow]"
+                "[yellow]Enter a target directory (md/yaml) or a .csv / "
+                ".json file to export to.[/yellow]"
             )
             return
+        low = path.lower()
         try:
-            n = export_store(path)
+            if low.endswith(".csv"):
+                n, fmt = export_store_csv(path), "CSV"
+            elif low.endswith(".json"):
+                n, fmt = export_store_json(path), "JSON"
+            else:
+                n, fmt = export_store(path), "md/yaml"
         except OSError as exc:
             self._set_status(f"[red]export failed: {exc}[/red]")
             return
         self._set_status(
-            f"[green]✓ exported {n}[/green] [dim]→ {path}[/dim]"
+            f"[green]✓ exported {n} ({fmt})[/green] [dim]→ {path}[/dim]"
         )
 
     def _export_as_pack(self) -> None:
@@ -1276,22 +1286,31 @@ class DiagnosticsScreen(Screen):
         )
 
     def _import_dir(self) -> None:
-        """Import (copy) prompts from the attach-input dir into the store."""
-        from acc.golden_prompts import import_store  # noqa: PLC0415
-
+        """Import prompts into the store.  047 Slice 3 — a ``.csv`` / ``.json``
+        path imports that format; anything else is a dir of md/yaml."""
+        from acc.golden_prompts import (  # noqa: PLC0415
+            import_store, import_store_csv, import_store_json,
+        )
         path = self._attach_input_path()
         if not path:
             self._set_status(
-                "[yellow]Enter a source directory to import from.[/yellow]"
+                "[yellow]Enter a source directory (md/yaml) or a .csv / "
+                ".json file to import from.[/yellow]"
             )
             return
+        low = path.lower()
         try:
-            n = import_store(path)
+            if low.endswith(".csv"):
+                n, fmt = import_store_csv(path), "CSV"
+            elif low.endswith(".json"):
+                n, fmt = import_store_json(path), "JSON"
+            else:
+                n, fmt = import_store(path), "md/yaml"
         except OSError as exc:
             self._set_status(f"[red]import failed: {exc}[/red]")
             return
         self._set_status(
-            f"[green]✓ imported {n}[/green] [dim]from {path}[/dim]"
+            f"[green]✓ imported {n} ({fmt})[/green] [dim]from {path}[/dim]"
         )
         self._reload_prompts()
 

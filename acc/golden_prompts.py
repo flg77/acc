@@ -787,6 +787,131 @@ def import_store(src: Path | str, *, root: Optional[Path] = None) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 047 Slice 3 — whole-list CSV (human/Excel-Sheets) + JSON (agentic) round-trip
+# ---------------------------------------------------------------------------
+
+_CSV_COLUMNS = (
+    "name", "description", "target_role", "target_agent_id",
+    "operating_mode", "timeout_s", "prompt", "expects_json",
+)
+
+
+def export_store_csv(dest: Path | str, *, root: Optional[Path] = None) -> int:
+    """Write the whole writable store to ONE CSV file (Excel/Sheets-friendly).
+
+    The multi-line ``prompt`` is quoted by the csv writer; the ``expects``
+    block is JSON in the single ``expects_json`` cell.  Round-trips back via
+    :func:`import_store_csv`.  Returns the row count."""
+    import csv  # noqa: PLC0415
+    import json as _json  # noqa: PLC0415
+    root = root or writable_root()
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    prompts = load_merged([Path(root)])
+    with dest.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(_CSV_COLUMNS))
+        writer.writeheader()
+        for p in prompts:
+            writer.writerow({
+                "name": p.name,
+                "description": p.description,
+                "target_role": p.target_role,
+                "target_agent_id": p.target_agent_id,
+                "operating_mode": p.operating_mode,
+                "timeout_s": p.timeout_s,
+                "prompt": p.prompt,
+                "expects_json": _json.dumps(
+                    p.expects.model_dump(), ensure_ascii=False,
+                ),
+            })
+    return len(prompts)
+
+
+def import_store_csv(src: Path | str, *, root: Optional[Path] = None) -> int:
+    """Import prompts from a CSV file (from :func:`export_store_csv` or a
+    spreadsheet) into the writable store.  Rows without a ``name`` or that
+    fail validation are skipped.  Returns the count imported."""
+    import csv  # noqa: PLC0415
+    import json as _json  # noqa: PLC0415
+    root = root or writable_root()
+    n = 0
+    with Path(src).open("r", encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            if not (row.get("name") or "").strip():
+                continue
+            data: dict[str, Any] = {
+                "name": row["name"].strip(),
+                "description": row.get("description", "") or "",
+                "target_role": (row.get("target_role") or "").strip(),
+                "target_agent_id": (row.get("target_agent_id") or "").strip(),
+                "operating_mode": (
+                    (row.get("operating_mode") or "AUTO").strip() or "AUTO"
+                ),
+                "prompt": row.get("prompt", "") or "",
+            }
+            try:
+                data["timeout_s"] = float(row.get("timeout_s") or 60.0)
+            except (TypeError, ValueError):
+                data["timeout_s"] = 60.0
+            ej = (row.get("expects_json") or "").strip()
+            if ej:
+                try:
+                    data["expects"] = _json.loads(ej)
+                except (ValueError, TypeError):
+                    pass
+            try:
+                p = GoldenPrompt.model_validate(data)
+            except Exception:
+                logger.warning(
+                    "golden_prompts: skipping invalid CSV row %r",
+                    data.get("name"),
+                )
+                continue
+            save_prompt(p, Path(root))
+            n += 1
+    return n
+
+
+def export_store_json(dest: Path | str, *, root: Optional[Path] = None) -> int:
+    """Write the whole writable store to ONE JSON file (a faithful array of
+    prompt objects) — the agentic interchange.  Returns the count."""
+    import json as _json  # noqa: PLC0415
+    root = root or writable_root()
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    prompts = load_merged([Path(root)])
+    dest.write_text(
+        _json.dumps(
+            [p.model_dump() for p in prompts], ensure_ascii=False, indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return len(prompts)
+
+
+def import_store_json(src: Path | str, *, root: Optional[Path] = None) -> int:
+    """Import prompts from a JSON array (from :func:`export_store_json`) into
+    the writable store.  Returns the count imported."""
+    import json as _json  # noqa: PLC0415
+    root = root or writable_root()
+    try:
+        data = _json.loads(Path(src).read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return 0
+    if not isinstance(data, list):
+        return 0
+    n = 0
+    for obj in data:
+        try:
+            p = GoldenPrompt.model_validate(obj)
+        except Exception:
+            continue
+        save_prompt(p, Path(root))
+        n += 1
+    return n
+
+
+# ---------------------------------------------------------------------------
 # Proposal G P1 — per-run execution history + version-controlled prompts
 # ---------------------------------------------------------------------------
 #

@@ -842,3 +842,59 @@ class TestGoldenRootsPackAutodetect:
         # Discovery must never break loading.
         roots = golden_roots()
         assert isinstance(roots, list) and roots
+
+
+class TestCsvJsonRoundtrip:
+    """047 Slice 3 — whole-list CSV (human/Excel-Sheets) + JSON (agentic)
+    round-trip through the writable store."""
+
+    def _seed(self, root: Path) -> None:
+        from acc.golden_prompts import save_prompt
+        save_prompt(GoldenPrompt(
+            name="p1", description="d1", prompt="line1\nline2",
+            target_role="analyst",
+            expects=ExpectsBlock(output_contains=["IBM"]),
+        ), root=root)
+        save_prompt(GoldenPrompt(
+            name="p2", prompt='has, "quotes", commas',
+            target_role="coding_agent",
+        ), root=root)
+
+    def test_csv_roundtrip_preserves_multiline_and_expects(self, tmp_path):
+        from acc.golden_prompts import (
+            export_store_csv, import_store_csv, load_merged,
+        )
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        self._seed(src)
+        csv_file = tmp_path / "out.csv"
+        assert export_store_csv(csv_file, root=src) == 2
+        assert csv_file.is_file()
+        assert import_store_csv(csv_file, root=dst) == 2
+        by = {p.name: p for p in load_merged([dst])}
+        assert by["p1"].prompt == "line1\nline2"
+        assert by["p1"].expects.output_contains == ["IBM"]
+        assert by["p2"].prompt == 'has, "quotes", commas'
+
+    def test_json_roundtrip_is_faithful(self, tmp_path):
+        from acc.golden_prompts import (
+            export_store_json, import_store_json, load_merged,
+        )
+        src, dst = tmp_path / "src", tmp_path / "dst"
+        self._seed(src)
+        js = tmp_path / "out.json"
+        assert export_store_json(js, root=src) == 2
+        assert import_store_json(js, root=dst) == 2
+        by = {p.name: p for p in load_merged([dst])}
+        assert by["p1"].expects.output_contains == ["IBM"]
+        assert by["p1"].description == "d1"
+
+    def test_csv_skips_rows_without_name(self, tmp_path):
+        from acc.golden_prompts import import_store_csv, load_merged
+        f = tmp_path / "partial.csv"
+        f.write_text(
+            "name,target_role,prompt\n,analyst,orphan\nkeep,analyst,ok\n",
+            encoding="utf-8",
+        )
+        dst = tmp_path / "dst"
+        assert import_store_csv(f, root=dst) == 1
+        assert [p.name for p in load_merged([dst])] == ["keep"]
