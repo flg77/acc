@@ -84,6 +84,9 @@ class DiagnosticsScreen(Screen):
     DiagnosticsScreen #gp-form-fields { height: 1fr; min-height: 0; }
     DiagnosticsScreen #gp-versions { height: auto; max-height: 5; display: none; }
     DiagnosticsScreen.show-versions #gp-versions { display: block; }
+    /* 047 Slice 2 — View shows the rendered doc; Edit shows the YAML editor. */
+    DiagnosticsScreen.ws-view #golden-edit-tabs { display: none; }
+    DiagnosticsScreen.ws-edit #diagnostics-detail-container { display: none; }
     DiagnosticsScreen #gp-run { height: auto; }
     DiagnosticsScreen #golden-editor-actions { height: auto; }
     DiagnosticsScreen #form-actions { height: auto; }
@@ -110,12 +113,19 @@ class DiagnosticsScreen(Screen):
         Binding("a", "run_all", "Run all", priority=True),
         # 047 Slice 1 — collapse the expanded area back to the list view.
         Binding("escape", "collapse_to_list", "Back to list"),
+        # 047 Slice 2 — 'e' enters Edit on the Workspace (only when a text
+        # widget isn't focused, so it never hijacks typing).
+        Binding("e", "edit_mode", "Edit"),
     ]
 
     snapshot: reactive["Any | None"] = reactive(None, layout=True)
 
     # 047 Slice 1 — which of the three stacked areas is expanded to ~80%.
     focus_area: reactive[str] = reactive("list")
+
+    # 047 Slice 2 — Workspace mode: 'view' (rendered, read-only) or 'edit'
+    # (the YAML editor).  'e' / Edit → edit; the View button → view.
+    ws_mode: reactive[str] = reactive("view")
 
     # 7-column table (No|Title|Description|Role|Mode|Version|Last): the
     # "Last" cell that a completed run rewrites is column index 6.
@@ -180,6 +190,9 @@ class DiagnosticsScreen(Screen):
                 # 045 G1).  Copy/Paste buttons dropped (047 G9 — copy/paste
                 # is terminal-native: mark + Ctrl+Shift+C/V or middle-click).
                 with Horizontal(id="golden-editor-actions"):
+                    # 047 Slice 2 — View (rendered) / Edit (YAML) mode toggle.
+                    yield Button("View", id="btn-ws-view", variant="default")
+                    yield Button("Edit", id="btn-ws-edit", variant="default")
                     yield Button("New", id="btn-golden-new", variant="default")
                     yield Button("Save", id="btn-golden-save", variant="primary")
                     # Proposal G — restore a previous saved version.
@@ -261,6 +274,7 @@ class DiagnosticsScreen(Screen):
             "No", "Title", "Description", "Role", "Mode", "Version", "Last",
         )
         self.add_class("focus-list")  # the list is the default work area
+        self.add_class("ws-view")  # Workspace opens read-only; 'e'/Edit → YAML
         self._reload_prompts()
         self._populate_role_options()
         # PR-Y-2 — live-reload: poll the load roots' file mtimes every
@@ -314,6 +328,29 @@ class DiagnosticsScreen(Screen):
             self.query_one("#golden-table", DataTable).focus()
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # 047 Slice 2 — Workspace View / Edit modes
+    # ------------------------------------------------------------------
+
+    def watch_ws_mode(self, mode: str) -> None:
+        self.set_class(mode == "view", "ws-view")
+        self.set_class(mode == "edit", "ws-edit")
+
+    def action_edit_mode(self) -> None:
+        """'e' / Edit — show the YAML editor + focus it (in the Workspace)."""
+        self.ws_mode = "edit"
+        self.focus_area = "workspace"
+        try:
+            self._editor().focus()
+        except Exception:
+            pass
+
+    def action_view_mode(self) -> None:
+        """View — show the read-only rendered doc."""
+        self.ws_mode = "view"
+        if self._current_name:
+            self._render_detail(self._current_name)
 
     # ------------------------------------------------------------------
     # Loading
@@ -426,6 +463,7 @@ class DiagnosticsScreen(Screen):
         if self._open_version_picker(name):
             return
         self._load_into_editor(name)
+        self.ws_mode = "edit"
         self.focus_area = "workspace"
         if name in self._prompts:
             self._set_status(
@@ -490,6 +528,7 @@ class DiagnosticsScreen(Screen):
             pass
         self._current_name = name
         self.remove_class("show-versions")
+        self.ws_mode = "edit"
         # Move focus INTO the workspace (hiding the OptionList otherwise
         # auto-moves focus to the table → on_descendant_focus flips us to
         # 'list'); focusing the editor lands focus in the workspace last.
@@ -739,6 +778,10 @@ class DiagnosticsScreen(Screen):
             self.action_run_selected()
         elif bid == "btn-run-all":
             self.action_run_all()
+        elif bid == "btn-ws-view":
+            self.action_view_mode()
+        elif bid == "btn-ws-edit":
+            self.action_edit_mode()
         elif bid == "btn-golden-new":
             self._editor_new()
         elif bid == "btn-golden-save":
@@ -950,7 +993,17 @@ class DiagnosticsScreen(Screen):
             self._editor().text = self._EDITOR_TEMPLATE
         except Exception:
             pass
-        self._set_status("[dim]New prompt template — edit + Save.[/dim]")
+        # 047 Slice 2 — New flips to Edit + focuses the editor so the operator
+        # SEES the template (the 2.6.26 "New blinks, no new form" finding).
+        self.ws_mode = "edit"
+        self.focus_area = "workspace"
+        try:
+            self._editor().focus()
+        except Exception:
+            pass
+        self._set_status(
+            "[green]✓ new template[/green] [dim]— edit + Save[/dim]"
+        )
 
     def _editor_save(self) -> None:
         """Validate the editor YAML and write it to the writable store.

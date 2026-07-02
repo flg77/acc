@@ -1102,3 +1102,59 @@ async def test_enter_no_versions_loads_editor_directly():
         assert not screen.has_class("show-versions")
         assert name in screen.query_one("#golden-editor", TextArea).text
         assert screen.focus_area == "workspace"
+
+
+# ---------------------------------------------------------------------------
+# 047 Slice 2b — Workspace View / Edit modes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_workspace_defaults_to_view_mode():
+    from textual.widgets import TabbedContent
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert screen.ws_mode == "view" and screen.has_class("ws-view")
+        # View shows the rendered detail; the YAML editor is hidden.
+        assert not screen.query_one("#golden-edit-tabs", TabbedContent).display
+        assert screen.query_one("#diagnostics-detail-container").display
+
+
+@pytest.mark.asyncio
+async def test_edit_action_shows_editor_hides_detail():
+    from textual.widgets import TabbedContent
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.action_edit_mode()      # 'e' / Edit
+        await pilot.pause()
+        assert screen.ws_mode == "edit" and screen.has_class("ws-edit")
+        assert screen.query_one("#golden-edit-tabs", TabbedContent).display
+        assert not screen.query_one("#diagnostics-detail-container").display
+
+
+@pytest.mark.asyncio
+async def test_new_flips_to_edit_and_loads_template(tmp_path, monkeypatch):
+    from textual.widgets import TextArea
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._editor_new()
+        await pilot.pause()
+        assert screen.ws_mode == "edit"
+        assert "name:" in screen.query_one("#golden-editor", TextArea).text
+
+
+@pytest.mark.asyncio
+async def test_view_edit_buttons_present():
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert screen.query_one("#btn-ws-view", Button) is not None
+        assert screen.query_one("#btn-ws-edit", Button) is not None
