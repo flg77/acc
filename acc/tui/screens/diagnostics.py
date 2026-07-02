@@ -209,6 +209,11 @@ class DiagnosticsScreen(Screen):
             with Vertical(id="gp-form"):
                 yield Label("③ FORM", classes="panel-label")
                 with ScrollableContainer(id="gp-form-fields"):
+                    # 047 Slice 2c — Title (required to save) + Description.
+                    yield Label("Title (required to save)")
+                    yield Input(placeholder="prompt title", id="form-title")
+                    yield Label("Description")
+                    yield Input(placeholder="optional", id="form-desc")
                     yield Label("Target role")
                     yield Select(
                         [], id="form-role", prompt="select role",
@@ -230,6 +235,14 @@ class DiagnosticsScreen(Screen):
                 # 047 G7 — Send is its own always-visible bar (it used to hide
                 # inside the Form tab → "Send disappeared" in the findings).
                 with Horizontal(id="form-actions"):
+                    # 047 Slice 2c — the Form's own [New · Export · Save · Send].
+                    yield Button("New", id="btn-form-new", variant="default")
+                    yield Button(
+                        "Export", id="btn-form-export", variant="default",
+                    )
+                    yield Button(
+                        "Save", id="btn-form-save", variant="primary",
+                    )
                     yield Button(
                         "Send", id="btn-golden-send", variant="success",
                     )
@@ -804,6 +817,12 @@ class DiagnosticsScreen(Screen):
             self._export_as_pack()
         elif bid == "btn-golden-send":
             self.action_send()
+        elif bid == "btn-form-new":
+            self._form_new()
+        elif bid == "btn-form-save":
+            self._form_save()
+        elif bid == "btn-form-export":
+            self._form_export()
 
     # ------------------------------------------------------------------
     # PR-Y-2 — in-pane editor + attach/watch
@@ -875,6 +894,8 @@ class DiagnosticsScreen(Screen):
         """Set the Form widgets from a GoldenPrompt (no side effects on
         the loaded library)."""
         try:
+            self.query_one("#form-title", Input).value = prompt.name or ""
+            self.query_one("#form-desc", Input).value = prompt.description or ""
             sel = self.query_one("#form-role", Select)
             options = self._available_role_names()
             if prompt.target_role and prompt.target_role not in options:
@@ -938,6 +959,8 @@ class DiagnosticsScreen(Screen):
         from acc.golden_prompts import GoldenPrompt  # noqa: PLC0415
 
         try:
+            title = self.query_one("#form-title", Input).value.strip()
+            desc = self.query_one("#form-desc", Input).value.strip()
             raw_role = self.query_one("#form-role", Select).value
             agent = self.query_one("#form-agent", Input).value.strip()
             mode = str(self.query_one("#form-mode", Select).value or "AUTO")
@@ -955,7 +978,8 @@ class DiagnosticsScreen(Screen):
         except ValueError:
             timeout_s = 60.0
         return GoldenPrompt(
-            name=self._current_name or "form_send",
+            name=title or self._current_name or "form_send",
+            description=desc,
             prompt=text,
             target_role=role,
             target_agent_id=agent,
@@ -987,6 +1011,99 @@ class DiagnosticsScreen(Screen):
         self._set_status(
             f"[b]→ Prompt[/b] sending to {prompt.target_role}…"
         )
+
+    # ------------------------------------------------------------------
+    # 047 Slice 2c — the Form's own New / Save / Export
+    # ------------------------------------------------------------------
+
+    def _form_new(self) -> None:
+        """Blank the Form for a fresh prompt (Title required before Save)."""
+        for wid in ("#form-title", "#form-desc", "#form-agent"):
+            try:
+                self.query_one(wid, Input).value = ""
+            except Exception:
+                pass
+        try:
+            self.query_one("#form-timeout", Input).value = "60"
+        except Exception:
+            pass
+        try:
+            self.query_one("#form-prompt", TextArea).text = ""
+        except Exception:
+            pass
+        try:
+            self.query_one("#form-role", Select).value = Select.BLANK
+        except Exception:
+            pass
+        self._current_name = ""
+        self.focus_area = "form"
+        try:
+            self.query_one("#form-title", Input).focus()
+        except Exception:
+            pass
+        self._set_status(
+            "[green]✓ new form[/green] "
+            "[dim]— fill Title + Prompt, then Save[/dim]"
+        )
+
+    def _form_save(self) -> None:
+        """Persist the Form as a golden prompt.  Title is the name and is
+        REQUIRED (047 G6 — 'if not set not saveable')."""
+        import yaml  # noqa: PLC0415
+        from acc.golden_prompts import (  # noqa: PLC0415
+            append_save_history, save_prompt,
+        )
+        try:
+            title = self.query_one("#form-title", Input).value.strip()
+        except Exception:
+            title = ""
+        if not title:
+            self._set_status("[yellow]Title is required to save.[/yellow]")
+            return
+        prompt = self._form_to_prompt()
+        if prompt is None:
+            self._set_status(
+                "[yellow]Form needs a target role + a prompt.[/yellow]"
+            )
+            return
+        try:
+            out = save_prompt(prompt)
+        except OSError as exc:
+            self._set_status(f"[red]save failed: {exc}[/red]")
+            return
+        ver = append_save_history(
+            prompt.name,
+            yaml.safe_dump(prompt.model_dump(), sort_keys=False),
+        )
+        self._current_name = prompt.name
+        self._set_status(
+            f"[green]✓ saved (v{ver})[/green] [dim]{out}[/dim]"
+        )
+        self._reload_prompts()
+        self._files_sig = self._compute_files_sig()
+
+    def _form_export(self) -> None:
+        """Export the Form's prompt as a single YAML to the attach dir."""
+        from pathlib import Path  # noqa: PLC0415
+        from acc.golden_prompts import dump_prompt  # noqa: PLC0415
+        prompt = self._form_to_prompt()
+        if prompt is None:
+            self._set_status(
+                "[yellow]Form needs a target role + a prompt to export.[/yellow]"
+            )
+            return
+        path = self._attach_input_path()
+        if not path:
+            self._set_status(
+                "[yellow]Enter a target directory (row below) to export to.[/yellow]"
+            )
+            return
+        try:
+            out = dump_prompt(prompt, Path(path) / f"{prompt.name}.yaml")
+        except OSError as exc:
+            self._set_status(f"[red]export failed: {exc}[/red]")
+            return
+        self._set_status(f"[green]✓ exported[/green] [dim]→ {out}[/dim]")
 
     def _editor_new(self) -> None:
         try:

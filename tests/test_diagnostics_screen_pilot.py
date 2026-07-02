@@ -1158,3 +1158,87 @@ async def test_view_edit_buttons_present():
         screen = app.screen
         assert screen.query_one("#btn-ws-view", Button) is not None
         assert screen.query_one("#btn-ws-edit", Button) is not None
+
+
+# ---------------------------------------------------------------------------
+# 047 Slice 2c — Form editor (Title/Description + New/Export/Save)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_form_new_blanks_fields(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen.query_one("#form-title", Input).value = "x"
+        screen.query_one("#form-prompt", TextArea).text = "y"
+        screen._form_new()
+        await pilot.pause()
+        assert screen.query_one("#form-title", Input).value == ""
+        assert screen.query_one("#form-prompt", TextArea).text == ""
+
+
+@pytest.mark.asyncio
+async def test_form_save_requires_title(tmp_path, monkeypatch):
+    from textual.widgets import Select
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        statuses: list[str] = []
+        screen._set_status = lambda m: statuses.append(m)  # type: ignore
+        sel = screen.query_one("#form-role", Select)
+        sel.set_options([("analyst", "analyst")])
+        sel.value = "analyst"
+        screen.query_one("#form-prompt", TextArea).text = "do it"
+        screen.query_one("#form-title", Input).value = ""
+        screen._form_save()
+        assert any("title" in s.lower() for s in statuses)
+        assert not list(tmp_path.glob("*.yaml"))
+
+
+@pytest.mark.asyncio
+async def test_form_save_persists_with_title(tmp_path, monkeypatch):
+    from textual.widgets import Select
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        sel = screen.query_one("#form-role", Select)
+        sel.set_options([("analyst", "analyst")])
+        sel.value = "analyst"
+        screen.query_one("#form-title", Input).value = "form_made"
+        screen.query_one("#form-desc", Input).value = "a desc"
+        screen.query_one("#form-prompt", TextArea).text = "do the thing"
+        screen._form_save()
+        await pilot.pause()
+        assert (tmp_path / "form_made.yaml").is_file()
+        assert "form_made" in screen._prompts
+        assert screen._prompts["form_made"].description == "a desc"
+
+
+@pytest.mark.asyncio
+async def test_form_export_writes_yaml(tmp_path, monkeypatch):
+    from textual.widgets import Select
+    store = tmp_path / "store"
+    store.mkdir()
+    dest = tmp_path / "out"
+    dest.mkdir()
+    monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(store))
+    app = _Harness()
+    async with app.run_test(size=(140, 50)) as pilot:
+        await pilot.pause()
+        screen = app.screen
+        sel = screen.query_one("#form-role", Select)
+        sel.set_options([("analyst", "analyst")])
+        sel.value = "analyst"
+        screen.query_one("#form-title", Input).value = "expp"
+        screen.query_one("#form-prompt", TextArea).text = "keep me"
+        screen.query_one("#golden-attach-input", Input).value = str(dest)
+        screen._form_export()
+        await pilot.pause()
+        assert (dest / "expp.yaml").is_file()
