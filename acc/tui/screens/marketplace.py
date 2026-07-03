@@ -21,7 +21,6 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.screen import Screen
 from textual.widgets import (
     Button,
     DataTable,
@@ -37,7 +36,7 @@ from acc.marketplace import (
     render_rows,
     stage_install,
 )
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
 
 if TYPE_CHECKING:
     pass
@@ -59,7 +58,7 @@ class _StageInstall(Message):
         self.row = row
 
 
-class MarketplaceScreen(Screen):
+class MarketplaceScreen(NavScreen):
     """Package discovery + one-tap install staging."""
 
     BINDINGS = [
@@ -92,7 +91,7 @@ class MarketplaceScreen(Screen):
         self._filter_text: str = ""
 
     def compose(self) -> ComposeResult:
-        yield NavigationBar(active="marketplace")
+        yield NavigationBar(active_screen="marketplace", id="nav")
         with Horizontal(id="market-filter-row"):
             yield Label("Filter: ")
             yield Input(placeholder="@scope/name…", id="market-filter-input")

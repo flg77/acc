@@ -18,7 +18,6 @@ from pydantic import ValidationError
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.screen import Screen
 from textual.widgets import (
     Button,
     DataTable,
@@ -31,7 +30,7 @@ from textual.widgets import (
 
 from acc import catalog_admin
 from acc.pkg.catalog import Catalog
-from acc.tui.widgets.nav_bar import NavigationBar
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 logger = logging.getLogger("acc.tui.catalogs")
 
@@ -45,7 +44,7 @@ _TIER_CHOICES = [
 _MODE_CHOICES = [("https", "https"), ("file", "file")]
 
 
-class CatalogsScreen(Screen):
+class CatalogsScreen(NavScreen):
     """Catalog admin pane."""
 
     BINDINGS = [
@@ -84,7 +83,7 @@ class CatalogsScreen(Screen):
         self._catalogs: list[Catalog] = []
 
     def compose(self) -> ComposeResult:
-        yield NavigationBar(active="catalogs")
+        yield NavigationBar(active_screen="catalogs", id="nav")
         yield Label("Configured catalogs (layered: system → user → workspace)",
                     classes="panel-label")
         yield DataTable(id="catalogs-table")

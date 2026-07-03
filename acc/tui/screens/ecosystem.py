@@ -376,6 +376,13 @@ class EcosystemScreen(Screen):
         # Load a role pack from the catalog into the ecosystem, then its roles
         # appear here to infuse.  `g` = "get pack".
         ("g", "get_pack", "Get pack"),
+        # The Marketplace (browse/install) + Catalogs (admin) panes have no
+        # number-key slot — the nav strip is full at 1–9 — so the roles/
+        # packages hub is their entry point.  `m` = market, `c` = catalogs.
+        # (Both were orphaned + crashed on open before this fix —
+        # NavigationBar was called with active= instead of active_screen=.)
+        ("m", "open_marketplace", "Marketplace"),
+        ("c", "open_catalogs", "Catalogs"),
         # Commit-4 — operator-requested two-step selection:
         #   Space = preview (load role.md + role.yaml into the right
         #           pane WITHOUT arming buttons or pinning selection)
@@ -2419,3 +2426,11 @@ class EcosystemScreen(Screen):
 
     def action_navigate(self, screen_name: str) -> None:
         self.app.switch_screen(screen_name)
+
+    def action_open_marketplace(self) -> None:
+        """Open the package Marketplace (browse/install) from the hub."""
+        self.app.switch_screen("marketplace")
+
+    def action_open_catalogs(self) -> None:
+        """Open the Catalogs admin pane from the hub."""
+        self.app.switch_screen("catalogs")

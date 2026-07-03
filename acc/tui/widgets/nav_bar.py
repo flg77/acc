@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from textual.app import ComposeResult
 from textual.message import Message
+from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Button
 
@@ -129,4 +130,32 @@ class NavigationBar(Widget):
 
     def action_navigate(self, screen_name: str) -> None:
         """Keyboard action for numeric key bindings."""
+        self.post_message(NavigateTo(screen_name))
+
+
+class NavScreen(Screen):
+    """Base ``Screen`` carrying the shared ``1``–``9`` screen-navigation
+    bindings (+ ``q`` quit) so a screen doesn't hand-copy them.
+
+    A subclass's own ``BINDINGS`` merge on top via the MRO, so it declares
+    only its *screen-specific* keys.  This is the single navigation source
+    the per-screen copies (dashboard / comms / …) should migrate onto; today
+    Marketplace + Catalogs use it while the rest still carry inline copies
+    (migrating the remaining screens onto this base is tracked in the TUI
+    improvement backlog).
+
+    Kept here beside :class:`NavigateTo` so it imports no screen module
+    (REQ-TUI-051).
+    """
+
+    BINDINGS = [
+        ("q", "app.quit", "Quit"),
+        *[
+            (key, f"navigate('{name}')", label.split(" ", 1)[1])
+            for key, name, label in _SCREENS
+        ],
+    ]
+
+    def action_navigate(self, screen_name: str) -> None:
+        """Post a :class:`NavigateTo` for the app to switch screens."""
         self.post_message(NavigateTo(screen_name))
