@@ -48,6 +48,7 @@ from acc.tui.screens.performance import PerformanceScreen
 from acc.tui.screens.prompt import PromptScreen
 from acc.tui.widgets.nav_bar import NavigateTo
 from acc.tui.widgets.collective_tabs import CollectiveTabStrip, SwitchCollective
+from acc.tui.palette import ScreenCommands, ScreenActionCommands
 
 logger = logging.getLogger("acc.tui.app")
 
@@ -94,6 +95,11 @@ class ACCTUIApp(App):
     BINDINGS = [
         ("question_mark", "show_help", "Help"),
     ]
+
+    # 050 Slice 2 — global command palette (ctrl+p): fuzzy-jump to any screen
+    # + run any action on the active screen, from anywhere.  Union keeps
+    # Textual's built-in system commands (theme, quit, …).
+    COMMANDS = App.COMMANDS | {ScreenCommands, ScreenActionCommands}
 
     # Eight screens — six biological + PR-B prompt pane +
     # proposal-003 PR-4 configuration pane (REQ-TUI-003).
