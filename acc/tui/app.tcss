@@ -1,6 +1,13 @@
-/* ACC TUI — Global stylesheet (REQ-TUI-005)
- * Externalised from the inline CSS = block in acc/tui/app.py.
- * Screen-specific rules live in screens/{name}.tcss (future).
+/* ACC TUI — Global stylesheet.
+ *
+ * Styling home (proposal 050 Slice 5) — the per-screen `screens/{name}.tcss`
+ * plan once hinted at here was never adopted and is dropped.  The convention:
+ *   • THIS file holds only cross-screen chrome — titles, badge colours, key
+ *     hints, the shared master/detail two-column layout ids, the collective
+ *     tab strip, and the Help modal.
+ *   • Anything SCREEN-SPECIFIC lives in that screen's `DEFAULT_CSS` (the
+ *     de-facto convention across prompt / configuration / diagnostics /
+ *     marketplace / catalogs, and every widget/modal).
  */
 
 /* ── Base ──────────────────────────────────────────────────────────────────── */
@@ -106,12 +113,7 @@ Screen {
 .backpressure-throttle { color: $warning; }
 .backpressure-closed  { color: $error; }
 
-/* ── Domain + compliance health badges ────────────────────────────────────── */
-
-.domain-badge {
-    color: $accent;
-    text-style: italic;
-}
+/* ── Compliance health badges (class chosen in acc/tui/models.py) ──────────── */
 
 .health-score-green { color: $success; }
 .health-score-amber { color: $warning; }
@@ -150,19 +152,6 @@ Screen {
 .key-hint {
     color: $text-muted;
     padding: 0 1;
-}
-
-/* ── Roadmap placeholders (EcosystemScreen) ────────────────────────────────── */
-
-.roadmap-label {
-    text-style: bold;
-    color: $text-muted;
-    margin-top: 1;
-    padding: 0 1;
-}
-
-.roadmap-content {
-    padding: 0 1 1 1;
 }
 
 /* ── Ecosystem layout ──────────────────────────────────────────────────────── */
