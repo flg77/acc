@@ -66,15 +66,19 @@ Screen {
     min-height: 6;
 }
 
-/* ── Dashboard layout ──────────────────────────────────────────────────────── */
+/* ── Two-column layouts ────────────────────────────────────────────────────── */
+/* 050 Slice 4 — the master/detail screens use fr-units instead of % so the two
+ * columns always fill the row exactly (no rounding gap / overflow) and honour
+ * their min-width on narrow terminals.  Same ratios as before (45/55 → 9/11,
+ * 50/50 → 1/1) — a robustness swap, not a visual change. */
 
 #agents-panel {
-    width: 50%;
+    width: 1fr;
     min-width: 30;
 }
 
 #right-panels {
-    width: 50%;
+    width: 1fr;
     padding: 0 1;
 }
 
@@ -164,44 +168,44 @@ Screen {
 /* ── Ecosystem layout ──────────────────────────────────────────────────────── */
 
 #ecosystem-left {
-    width: 45%;
+    width: 9fr;
 }
 
 #ecosystem-right {
-    width: 55%;
+    width: 11fr;
     padding: 0 0 0 1;
 }
 
 /* ── Compliance layout ─────────────────────────────────────────────────────── */
 
 #compliance-left {
-    width: 45%;
+    width: 9fr;
 }
 
 #compliance-right {
-    width: 55%;
+    width: 11fr;
     padding: 0 0 0 1;
 }
 
 /* ── Performance layout ────────────────────────────────────────────────────── */
 
 #performance-left {
-    width: 55%;
+    width: 11fr;
 }
 
 #performance-right {
-    width: 45%;
+    width: 9fr;
     padding: 0 0 0 1;
 }
 
 /* ── Comms layout ──────────────────────────────────────────────────────────── */
 
 #comms-left {
-    width: 50%;
+    width: 1fr;
 }
 
 #comms-right {
-    width: 50%;
+    width: 1fr;
     padding: 0 0 0 1;
 }
 

@@ -274,6 +274,7 @@ class PromptScreen(NavScreen):
     }
     PromptScreen #prompt-transcript-container {
         height: 1fr;
+        min-height: 5;
         border: round $primary;
         padding: 0 1;
         background: $background;

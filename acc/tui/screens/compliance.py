@@ -107,7 +107,10 @@ class ComplianceScreen(NavScreen):
     # so they fire even if a future child widget claims the keys.
     DEFAULT_CSS = """
     ComplianceScreen #owasp-table { height: 13; }
-    ComplianceScreen #governance-layers { height: 1fr; margin-top: 1; }
+    /* 050 Slice 4 — governance (1fr) shares the column with the fixed-height
+       OWASP table; a min-height keeps it usable on a short terminal instead of
+       being squeezed toward zero (the parent scrolls past that point). */
+    ComplianceScreen #governance-layers { height: 1fr; min-height: 8; margin-top: 1; }
     ComplianceScreen .gov-table { height: auto; max-height: 10; }
     """
 
