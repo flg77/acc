@@ -478,6 +478,13 @@ class ACCTUIApp(App):
             CommunicationsScreen: "comms",
             PerformanceScreen: "performance",
             EcosystemScreen: "ecosystem",
+            # 050 Slice 6 — the operator tools + pkg panes had no help entry, so
+            # `?` fell back to Soma on them (prompt.md even existed but wasn't mapped).
+            PromptScreen: "prompt",
+            ConfigurationScreen: "configuration",
+            DiagnosticsScreen: "diagnostics",
+            MarketplaceScreen: "marketplace",
+            CatalogsScreen: "catalogs",
         }
 
         active = self.screen
