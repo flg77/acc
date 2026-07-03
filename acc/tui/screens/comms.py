@@ -21,7 +21,7 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Label, Static
 
-from acc.tui.widgets.nav_bar import NavigationBar, NavScreen, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot, PlanSnapshot
@@ -110,9 +110,6 @@ class CommunicationsScreen(NavScreen):
         ep_table.add_columns(
             "Episode ID", "Agent", "Score", "Task Type", "Status"
         )
-
-    def on_navigate_to(self, event: NavigateTo) -> None:
-        self.app.switch_screen(event.screen_name)
 
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
         if snap is None:

@@ -37,7 +37,7 @@ from acc.role_loader import RoleLoader, list_roles, list_all_role_names
 from acc.signals import subject_role_update
 from acc.tui.config_helpers import load_operator_mode
 from acc.tui.mode_badge import operator_mode_hint, operator_mode_markup
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -460,9 +460,6 @@ class InfuseScreen(NavScreen):
                 "approver_id": "—",
             }
         ]
-
-    def on_navigate_to(self, event: NavigateTo) -> None:
-        self.app.switch_screen(event.screen_name)
 
     def on_select_changed(self, event: Select.Changed) -> None:
         """Reload the WHOLE detail form when the role dropdown changes.

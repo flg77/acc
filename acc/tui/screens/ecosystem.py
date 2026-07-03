@@ -45,7 +45,7 @@ from acc.tui.messages import RolePreloadMessage, RolesChangedMessage
 from acc.tui.path_resolution import resolve_manifest_root
 # FilePickerModal import removed in proposal 009 (upload flow moved
 # to acc/tui/screens/configuration.py).
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -881,9 +881,6 @@ class EcosystemScreen(NavScreen):
             self._watch_task.cancel()
         self._watch_task = None
         self._release_selection_lock()
-
-    def on_navigate_to(self, event: NavigateTo) -> None:
-        self.app.switch_screen(event.screen_name)
 
     def on_tabbed_content_tab_activated(
         self, event: "TabbedContent.TabActivated"

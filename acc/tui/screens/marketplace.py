@@ -36,7 +36,7 @@ from acc.marketplace import (
     render_rows,
     stage_install,
 )
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
     pass

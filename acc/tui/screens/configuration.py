@@ -55,7 +55,7 @@ from acc.models import ModelEntry, load_models
 from acc.pkg.manifest import CORE_BASELINE_MCPS, CORE_BASELINE_SKILLS
 from acc.tui.path_resolution import resolve_manifest_root
 from acc.tui.widgets.file_picker import FilePickerModal
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -541,13 +541,6 @@ class ConfigurationScreen(NavScreen):
         self._render_role_model()
         self._load_skills()
         self._load_mcps()
-
-    # ------------------------------------------------------------------
-    # Navigation
-    # ------------------------------------------------------------------
-
-    def on_navigate_to(self, event: NavigateTo) -> None:
-        self.app.switch_screen(event.screen_name)
 
     # ------------------------------------------------------------------
     # Snapshot watcher (LLM live table)

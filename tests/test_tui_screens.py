@@ -479,6 +479,12 @@ class TestNavigationBarKeys:
             def on_mount(self) -> None:
                 self.push_screen(DashboardScreen())
 
+            # Mirror ACCTUIApp.on_navigate_to: the app owns nav routing now that
+            # the redundant per-screen handlers are swept — each NavScreen just
+            # posts NavigateTo, which bubbles here.
+            def on_navigate_to(self, event) -> None:
+                self.switch_screen(event.screen_name)
+
         app = _NavApp()
         async with app.run_test(headless=True) as pilot:
             await pilot.pause(0.1)
@@ -505,6 +511,12 @@ class TestNavigationBarKeys:
 
             def on_mount(self) -> None:
                 self.push_screen(DashboardScreen())
+
+            # Mirror ACCTUIApp.on_navigate_to: the app owns nav routing now that
+            # the redundant per-screen handlers are swept — each NavScreen just
+            # posts NavigateTo, which bubbles here.
+            def on_navigate_to(self, event) -> None:
+                self.switch_screen(event.screen_name)
 
         app = _NavApp()
         async with app.run_test(headless=True) as pilot:

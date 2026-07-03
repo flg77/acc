@@ -47,7 +47,7 @@ from textual.widgets import (
 
 from textual.widgets.option_list import Option
 
-from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar, NavScreen
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 logger = logging.getLogger("acc.tui.diagnostics")
 
@@ -290,9 +290,6 @@ class DiagnosticsScreen(NavScreen):
         # table, so a reload never clobbers in-progress edits.
         self._files_sig = self._compute_files_sig()
         self.set_interval(2.0, self._poll_changes)
-
-    def on_navigate_to(self, event: NavigateTo) -> None:
-        self.app.switch_screen(event.screen_name)
 
     # ------------------------------------------------------------------
     # 047 Slice 1 — focus-driven resize (List / Workspace / Form)

@@ -34,7 +34,7 @@ from textual.widgets import (
     Static,
 )
 
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -697,9 +697,6 @@ class ComplianceScreen(NavScreen):
             PolicyViewerModal,
         )
         self.app.push_screen(PolicyViewerModal(json_path.with_suffix(".md")))
-
-    def on_navigate_to(self, event: NavigateTo) -> None:
-        self.app.switch_screen(event.screen_name)
 
     def watch_snapshot(self, snap: "CollectiveSnapshot | None") -> None:
         if snap is None:

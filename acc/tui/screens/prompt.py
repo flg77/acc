@@ -58,7 +58,7 @@ from textual.widgets import (
 from acc.channels import TUIPromptChannel
 from acc.tui.widgets.cluster_panel import ClusterPanel
 from acc.tui.widgets.invocation_detail_modal import InvocationDetailModal
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 from acc.tui.widgets.slash_palette import SlashPalette, top_match
 
 if TYPE_CHECKING:
@@ -663,9 +663,6 @@ class PromptScreen(NavScreen):
     # ------------------------------------------------------------------
     # Actions
     # ------------------------------------------------------------------
-
-    def on_navigate_to(self, event: NavigateTo) -> None:
-        self.app.switch_screen(event.screen_name)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""

@@ -21,7 +21,7 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Label, ProgressBar, Static
 
 from acc.tui.widgets.agent_card import AgentCard
-from acc.tui.widgets.nav_bar import NavigationBar, NavScreen, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -123,9 +123,6 @@ class DashboardScreen(NavScreen):
             )
         except Exception:
             logger.exception("dashboard: render mode badge failed")
-
-    def on_navigate_to(self, event: NavigateTo) -> None:
-        self.app.switch_screen(event.screen_name)
 
     # ------------------------------------------------------------------
     # Reactive watcher
