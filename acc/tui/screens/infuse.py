@@ -21,7 +21,6 @@ logger = logging.getLogger("acc.tui.screens.infuse")
 
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, ScrollableContainer
-from textual.screen import Screen
 from textual.widgets import (
     Button,
     DataTable,
@@ -38,7 +37,7 @@ from acc.role_loader import RoleLoader, list_roles, list_all_role_names
 from acc.signals import subject_role_update
 from acc.tui.config_helpers import load_operator_mode
 from acc.tui.mode_badge import operator_mode_hint, operator_mode_markup
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -85,7 +84,7 @@ def _resolve_collective_path():
     return Path("collective.yaml")
 
 
-class InfuseScreen(Screen):
+class InfuseScreen(NavScreen):
     """Role infusion form — compose and apply role definitions to the collective."""
 
     BINDINGS = [
@@ -93,15 +92,6 @@ class InfuseScreen(Screen):
         ("ctrl+l", "clear", "Clear"),
         ("ctrl+h", "toggle_history", "History"),
         ("ctrl+b", "build_package", "Build pkg"),
-        ("q", "app.quit", "Quit"),
-        ("1", "navigate('soma')", "Soma"),
-        ("2", "navigate('nucleus')", "Nucleus"),
-        ("3", "navigate('compliance')", "Compliance"),
-        ("4", "navigate('comms')", "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')", "Ecosystem"),
-        ("7", "navigate('prompt')", "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
     ]
 
     history_rows: reactive[list[dict]] = reactive([], layout=True)
@@ -808,9 +798,6 @@ class InfuseScreen(Screen):
 
     def action_toggle_history(self) -> None:
         self.show_history = not self.show_history
-
-    def action_navigate(self, screen_name: str) -> None:
-        self.app.switch_screen(screen_name)
 
     # ------------------------------------------------------------------
     # 26.6.26 finding #4 — DEV/PROD differentiation + Build-package workflow

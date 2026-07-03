@@ -39,7 +39,6 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.css.query import NoMatches
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import (
     Button,
     DataTable,
@@ -56,7 +55,7 @@ from acc.models import ModelEntry, load_models
 from acc.pkg.manifest import CORE_BASELINE_MCPS, CORE_BASELINE_SKILLS
 from acc.tui.path_resolution import resolve_manifest_root
 from acc.tui.widgets.file_picker import FilePickerModal
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -269,7 +268,7 @@ def _load_acc_config_summary() -> dict[str, str]:
         }
 
 
-class ConfigurationScreen(Screen):
+class ConfigurationScreen(NavScreen):
     """Pane 8 — Configuration.
 
     Three tabs:
@@ -279,18 +278,6 @@ class ConfigurationScreen(Screen):
     * Skills — moved from Ecosystem (PR-A2 upload flow preserved).
     * MCPs — moved from Ecosystem (PR-A2 upload flow preserved).
     """
-
-    BINDINGS = [
-        ("q", "app.quit", "Quit"),
-        ("1", "navigate('soma')", "Soma"),
-        ("2", "navigate('nucleus')", "Nucleus"),
-        ("3", "navigate('compliance')", "Compliance"),
-        ("4", "navigate('comms')", "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')", "Ecosystem"),
-        ("7", "navigate('prompt')", "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
-    ]
 
     DEFAULT_CSS = """
     ConfigurationScreen {
@@ -561,9 +548,6 @@ class ConfigurationScreen(Screen):
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
-
-    def action_navigate(self, screen_name: str) -> None:
-        self.app.switch_screen(screen_name)
 
     # ------------------------------------------------------------------
     # Snapshot watcher (LLM live table)

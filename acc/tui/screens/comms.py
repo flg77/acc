@@ -19,10 +19,9 @@ from typing import TYPE_CHECKING
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Label, Static
 
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen, NavigateTo
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot, PlanSnapshot
@@ -60,20 +59,8 @@ def _render_plan_dag(plan: "PlanSnapshot") -> str:
     return "\n".join(lines)
 
 
-class CommunicationsScreen(Screen):
+class CommunicationsScreen(NavScreen):
     """A2A communications and signal network monitor (REQ-TUI-033 – REQ-TUI-036)."""
-
-    BINDINGS = [
-        ("q", "app.quit", "Quit"),
-        ("1", "navigate('soma')", "Soma"),
-        ("2", "navigate('nucleus')", "Nucleus"),
-        ("3", "navigate('compliance')", "Compliance"),
-        ("4", "navigate('comms')", "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')", "Ecosystem"),
-        ("7", "navigate('prompt')", "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
-    ]
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
 
@@ -215,6 +202,3 @@ class CommunicationsScreen(Screen):
                 task_type,
                 status,
             )
-
-    def action_navigate(self, screen_name: str) -> None:
-        self.app.switch_screen(screen_name)

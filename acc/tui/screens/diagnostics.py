@@ -31,7 +31,6 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import (
     Button,
     DataTable,
@@ -48,7 +47,7 @@ from textual.widgets import (
 
 from textual.widgets.option_list import Option
 
-from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar
+from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar, NavScreen
 
 logger = logging.getLogger("acc.tui.diagnostics")
 
@@ -58,7 +57,7 @@ logger = logging.getLogger("acc.tui.diagnostics")
 _OPERATING_MODES = ("PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS", "AUTO")
 
 
-class DiagnosticsScreen(Screen):
+class DiagnosticsScreen(NavScreen):
     """Pane #9 — run the golden-prompt suite against the live stack."""
 
     # 047 Slice 1 — ground-up layout.  THREE full-width areas stacked
@@ -99,16 +98,6 @@ class DiagnosticsScreen(Screen):
     """
 
     BINDINGS = [
-        ("q", "app.quit", "Quit"),
-        ("1", "navigate('soma')", "Soma"),
-        ("2", "navigate('nucleus')", "Nucleus"),
-        ("3", "navigate('compliance')", "Compliance"),
-        ("4", "navigate('comms')", "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')", "Ecosystem"),
-        ("7", "navigate('prompt')", "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
-        ("9", "navigate('diagnostics')", "Diagnostics"),
         Binding("r", "run_selected", "Run selected", priority=True),
         Binding("a", "run_all", "Run all", priority=True),
         # 047 Slice 1 — collapse the expanded area back to the list view.
@@ -304,9 +293,6 @@ class DiagnosticsScreen(Screen):
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
-
-    def action_navigate(self, screen_name: str) -> None:
-        self.app.switch_screen(screen_name)
 
     # ------------------------------------------------------------------
     # 047 Slice 1 — focus-driven resize (List / Workspace / Form)

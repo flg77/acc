@@ -51,7 +51,6 @@ from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.message import Message
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import (
     Button, DataTable, Footer, Input, Label, Select, Static, TextArea,
 )
@@ -59,7 +58,7 @@ from textual.widgets import (
 from acc.channels import TUIPromptChannel
 from acc.tui.widgets.cluster_panel import ClusterPanel
 from acc.tui.widgets.invocation_detail_modal import InvocationDetailModal
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
 from acc.tui.widgets.slash_palette import SlashPalette, top_match
 
 if TYPE_CHECKING:
@@ -202,7 +201,7 @@ class _PromptInput(TextArea):
         await super()._on_key(event)
 
 
-class PromptScreen(Screen):
+class PromptScreen(NavScreen):
     """Chat-style direct-prompt screen.
 
     Three regions, top → bottom:
@@ -234,15 +233,6 @@ class PromptScreen(Screen):
         # action publishes on subject_assistant_control and the
         # banner re-renders from the heartbeat-carried `dormant` flag.
         Binding("ctrl+z", "toggle_assistant_dormant", "💤 Assistant", priority=True),
-        ("q", "app.quit", "Quit"),
-        ("1", "navigate('soma')", "Soma"),
-        ("2", "navigate('nucleus')", "Nucleus"),
-        ("3", "navigate('compliance')", "Compliance"),
-        ("4", "navigate('comms')", "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')", "Ecosystem"),
-        ("7", "navigate('prompt')", "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
     ]
 
     DEFAULT_CSS = """
@@ -675,9 +665,6 @@ class PromptScreen(Screen):
 
     def on_navigate_to(self, event: NavigateTo) -> None:
         self.app.switch_screen(event.screen_name)
-
-    def action_navigate(self, screen_name: str) -> None:
-        self.app.switch_screen(screen_name)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""

@@ -20,11 +20,10 @@ from typing import TYPE_CHECKING
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Label, Static
 
 from acc.tui.widgets.cluster_panel import ClusterPanel
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen, NavigateTo
 
 if TYPE_CHECKING:
     from acc.tui.models import AgentSnapshot, CollectiveSnapshot
@@ -37,20 +36,8 @@ _BP_COLOUR = {
 }
 
 
-class PerformanceScreen(Screen):
+class PerformanceScreen(NavScreen):
     """Agent performance monitoring screen (REQ-TUI-028 – REQ-TUI-032)."""
-
-    BINDINGS = [
-        ("q", "app.quit", "Quit"),
-        ("1", "navigate('soma')", "Soma"),
-        ("2", "navigate('nucleus')", "Nucleus"),
-        ("3", "navigate('compliance')", "Compliance"),
-        ("4", "navigate('comms')", "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')", "Ecosystem"),
-        ("7", "navigate('prompt')", "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
-    ]
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
 
@@ -429,6 +416,3 @@ class PerformanceScreen(Screen):
         self.query_one("#capability-failures-panel", Static).update(
             "\n".join(lines)
         )
-
-    def action_navigate(self, screen_name: str) -> None:
-        self.app.switch_screen(screen_name)

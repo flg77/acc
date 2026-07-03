@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any, Optional
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import (
     Button,
     Collapsible,
@@ -46,7 +45,7 @@ from acc.tui.messages import RolePreloadMessage, RolesChangedMessage
 from acc.tui.path_resolution import resolve_manifest_root
 # FilePickerModal import removed in proposal 009 (upload flow moved
 # to acc/tui/screens/configuration.py).
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -346,19 +345,10 @@ def _format_subrole_section(
     return "\n".join(lines)
 
 
-class EcosystemScreen(Screen):
+class EcosystemScreen(NavScreen):
     """Genome browser — roles, LLM backends, Skills/MCP roadmap (REQ-TUI-037 – REQ-TUI-040)."""
 
     BINDINGS = [
-        ("q", "app.quit", "Quit"),
-        ("1", "navigate('soma')", "Soma"),
-        ("2", "navigate('nucleus')", "Nucleus"),
-        ("3", "navigate('compliance')", "Compliance"),
-        ("4", "navigate('comms')", "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')", "Ecosystem"),
-        ("7", "navigate('prompt')", "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
         # Commit-3c — per-pane shortcuts.  Surfaced in the shortcut-
         # agenda bar above the Footer.  Lowercase so they don't clash
         # with screen-level Tab/Enter input handling.
@@ -2423,9 +2413,6 @@ class EcosystemScreen(Screen):
         """
         if self._selected_role:
             self._refresh_role_sync_badge(self._selected_role)
-
-    def action_navigate(self, screen_name: str) -> None:
-        self.app.switch_screen(screen_name)
 
     def action_open_marketplace(self) -> None:
         """Open the package Marketplace (browse/install) from the hub."""

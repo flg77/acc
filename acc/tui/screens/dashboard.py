@@ -18,11 +18,10 @@ from typing import TYPE_CHECKING
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import Footer, Label, ProgressBar, Static
 
 from acc.tui.widgets.agent_card import AgentCard
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavScreen, NavigateTo
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -30,20 +29,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("acc.tui.screens.dashboard")
 
 
-class DashboardScreen(Screen):
+class DashboardScreen(NavScreen):
     """Soma — live ACC collective dashboard: agent grid + governance + memory."""
 
     BINDINGS = [
         ("r", "refresh_subscription", "Refresh"),
-        ("q", "app.quit", "Quit"),
-        ("1", "navigate('soma')", "Soma"),
-        ("2", "navigate('nucleus')", "Nucleus"),
-        ("3", "navigate('compliance')", "Compliance"),
-        ("4", "navigate('comms')", "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')", "Ecosystem"),
-        ("7", "navigate('prompt')", "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
     ]
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
@@ -299,9 +289,6 @@ class DashboardScreen(Screen):
 
     def action_refresh_subscription(self) -> None:
         self.app.post_message(_RefreshMessage())
-
-    def action_navigate(self, screen_name: str) -> None:
-        self.app.switch_screen(screen_name)
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,6 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
-from textual.screen import Screen
 from textual.widgets import (
     Button,
     Collapsible,
@@ -35,7 +34,7 @@ from textual.widgets import (
     Static,
 )
 
-from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo
+from acc.tui.widgets.nav_bar import NavigationBar, NavigateTo, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -95,7 +94,7 @@ def _compute_owasp_grades(
     return result
 
 
-class ComplianceScreen(Screen):
+class ComplianceScreen(NavScreen):
     """Compliance and governance monitoring screen (REQ-TUI-023 – REQ-TUI-027)."""
 
     # Approve / reject use letter keys (NOT Enter) so the screen-level
@@ -120,15 +119,6 @@ class ComplianceScreen(Screen):
         Binding("g", "focus_governance", "Governance", priority=True),
         Binding("o", "focus_oversight", "Oversight", priority=True),
         Binding("p", "focus_proposals", "Proposals", priority=True),
-        ("q", "app.quit", "Quit"),
-        ("1", "navigate('soma')", "Soma"),
-        ("2", "navigate('nucleus')", "Nucleus"),
-        ("3", "navigate('compliance')", "Compliance"),
-        ("4", "navigate('comms')", "Comms"),
-        ("5", "navigate('performance')", "Performance"),
-        ("6", "navigate('ecosystem')", "Ecosystem"),
-        ("7", "navigate('prompt')", "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
     ]
 
     snapshot: reactive["CollectiveSnapshot | None"] = reactive(None, layout=True)
@@ -1147,9 +1137,6 @@ class ComplianceScreen(Screen):
             return str(value)
         except Exception:
             return None
-
-    def action_navigate(self, screen_name: str) -> None:
-        self.app.switch_screen(screen_name)
 
 
 # ---------------------------------------------------------------------------
