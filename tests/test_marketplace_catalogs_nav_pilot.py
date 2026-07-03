@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 from textual.app import App
+from textual.binding import Binding
 
 from acc.tui.screens.catalogs import CatalogsScreen
 from acc.tui.screens.ecosystem import EcosystemScreen
@@ -62,7 +63,7 @@ def test_both_screens_inherit_navscreen():
     for cls in (MarketplaceScreen, CatalogsScreen):
         assert issubclass(cls, NavScreen)
         assert hasattr(cls, "action_navigate")
-    navkeys = {b[0] for b in NavScreen.BINDINGS}
+    navkeys = {(b.key if isinstance(b, Binding) else b[0]) for b in NavScreen.BINDINGS}
     assert {"1", "9", "q"} <= navkeys
 
 

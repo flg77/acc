@@ -16,6 +16,7 @@ This widget has no imports from sibling screen files (REQ-TUI-051).
 from __future__ import annotations
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.message import Message
 from textual.screen import Screen
 from textual.widget import Widget
@@ -82,19 +83,20 @@ class NavigationBar(Widget):
     }
     """
 
+    # show=False: the button strip itself is the visible nav affordance, so
+    # these keys are kept out of the Footer to avoid listing navigation twice
+    # (proposal 050 Slice 3).  They still fire.
     BINDINGS = [
-        ("1", "navigate('soma')",          "Soma"),
-        ("2", "navigate('nucleus')",       "Nucleus"),
-        ("3", "navigate('compliance')",    "Compliance"),
-        ("4", "navigate('comms')",         "Comms"),
-        ("5", "navigate('performance')",   "Performance"),
-        ("6", "navigate('ecosystem')",     "Ecosystem"),
-        ("7", "navigate('prompt')",        "Prompt"),
-        ("8", "navigate('configuration')", "Configuration"),
-        # PR-N (K-2) — golden-prompt diagnostics pane.  The button was
-        # added to _SCREENS but the keyboard shortcut was missing, so
-        # `9` did nothing from any screen until now.
-        ("9", "navigate('diagnostics')",   "Diagnostics"),
+        Binding("1", "navigate('soma')",          "Soma",          show=False),
+        Binding("2", "navigate('nucleus')",       "Nucleus",       show=False),
+        Binding("3", "navigate('compliance')",    "Compliance",    show=False),
+        Binding("4", "navigate('comms')",         "Comms",         show=False),
+        Binding("5", "navigate('performance')",   "Performance",   show=False),
+        Binding("6", "navigate('ecosystem')",     "Ecosystem",     show=False),
+        Binding("7", "navigate('prompt')",        "Prompt",        show=False),
+        Binding("8", "navigate('configuration')", "Configuration", show=False),
+        # PR-N (K-2) — golden-prompt diagnostics pane.
+        Binding("9", "navigate('diagnostics')",   "Diagnostics",   show=False),
     ]
 
     def __init__(self, active_screen: str = "soma", **kwargs) -> None:  # type: ignore[override]
@@ -148,10 +150,14 @@ class NavScreen(Screen):
     (REQ-TUI-051).
     """
 
+    # `q` (Quit) stays visible in the Footer; the 1..9 screen-nav keys are
+    # hidden there (show=False) because the NavigationBar button strip already
+    # shows them — listing nav twice crowded out each screen's own actions
+    # (proposal 050 Slice 3).  The keys still fire from every screen.
     BINDINGS = [
         ("q", "app.quit", "Quit"),
         *[
-            (key, f"navigate('{name}')", label.split(" ", 1)[1])
+            Binding(key, f"navigate('{name}')", label.split(" ", 1)[1], show=False)
             for key, name, label in _SCREENS
         ],
     ]

@@ -337,5 +337,6 @@ def test_nav_bar_includes_configuration():
 def test_nav_bar_has_8_keybinding():
     """The NavigationBar's BINDINGS include ('8', navigate(configuration))."""
     from acc.tui.widgets.nav_bar import NavigationBar
-    binding_keys = [b[0] for b in NavigationBar.BINDINGS]
+    from textual.binding import Binding
+    binding_keys = [(b.key if isinstance(b, Binding) else b[0]) for b in NavigationBar.BINDINGS]
     assert "8" in binding_keys

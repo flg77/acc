@@ -204,11 +204,12 @@ def test_every_nav_screen_has_a_keyboard_binding():
     binding, so the `9` key did nothing; this guards the regression for
     every nav entry."""
     from acc.tui.widgets.nav_bar import NavigationBar, _SCREENS
+    from textual.binding import Binding
 
     # Map each binding key → the screen its action navigates to.
     bound: dict[str, str] = {}
     for b in NavigationBar.BINDINGS:
-        key, action = b[0], b[1]
+        key, action = (b.key, b.action) if isinstance(b, Binding) else (b[0], b[1])
         # action looks like: navigate('diagnostics')
         assert action.startswith("navigate(")
         target = action[len("navigate('"):-len("')")]
