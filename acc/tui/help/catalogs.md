@@ -3,7 +3,9 @@
 Manage the **layered catalog sources** the Marketplace searches. The
 layers stack **system → user → workspace**; this screen edits the
 per-collective workspace override at `<workspace>/.acc/catalogs.yaml`.
-Reach it with **`c`** from the Ecosystem screen.
+The nav strip is full at 1..9, so this overflow pane uses a **leader chord**:
+press **`Ctrl+A` then `1`** from anywhere. (`c` from the Ecosystem screen
+and `ctrl+p` → "Go to Catalogs" also work.)
 
 ## Panel
 A table of the resolved catalogs — **ID · Tier · Mode · Endpoint ·
@@ -31,5 +33,5 @@ Three rows of fields:
 
 ## Keybindings
 - `n` — new · `d` — delete · `r` — refresh · `+` / `-` — priority
-- `1` … `9` — switch screens (also `ctrl+p` command palette)
+- `1` … `9` — switch screens · `Ctrl+A` `0` Marketplace · `Ctrl+A` `1` Catalogs · `ctrl+p` palette
 - `?` — this help

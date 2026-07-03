@@ -8,8 +8,8 @@ per-screen key" surface.
 Two providers:
 
 - :class:`ScreenCommands` — "Go to <Screen>" for every registered screen
-  (the 9 nav-strip panes + Marketplace + Catalogs, which have no number-key
-  slot). Selecting one ``switch_screen``s to it.
+  (the 9 nav-strip panes + the Alt+digit overflow panes, Marketplace +
+  Catalogs). Selecting one ``switch_screen``s to it.
 - :class:`ScreenActionCommands` — the *active* screen's own key-bound actions
   (Approve, Run all, Apply, …). Navigation + quit are excluded (the palette's
   ScreenCommands + the built-in system Quit already cover those), so this lists
@@ -27,13 +27,17 @@ from functools import partial
 from textual.binding import Binding
 from textual.command import DiscoveryHit, Hit, Hits, Provider
 
-from acc.tui.widgets.nav_bar import _SCREENS
+from acc.tui.widgets.nav_bar import _SCREENS, _SCREENS_EXT
 
-# Every jump target: the 9 nav-strip screens + the two hub-reached panes
-# (Marketplace/Catalogs have no number key — the strip is full at 1–9).
+# Every jump target: the 9 nav-strip screens (1–9) + the Ctrl+A-leader overflow
+# panes (Marketplace/Catalogs).  Derived from the nav registry so a new pane
+# appears here automatically.  _SCREENS labels carry a digit prefix ("1 Soma")
+# — strip it; _SCREENS_EXT labels are already bare ("Marketplace").
 _JUMP_TARGETS: list[tuple[str, str]] = [
     (name, label.split(" ", 1)[1]) for _key, name, label in _SCREENS
-] + [("marketplace", "Marketplace"), ("catalogs", "Catalogs")]
+] + [
+    (name, label) for name, label in _SCREENS_EXT
+]
 
 # Actions ScreenActionCommands never surfaces (covered elsewhere / not useful).
 _SKIP_ACTION_PREFIXES = ("navigate(", "app.quit", "command_palette")

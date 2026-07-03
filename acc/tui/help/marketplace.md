@@ -1,9 +1,10 @@
 # Marketplace — Package Discovery
 
 Browse every `@scope/name` package advertised across the **layered
-catalogs** (system → user → workspace) and stage one for install. Reach
-it with **`m`** from the Ecosystem screen (it has no number-key slot —
-the nav strip is full at 1..9).
+catalogs** (system → user → workspace) and stage one for install. The
+nav strip is full at 1..9, so this overflow pane uses a **leader chord**:
+press **`Ctrl+A` then `0`** from anywhere. (`m` from the Ecosystem screen
+and `ctrl+p` → "Go to Marketplace" also work.)
 
 ## Panel
 A single table: **Package · Version · Tier · Catalog · Signer**. The
@@ -26,5 +27,5 @@ from the catalog entry, so you can see the provenance before installing.
 
 ## Keybindings
 - `/` — filter · `r` — refresh · `Enter` — stage install
-- `1` … `9` — switch screens (also `ctrl+p` command palette)
+- `1` … `9` — switch screens · `Ctrl+A` `0` Marketplace · `Ctrl+A` `1` Catalogs · `ctrl+p` palette
 - `?` — this help

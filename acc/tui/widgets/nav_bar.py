@@ -15,6 +15,7 @@ This widget has no imports from sibling screen files (REQ-TUI-051).
 
 from __future__ import annotations
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.message import Message
@@ -36,6 +37,26 @@ _SCREENS: list[tuple[str, str, str]] = [
     # PR-N (K-2) — golden-prompt diagnostics pane.
     ("9", "diagnostics",   "9 Diagnostics"),
 ]
+
+# Overflow panes beyond the 1–9 strip, in Ctrl+A-leader order.  The number row
+# is full, so these are reached with a leader key (Ctrl+A) then a digit d →
+# the (10+d)-th screen: Ctrl+A 0 → Marketplace, Ctrl+A 1 → Catalogs, … up to
+# Ctrl+A 9 → screen 19.  Why a leader and not a modifier+digit chord: Win+digit
+# is grabbed by the OS, and Alt+digit is decoded inconsistently by terminals
+# (Kitty-protocol → "alt+0"; a legacy "Alt-sends-ESC" terminal → a macOS
+# Option-char with an irregular key name).  The leader uses only plain, stable
+# key names (ctrl+a, then 0–9), so it works on every terminal.  A screen that
+# binds Ctrl+A itself (Nucleus = Apply) shadows the leader via the MRO — use
+# Ctrl+P to reach the panes there.  These panes carry no nav-strip button (the
+# strip stays at 1–9 to fit narrow terminals).  The list index IS the digit.
+_SCREENS_EXT: list[tuple[str, str]] = [
+    ("marketplace", "Marketplace"),   # Ctrl+A 0  → screen 10
+    ("catalogs",    "Catalogs"),      # Ctrl+A 1  → screen 11
+]
+
+# The overflow-pane leader chord (GNU-Screen-style prefix), then a digit 0–9.
+NAV_LEADER_KEY = "ctrl+a"
+NAV_LEADER_LABEL = "Ctrl+A"
 
 
 class NavigateTo(Message):
@@ -136,32 +157,79 @@ class NavigationBar(Widget):
 
 
 class NavScreen(Screen):
-    """Base ``Screen`` carrying the shared ``1``–``9`` screen-navigation
-    bindings (+ ``q`` quit) so a screen doesn't hand-copy them.
+    """Base ``Screen`` carrying the shared screen-navigation bindings so no
+    screen hand-copies them: ``1``–``9`` for the nav-strip panes, the
+    ``Ctrl+A`` leader-then-digit chord for the overflow panes (``Ctrl+A 0``
+    Marketplace, ``Ctrl+A 1`` Catalogs, … screens 10–19), plus ``q`` to quit.
 
     A subclass's own ``BINDINGS`` merge on top via the MRO, so it declares
-    only its *screen-specific* keys.  This is the single navigation source
-    the per-screen copies (dashboard / comms / …) should migrate onto; today
-    Marketplace + Catalogs use it while the rest still carry inline copies
-    (migrating the remaining screens onto this base is tracked in the TUI
-    improvement backlog).
+    only its *screen-specific* keys.  Every screen extends this base — it is
+    the single source of navigation truth (no per-screen copies remain).  A
+    screen that binds ``Ctrl+A`` itself (Nucleus = Apply) shadows the leader on
+    that screen via the MRO; use ``Ctrl+P`` to reach the overflow panes there.
 
     Kept here beside :class:`NavigateTo` so it imports no screen module
     (REQ-TUI-051).
     """
 
-    # `q` (Quit) stays visible in the Footer; the 1..9 screen-nav keys are
-    # hidden there (show=False) because the NavigationBar button strip already
-    # shows them — listing nav twice crowded out each screen's own actions
-    # (proposal 050 Slice 3).  The keys still fire from every screen.
+    # `q` (Quit) stays visible in the Footer; the screen-nav keys are hidden
+    # there (show=False) — the NavigationBar strip already shows 1..9, and the
+    # Ctrl+A overflow leader is discoverable via Ctrl+P / the help modal.
+    # Listing nav twice crowded out each screen's own actions (050 Slice 3).
+    # The keys still fire from every screen.
     BINDINGS = [
         ("q", "app.quit", "Quit"),
         *[
             Binding(key, f"navigate('{name}')", label.split(" ", 1)[1], show=False)
             for key, name, label in _SCREENS
         ],
+        Binding(NAV_LEADER_KEY, "nav_leader", "Go to pane 10+", show=False),
     ]
+
+    # Set True by the Ctrl+A leader; the next key (a digit) is consumed by
+    # on_key to jump to an overflow pane.  Class default → per-instance on set.
+    _nav_leader_armed: bool = False
 
     def action_navigate(self, screen_name: str) -> None:
         """Post a :class:`NavigateTo` for the app to switch screens."""
         self.post_message(NavigateTo(screen_name))
+
+    def action_nav_leader(self) -> None:
+        """Arm the overflow-pane leader (``Ctrl+A``): the next digit ``d`` jumps
+        to the ``(10+d)``-th screen (``Ctrl+A 0`` → Marketplace, ``Ctrl+A 1`` →
+        Catalogs, …).  A GNU-Screen-style prefix — chosen over Alt/Win+digit
+        because it uses only plain, stable key names that every terminal
+        delivers.  ``on_key`` handles the digit."""
+        self._nav_leader_armed = True
+        hint = ", ".join(
+            f"{i}={label}" for i, (_name, label) in enumerate(_SCREENS_EXT)
+        )
+        try:
+            self.notify(f"Go to pane — {NAV_LEADER_LABEL} then {hint}", timeout=3)
+        except Exception:  # pragma: no cover — notify needs a mounted app
+            pass
+
+    def on_key(self, event: events.Key) -> None:
+        """Second half of the leader chord: when armed, a digit selects the
+        overflow pane; anything else disarms.  The arming ``Ctrl+A`` itself is
+        handled by :meth:`action_nav_leader` (its binding) — ignore it here so
+        it isn't mistaken for the digit."""
+        if event.key == NAV_LEADER_KEY:
+            return
+        if not self._nav_leader_armed:
+            return
+        self._nav_leader_armed = False
+        if not event.key.isdigit():
+            return  # disarm silently; let the key through
+        event.stop()
+        idx = int(event.key)
+        if 0 <= idx < len(_SCREENS_EXT):
+            self.post_message(NavigateTo(_SCREENS_EXT[idx][0]))
+        else:
+            try:
+                self.notify(
+                    f"No pane at {NAV_LEADER_LABEL} {idx}",
+                    severity="warning", timeout=2,
+                )
+            except Exception:  # pragma: no cover
+                pass
