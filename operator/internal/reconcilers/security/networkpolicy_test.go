@@ -147,14 +147,14 @@ func TestAgentPodSelectorMatchesAgentRole(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestExternalEgressFQDNs_Default(t *testing.T) {
-	got := externalEgressFQDNs(&accv1alpha1.NetworkPolicySpec{})
+	got := ExternalEgressFQDNs(&accv1alpha1.NetworkPolicySpec{})
 	if len(got) != 2 {
 		t.Fatalf("default FQDN set should have 2 entries, got %v", got)
 	}
 }
 
 func TestExternalEgressFQDNs_OverrideAndExtra(t *testing.T) {
-	got := externalEgressFQDNs(&accv1alpha1.NetworkPolicySpec{
+	got := ExternalEgressFQDNs(&accv1alpha1.NetworkPolicySpec{
 		AllowedExternalLLM: []string{"llm.internal"},
 		ExtraEgressFQDNs:   []string{"slack-proxy.internal"},
 	})

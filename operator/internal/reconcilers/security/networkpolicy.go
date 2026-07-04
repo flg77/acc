@@ -177,7 +177,7 @@ func (r *NetworkPolicyReconciler) reconcileEnhancedTiers(
 ) (tier int32, backend string, extraCount int, err error) {
 	cilium := corpus.Status.Prerequisites.CiliumInstalled
 	ovn := corpus.Status.Prerequisites.OVNEgressFirewallSupported
-	fqdns := externalEgressFQDNs(np)
+	fqdns := ExternalEgressFQDNs(np)
 
 	switch {
 	case maxTier >= 3 && cilium:

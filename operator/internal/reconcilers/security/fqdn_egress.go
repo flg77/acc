@@ -47,16 +47,25 @@ func defaultExternalLLMFQDNs() []string {
 	}
 }
 
-// externalEgressFQDNs returns the full FQDN allow-set: the external-LLM
-// set (operator override or the built-in default) plus any
-// extraEgressFQDNs.
-func externalEgressFQDNs(np *accv1alpha1.NetworkPolicySpec) []string {
-	llm := np.AllowedExternalLLM
+// ExternalEgressFQDNs returns the full FQDN allow-set: the external-LLM
+// set (operator override or the built-in default) plus any extraEgressFQDNs.
+//
+// It is the SINGLE SOURCE of the external egress allow-set: the OVN
+// EgressFirewall, the Cilium FQDN policy, and the OpenShell sandbox network
+// policy (sandbox.BuildSandboxPolicyYAML) all derive from it, so the three
+// enforcement surfaces cannot drift — guarded by the CI three-surface parity
+// test. Nil-safe: a nil spec yields the built-in default set.
+func ExternalEgressFQDNs(np *accv1alpha1.NetworkPolicySpec) []string {
+	var llm, extra []string
+	if np != nil {
+		llm = np.AllowedExternalLLM
+		extra = np.ExtraEgressFQDNs
+	}
 	if len(llm) == 0 {
 		llm = defaultExternalLLMFQDNs()
 	}
 	out := append([]string{}, llm...)
-	out = append(out, np.ExtraEgressFQDNs...)
+	out = append(out, extra...)
 	return out
 }
 
