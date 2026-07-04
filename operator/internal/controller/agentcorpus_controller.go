@@ -35,6 +35,7 @@ import (
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/manifests"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/observability"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/rhoai"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/sandbox"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/security"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/ui"
 	statuspkg "github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/status"
@@ -286,6 +287,12 @@ func (r *AgentCorpusReconciler) buildSubReconcilers() []reconcilers.SubReconcile
 		// for Cat-A; opt-in, no-op when governance.runtimeEvidence is
 		// disabled or no backend is detected.
 		&bridge.RuntimeEvidenceBridgeReconciler{Client: r.Client, Scheme: r.Scheme},
+		// OpenShell sandbox (OpenShell integration) — the ENFORCE-mode
+		// inversion of the runtime-evidence bridge: opt-in per agentset,
+		// no-op unless spec.sandbox is enabled. Right after the bridge so
+		// the two runtime-security surfaces sit together. Phase-1: gates +
+		// status only; provisioning lands after the Phase-0 spike.
+		&sandbox.OpenShellReconciler{Client: r.Client, Scheme: r.Scheme},
 		&observability.OTelCollectorReconciler{Client: r.Client, Scheme: r.Scheme},
 		&observability.PrometheusRulesReconciler{Client: r.Client, Scheme: r.Scheme},
 		// NetworkPolicy slot (proposal 014): after prerequisites +
