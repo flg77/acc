@@ -334,8 +334,9 @@ spec:
                 properties:
                   milvus:
                     description: |-
-                      Milvus configures the datacenter vector DB (rhoai mode only).
-                      Required when deployMode=rhoai; ignored in standalone mode.
+                      Milvus configures the datacenter vector DB.
+                      Only consulted when vectorBackend is "milvus" (and required then in
+                      rhoai mode); ignored otherwise.  The operator does NOT install Milvus.
                     properties:
                       collectionPrefix:
                         default: acc_
@@ -568,6 +569,26 @@ spec:
                     - replicas
                     - version
                     type: object
+                  vectorBackend:
+                    description: |-
+                      VectorBackend selects the agent vector store (proposal 024).
+
+                        - "turbovec" (default in rhoai when no Milvus URI is set):
+                          embedded quantized index + SQLite record store inside the agent
+                          pod, persisted to a PVC.  Zero extra infrastructure; the corpus
+                          has working recall out of the box.
+                        - "lancedb": embedded full-record store (default standalone/edge).
+                        - "milvus": shared datacenter vector service; requires
+                          infrastructure.milvus.uri.  Milvus remains the right choice for
+                          large shared multi-writer corpora and can be used in addition.
+
+                      Empty = operator default per deployMode (rhoai→turbovec unless a
+                      Milvus URI is configured, then milvus; standalone/edge→lancedb).
+                    enum:
+                    - turbovec
+                    - lancedb
+                    - milvus
+                    type: string
                 required:
                 - nats
                 - redis
@@ -1139,6 +1160,67 @@ spec:
                       set to false) because other RHOAI assets may live in the namespace.
                     type: boolean
                 type: object
+              sandbox:
+                description: |-
+                  Sandbox configures OpenShell kernel-enforced execution sandboxing for
+                  this corpus's agents — the in-line enforcement runtime that turns Cat-A
+                  from evaluated-at-dispatch into enforced-at-the-kernel (Landlock +
+                  seccomp + SELinux + OPA per-binary egress). OPT-IN PER AGENTSET: a nil
+                  block leaves agents in today's container-only isolation (unchanged legacy
+                  behaviour). OpenShell is upstream-alpha — experimental until Red Hat AI
+                  GA; the operator no-ops it where the kernel path is unavailable.
+                properties:
+                  driver:
+                    default: podman
+                    description: |-
+                      Driver selects the OpenShell compute driver. "podman" is the default;
+                      "microvm" adds a VM boundary for HIGH_CONSEQUENCE workloads;
+                      "kubernetes" runs each agent as a policy-enforced pod (the OpenShift
+                      driver); "docker" for non-rootless hosts. The bootc→Hummingbird edge
+                      substrate builds on the podman driver.
+                    enum:
+                    - podman
+                    - microvm
+                    - kubernetes
+                    - docker
+                    type: string
+                  enabled:
+                    default: true
+                    description: |-
+                      Enabled turns on OpenShell sandboxing for this corpus's agents.
+                      Default true within the block; a nil Sandbox block = disabled.
+                    type: boolean
+                  failClosed:
+                    default: true
+                    description: |-
+                      FailClosed makes Cat-A enforcement mandatory: if the sandbox with the
+                      corpus's Cat-A policy cannot be provisioned, the agent is NOT rolled (a
+                      SandboxBlocked status is set instead). ACC's constitutional posture —
+                      a Cat-A-critical agent must not run outside its cage. Set false only for
+                      a deliberate degrade-to-container-with-alert.
+                    type: boolean
+                  gatewayURL:
+                    description: |-
+                      GatewayURL points at an operator-installed OpenShell Gateway control
+                      plane. Empty = the operator uses/provisions the default in-namespace
+                      Gateway. (Exact provisioning is finalised by the Phase-0 spike;
+                      OpenShell's Kubernetes surface is upstream-alpha.)
+                    type: string
+                  mode:
+                    default: 2
+                    description: |-
+                      Mode selects the OpenShell sandboxing mode: 1 = full containment (all
+                      agent processes + tool calls in one boundary); 2 = decoupled execution
+                      (reasoning outside, tool/code execution sandboxed); 3 = code-only
+                      isolation (only generated code runs sandboxed). Default 2 — reasoning
+                      stays on the ACC agent, execution is caged.
+                    enum:
+                    - 1
+                    - 2
+                    - 3
+                    format: int32
+                    type: integer
+                type: object
               tui:
                 description: |-
                   TUI deploys the acc-tui interaction surface (proposal 023 / ADR 025
@@ -1161,6 +1243,15 @@ spec:
                     format: int32
                     minimum: 0
                     type: integer
+                  webTerminal:
+                    description: |-
+                      WebTerminal exposes the interactive TUI in a browser via ttyd behind
+                      a Keycloak oauth2-proxy + Route (proposal 023 §8 Q1). Default false —
+                      the TUI is an `oc rsh` attach pod unless this is set. Requires
+                      spec.webgui.keycloak (reused for auth); without it the operator
+                      refuses to stand up an unauthenticated terminal (ADR 025 §5) and
+                      falls back to the rsh-attach pod.
+                    type: boolean
                 type: object
               upgradePolicy:
                 description: UpgradePolicy controls how the operator handles ACC version
@@ -1711,11 +1802,29 @@ spec:
                       "none" or "netobserv".
                     type: string
                 type: object
+              sandboxBlocked:
+                description: |-
+                  SandboxBlocked is true when spec.sandbox is fail-closed but the sandbox
+                  could not be provisioned, so agents are intentionally NOT running —
+                  ACC's constitutional refusal to run a Cat-A-critical agent outside its
+                  cage (mirrors the WebGUIBlocked posture).
+                type: boolean
+              sandboxReady:
+                description: |-
+                  SandboxReady is true once this corpus's agents are running inside their
+                  OpenShell sandbox with the Cat-A policy applied. Only meaningful when
+                  spec.sandbox is enabled; the SandboxReady condition carries the reason.
+                type: boolean
               tuiDeployed:
                 description: |-
                   TUIDeployed is true once the acc-tui attach pod is reconciled
                   (proposal 023). False when spec.tui is unset or disabled.
                 type: boolean
+              tuiURL:
+                description: |-
+                  TUIURL is the external https URL of the acc-tui web-terminal Route
+                  once admitted (proposal 023 ttyd web-terminal). Empty until then.
+                type: string
               webguiDeployed:
                 description: |-
                   WebGUIDeployed is true once the acc-webgui Deployment + Service (and,
@@ -1724,6 +1833,12 @@ spec:
                   disabled, or its Keycloak config is incomplete (the operator refuses
                   to expose an unauthenticated surface).
                 type: boolean
+              webguiURL:
+                description: |-
+                  WebGUIURL is the external https URL of the webgui Route once
+                  admitted (also surfaced as an app-launcher ConsoleLink). Empty
+                  until the Route gets an ingress host.
+                type: string
             type: object
         type: object
     served: true
