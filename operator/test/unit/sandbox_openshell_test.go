@@ -115,3 +115,26 @@ func TestSandbox_EnabledGate(t *testing.T) {
 		})
 	}
 }
+
+// SandboxWorkloadActive (the Phase-3 attach gate) additionally requires a
+// GatewayURL — so enabling the opt-in block alone leaves the attach inert.
+func TestSandbox_WorkloadActiveGate(t *testing.T) {
+	cases := []struct {
+		name string
+		spec *accv1alpha1.SandboxSpec
+		want bool
+	}{
+		{"nil block", nil, false},
+		{"enabled, no gateway", &accv1alpha1.SandboxSpec{Enabled: ptr.To(true)}, false},
+		{"enabled + gateway", &accv1alpha1.SandboxSpec{Enabled: ptr.To(true), GatewayURL: "https://gw:8080"}, true},
+		{"disabled + gateway", &accv1alpha1.SandboxSpec{Enabled: ptr.To(false), GatewayURL: "https://gw:8080"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			corpus := sandboxCorpus(accv1alpha1.DeployModeRHOAI, tc.spec)
+			if got := sandbox.SandboxWorkloadActive(corpus); got != tc.want {
+				t.Errorf("SandboxWorkloadActive = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

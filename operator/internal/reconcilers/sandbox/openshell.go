@@ -57,6 +57,16 @@ func SandboxEnabled(corpus *accv1alpha1.AgentCorpus) bool {
 	return s != nil && (s.Enabled == nil || *s.Enabled)
 }
 
+// SandboxWorkloadActive reports whether the operator should run the corpus's
+// agents AS OpenShell Sandboxes (the Phase-3 attach) instead of the default
+// StatefulSet: sandboxing is opted in AND a Gateway is configured to deliver
+// the policy to. Gating on GatewayURL keeps the attach seam INERT until an
+// operator points at a live gateway — so enabling the (opt-in) block alone
+// changes nothing. SandboxEnabled guarantees Spec.Sandbox is non-nil.
+func SandboxWorkloadActive(corpus *accv1alpha1.AgentCorpus) bool {
+	return SandboxEnabled(corpus) && corpus.Spec.Sandbox.GatewayURL != ""
+}
+
 // Reconcile implements SubReconciler.
 func (r *OpenShellReconciler) Reconcile(_ context.Context, corpus *accv1alpha1.AgentCorpus) (reconcilers.SubResult, error) {
 	// Opt-in gate: nil or disabled → agents keep today's container-only
