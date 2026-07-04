@@ -85,7 +85,7 @@ func TestBuildSandboxPolicy_CatBEgressDefault(t *testing.T) {
 		t.Fatalf("default egress should have 2 endpoints, got %v", np.Endpoints)
 	}
 	for _, ep := range np.Endpoints {
-		if ep.Port != egressPort || ep.Enforcement != egressEnforcement || ep.Access != egressAccess {
+		if ep.Port != egressPort || ep.Enforcement != egressEnforce || ep.Access != egressAccess {
 			t.Errorf("endpoint %+v: want port 443 / enforce / read-write", ep)
 		}
 	}
@@ -105,6 +105,34 @@ func TestBuildSandboxPolicy_CatBEgressOverride(t *testing.T) {
 	hosts := endpointHosts(doc.NetworkPolicies[inferencePolicyKey].Endpoints)
 	if want := []string{"llm.internal", "tools.internal"}; !slices.Equal(hosts, want) {
 		t.Errorf("egress hosts = %v, want %v", hosts, want)
+	}
+}
+
+// Cat-C observe→propose: NetworkPolicy.Mode=audit stamps egress endpoints
+// `audit` (log, don't block); default/enforce keeps them blocking. Cat-A stays
+// enforced either way — the constitutional floor never audits.
+func TestBuildSandboxPolicy_CatCAuditMode(t *testing.T) {
+	audit := buildSandboxPolicy(policyCorpus(
+		&accv1alpha1.SandboxSpec{Enabled: ptr.To(true)},
+		&accv1alpha1.NetworkPolicySpec{Mode: "audit"}))
+	for _, ep := range audit.NetworkPolicies[inferencePolicyKey].Endpoints {
+		if ep.Enforcement != egressAudit {
+			t.Errorf("audit mode: endpoint %q enforcement = %q, want audit", ep.Host, ep.Enforcement)
+		}
+	}
+	// audit must NOT soften Cat-A — Landlock stays hard (FailClosed defaults true).
+	if audit.Landlock.Compatibility != landlockHardRequirement {
+		t.Errorf("audit mode softened Cat-A landlock to %q", audit.Landlock.Compatibility)
+	}
+
+	// nil spec, empty Mode, and explicit "enforce" all block.
+	for _, np := range []*accv1alpha1.NetworkPolicySpec{nil, {}, {Mode: "enforce"}} {
+		doc := buildSandboxPolicy(policyCorpus(&accv1alpha1.SandboxSpec{Enabled: ptr.To(true)}, np))
+		for _, ep := range doc.NetworkPolicies[inferencePolicyKey].Endpoints {
+			if ep.Enforcement != egressEnforce {
+				t.Errorf("np=%v: endpoint enforcement = %q, want enforce", np, ep.Enforcement)
+			}
+		}
 	}
 }
 

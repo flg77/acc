@@ -33,6 +33,11 @@ import (
 // Category mapping (confirmed against the OpenShell policy schema on the spike):
 //   - filesystem + process + landlock are LOCKED at sandbox creation → Cat-A
 //   - the network endpoint allow-set is HOT-RELOADABLE (`policy set`) → Cat-B
+//   - the egress enforcement posture (enforce vs `audit`) is the Cat-C
+//     observe→propose axis: `audit` logs would-be denials without blocking
+//     (never auto-enforce, `_NEVER_AUTOEXEC`), driven by NetworkPolicy.Mode.
+//     Cat-C's learned RULES (arbiter-signed adaptive bundle) are dispatch-layer
+//     and load in the runtime/OPA path — not kernel policy the operator emits.
 //
 // The struct tags mirror crates/openshell-policy/src/lib.rs (the serde schema
 // `openshell policy set --policy` parses) and match the shipped example
@@ -116,9 +121,15 @@ const (
 	inferencePolicyKey  = "acc_inference"
 	inferencePolicyName = "acc-inference-egress"
 
-	egressPort        = 443
-	egressProtocol    = "rest"
-	egressEnforcement = "enforce"
+	egressPort     = 443
+	egressProtocol = "rest"
+	// Enforcement postures — OpenShell honours exactly these two
+	// (crates/openshell-cli/src/policy_update.rs). "enforce" blocks disallowed
+	// egress (Cat-B); "audit" is the observe→propose mode — would-be denials are
+	// LOGGED, not blocked (Cat-C / `_NEVER_AUTOEXEC`; a human/arbiter promotes
+	// audit→enforce). Selected from NetworkPolicy.Mode.
+	egressEnforce = "enforce"
+	egressAudit   = "audit"
 	// Inference POSTs prompts to the LLM, so the endpoint needs read-write;
 	// the "read-only" preset would block POST/PUT.
 	egressAccess = "read-write"
@@ -145,6 +156,21 @@ func sandboxFailClosed(corpus *accv1alpha1.AgentCorpus) bool {
 	return s == nil || s.FailClosed == nil || *s.FailClosed
 }
 
+// endpointEnforcement selects the egress enforcement posture from
+// NetworkPolicy.Mode — the SAME field the cluster NetworkPolicy audit/enforce
+// canary uses, so the OpenShell sandbox egress and the K8s NetworkPolicy share
+// one posture (no independent knob to drift). "audit" is OpenShell's
+// observe→propose mode: would-be denials are logged, not blocked — the Cat-C /
+// `_NEVER_AUTOEXEC` stance, promoted to enforce by a human/arbiter. This
+// governs only the network egress (Cat-B/C); Cat-A filesystem/process/landlock
+// stays enforced regardless — the constitutional floor never audits.
+func endpointEnforcement(np *accv1alpha1.NetworkPolicySpec) string {
+	if np != nil && np.Mode == egressAudit {
+		return egressAudit
+	}
+	return egressEnforce
+}
+
 // buildSandboxPolicy renders the corpus's Cat-A/B governance into an OpenShell
 // SandboxPolicy document.
 func buildSandboxPolicy(corpus *accv1alpha1.AgentCorpus) *sandboxPolicyDoc {
@@ -160,13 +186,14 @@ func buildSandboxPolicy(corpus *accv1alpha1.AgentCorpus) *sandboxPolicyDoc {
 	// OpenShell policy, the OVN EgressFirewall, and the Cilium FQDN policy
 	// cannot drift (three-surface parity test).
 	fqdns := security.ExternalEgressFQDNs(corpus.Spec.NetworkPolicy)
+	enforcement := endpointEnforcement(corpus.Spec.NetworkPolicy)
 	endpoints := make([]policyEndpoint, 0, len(fqdns))
 	for _, host := range fqdns {
 		endpoints = append(endpoints, policyEndpoint{
 			Host:        host,
 			Port:        egressPort,
 			Protocol:    egressProtocol,
-			Enforcement: egressEnforcement,
+			Enforcement: enforcement,
 			Access:      egressAccess,
 		})
 	}
