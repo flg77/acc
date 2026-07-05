@@ -17,7 +17,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -427,14 +426,29 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	// when spec.infrastructure.nats.nkeyAuth is disabled.
 	ApplyNKeySeed(&deploy.Spec.Template, corpus, role)
 
-	// OpenShell Phase 3 (D3): when this corpus opts into kernel-enforced
-	// sandboxing AND a Gateway is configured, run the agent AS a single
-	// OpenShell Sandbox (Agent Sandbox CR, combined topology) instead of a
-	// StatefulSet — the fully-assembled pod template above (incl. the SPIFFE +
-	// NKey sidecars) becomes the sandbox workload. Inert until GatewayURL is
-	// set; fail-closed — no un-caged StatefulSet fallback on error.
+	// OpenShell Model 2 (proposal 051): when this corpus opts into
+	// kernel-enforced sandboxing AND a Gateway is configured, the agent stays a
+	// normal StatefulSet but gains a per-agent OpenShell sandbox — an
+	// `openshell sandbox create` initContainer carrying the corpus's Cat-A/B/C
+	// policy (BuildSandboxPolicyYAML) + the env the runtime shim (acc.sandbox)
+	// reads to delegate code execution INTO the cage. Inert until GatewayURL is
+	// set; fail-closed (D3) — a policy-ConfigMap error aborts, so no agent runs
+	// without its cage. (Model 1 emitted the agent AS a Sandbox CR here; a raw
+	// CR gets no gateway-injected supervisor → uncaged, so delivery moved to
+	// runtime exec-delegation and BuildSandboxObject is now caller-less.)
 	if sandbox.SandboxWorkloadActive(corpus) {
-		return r.reconcileSandboxWorkload(ctx, corpus, collective, deployName, ns, deploy.Spec.Template)
+		policyCMName := sandbox.PolicyConfigMapName(deployName)
+		policyCM, err := sandbox.BuildPolicyConfigMap(corpus, policyCMName, ns)
+		if err != nil {
+			return 0, roleSpec.Replicas, false, fmt.Errorf("build sandbox policy for %s: %w", deployName, err)
+		}
+		if _, err := util.Upsert(ctx, r.Client, r.Scheme, collective, policyCM, func(existing client.Object) error {
+			existing.(*corev1.ConfigMap).Data = policyCM.Data
+			return nil
+		}); err != nil {
+			return 0, roleSpec.Replicas, false, fmt.Errorf("upsert sandbox policy %s: %w", policyCMName, err)
+		}
+		sandbox.ApplyOpenShellSandbox(&deploy.Spec.Template, corpus, sandbox.SandboxName(deployName), policyCMName, image)
 	}
 
 	// Upsert: Replicas + Template are mutable on a StatefulSet;
@@ -462,44 +476,6 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	isProgressing := upsertResult != util.UpsertResultNoop || readyReplicas < desiredReplicas
 
 	return readyReplicas, desiredReplicas, isProgressing, nil
-}
-
-// reconcileSandboxWorkload runs the agent as a single OpenShell kernel-enforced
-// Sandbox (Agent Sandbox SIG CR) instead of a StatefulSet — the OpenShell
-// Phase-3 attach. A caged agent is one pod: the Sandbox is a single-pod
-// primitive (no replicas), so roleSpec.Replicas is not honored here (operator
-// decision — caged agents do not horizontally scale in this cut); desired is
-// always 1. Fail-closed (D3): any error is returned so the caller aborts — the
-// un-caged StatefulSet is never created as a fallback.
-//
-// Delivering the corpus's SandboxPolicy to the gateway (keyed by the sandbox id
-// BuildSandboxObject stamps) is the companion policy-delivery seam.
-func (r *AgentDeploymentReconciler) reconcileSandboxWorkload(
-	ctx context.Context,
-	corpus *accv1alpha1.AgentCorpus,
-	collective *accv1alpha1.AgentCollective,
-	name, ns string,
-	podTemplate corev1.PodTemplateSpec,
-) (ready, desired int32, progressing bool, err error) {
-	sb, err := sandbox.BuildSandboxObject(corpus, name, podTemplate)
-	if err != nil {
-		return 0, 1, false, fmt.Errorf("build sandbox for %s: %w", name, err)
-	}
-	sb.SetNamespace(ns) // co-locate with where the StatefulSet would have gone
-
-	// Unstructured upsert (mirrors keda_scaled_object.go): copy the desired
-	// spec on update. Owned by the collective, like the StatefulSet it replaces.
-	if _, err := util.Upsert(ctx, r.Client, r.Scheme, collective, sb, func(existing client.Object) error {
-		existingU := existing.(*unstructured.Unstructured)
-		spec, _, _ := unstructured.NestedMap(sb.Object, "spec")
-		return unstructured.SetNestedMap(existingU.Object, spec, "spec")
-	}); err != nil {
-		return 0, 1, false, fmt.Errorf("upsert sandbox %s: %w", name, err)
-	}
-
-	// A freshly-upserted Sandbox is progressing; mapping the Agent Sandbox
-	// status → ready is pinned against the live smoke in a later slice.
-	return 0, 1, true, nil
 }
 
 // buildExtraEnv appends the role-specific ExtraEnv and injects the Anthropic

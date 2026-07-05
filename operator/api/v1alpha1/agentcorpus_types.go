@@ -260,6 +260,25 @@ type SandboxSpec struct {
 	// OpenShell's Kubernetes surface is upstream-alpha.)
 	// +optional
 	GatewayURL string `json:"gatewayURL,omitempty"`
+
+	// Image is the sandbox base image (`openshell sandbox create --from`) that
+	// delegated code execution runs inside (Model 2, proposal 051). Empty =
+	// reuse the agent's own container image, so exec'd code has exactly the
+	// agent's toolchain (python3, git, shell) — just caged by the Cat-A/B/C
+	// policy at the kernel. Override for a slimmer or purpose-built sandbox
+	// image; it must carry whatever the agent's exec'd code needs.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// CredentialsSecret names a Secret (in the agent's namespace) whose keys
+	// are projected as environment (`envFrom`) into the sandbox create
+	// initContainer and the agent container, carrying the OpenShell Gateway's
+	// OIDC client credentials the `openshell` CLI authenticates with. The
+	// operator stays agnostic to the exact variable names — the Secret carries
+	// them. Never holds a value here (secret by reference only). Empty = the
+	// CLI is expected to find its own credentials (e.g. a dev/local gateway).
+	// +optional
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
 }
 
 // TUISpec configures the acc-tui interaction surface (proposal 023 / ADR
