@@ -14,6 +14,18 @@ slice. It is inert until an agent is provisioned with gateway access.
 
 from __future__ import annotations
 
-from acc.sandbox.runner import ExecResult, SandboxConfig, run_in_sandbox
+from acc.sandbox.runner import (
+    ExecResult,
+    SandboxConfig,
+    SandboxUnavailable,
+    maybe_run_sandboxed,
+    run_in_sandbox,
+)
 
-__all__ = ["ExecResult", "SandboxConfig", "run_in_sandbox"]
+__all__ = [
+    "ExecResult",
+    "SandboxConfig",
+    "SandboxUnavailable",
+    "maybe_run_sandboxed",
+    "run_in_sandbox",
+]

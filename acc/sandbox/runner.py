@@ -132,3 +132,23 @@ def run_in_sandbox(
         stderr=(res.stderr or "")[:_STDERR_CAP],
         duration_s=round(duration, 3),
     )
+
+
+def maybe_run_sandboxed(
+    argv: list[str],
+    *,
+    timeout_s: int = 30,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
+    """Delegate ``argv`` to the OpenShell sandbox IFF this agent is sandboxed.
+
+    The exec skills' one-line drop-in: returns the exec-result dict when
+    sandboxing is enabled (raising :class:`SandboxUnavailable` fail-closed if it
+    cannot run), or ``None`` when it is not enabled — the caller then runs the
+    command locally, exactly as before. Inert until the operator sets
+    ``ACC_SANDBOX_NAME`` in the agent's env.
+    """
+    config = SandboxConfig.from_env(env)
+    if not config.enabled:
+        return None
+    return run_in_sandbox(argv, config, timeout_s=timeout_s).as_dict()

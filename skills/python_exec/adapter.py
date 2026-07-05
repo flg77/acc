@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from acc.sandbox import maybe_run_sandboxed
 from acc.skills import Skill
 
 
@@ -26,6 +27,14 @@ class PythonExecSkill(Skill):
         code = args.get("code")
         if not isinstance(code, str) or not code.strip():
             raise ValueError("python_exec: code must be a non-empty string")
+        timeout_s = int(args.get("timeout_s", 30))
+        # OpenShell Model 2 (proposal 051): run the snippet in the corpus's
+        # kernel-enforced sandbox when this agent is sandboxed (ACC_SANDBOX_NAME
+        # set) — using the sandbox's "python3" (not the host sys.executable),
+        # still isolated (-I). Fail-closed, never falling back. Inert otherwise.
+        sandboxed = maybe_run_sandboxed(["python3", "-I", "-c", code], timeout_s=timeout_s)
+        if sandboxed is not None:
+            return sandboxed
         cwd_arg = args.get("cwd")
         if cwd_arg:
             cwd = Path(cwd_arg).resolve()
@@ -34,7 +43,6 @@ class PythonExecSkill(Skill):
             cwd_s = str(cwd)
         else:
             cwd_s = None
-        timeout_s = int(args.get("timeout_s", 30))
         interp = sys.executable or "python3"
         start = time.monotonic()
         try:

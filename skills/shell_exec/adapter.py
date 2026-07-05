@@ -16,12 +16,22 @@ import time
 from pathlib import Path
 from typing import Any
 
+from acc.sandbox import maybe_run_sandboxed
 from acc.skills import Skill, resolve_argv
 
 
 class ShellExecSkill(Skill):
     async def invoke(self, args: dict[str, Any]) -> dict[str, Any]:
         argv = resolve_argv(args, skill="shell_exec")
+        timeout_s = int(args.get("timeout_s", 30))
+        # OpenShell Model 2 (proposal 051): when this agent is sandboxed
+        # (ACC_SANDBOX_NAME set), run the command IN the corpus's kernel-enforced
+        # sandbox instead of locally — fail-closed, never falling back. Checked
+        # before cwd handling: cwd is a host path, irrelevant in the sandbox's
+        # isolated /workspace. Inert (returns None) otherwise.
+        sandboxed = maybe_run_sandboxed(argv, timeout_s=timeout_s)
+        if sandboxed is not None:
+            return sandboxed
         cwd_arg = args.get("cwd")
         if cwd_arg:
             cwd = Path(cwd_arg).resolve()
@@ -30,7 +40,6 @@ class ShellExecSkill(Skill):
             cwd_s = str(cwd)
         else:
             cwd_s = None
-        timeout_s = int(args.get("timeout_s", 30))
         start = time.monotonic()
         try:
             res = subprocess.run(
