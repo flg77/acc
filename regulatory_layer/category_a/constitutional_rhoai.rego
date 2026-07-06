@@ -350,6 +350,8 @@ is_arbiter(agent_id) if {
     reg.collective_id == input.agent.collective_id
 }
 
-# Note: is_valid_json is a built-in when using OPA's JSON capabilities.
-# For WASM compilation, this is implemented in the membrane binary
-# and exposed as a custom built-in function.
+# is_valid_json: true iff x is a syntactically valid JSON document. Implemented as
+# a thin rego wrapper over OPA's `json.is_valid` builtin so the Category-A policy
+# compiles to WASM with a plain `opa build -t wasm` — no host custom-builtin /
+# --capabilities file required. Referenced by A-007 (deny_unstructured_output).
+is_valid_json(x) if { json.is_valid(x) }
