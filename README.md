@@ -53,6 +53,11 @@ Highlights from the current `0.5.x` cycle — see [`CHANGELOG.md`](CHANGELOG.md)
 | Feature | What it is | Status |
 |---|---|---|
 | **Role & package ecosystem** | The 43 movable roles moved out of core into signed, versioned `@acc/*` **family packs** served from the public [`acc-ecosystem`](https://github.com/flg77/acc-ecosystem) registry. `acc-pkg` builds/signs/verifies/installs `.accpkg` bundles; `collective.yaml` `required_packages:` + a dual-source loader fetch and verify them at boot; **Marketplace** + **Catalog** panes (TUI/WebGUI) and the [`acc-podman-desktop`](https://github.com/flg77/acc-podman-desktop) extension are the discovery surfaces. Core keeps only the 7 CONTROL roles. See [**Role & Package Ecosystem**](#role--package-ecosystem). | ✅ Landed (Stage 1 + Stage 2 cutover) |
+| **Interaction, oversight & operating modes** | Human-in-the-loop autonomy — a per-role **operating-mode** ceiling (`PLAN` / `ACCEPT_EDITS` / `ASK_PERMISSIONS` / `AUTO`, per-task overridable), a live **oversight queue** that gates high-consequence actions to a signed approval, and an optional **browser TUI** (`ttyd` behind the corpus's Keycloak oauth2-proxy). See the Interaction & Oversight ADR (025). | ✅ Landed (proposals 023 / 025) |
+| **A2A agent federation** | Agent-to-Agent interop — an agent publishes an **AgentCard** (`/.well-known/agent-card.json`) and serves/consumes JSON-RPC `message/send`; peer **discovery + delegation** routes over A2A (with a NATS-bridge fallback), and inbound calls hit the same Cat-A/B gates as NATS. SPIRE JWT-SVID card signing. Opt-in via `ACC_A2A_PORT`. | ✅ Landed |
+| **Embedded vector backends + semantic routing** | A `turbovec` embedded, quantized vector backend (the `rhoai` default when no Milvus is configured) alongside LanceDB / Milvus; opt-in **semantic capability routing** (`ACC_SEMANTIC_ROUTING`) and a **document store** (`document_store` + doc skills + the `@acc/rag-roles` pack). | ✅ Landed (proposal 024) |
+| **Adaptive Category-C (self-improving policy)** | The arbiter learns Cat-C setpoints from collective behaviour under a **composite reward + drift constraint** — windowed updates, **frozen-in-AUTO**, pinning / bounds / reset, and an audit event per change; contextual features + a linear policy head are opt-in. | ✅ Landed |
+| **OpenShift console plugin** | A dynamic **OpenShift console plugin** (TLS-served, OLM-wired via the CSV) surfaces ACC corpora inside the OpenShift / RHOAI web console. Opt-in. | ✅ Landed (proposal 035) |
 | **Compliance governance & frameworks** | The full governance surface in both UIs: browse the **Category A/B/C rule layers**, import regulatory **frameworks** (NIST AI RMF, SOC 2, EU AI Act, …) and **run a gap scan** (coverage %, gaps), then review **arbiter-proposed Category-C rule proposals** learned from collective violations — approve/reject with the action stamped to your identity. Standalone-first; shared report/proposal store between `acc-tui` and `acc-webgui`. | ✅ Landed (PR-Z1/Z2/Z3) |
 | **Per-agent models (multimodel)** | A central `models.yaml` registry lets each agent role run on a different backend/model (e.g. a `reviewer` on a powerful model driving a critic loop). The TUI/WebGUI Ecosystem surfaces the registry; `AgentSpec.model` selects per role. | ✅ Landed (PR-MM1/2/3) |
 | **Self-reflective memory** | An out-of-band consolidation loop distils episodic memory into durable `memory_notes` an agent reads on the hot path — opt-in per role via `memory_reflection`. | ✅ Landed (PR-MEM1/2/3) |
@@ -67,7 +72,7 @@ Highlights from the current `0.5.x` cycle — see [`CHANGELOG.md`](CHANGELOG.md)
 | **Bi-directional role-definition sync** | `role_sync.role_source: files \| crd \| mirror` keeps `roles/<id>/role.yaml` and the `AgentCollective` CRD in step, with mirror-mode conflict detection over NATS. | ✅ Landed (proposal 010) |
 | **TUI usability hardening** | Prompt cancel-on-timeout, `role.md` narrative rendering, role-directory file-watcher, the Configuration pane (pane 8). | ✅ Landed (proposal 003, v0.2.0) |
 
-**Planned next**: Phase 4 (hardened standalone — NKeys + self-signed CA mTLS for Podman); the v0.5.0 `rhoai` default flip to `signing_mode: spiffe`; NATS mTLS using the X.509-SVID; the offline-action agent wire-up. ACC remains pre-1.0.
+**Planned next**: the OpenShell **live kernel-denial enforcement smoke** (the v0.5.49 follow-up); **NATS / Redis mTLS** via the SPIFFE X.509-SVID; the `rhoai` `signing_mode: spiffe` **default flip**; Phase 4 **hardened standalone** (Podman mTLS, no SPIRE/Tetragon dependency). ACC remains pre-1.0.
 
 ---
 
@@ -334,6 +339,8 @@ The TUI panes (switch with the nav bar / `Tab`):
 - **Prompt** — drive an agent directly (Enter-to-send, operating-mode aware: PLAN / ACCEPT_EDITS / ASK_PERMISSIONS / AUTO), optionally scoping a workspace directory
 - **Compliance** — the live oversight queue plus the Category A/B/C governance layers, regulatory frameworks + gap scan, and the arbiter rule-proposal review surface
 - **Ecosystem** — collective roles + the `models.yaml` model registry; infuse roles
+- **Marketplace** — discover + install signed `@acc/*` role packs from the configured catalogs
+- **Catalogs** — add / inspect package catalogs (the trusted / community / self tiers + `required_signer`)
 - **Performance** — LLM/token metrics including best-effort prompt-cache stats
 - **Comms** — cross-collective bridge / signalling activity
 - **Configuration** — the running `acc-config.yaml` view
@@ -345,7 +352,7 @@ See [`docs/howto-tui.md`](docs/howto-tui.md) for the full guide including deploy
 
 ## Security
 
-ACC's security hardening follows a phased approach. Phases 0a, 0b, 0c, 1, 2, and 3 are implemented (0c, 1, 2, and 3 ship opt-in); phase 4 is planned:
+ACC's security hardening follows a phased approach. Phases 0a, 0b, 0c, 1, 2, 3, and 5 are implemented (0c, 1, 2, 3, and 5 ship opt-in); phase 4 is planned:
 
 Phases marked _opt-in_ are additive — they change no behaviour until
 explicitly enabled, so the Status column reports `Implemented` for all
@@ -360,6 +367,7 @@ of them; the "opt-in" switch is named in each row's Controls cell.
 | **2** — SPIFFE workload identity | SPIRE-issued JWT-SVIDs sign/verify `ROLE_UPDATE`; operator-issued `ClusterSPIFFEID`s; `spiffe-helper` sidecar; edge nested/federated topologies + offline survival. _Opt-in_ via `signing_mode: spiffe` (NATS/Redis mTLS via the X.509-SVID still to come) | ✅ Implemented |
 | **3** — Runtime-evidence Cat-A | Provider-agnostic kernel-event evidence (`execve`/`openat`/`connect`) folded into Cat-A — detects RHACS / Falco / Tetragon (process+file) and NetObserv (network); a bridge normalises events onto NATS.  Opt-in via `governance.runtimeEvidence.enabled` | ✅ Implemented (opt-in) |
 | **4** — Hardened Standalone | NKeys + self-signed CA mTLS for Podman mode; no SPIRE/Tetragon dependency | 🔲 Planned |
+| **5** — Kernel-enforced execution (OpenShell) | Cat-A/B/C enforced at the kernel (Landlock / seccomp / per-binary egress) for delegated code execution — the operator provisions a per-agent [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox that the runtime delegates exec into, **fail-closed**. _Opt-in_ via `spec.sandbox` + `gatewayURL`; live enforcement smoke pending | ✅ Implemented (v0.5.49) |
 
 > **Phase 1 design decision — Cilium is _not_ ACC's prime mechanism.**
 > The roadmap item was originally sketched as "Cilium L7 NetworkPolicy",
@@ -502,7 +510,7 @@ agentic-cell-corpus/
 │   ├── Containerfile.agent-core   # UBI10 / python-312 agent image (UID 1001)
 │   └── podman-compose.yml         # Standalone: NATS + Redis + 3 agent roles
 ├── regulatory_layer/           # OPA Rego rules — Category A/B/C
-├── tests/                      # 127 unit tests; all infra mocked
+├── tests/                      # 3,800+ unit tests (270 files); all infra mocked
 ├── docs/
 │   ├── howto-standalone.md        # Podman setup, env vars, Redis auth, Ed25519
 │   ├── howto-edge.md              # Edge node setup, hub connectivity, bridge delegation
@@ -539,7 +547,7 @@ agentic-cell-corpus/
 | MicroShift | 4.14+ (or K3s any) |
 | RAM | 4 GB |
 | Storage | 32 GB NVMe |
-| Go | 1.22 (operator build only) |
+| Go | 1.23 (operator build only) |
 
 ### RHOAI (OpenShift Datacenter)
 
@@ -547,7 +555,7 @@ agentic-cell-corpus/
 |-----------|---------|
 | OpenShift | 4.14+ |
 | RHOAI / ODH | 2.x |
-| Go | 1.22 (operator build only) |
+| Go | 1.23 (operator build only) |
 | RAM per worker | 16 GiB |
 | StorageClass | ReadWriteOnce PVCs |
 
