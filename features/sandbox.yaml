@@ -1,0 +1,23 @@
+# features/sandbox.yaml — OpenShell kernel-enforced execution sandbox (Model 2).
+#
+# Integration: ACC Implementation proposal 051. The exec skills (shell_exec,
+# python_exec) delegate code execution INTO a per-agent OpenShell sandbox that
+# carries the corpus's Cat-A/B/C policy — enforced at the Landlock/seccomp
+# kernel level, not merely evaluated at dispatch. This feature bakes the
+# `openshell` CLI (the [sandbox] extra) into the agent image; the operator
+# provisions the sandbox + sets the env (proposal 051 slice 3). OPT-IN + alpha —
+# not in the lean tiers.
+id: sandbox
+summary: "Kernel-enforced code-exec cage — exec skills delegate into a per-agent OpenShell sandbox (Cat-A/B/C at the kernel)."
+extras: [sandbox]
+enables:
+  skills: []       # augments shell_exec / python_exec in-place — adds no new skill
+  channels: []
+sidecars: []       # the sandbox is gateway-created; the create initContainer is operator-provisioned
+requires_env: []   # inert without ACC_SANDBOX_NAME (operator-set); the agent runs fine unsandboxed
+optional_env:
+  ACC_SANDBOX_NAME: "the per-agent OpenShell sandbox to exec in (operator-set when spec.sandbox is active; unset = inert)"
+  ACC_SANDBOX_ENABLED: "0/false to force-off even when a sandbox name is set (default on)"
+  OPENSHELL_GATEWAY: "registered gateway name the openshell CLI execs against"
+  ACC_OPENSHELL_BIN: "override the openshell CLI path (default: openshell on PATH)"
+models: []

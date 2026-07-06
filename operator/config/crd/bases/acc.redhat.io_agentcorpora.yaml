@@ -1170,6 +1170,16 @@ spec:
                   behaviour). OpenShell is upstream-alpha — experimental until Red Hat AI
                   GA; the operator no-ops it where the kernel path is unavailable.
                 properties:
+                  credentialsSecret:
+                    description: |-
+                      CredentialsSecret names a Secret (in the agent's namespace) whose keys
+                      are projected as environment (`envFrom`) into the sandbox create
+                      initContainer and the agent container, carrying the OpenShell Gateway's
+                      OIDC client credentials the `openshell` CLI authenticates with. The
+                      operator stays agnostic to the exact variable names — the Secret carries
+                      them. Never holds a value here (secret by reference only). Empty = the
+                      CLI is expected to find its own credentials (e.g. a dev/local gateway).
+                    type: string
                   driver:
                     default: podman
                     description: |-
@@ -1205,6 +1215,15 @@ spec:
                       plane. Empty = the operator uses/provisions the default in-namespace
                       Gateway. (Exact provisioning is finalised by the Phase-0 spike;
                       OpenShell's Kubernetes surface is upstream-alpha.)
+                    type: string
+                  image:
+                    description: |-
+                      Image is the sandbox base image (`openshell sandbox create --from`) that
+                      delegated code execution runs inside (Model 2, proposal 051). Empty =
+                      reuse the agent's own container image, so exec'd code has exactly the
+                      agent's toolchain (python3, git, shell) — just caged by the Cat-A/B/C
+                      policy at the kernel. Override for a slimmer or purpose-built sandbox
+                      image; it must carry whatever the agent's exec'd code needs.
                     type: string
                   mode:
                     default: 2

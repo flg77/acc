@@ -103,6 +103,17 @@ mlflow = [
     # ACC_MLFLOW_TRACKING_URI; acc.backends.mlflow_runs no-ops without it.
     "mlflow-skinny>=2.14,<3.0",
 ]
+sandbox = [
+    # OpenShell kernel-enforced execution sandbox (proposal 051, Model 2).
+    # OPT-IN + ALPHA: the `openshell` CLI (NVIDIA OpenShell, PyPI) that the exec
+    # skills delegate code execution through (`openshell sandbox exec`) and the
+    # operator's create initContainer runs (`openshell sandbox create`). Only
+    # needed when spec.sandbox is enabled — NOT in the base install, so the
+    # default agent image carries no alpha dependency. Inert at runtime without
+    # ACC_SANDBOX_NAME (acc.sandbox no-ops). EXACT pin: OpenShell is pre-GA
+    # single-image alpha; bumps go through the live acc1 enforcement smoke.
+    "openshell==0.0.76",
+]
 turbovec = [
     # Proposal 024 — TurboVec embedded quantized vector backend
     # (vector_db.backend: turbovec; the rhoai default when no Milvus is
