@@ -75,6 +75,21 @@ COPY acc/ /app/acc/
 COPY regulatory_layer/ /app/regulatory_layer/
 RUN python3 -m pip install --no-cache-dir --no-deps .
 
+# ── OpenShell sandbox CLI (opt-in, proposal 051 Model 2) ──────────────────
+# Install the `openshell` CLI (the [sandbox] extra) ONLY for a sandbox-capable
+# agent image — it's alpha and needed solely when spec.sandbox is enabled, so
+# the default image stays lean + free of the dependency. Build the sandbox
+# flavour with `--build-arg WITH_SANDBOX=true`. The version comes from
+# pyproject's [sandbox] extra (single source; no drift). Lands in /opt/app-root,
+# copied wholesale into the runtime stage below.
+ARG WITH_SANDBOX=false
+RUN if [ "$WITH_SANDBOX" = "true" ]; then \
+        python3 -c "import tomllib, subprocess, sys; \
+deps = tomllib.load(open('/app/pyproject.toml','rb'))['project']['optional-dependencies']['sandbox']; \
+print('Installing sandbox extra:', deps); \
+subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + deps, check=True)"; \
+    fi
+
 # ── Strip runtime-unnecessary weight before it reaches the runtime stage ───
 # __pycache__ bytecode (~300 MB; regenerated lazily at runtime if needed),
 # torch C++ headers and the bundled test suite — none used for CPU inference.

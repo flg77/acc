@@ -24,6 +24,7 @@ import (
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/manifests"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/sandbox"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/templates"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/util"
 )
@@ -424,6 +425,31 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	// operator-generated Secret + set the ACC_NKEY_* env vars.  No-op
 	// when spec.infrastructure.nats.nkeyAuth is disabled.
 	ApplyNKeySeed(&deploy.Spec.Template, corpus, role)
+
+	// OpenShell Model 2 (proposal 051): when this corpus opts into
+	// kernel-enforced sandboxing AND a Gateway is configured, the agent stays a
+	// normal StatefulSet but gains a per-agent OpenShell sandbox — an
+	// `openshell sandbox create` initContainer carrying the corpus's Cat-A/B/C
+	// policy (BuildSandboxPolicyYAML) + the env the runtime shim (acc.sandbox)
+	// reads to delegate code execution INTO the cage. Inert until GatewayURL is
+	// set; fail-closed (D3) — a policy-ConfigMap error aborts, so no agent runs
+	// without its cage. (Model 1 emitted the agent AS a Sandbox CR here; a raw
+	// CR gets no gateway-injected supervisor → uncaged, so delivery moved to
+	// runtime exec-delegation and BuildSandboxObject is now caller-less.)
+	if sandbox.SandboxWorkloadActive(corpus) {
+		policyCMName := sandbox.PolicyConfigMapName(deployName)
+		policyCM, err := sandbox.BuildPolicyConfigMap(corpus, policyCMName, ns)
+		if err != nil {
+			return 0, roleSpec.Replicas, false, fmt.Errorf("build sandbox policy for %s: %w", deployName, err)
+		}
+		if _, err := util.Upsert(ctx, r.Client, r.Scheme, collective, policyCM, func(existing client.Object) error {
+			existing.(*corev1.ConfigMap).Data = policyCM.Data
+			return nil
+		}); err != nil {
+			return 0, roleSpec.Replicas, false, fmt.Errorf("upsert sandbox policy %s: %w", policyCMName, err)
+		}
+		sandbox.ApplyOpenShellSandbox(&deploy.Spec.Template, corpus, sandbox.SandboxName(deployName), policyCMName, image)
+	}
 
 	// Upsert: Replicas + Template are mutable on a StatefulSet;
 	// VolumeClaimTemplates + ServiceName are immutable post-create, so the

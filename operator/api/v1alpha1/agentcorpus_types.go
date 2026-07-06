@@ -152,6 +152,16 @@ type AgentCorpusSpec struct {
 	// +optional
 	NetworkPolicy *NetworkPolicySpec `json:"networkPolicy,omitempty"`
 
+	// Sandbox configures OpenShell kernel-enforced execution sandboxing for
+	// this corpus's agents — the in-line enforcement runtime that turns Cat-A
+	// from evaluated-at-dispatch into enforced-at-the-kernel (Landlock +
+	// seccomp + SELinux + OPA per-binary egress). OPT-IN PER AGENTSET: a nil
+	// block leaves agents in today's container-only isolation (unchanged legacy
+	// behaviour). OpenShell is upstream-alpha — experimental until Red Hat AI
+	// GA; the operator no-ops it where the kernel path is unavailable.
+	// +optional
+	Sandbox *SandboxSpec `json:"sandbox,omitempty"`
+
 	// MCPServers configures shared MCP servers visible to every collective in
 	// this corpus. Each entry produces a Deployment + Service named
 	// acc-mcp-{name}, matching the URL convention used by mcps/<name>/mcp.yaml.
@@ -202,6 +212,73 @@ type RHOAISpec struct {
 	// +kubebuilder:default="redhat-ods-applications"
 	// +optional
 	DashboardNamespace string `json:"dashboardNamespace,omitempty"`
+}
+
+// SandboxSpec configures OpenShell kernel-enforced execution sandboxing for a
+// corpus's agents. NVIDIA OpenShell is the in-line enforcement runtime that
+// makes Cat-A enforced-at-the-kernel rather than only evaluated-at-dispatch.
+// A nil Sandbox block = disabled (today's container-only isolation).
+type SandboxSpec struct {
+	// Enabled turns on OpenShell sandboxing for this corpus's agents.
+	// Default true within the block; a nil Sandbox block = disabled.
+	// +kubebuilder:default=true
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// Driver selects the OpenShell compute driver. "podman" is the default;
+	// "microvm" adds a VM boundary for HIGH_CONSEQUENCE workloads;
+	// "kubernetes" runs each agent as a policy-enforced pod (the OpenShift
+	// driver); "docker" for non-rootless hosts. The bootc→Hummingbird edge
+	// substrate builds on the podman driver.
+	// +kubebuilder:validation:Enum=podman;microvm;kubernetes;docker
+	// +kubebuilder:default=podman
+	// +optional
+	Driver string `json:"driver,omitempty"`
+
+	// Mode selects the OpenShell sandboxing mode: 1 = full containment (all
+	// agent processes + tool calls in one boundary); 2 = decoupled execution
+	// (reasoning outside, tool/code execution sandboxed); 3 = code-only
+	// isolation (only generated code runs sandboxed). Default 2 — reasoning
+	// stays on the ACC agent, execution is caged.
+	// +kubebuilder:validation:Enum=1;2;3
+	// +kubebuilder:default=2
+	// +optional
+	Mode int32 `json:"mode,omitempty"`
+
+	// FailClosed makes Cat-A enforcement mandatory: if the sandbox with the
+	// corpus's Cat-A policy cannot be provisioned, the agent is NOT rolled (a
+	// SandboxBlocked status is set instead). ACC's constitutional posture —
+	// a Cat-A-critical agent must not run outside its cage. Set false only for
+	// a deliberate degrade-to-container-with-alert.
+	// +kubebuilder:default=true
+	// +optional
+	FailClosed *bool `json:"failClosed,omitempty"`
+
+	// GatewayURL points at an operator-installed OpenShell Gateway control
+	// plane. Empty = the operator uses/provisions the default in-namespace
+	// Gateway. (Exact provisioning is finalised by the Phase-0 spike;
+	// OpenShell's Kubernetes surface is upstream-alpha.)
+	// +optional
+	GatewayURL string `json:"gatewayURL,omitempty"`
+
+	// Image is the sandbox base image (`openshell sandbox create --from`) that
+	// delegated code execution runs inside (Model 2, proposal 051). Empty =
+	// reuse the agent's own container image, so exec'd code has exactly the
+	// agent's toolchain (python3, git, shell) — just caged by the Cat-A/B/C
+	// policy at the kernel. Override for a slimmer or purpose-built sandbox
+	// image; it must carry whatever the agent's exec'd code needs.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// CredentialsSecret names a Secret (in the agent's namespace) whose keys
+	// are projected as environment (`envFrom`) into the sandbox create
+	// initContainer and the agent container, carrying the OpenShell Gateway's
+	// OIDC client credentials the `openshell` CLI authenticates with. The
+	// operator stays agnostic to the exact variable names — the Secret carries
+	// them. Never holds a value here (secret by reference only). Empty = the
+	// CLI is expected to find its own credentials (e.g. a dev/local gateway).
+	// +optional
+	CredentialsSecret string `json:"credentialsSecret,omitempty"`
 }
 
 // TUISpec configures the acc-tui interaction surface (proposal 023 / ADR
@@ -968,6 +1045,19 @@ type AgentCorpusStatus struct {
 	// already present).
 	// +optional
 	DefaultCatalogBootstrapped bool `json:"defaultCatalogBootstrapped,omitempty"`
+
+	// SandboxReady is true once this corpus's agents are running inside their
+	// OpenShell sandbox with the Cat-A policy applied. Only meaningful when
+	// spec.sandbox is enabled; the SandboxReady condition carries the reason.
+	// +optional
+	SandboxReady bool `json:"sandboxReady,omitempty"`
+
+	// SandboxBlocked is true when spec.sandbox is fail-closed but the sandbox
+	// could not be provisioned, so agents are intentionally NOT running —
+	// ACC's constitutional refusal to run a Cat-A-critical agent outside its
+	// cage (mirrors the WebGUIBlocked posture).
+	// +optional
+	SandboxBlocked bool `json:"sandboxBlocked,omitempty"`
 
 	// NetworkPolicy reports what the NetworkPolicyReconciler emitted
 	// (proposal 014).  The companion NetworkPolicyReady condition
