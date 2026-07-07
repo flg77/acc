@@ -51,10 +51,19 @@ from textual.widgets import (
     TabPane,
 )
 
-from acc.models import ModelEntry, load_models
+from acc.models import (
+    ModelEntry,
+    delete_model,
+    get_model,
+    load_models,
+    load_registry,
+    set_role_model,
+    upsert_model,
+)
 from acc.pkg.manifest import CORE_BASELINE_MCPS, CORE_BASELINE_SKILLS
 from acc.tui.path_resolution import resolve_manifest_root
 from acc.tui.widgets.file_picker import FilePickerModal
+from acc.tui.widgets.model_editor_modal import ModelEditorModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
@@ -353,6 +362,9 @@ class ConfigurationScreen(NavScreen):
         # Nucleus Ctrl+A→e — role to pre-select in the role→model editor once
         # this screen is composed.  "" = none pending.
         self._pending_role: str = ""
+        # MODEL REGISTRY CRUD — row-index → model_id map for the selectable
+        # registry table (rebuilt on every _render_model_registry).
+        self._registry_model_ids: list[str] = []
 
     def preselect_role(self, role_name: str) -> None:
         """Arrive from Nucleus (Ctrl+A→e) with *role_name* pre-selected in the
@@ -486,6 +498,14 @@ class ConfigurationScreen(NavScreen):
             )
 
             yield Label("LIVE BACKENDS (per agent)", classes="panel-label")
+            yield Static(
+                "[dim]Each agent's RESOLVED model, from its heartbeat.  All rows "
+                "the same = every role runs on the default; map roles → models in "
+                "the registry below + Reload to differentiate them here.  p50 / "
+                "health are per-heartbeat placeholders until per-call telemetry "
+                "lands.[/dim]",
+                id="llm-live-hint",
+            )
             # N7 — per-backend health rollup so the active LLMs are monitored
             # at a glance (25.6.26 image 6), above the per-agent detail.
             yield Static("", id="llm-health-rollup", classes="panel-label")
@@ -498,12 +518,29 @@ class ConfigurationScreen(NavScreen):
             # to.  Read-only here; assignment writeback stays a follow-up.
             yield Label("MODEL REGISTRY (models.yaml)", classes="panel-label")
             yield Static(
-                "[dim]Endpoints an agentset can assign to roles "
-                "(per-agent model = AgentSpec.model → a model_id here). "
-                "Empty = agents use the configured default above.[/dim]",
+                "[dim]CRUD the model endpoints + set a default model per role "
+                "(models.yaml role_models). Edits save to models.yaml; 'Reload "
+                "agents' broadcasts config.reload so running agents live-swap "
+                "(~1 heartbeat, no redeploy).[/dim]",
                 id="llm-registry-hint",
             )
-            yield DataTable(id="llm-registry-table", show_cursor=False)
+            yield DataTable(id="llm-registry-table", cursor_type="row")
+            with Horizontal(id="registry-actions", classes="llm-edit-row"):
+                yield Button("Add model", id="btn-model-add", variant="success")
+                yield Button("Edit", id="btn-model-edit")
+                yield Button("Delete", id="btn-model-delete", variant="error")
+                yield Button("Test", id="btn-model-test", variant="primary")
+                yield Button("Reload agents", id="btn-model-reload", variant="warning")
+            yield Static("[dim]Select a row, then Edit / Delete / Test.[/dim]",
+                         id="registry-status")
+            with Horizontal(id="registry-rolemap", classes="llm-edit-row"):
+                yield Label("Default per role:", classes="llm-edit-label")
+                yield Select([("(role)", "")], id="registry-role",
+                             allow_blank=True, classes="llm-edit-control")
+                yield Select([("(default)", "")], id="registry-model",
+                             allow_blank=True, classes="llm-edit-control")
+                yield Button("Set default", id="btn-registry-setrole",
+                             variant="primary")
 
             # Operator goal 2026-06-22 — ROLE → MODEL, the canonical mapping
             # surface (locked decision).  Assigns AgentSpec.model per role in the
@@ -559,7 +596,7 @@ class ConfigurationScreen(NavScreen):
         live_table.add_columns("Agent", "Backend", "Model", "Health", "p50ms")
 
         registry_table = self.query_one("#llm-registry-table", DataTable)
-        registry_table.add_columns("model_id", "Backend", "Model", "Base URL", "Label")
+        registry_table.add_columns("model_id", "backend", "model", "base_url", "roles")
 
         skills_table = self.query_one("#skills-table", DataTable)
         skills_table.add_columns("Skill", "Version", "Risk", "Requires", "Source")
@@ -673,29 +710,35 @@ class ConfigurationScreen(NavScreen):
     @staticmethod
     def _model_registry_rows(
         entries: "list[ModelEntry]",
+        role_models: "dict[str, str] | None" = None,
     ) -> list[tuple[str, str, str, str, str]]:
         """Display rows for the MODEL REGISTRY table (pure → testable).
 
-        An empty registry yields one explanatory row rather than a blank
-        table — the 2026-06-16 review flagged silent empty tables as
-        confusing.
+        The last column lists the roles that DEFAULT to each model (the
+        models.yaml ``role_models`` reverse map).  An empty registry yields one
+        explanatory row rather than a blank table — the 2026-06-16 review
+        flagged silent empty tables as confusing.
         """
         if not entries:
             return [(
                 "—",
                 "(no models.yaml)",
-                "agents use the default backend above",
+                "Add model → to populate the registry",
                 "—",
                 "—",
             )]
+        reverse: dict[str, list[str]] = {}
+        for role, model_id in (role_models or {}).items():
+            reverse.setdefault(model_id, []).append(role)
         rows: list[tuple[str, str, str, str, str]] = []
         for e in entries:
+            roles = ", ".join(sorted(reverse.get(e.model_id, []))) or "—"
             rows.append((
-                (e.model_id or "—")[:24],
-                (e.backend or "—")[:14],
-                (e.model or "—")[:28],
-                (e.base_url or "—")[:32],
-                (e.label or "—")[:40],
+                (e.model_id or "—")[:22],
+                (e.backend or "—")[:12],
+                (e.model or "—")[:24],
+                (e.base_url or "—")[:26],
+                roles[:24],
             ))
         return rows
 
@@ -706,17 +749,154 @@ class ConfigurationScreen(NavScreen):
         empty list, so this never raises on a fresh corpus.
         """
         try:
-            entries = load_models()
+            reg = load_registry()
+            entries, role_models = reg.models, reg.role_models
         except Exception:
             logger.exception("configuration: model registry load failed")
-            entries = []
+            entries, role_models = [], {}
+        self._registry_model_ids = [e.model_id for e in entries]
         try:
             table = self.query_one("#llm-registry-table", DataTable)
             table.clear()
-            for row in self._model_registry_rows(entries):
+            for row in self._model_registry_rows(entries, role_models):
                 table.add_row(*row)
         except Exception:
             logger.exception("configuration: model registry render failed")
+        # (Re)populate the role-default dropdowns — role names ∪ existing maps.
+        try:
+            self.query_one("#registry-model", Select).set_options(
+                [("(default)", "")] + [(e.model_id, e.model_id) for e in entries])
+            self.query_one("#registry-role", Select).set_options(
+                [("(role)", "")]
+                + [(r, r) for r in self._registry_role_options(role_models)])
+        except Exception:
+            logger.exception("configuration: registry dropdown populate failed")
+
+    @staticmethod
+    def _registry_role_options(role_models: "dict[str, str]") -> list[str]:
+        """Roles offerable for a models.yaml default: all on-disk roles ∪ any
+        already mapped (so an off-disk mapping is still editable)."""
+        roles = set(role_models or {})
+        try:
+            import os  # noqa: PLC0415
+
+            from acc.role_loader import list_all_role_names  # noqa: PLC0415
+            roles |= set(
+                list_all_role_names(os.environ.get("ACC_ROLES_ROOT", "roles"))
+            )
+        except Exception:
+            logger.debug("configuration: role list for registry unavailable",
+                         exc_info=True)
+        return sorted(roles)
+
+    # ------------------------------------------------------------------
+    # MODEL REGISTRY CRUD — Add/Edit/Delete/Test + role_models + reload
+    # ------------------------------------------------------------------
+
+    def _registry_status(self, markup: str) -> None:
+        try:
+            self.query_one("#registry-status", Static).update(markup)
+        except Exception:
+            pass
+
+    def _selected_registry_model_id(self) -> "str | None":
+        try:
+            table = self.query_one("#llm-registry-table", DataTable)
+        except Exception:
+            return None
+        idx = table.cursor_row
+        if 0 <= idx < len(self._registry_model_ids):
+            return self._registry_model_ids[idx]
+        return None
+
+    def _selected_registry_entry(self) -> "ModelEntry | None":
+        mid = self._selected_registry_model_id()
+        return get_model(mid) if mid else None
+
+    def _open_model_editor(self, entry: "ModelEntry | None") -> None:
+        """Add (entry=None) or Edit a models.yaml entry via the modal, then
+        upsert + repaint."""
+        def _done(result: "ModelEntry | None") -> None:
+            if result is None:
+                return  # cancelled
+            try:
+                upsert_model(result)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("configuration: model upsert failed")
+                self._registry_status(f"[red]save failed: {exc}[/red]")
+                return
+            self._render_model_registry()
+            self._registry_status(
+                f"[green]✓ saved {result.model_id} to models.yaml — "
+                f"'Reload agents' to apply[/green]"
+            )
+
+        self.app.push_screen(ModelEditorModal(entry), _done)
+
+    def _on_model_delete(self) -> None:
+        mid = self._selected_registry_model_id()
+        if not mid:
+            self._registry_status("[yellow]select a model row first[/yellow]")
+            return
+        try:
+            delete_model(mid)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("configuration: model delete failed")
+            self._registry_status(f"[red]delete failed: {exc}[/red]")
+            return
+        self._render_model_registry()
+        self._registry_status(
+            f"[green]✓ deleted {mid} — 'Reload agents' to apply[/green]"
+        )
+
+    def _on_model_test(self) -> None:
+        entry = self._selected_registry_entry()
+        if entry is None:
+            self._registry_status("[yellow]select a model row first[/yellow]")
+            return
+        if not entry.base_url:
+            self._registry_status(
+                f"[dim]{entry.model_id}: hosted API ({entry.backend}) — "
+                f"no base_url to probe[/dim]"
+            )
+            return
+        self._registry_status(f"[yellow]pinging {entry.model_id}…[/yellow]")
+        probe_url, method = _probe_for(entry.backend, entry.base_url)
+        ok, message, elapsed_ms = _ping_endpoint(probe_url, method)
+        colour = "green" if ok else "red"
+        self._registry_status(
+            f"[{colour}]{entry.model_id}: {message}[/{colour}] · {method} · "
+            f"{elapsed_ms:.0f} ms · {probe_url}"
+        )
+
+    def _on_reload_agents(self) -> None:
+        # A non-LLM marker: agents apply no hot env key, so they re-read
+        # models.yaml (role_models) and live-swap on the next heartbeat.
+        msg = self._publish_config_reload({"ACC_MODELS_RELOAD": "1"})
+        self._registry_status(
+            f"[green]config.reload broadcast — agents re-read models.yaml "
+            f"(~1 heartbeat)[/green] · {msg}"
+        )
+
+    def _on_registry_setrole(self) -> None:
+        role = self.query_one("#registry-role", Select).value
+        model_id = self.query_one("#registry-model", Select).value
+        if not role or role == Select.BLANK:
+            self._registry_status("[yellow]pick a role first[/yellow]")
+            return
+        model_arg = None if (not model_id or model_id == Select.BLANK) else str(model_id)
+        try:
+            set_role_model(str(role), model_arg)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("configuration: set_role_model failed")
+            self._registry_status(f"[red]map failed: {exc}[/red]")
+            return
+        self._render_model_registry()
+        target = model_arg or "(default)"
+        self._registry_status(
+            f"[green]✓ {role} → {target} in models.yaml — "
+            f"'Reload agents' to apply[/green]"
+        )
 
     # ------------------------------------------------------------------
     # ROLE → MODEL (operator goal 2026-06-22) — canonical mapping surface.
@@ -1133,6 +1313,24 @@ class ConfigurationScreen(NavScreen):
             return
         if btn_id == "btn-rolemodel-seed":
             self._on_rolemodel_seed()
+            return
+        if btn_id == "btn-model-add":
+            self._open_model_editor(None)
+            return
+        if btn_id == "btn-model-edit":
+            self._open_model_editor(self._selected_registry_entry())
+            return
+        if btn_id == "btn-model-delete":
+            self._on_model_delete()
+            return
+        if btn_id == "btn-model-test":
+            self._on_model_test()
+            return
+        if btn_id == "btn-model-reload":
+            self._on_reload_agents()
+            return
+        if btn_id == "btn-registry-setrole":
+            self._on_registry_setrole()
             return
 
     def on_file_picker_modal_file_selected(
