@@ -24,13 +24,16 @@ def _row(name="@acc/coding-roles", version="1.0.0") -> MarketplaceRow:
     )
 
 
-def test_stage_install_message_carries_marker_and_row():
+def test_stage_install_message_carries_marker_and_name():
+    # Rows are now flattened display rows (built-in + layered), so the message
+    # carries the package name + marker the Compliance queue needs — not a
+    # MarketplaceRow.
     msg = _StageInstall(
         marker_text="[PROPOSE_INFUSE:@acc/x@1.0:r]",
-        row=_row("@acc/x", "1.0.0"),
+        name="@acc/x",
     )
     assert msg.marker_text == "[PROPOSE_INFUSE:@acc/x@1.0:r]"
-    assert msg.row.name == "@acc/x"
+    assert msg.name == "@acc/x"
 
 
 def test_marketplace_screen_caches_rows_for_dispatch():

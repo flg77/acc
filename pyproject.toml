@@ -183,6 +183,10 @@ include = ["acc*"]
 # (acc/tui/screens/help.py).  Bundled into the installed package so the
 # ? key works after `pip install --no-deps .` in the production image.
 "acc.tui.help" = ["*.md"]
+# Built-in day-0 catalog metadata (the bundled ACC role families), loaded via
+# importlib.resources by acc/pkg/builtin_catalog.py so the Marketplace +
+# Catalogs panes show real content offline after `pip install --no-deps .`.
+"acc.pkg.data" = ["*.yaml"]
 # Compiled React SPA (Vite `dist/`).  Containerfile.webgui copies the
 # build output into acc/webgui/static BEFORE `pip install --no-deps .`;
 # without this entry pip copies only .py files, so the installed package
