@@ -91,33 +91,50 @@ def test_ecosystem_exposes_marketplace_and_catalogs_entries():
 # --------------------------------------------------------------------------
 
 
-def test_navscreen_binds_ctrl_a_leader():
-    """The overflow leader lives once on the shared base as a Ctrl+A binding;
-    _SCREENS_EXT gives the digit order (list index == leader digit)."""
-    actions = {
-        (b.key if isinstance(b, Binding) else b[0]):
-        (b.action if isinstance(b, Binding) else b[1])
-        for b in NavScreen.BINDINGS
-    }
-    assert actions.get(NAV_LEADER_KEY) == "nav_leader"
-    assert callable(getattr(NavScreen, "action_nav_leader", None))
-    # Registry order defines the leader digits: 0=Marketplace, 1=Catalogs.
+def test_navscreen_binds_ctrl_a_which_key_menu():
+    """The Ctrl+A which-key menu lives once on the shared base as a *priority*
+    binding; _SCREENS_EXT gives the overflow-nav digit order."""
+    menu = None
+    for b in NavScreen.BINDINGS:
+        key = b.key if isinstance(b, Binding) else b[0]
+        if key == NAV_LEADER_KEY:
+            menu = b
+    assert isinstance(menu, Binding)
+    assert menu.action == "leader_menu"
+    assert menu.priority is True  # beats a focused Input's ctrl+a→home
+    assert callable(getattr(NavScreen, "action_leader_menu", None))
+    # Registry order defines the overflow digits: 0=Marketplace, 1=Catalogs.
     assert [name for name, _label in _SCREENS_EXT][:2] == ["marketplace", "catalogs"]
 
 
-def test_infuse_binds_ctrl_a_to_its_which_key_menu():
-    """Nucleus/Infuse repurposes Ctrl+A as its which-key menu (s Skills · m MCPs
-    · e Config · a Apply), shadowing the base nav leader on that screen (MRO
-    override).  It must be a *priority* binding so it beats the focused Input's
-    own ctrl+a→home — see tests/test_infuse_nucleus_menu.py for the behaviour."""
+def test_infuse_contributes_leader_menu_entries():
+    """Nucleus/Infuse no longer owns a ctrl+a binding — it inherits the shared
+    which-key menu and adds its own keys (s Skills · m MCPs · e Config · g
+    Apply) via leader_menu_entries()."""
     from acc.tui.screens.infuse import InfuseScreen
 
-    own = {
-        (b.key if isinstance(b, Binding) else b[0]):
-        (b.action if isinstance(b, Binding) else b[1])
-        for b in InfuseScreen.BINDINGS
-    }
-    assert own.get(NAV_LEADER_KEY) == "menu"
+    own = {(b.key if isinstance(b, Binding) else b[0]) for b in InfuseScreen.BINDINGS}
+    assert NAV_LEADER_KEY not in own  # inherits the base Ctrl+A menu
+    entries = InfuseScreen.leader_menu_entries(InfuseScreen.__new__(InfuseScreen))
+    keys = {k for k, _label in entries}
+    assert {"s", "m", "e", "g"} <= keys
+
+
+@pytest.mark.asyncio
+async def test_ctrl_a_h_opens_shortcut_help_on_any_pane():
+    """Ctrl+A → h opens the keyboard-shortcut cheat sheet from a non-form pane
+    (Dashboard) — the universal `h` entry the base menu always offers."""
+    from acc.tui.widgets.shortcut_help_modal import ShortcutHelpModal
+
+    app = _LeaderNavApp()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, DashboardScreen)
+        await pilot.press(NAV_LEADER_KEY)
+        await pilot.pause()
+        await pilot.press("h")
+        await pilot.pause()
+        assert isinstance(app.screen, ShortcutHelpModal)
 
 
 class _LeaderNavApp(App):

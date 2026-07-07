@@ -20,7 +20,6 @@ from pathlib import Path
 
 import pytest
 from textual.app import App
-from textual.binding import Binding
 from textual.widgets import DataTable, Input, Select
 
 import acc.tui.app as appmod
@@ -28,7 +27,6 @@ from acc.tui.screens.configuration import ConfigurationScreen
 from acc.tui.screens.infuse import InfuseScreen
 from acc.tui.widgets.caps_editor_modal import CapsEditorModal
 from acc.tui.widgets.leader_menu_modal import LeaderMenuModal
-from acc.tui.widgets.nav_bar import NAV_LEADER_KEY
 
 _APP_CSS = Path(appmod.__file__).parent / "app.tcss"
 
@@ -133,7 +131,8 @@ async def test_menu_e_jumps_to_configuration_preselecting_role():
 
 
 @pytest.mark.asyncio
-async def test_menu_a_dispatches_apply(monkeypatch):
+async def test_menu_g_dispatches_apply(monkeypatch):
+    """Ctrl+A → g applies (Apply moved off the one-key ctrl+a to the menu)."""
     app = _InfuseHarness()
     async with app.run_test(size=(140, 45)) as pilot:
         await pilot.pause()
@@ -144,30 +143,33 @@ async def test_menu_a_dispatches_apply(monkeypatch):
             infuse, "action_apply", lambda: calls.__setitem__("n", calls["n"] + 1)
         )
         await pilot.press("ctrl+a")
-        await pilot.press("a")
+        await pilot.press("g")
         await pilot.pause()
         assert calls["n"] == 1
 
 
-# --------------------------------------------------------------------------
-# Binding contract + persistence overlay.
-# --------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_ctrl_a_h_opens_shortcut_help_on_form_pane():
+    """Ctrl+A → h opens the shortcut cheat sheet even on the input-heavy Nucleus
+    form (the priority menu binding beats the focused Input's ctrl+a→home)."""
+    from acc.tui.widgets.shortcut_help_modal import ShortcutHelpModal
+
+    app = _InfuseHarness()
+    async with app.run_test(size=(140, 45)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        app.screen.query_one("#input-collective", Input).focus()
+        await pilot.pause()
+        await pilot.press("ctrl+a")
+        await pilot.pause()
+        await pilot.press("h")
+        await pilot.pause()
+        assert isinstance(app.screen, ShortcutHelpModal)
 
 
-def test_ctrl_a_binding_is_priority_menu():
-    """Ctrl+A now opens the menu (was direct Apply); it must be a priority
-    binding so it beats the focused Input's ctrl+a→home."""
-    menu_binding = None
-    for b in InfuseScreen.BINDINGS:
-        key = b.key if isinstance(b, Binding) else b[0]
-        if key == NAV_LEADER_KEY:
-            menu_binding = b
-    assert isinstance(menu_binding, Binding)
-    assert menu_binding.action == "menu"
-    assert menu_binding.priority is True
-    # Apply stays reachable (button + Ctrl+A a).
-    assert callable(getattr(InfuseScreen, "action_apply", None))
-    assert callable(getattr(InfuseScreen, "action_menu", None))
+# --------------------------------------------------------------------------
+# Persistence overlay.
+# --------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio

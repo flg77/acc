@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger("acc.tui.screens.infuse")
 
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Container, Horizontal, ScrollableContainer
 from textual.widgets import (
     Button,
@@ -39,7 +38,6 @@ from acc.signals import subject_role_update
 from acc.tui.config_helpers import load_operator_mode
 from acc.tui.mode_badge import operator_mode_hint, operator_mode_markup
 from acc.tui.widgets.caps_editor_modal import CapsEditorModal
-from acc.tui.widgets.leader_menu_modal import LeaderMenuModal
 from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar, NavScreen
 
 if TYPE_CHECKING:
@@ -135,12 +133,9 @@ class InfuseScreen(NavScreen):
     """
 
     BINDINGS = [
-        # Ctrl+A opens the Nucleus which-key menu (s Skills · m MCPs · e Config
-        # · a Apply).  A *priority* binding so it wins over the focused Input's
-        # own ctrl+a→home (emacs cursor-start); the menu modal then captures the
-        # follow-up key reliably — a bare leader-then-letter is swallowed by
-        # whatever form field has focus.  Apply keeps its button + `Ctrl+A a`.
-        Binding("ctrl+a", "menu", "Menu", show=False, priority=True),
+        # Ctrl+A → the shared which-key menu (base NavScreen); this screen adds
+        # s Skills · m MCPs · e Config · g Apply via leader_menu_entries().
+        # Apply keeps its primary button too.
         ("ctrl+l", "clear", "Clear"),
         ("ctrl+h", "toggle_history", "History"),
         ("ctrl+b", "build_package", "Build pkg"),
@@ -306,7 +301,7 @@ class InfuseScreen(NavScreen):
             yield Static(id="status-bar", classes="status-bar")
             yield Static(id="build-pkg-result", classes="status-bar")
             yield Static(
-                "Ctrl+A → s Skills · m MCPs · e Config · a Apply",
+                "Ctrl+A → s Skills · m MCPs · e Config · g Apply · h Help",
                 id="nucleus-menu-hint",
                 classes="key-hint",
             )
@@ -649,30 +644,25 @@ class InfuseScreen(NavScreen):
     # Ctrl+A which-key menu → Skills / MCPs editor · Config jump · Apply
     # ------------------------------------------------------------------
 
-    def action_menu(self) -> None:
-        """Ctrl+A — pop the Nucleus which-key menu.  The follow-up key is
-        captured by the modal (reliable from any form field, unlike a bare
-        leader-then-letter which the focused Input swallows)."""
-        entries = [
+    def leader_menu_entries(self) -> list[tuple[str, str]]:
+        """Nucleus-specific Ctrl+A menu keys (folded into the base h/overflow
+        menu by NavScreen)."""
+        return [
             ("s", "Skills — activate / deactivate for this role"),
             ("m", "MCPs — activate / deactivate for this role"),
             ("e", "Config — open this role in Configuration"),
-            ("a", "Apply — write role.yaml + dispatch ROLE_UPDATE"),
+            ("g", "Apply — write role.yaml + dispatch ROLE_UPDATE"),
         ]
 
-        def _dispatch(choice: str) -> None:
-            if choice == "s":
-                self._open_caps_editor("skills")
-            elif choice == "m":
-                self._open_caps_editor("mcps")
-            elif choice == "e":
-                self._jump_to_config()
-            elif choice == "a":
-                self.action_apply()
-
-        self.app.push_screen(
-            LeaderMenuModal("Nucleus menu — press a key", entries), _dispatch
-        )
+    def on_leader_key(self, key: str) -> None:
+        if key == "s":
+            self._open_caps_editor("skills")
+        elif key == "m":
+            self._open_caps_editor("mcps")
+        elif key == "e":
+            self._jump_to_config()
+        elif key == "g":
+            self.action_apply()
 
     def _open_caps_editor(self, kind: str) -> None:
         """Open the Skills/MCPs toggler for the current role.  Lists the union

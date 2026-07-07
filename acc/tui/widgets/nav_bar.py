@@ -17,7 +17,6 @@ This widget has no imports from sibling screen files (REQ-TUI-051).
 
 from __future__ import annotations
 
-from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.message import Message
@@ -174,20 +173,26 @@ class NavigationBar(Widget):
 
 
 class NavScreen(Screen):
-    """Base ``Screen`` carrying the shared screen-navigation bindings so no
-    screen hand-copies them: ``1``–``9`` for the nav-strip panes, the
-    ``Ctrl+A`` leader-then-digit chord for the overflow panes (``Ctrl+A 0``
-    Marketplace, ``Ctrl+A 1`` Catalogs, … screens 10–19), plus ``q`` to quit.
+    """Base ``Screen`` carrying the shared screen navigation so no screen
+    hand-copies it: ``1``–``9`` for the nav-strip panes, ``q`` to quit, and the
+    ``Ctrl+A`` **which-key menu** — a *priority* binding that pops a small
+    overlay whose keys are ``h`` (keyboard-shortcut help), the overflow panes
+    (``0`` Marketplace, ``1`` Catalogs), plus whatever a screen adds via
+    :meth:`leader_menu_entries` (Nucleus: s/m/e/g · Compliance: a/b/c).
 
-    A subclass's own ``BINDINGS`` merge on top via the MRO, so it declares
-    only its *screen-specific* keys.  Every screen extends this base — it is
-    the single source of navigation truth (no per-screen copies remain).  A
-    screen that binds ``Ctrl+A`` itself (Nucleus = its which-key menu) shadows
-    the leader on that screen via the MRO; the overflow panes' visible nav
-    buttons (or ``Ctrl+P``) reach them there.
+    Why a menu and not a bare leader-then-key: Textual's ``Input`` binds
+    ``ctrl+a → home`` and swallows printable keys, so on a form pane both the
+    leader and the follow-up letter are eaten by the focused field.  The
+    priority binding beats that, and the modal (no text field) reliably
+    captures the follow-up key on every pane.
+
+    A subclass adds leader actions by overriding :meth:`leader_menu_entries`
+    (what the menu offers) + :meth:`on_leader_key` (what a pick does); its own
+    ``BINDINGS`` merge on top via the MRO.  Every screen extends this base — the
+    single source of navigation truth.
 
     Kept here beside :class:`NavigateTo` so it imports no screen module
-    (REQ-TUI-051).
+    (REQ-TUI-051); the menu / help modals are lazy-imported inside the actions.
     """
 
     # `q` (Quit) stays visible in the Footer; the screen-nav keys are hidden
@@ -201,53 +206,63 @@ class NavScreen(Screen):
             Binding(key, f"navigate('{name}')", label.split(" ", 1)[1], show=False)
             for key, name, label in _SCREENS
         ],
-        Binding(NAV_LEADER_KEY, "nav_leader", "Go to pane 10+", show=False),
+        # Ctrl+A opens this pane's which-key menu.  A *priority* binding so it
+        # beats a focused Input's own ctrl+a→home (form panes) — the modal then
+        # captures the follow-up key reliably.
+        Binding(NAV_LEADER_KEY, "leader_menu", "Menu", show=False, priority=True),
     ]
-
-    # Set True by the Ctrl+A leader; the next key (a digit) is consumed by
-    # on_key to jump to an overflow pane.  Class default → per-instance on set.
-    _nav_leader_armed: bool = False
 
     def action_navigate(self, screen_name: str) -> None:
         """Post a :class:`NavigateTo` for the app to switch screens."""
         self.post_message(NavigateTo(screen_name))
 
-    def action_nav_leader(self) -> None:
-        """Arm the overflow-pane leader (``Ctrl+A``): the next digit ``d`` jumps
-        to the ``(10+d)``-th screen (``Ctrl+A 0`` → Marketplace, ``Ctrl+A 1`` →
-        Catalogs, …).  A GNU-Screen-style prefix — chosen over Alt/Win+digit
-        because it uses only plain, stable key names that every terminal
-        delivers.  ``on_key`` handles the digit."""
-        self._nav_leader_armed = True
-        hint = ", ".join(
-            f"{i}={label}" for i, (_name, label) in enumerate(_SCREENS_EXT)
-        )
-        try:
-            self.notify(f"Go to pane — {NAV_LEADER_LABEL} then {hint}", timeout=3)
-        except Exception:  # pragma: no cover — notify needs a mounted app
-            pass
+    # ------------------------------------------------------------------
+    # Ctrl+A which-key menu — shared by every pane
+    # ------------------------------------------------------------------
 
-    def on_key(self, event: events.Key) -> None:
-        """Second half of the leader chord: when armed, a digit selects the
-        overflow pane; anything else disarms.  The arming ``Ctrl+A`` itself is
-        handled by :meth:`action_nav_leader` (its binding) — ignore it here so
-        it isn't mistaken for the digit."""
-        if event.key == NAV_LEADER_KEY:
+    def leader_menu_entries(self) -> list[tuple[str, str]]:
+        """``(key, label)`` leader actions specific to this pane.  Override in a
+        screen to add its own; the base prepends ``h`` (help) and appends the
+        overflow-pane nav digits.  Default: none."""
+        return []
+
+    def on_leader_key(self, key: str) -> None:
+        """Handle a pane-specific leader key chosen from
+        :meth:`leader_menu_entries`.  Override in a screen.  The universal keys
+        (``h`` help, overflow digits) are handled by the base before this."""
+        return None
+
+    def _leader_entries(self) -> list[tuple[str, str]]:
+        """Full menu = universal help + this pane's entries + overflow nav."""
+        entries: list[tuple[str, str]] = [("h", "Keyboard shortcuts")]
+        entries += list(self.leader_menu_entries())
+        for idx, (_name, label) in enumerate(_SCREENS_EXT):
+            entries.append((str(idx), f"Go to {label}"))
+        return entries
+
+    def action_leader_menu(self) -> None:
+        """``Ctrl+A`` — pop this pane's which-key menu."""
+        from acc.tui.widgets.leader_menu_modal import LeaderMenuModal  # noqa: PLC0415
+
+        self.app.push_screen(
+            LeaderMenuModal("Menu — press a key", self._leader_entries()),
+            self._on_leader_choice,
+        )
+
+    def _on_leader_choice(self, key: str) -> None:
+        if not key:
+            return  # cancelled, or a key not on the menu
+        if key == "h":
+            self._open_shortcut_help()
             return
-        if not self._nav_leader_armed:
+        if key.isdigit():
+            idx = int(key)
+            if 0 <= idx < len(_SCREENS_EXT):
+                self.post_message(NavigateTo(_SCREENS_EXT[idx][0]))
             return
-        self._nav_leader_armed = False
-        if not event.key.isdigit():
-            return  # disarm silently; let the key through
-        event.stop()
-        idx = int(event.key)
-        if 0 <= idx < len(_SCREENS_EXT):
-            self.post_message(NavigateTo(_SCREENS_EXT[idx][0]))
-        else:
-            try:
-                self.notify(
-                    f"No pane at {NAV_LEADER_LABEL} {idx}",
-                    severity="warning", timeout=2,
-                )
-            except Exception:  # pragma: no cover
-                pass
+        self.on_leader_key(key)
+
+    def _open_shortcut_help(self) -> None:
+        from acc.tui.widgets.shortcut_help_modal import ShortcutHelpModal  # noqa: PLC0415
+
+        self.app.push_screen(ShortcutHelpModal(self._leader_entries()))

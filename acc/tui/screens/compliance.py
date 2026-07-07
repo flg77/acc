@@ -19,7 +19,6 @@ import time
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -149,7 +148,7 @@ class ComplianceScreen(NavScreen):
                 # a read-only viewer.  Press `g` to focus this area.
                 yield Label("GOVERNANCE LAYERS", classes="panel-label")
                 yield Static(
-                    "[dim]g=focus · Ctrl+A then a / b / c → jump to Cat A / B / C[/dim]",
+                    "[dim]g=focus · Ctrl+A → a / b / c jump to Cat A / B / C · h Help[/dim]",
                     id="gov-hint",
                 )
                 with ScrollableContainer(id="governance-layers"):
@@ -513,20 +512,19 @@ class ComplianceScreen(NavScreen):
         except Exception:
             pass
 
-    def on_key(self, event: events.Key) -> None:
-        """Ctrl+A leader (armed by :class:`NavScreen`) then ``a`` / ``b`` / ``c``
-        → jump to the Cat-A / B / C governance layer.  The screen binds plain
-        ``a`` = Approve / ``r`` = Reject, so the leader chord avoids that
-        conflict; ``b`` / ``c`` are unbound here so this handles them, and ``a``
-        too (``action_approve_oversight`` guards the case where its priority
-        binding fires first).  Digits + everything else fall through to the base
-        (overflow-pane nav / disarm)."""
-        if self._nav_leader_armed and event.key in ("a", "b", "c"):
-            self._nav_leader_armed = False
-            event.stop()
-            self._jump_to_gov_cat(event.key)
-            return
-        super().on_key(event)
+    def leader_menu_entries(self) -> list[tuple[str, str]]:
+        """Compliance Ctrl+A menu keys — jump to a governance layer.  The screen
+        binds plain ``a`` = Approve / ``r`` = Reject; routing a/b/c through the
+        Ctrl+A menu (a modal) avoids that conflict entirely."""
+        return [
+            ("a", "Jump to Cat A governance"),
+            ("b", "Jump to Cat B governance"),
+            ("c", "Jump to Cat C governance"),
+        ]
+
+    def on_leader_key(self, key: str) -> None:
+        if key in ("a", "b", "c"):
+            self._jump_to_gov_cat(key)
 
     def _jump_to_gov_cat(self, letter: str) -> None:
         """Expand + scroll to + focus the Cat-A / B / C governance-layer
@@ -1120,14 +1118,9 @@ class ComplianceScreen(NavScreen):
         before the OVERSIGHT_DECISION is published.  Cancelling the
         modal (Escape / Cancel button) leaves the item PENDING and
         publishes nothing.  Reject is never gated."""
-        # Ctrl+A leader then `a` → jump to the Cat-A governance layer instead of
-        # approving (the leader shares the `a` key).  Whichever guard fires first
-        # wins — this covers the case where the priority `a` binding preempts
-        # on_key; on_key covers the reverse.
-        if self._nav_leader_armed:
-            self._nav_leader_armed = False
-            self._jump_to_gov_cat("a")
-            return
+        # Plain `a` = Approve.  The Cat-A jump lives on the Ctrl+A menu (a
+        # modal), which captures the key before this binding — so no guard is
+        # needed here anymore.
         oid = self._selected_oversight_id()
         if oid is None:
             return
