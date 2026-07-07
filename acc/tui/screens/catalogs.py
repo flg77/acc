@@ -29,6 +29,7 @@ from textual.widgets import (
 )
 
 from acc import catalog_admin
+from acc.pkg.builtin_catalog import BuiltinCatalog, load_builtin_catalog
 from acc.pkg.catalog import Catalog
 from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
@@ -60,7 +61,14 @@ class CatalogsScreen(NavScreen):
         layout: vertical;
     }
     #catalogs-table {
+        height: 12;
+    }
+    #catalogs-detail {
         height: 1fr;
+        min-height: 4;
+        padding: 0 1;
+        color: $text-muted;
+        overflow-y: auto;
     }
     #catalogs-form {
         height: auto;
@@ -80,13 +88,18 @@ class CatalogsScreen(NavScreen):
     def __init__(self, workspace: Path | None = None) -> None:
         super().__init__()
         self._workspace = workspace
-        self._catalogs: list[Catalog] = []
+        self._catalogs: list[Catalog] = []          # editable workspace override
+        self._builtin: BuiltinCatalog = BuiltinCatalog(packages=[])  # read-only, row 0
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="catalogs", id="nav")
         yield Label("Configured catalogs (layered: system → user → workspace)",
                     classes="panel-label")
         yield DataTable(id="catalogs-table")
+        yield Static(
+            "[dim]Select a catalog to see its roles (one per line).[/dim]",
+            id="catalogs-detail",
+        )
         yield Static("Add catalog", classes="panel-label")
         with Vertical(id="catalogs-form"):
             with Horizontal(id="catalogs-form-row1"):
@@ -112,7 +125,7 @@ class CatalogsScreen(NavScreen):
     def on_mount(self) -> None:
         table = self.query_one("#catalogs-table", DataTable)
         table.add_columns(
-            "ID", "Tier", "Mode", "Endpoint", "Priority", "Signer",
+            "id", "name", "roles", "description", "url", "oidc issuer",
         )
         table.cursor_type = "row"
         self.refresh_rows()
@@ -122,36 +135,78 @@ class CatalogsScreen(NavScreen):
     # ------------------------------------------------------------------
 
     def refresh_rows(self) -> None:
+        self._builtin = load_builtin_catalog()
         try:
             self._catalogs = catalog_admin.load(self._workspace)
         except Exception as exc:  # noqa: BLE001
             self._set_status(f"[red]load failed: {exc}[/red]")
             self._catalogs = []
-            return
+        # Sort priority desc, id asc — matches the catalog resolver.
+        self._catalogs = sorted(self._catalogs, key=lambda c: (-c.priority, c.id))
 
         table = self.query_one("#catalogs-table", DataTable)
         table.clear()
-        # Sort priority desc, id asc — matches the catalog resolver
-        sorted_cats = sorted(
-            self._catalogs,
-            key=lambda c: (-c.priority, c.id),
+
+        # Row 0 — the built-in day-0 catalog (bundled role families, read-only).
+        b = self._builtin
+        roles = b.all_roles()
+        roles_cell = f"{len(roles)}: {', '.join(roles[:2])}…" if roles else "—"
+        table.add_row(
+            b.id, b.name, roles_cell,
+            (b.description or "—")[:38], (b.url or "—")[:32],
+            (b.oidc_issuer or "—")[:32], key=b.id,
         )
-        self._catalogs = sorted_cats
-        for c in sorted_cats:
+        # Configured (workspace-override) catalogs — editable; the minimal
+        # catalog model has no name/roles, so those columns are derived/dashed.
+        for c in self._catalogs:
             endpoint = c.url or c.path or "—"
-            signer = (
-                f"keypair:{Path(c.required_signer.key_path).name}"
-                if c.required_signer.key_path
-                else f"oidc:{c.required_signer.issuer[:30]}"
-            )
+            oidc = (c.required_signer.issuer or "—")
             table.add_row(
-                c.id, c.tier, c.mode, endpoint[:40],
-                str(c.priority), signer[:30],
-                key=c.id,
+                c.id, c.id, "—",
+                f"configured · tier {c.tier} · prio {c.priority}",
+                endpoint[:32], oidc[:32], key=c.id,
             )
         self._set_status(
-            f"[dim]{len(sorted_cats)} catalog(s) in workspace override[/dim]"
+            f"[dim]1 built-in + {len(self._catalogs)} configured catalog(s)[/dim]"
         )
+        self._update_detail(0)
+
+    def _update_detail(self, row: int | None) -> None:
+        """Show the highlighted catalog's roles one-per-line (built-in) or a
+        pointer to the Marketplace (configured catalogs)."""
+        try:
+            detail = self.query_one("#catalogs-detail", Static)
+        except Exception:
+            return
+        if not row:  # row 0 or None → the built-in catalog
+            b = self._builtin
+            roles = b.all_roles()
+            lines = [
+                f"[b]{b.id}[/b] — {b.name}",
+                b.description or "",
+                f"[dim]{len(b.packages)} packs · {len(roles)} roles · "
+                f"signer {b.signer or '—'}[/dim]",
+                "[b]Roles:[/b]",
+            ]
+            lines += [f"  • {r}" for r in roles] or ["  [dim](none)[/dim]"]
+            detail.update("\n".join(x for x in lines if x))
+            return
+        idx = row - 1
+        if 0 <= idx < len(self._catalogs):
+            c = self._catalogs[idx]
+            detail.update(
+                f"[b]{c.id}[/b]  [dim](configured · tier {c.tier})[/dim]\n"
+                f"[dim]endpoint:[/dim] {c.url or c.path or '—'}\n"
+                f"[dim]signer:[/dim] {c.required_signer.issuer or '—'}\n"
+                "[dim]Its packages + roles are listed in the Marketplace pane.[/dim]"
+            )
+        else:
+            detail.update("[dim]Select a catalog to see its roles.[/dim]")
+
+    def on_data_table_row_highlighted(self, event) -> None:
+        if getattr(event, "data_table", None) is not None and \
+                event.data_table.id == "catalogs-table":
+            self._update_detail(event.cursor_row)
 
     def _set_status(self, markup: str) -> None:
         try:
@@ -163,9 +218,13 @@ class CatalogsScreen(NavScreen):
         table = self.query_one("#catalogs-table", DataTable)
         if table.row_count == 0 or table.cursor_row is None:
             return None
-        if not (0 <= table.cursor_row < len(self._catalogs)):
-            return None
-        return self._catalogs[table.cursor_row].id
+        row = table.cursor_row
+        if row == 0:
+            return self._builtin.id  # built-in — read-only (guarded in handlers)
+        idx = row - 1
+        if 0 <= idx < len(self._catalogs):
+            return self._catalogs[idx].id
+        return None
 
     # ------------------------------------------------------------------
     # Form helpers
@@ -217,6 +276,9 @@ class CatalogsScreen(NavScreen):
         if cid is None:
             self._set_status("[yellow]highlight a catalog first[/yellow]")
             return
+        if cid == self._builtin.id:
+            self._set_status("[yellow]the built-in catalog is read-only[/yellow]")
+            return
         try:
             result = catalog_admin.remove(cid, workspace=self._workspace)
         except ValueError as exc:
@@ -235,6 +297,9 @@ class CatalogsScreen(NavScreen):
         cid = self._selected_id()
         if cid is None:
             self._set_status("[yellow]highlight a catalog first[/yellow]")
+            return
+        if cid == self._builtin.id:
+            self._set_status("[yellow]the built-in catalog is read-only[/yellow]")
             return
         current = next((c for c in self._catalogs if c.id == cid), None)
         if current is None:
