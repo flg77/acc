@@ -19,6 +19,7 @@ import time
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -147,6 +148,10 @@ class ComplianceScreen(NavScreen):
                 # table; selecting a row opens the source policy file in
                 # a read-only viewer.  Press `g` to focus this area.
                 yield Label("GOVERNANCE LAYERS", classes="panel-label")
+                yield Static(
+                    "[dim]g=focus · Ctrl+A then a / b / c → jump to Cat A / B / C[/dim]",
+                    id="gov-hint",
+                )
                 with ScrollableContainer(id="governance-layers"):
                     with Collapsible(
                         title="Cat A", collapsed=False, id="gov-cat-a",
@@ -505,6 +510,40 @@ class ComplianceScreen(NavScreen):
         """`p` — focus the rule-proposals table."""
         try:
             self.query_one("#proposals-table", DataTable).focus()
+        except Exception:
+            pass
+
+    def on_key(self, event: events.Key) -> None:
+        """Ctrl+A leader (armed by :class:`NavScreen`) then ``a`` / ``b`` / ``c``
+        → jump to the Cat-A / B / C governance layer.  The screen binds plain
+        ``a`` = Approve / ``r`` = Reject, so the leader chord avoids that
+        conflict; ``b`` / ``c`` are unbound here so this handles them, and ``a``
+        too (``action_approve_oversight`` guards the case where its priority
+        binding fires first).  Digits + everything else fall through to the base
+        (overflow-pane nav / disarm)."""
+        if self._nav_leader_armed and event.key in ("a", "b", "c"):
+            self._nav_leader_armed = False
+            event.stop()
+            self._jump_to_gov_cat(event.key)
+            return
+        super().on_key(event)
+
+    def _jump_to_gov_cat(self, letter: str) -> None:
+        """Expand + scroll to + focus the Cat-A / B / C governance-layer
+        collapsible (``Ctrl+A`` then ``a`` / ``b`` / ``c``).  Cat-A starts
+        expanded but scrolls off once B / C are opened — this brings any of the
+        three back into view from the keyboard, no matter the scroll position."""
+        try:
+            coll = self.query_one(f"#gov-cat-{letter}", Collapsible)
+        except Exception:
+            return
+        coll.collapsed = False
+        try:
+            coll.scroll_visible()
+        except Exception:
+            pass
+        try:
+            self.query_one(f"#gov-table-{letter}", DataTable).focus()
         except Exception:
             pass
 
@@ -1081,6 +1120,14 @@ class ComplianceScreen(NavScreen):
         before the OVERSIGHT_DECISION is published.  Cancelling the
         modal (Escape / Cancel button) leaves the item PENDING and
         publishes nothing.  Reject is never gated."""
+        # Ctrl+A leader then `a` → jump to the Cat-A governance layer instead of
+        # approving (the leader shares the `a` key).  Whichever guard fires first
+        # wins — this covers the case where the priority `a` binding preempts
+        # on_key; on_key covers the reverse.
+        if self._nav_leader_armed:
+            self._nav_leader_armed = False
+            self._jump_to_gov_cat("a")
+            return
         oid = self._selected_oversight_id()
         if oid is None:
             return
