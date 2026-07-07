@@ -350,6 +350,42 @@ class ConfigurationScreen(NavScreen):
         # PR-A2 — which upload kind is currently in-flight (mirrors the
         # ecosystem screen's pattern).  "" = no upload pending.
         self._pending_upload_kind: str = ""
+        # Nucleus Ctrl+A→e — role to pre-select in the role→model editor once
+        # this screen is composed.  "" = none pending.
+        self._pending_role: str = ""
+
+    def preselect_role(self, role_name: str) -> None:
+        """Arrive from Nucleus (Ctrl+A→e) with *role_name* pre-selected in the
+        role→model editor.  Stashes + applies now if mounted, else on mount."""
+        self._pending_role = role_name or ""
+        self._apply_pending_role()
+
+    def _apply_pending_role(self) -> None:
+        role = self._pending_role
+        if not role:
+            return
+        try:
+            sel = self.query_one("#rolemodel-role", Select)
+        except Exception:
+            return  # not composed yet — on_mount will retry
+        self._pending_role = ""
+        try:
+            status = self.query_one("#role-model-status", Static)
+        except Exception:
+            status = None
+        try:
+            with sel.prevent(Select.Changed):
+                sel.value = role
+            if status is not None:
+                status.update(f"[cyan]Nucleus → configuring role '{role}'[/cyan]")
+        except Exception:
+            # Role isn't among the deployed collective's roles (the Select's
+            # options) — still tell the operator why it wasn't selected.
+            if status is not None:
+                status.update(
+                    f"[yellow]role '{role}' isn't in this collective — "
+                    f"pick a deployed role[/yellow]"
+                )
 
     # ------------------------------------------------------------------
     # Compose / mount
@@ -541,6 +577,8 @@ class ConfigurationScreen(NavScreen):
         self._render_role_model()
         self._load_skills()
         self._load_mcps()
+        # Nucleus Ctrl+A→e may have stashed a role before we composed.
+        self._apply_pending_role()
 
     # ------------------------------------------------------------------
     # Snapshot watcher (LLM live table)
