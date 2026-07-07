@@ -48,8 +48,9 @@ _SCREENS: list[tuple[str, str, str]] = [
 # (Kitty-protocol → "alt+0"; a legacy "Alt-sends-ESC" terminal → a macOS
 # Option-char with an irregular key name).  The leader uses only plain, stable
 # key names (ctrl+a, then 0–9), so it works on every terminal.  A screen that
-# binds Ctrl+A itself (Nucleus = Apply) shadows the leader via the MRO — use
-# Ctrl+P to reach the panes there.  These panes now carry a keyless nav-strip
+# binds Ctrl+A itself (Nucleus = its which-key menu) shadows the leader via the
+# MRO — the overflow panes' visible nav buttons + Ctrl+P reach them there.
+# These panes now carry a keyless nav-strip
 # button too — they were button-less, which made them effectively invisible
 # unless you knew the leader; the Ctrl+A leader + Ctrl+P stay as the keyboard
 # paths.  The list index IS the leader digit.
@@ -181,8 +182,9 @@ class NavScreen(Screen):
     A subclass's own ``BINDINGS`` merge on top via the MRO, so it declares
     only its *screen-specific* keys.  Every screen extends this base — it is
     the single source of navigation truth (no per-screen copies remain).  A
-    screen that binds ``Ctrl+A`` itself (Nucleus = Apply) shadows the leader on
-    that screen via the MRO; use ``Ctrl+P`` to reach the overflow panes there.
+    screen that binds ``Ctrl+A`` itself (Nucleus = its which-key menu) shadows
+    the leader on that screen via the MRO; the overflow panes' visible nav
+    buttons (or ``Ctrl+P``) reach them there.
 
     Kept here beside :class:`NavigateTo` so it imports no screen module
     (REQ-TUI-051).

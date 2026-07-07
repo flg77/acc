@@ -105,10 +105,11 @@ def test_navscreen_binds_ctrl_a_leader():
     assert [name for name, _label in _SCREENS_EXT][:2] == ["marketplace", "catalogs"]
 
 
-def test_infuse_keeps_ctrl_a_for_apply():
-    """Nucleus/Infuse binds Ctrl+A → Apply; that must still shadow the leader on
-    that screen (MRO override).  Regression guard for the leader/Apply
-    collision — the reason the overflow panes fall back to Ctrl+P there."""
+def test_infuse_binds_ctrl_a_to_its_which_key_menu():
+    """Nucleus/Infuse repurposes Ctrl+A as its which-key menu (s Skills · m MCPs
+    · e Config · a Apply), shadowing the base nav leader on that screen (MRO
+    override).  It must be a *priority* binding so it beats the focused Input's
+    own ctrl+a→home — see tests/test_infuse_nucleus_menu.py for the behaviour."""
     from acc.tui.screens.infuse import InfuseScreen
 
     own = {
@@ -116,7 +117,7 @@ def test_infuse_keeps_ctrl_a_for_apply():
         (b.action if isinstance(b, Binding) else b[1])
         for b in InfuseScreen.BINDINGS
     }
-    assert own.get(NAV_LEADER_KEY) == "apply"
+    assert own.get(NAV_LEADER_KEY) == "menu"
 
 
 class _LeaderNavApp(App):

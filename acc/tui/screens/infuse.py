@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger("acc.tui.screens.infuse")
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Container, Horizontal, ScrollableContainer
 from textual.widgets import (
     Button,
@@ -37,7 +38,9 @@ from acc.role_loader import RoleLoader, list_roles, list_all_role_names
 from acc.signals import subject_role_update
 from acc.tui.config_helpers import load_operator_mode
 from acc.tui.mode_badge import operator_mode_hint, operator_mode_markup
-from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
+from acc.tui.widgets.caps_editor_modal import CapsEditorModal
+from acc.tui.widgets.leader_menu_modal import LeaderMenuModal
+from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar, NavScreen
 
 if TYPE_CHECKING:
     from acc.tui.models import CollectiveSnapshot
@@ -65,6 +68,16 @@ def _roles_root() -> str:
     return os.environ.get("ACC_ROLES_ROOT", "roles")
 
 
+class _CapsShim:
+    """Minimal stand-in exposing ``allowed_skills`` / ``allowed_mcps`` so the
+    working caps state can be fed to ``get_role_capability_rows`` (which reads
+    exactly those two attributes) without a full RoleDefinitionConfig."""
+
+    def __init__(self, allowed_skills: list[str], allowed_mcps: list[str]) -> None:
+        self.allowed_skills = allowed_skills
+        self.allowed_mcps = allowed_mcps
+
+
 def _resolve_collective_path():
     """PR-D — resolve `./collective.yaml`.
 
@@ -87,8 +100,47 @@ def _resolve_collective_path():
 class InfuseScreen(NavScreen):
     """Role infusion form — compose and apply role definitions to the collective."""
 
+    # Screen-specific styling (app.tcss header: SCREEN-SPECIFIC lives in the
+    # screen's DEFAULT_CSS).  Every form row is a plain `Horizontal`, which
+    # Textual defaults to `height: 1fr` — stacked in the ScrollableContainer
+    # those fr-rows fought over the leftover height and collapsed to ~0 as the
+    # form grew (two fixed TextAreas + labels ate the budget), so their Label
+    # rendered but the Input/Select/DataTable below was clipped by
+    # `overflow: hidden` and vanished (Collective/Role, Skills/MCPs, Cluster-id,
+    # token/rate all showed a label but no widget).  Pin every row to
+    # `height: auto` so each sizes to its content and the container scrolls —
+    # the form fields are then visible at all times.
+    DEFAULT_CSS = """
+    InfuseScreen #row-nucleus-mode,
+    InfuseScreen #row-collective,
+    InfuseScreen #row-cluster-id,
+    InfuseScreen #row-persona-version,
+    InfuseScreen #row-cat-b,
+    InfuseScreen #row-actions,
+    InfuseScreen #row-caps,
+    InfuseScreen #history-panel {
+        height: auto;
+    }
+    InfuseScreen #caps-skills-box,
+    InfuseScreen #caps-mcps-box {
+        width: 1fr;
+        height: auto;
+    }
+    InfuseScreen #caps-skills-table,
+    InfuseScreen #caps-mcps-table {
+        height: auto;
+        min-height: 3;
+        max-height: 9;
+    }
+    """
+
     BINDINGS = [
-        ("ctrl+a", "apply", "Apply"),
+        # Ctrl+A opens the Nucleus which-key menu (s Skills · m MCPs · e Config
+        # · a Apply).  A *priority* binding so it wins over the focused Input's
+        # own ctrl+a→home (emacs cursor-start); the menu modal then captures the
+        # follow-up key reliably — a bare leader-then-letter is swallowed by
+        # whatever form field has focus.  Apply keeps its button + `Ctrl+A a`.
+        Binding("ctrl+a", "menu", "Menu", show=False, priority=True),
         ("ctrl+l", "clear", "Clear"),
         ("ctrl+h", "toggle_history", "History"),
         ("ctrl+b", "build_package", "Build pkg"),
@@ -117,6 +169,12 @@ class InfuseScreen(NavScreen):
         # 033 WS-G Part 2 — lazily-built (skill_reg, mcp_reg) tuple for the
         # caps panel; None until first _capability_registries() call.
         self._caps_registries: tuple[Any, Any] | None = None
+        # Ctrl+A→s/m caps editor state.  `_caps_state` is the working allowed
+        # set per kind (seeded from the loaded role, mutated by CapsEditorModal);
+        # `_caps_edited` marks a kind the operator changed, so Apply overlays it
+        # onto role.yaml while unedited kinds pass through from disk verbatim.
+        self._caps_state: dict[str, set[str]] = {"skills": set(), "mcps": set()}
+        self._caps_edited: dict[str, bool] = {"skills": False, "mcps": False}
 
     def compose(self) -> ComposeResult:
         yield NavigationBar(active_screen="nucleus", id="nav")
@@ -247,6 +305,11 @@ class InfuseScreen(NavScreen):
 
             yield Static(id="status-bar", classes="status-bar")
             yield Static(id="build-pkg-result", classes="status-bar")
+            yield Static(
+                "Ctrl+A → s Skills · m MCPs · e Config · a Apply",
+                id="nucleus-menu-hint",
+                classes="key-hint",
+            )
 
             with Container(id="history-panel"):
                 yield Label("── History ──────────────────────────────────", classes="section-label")
@@ -582,6 +645,112 @@ class InfuseScreen(NavScreen):
         elif event.button.id == "btn-build-pkg":
             self.action_build_package()
 
+    # ------------------------------------------------------------------
+    # Ctrl+A which-key menu → Skills / MCPs editor · Config jump · Apply
+    # ------------------------------------------------------------------
+
+    def action_menu(self) -> None:
+        """Ctrl+A — pop the Nucleus which-key menu.  The follow-up key is
+        captured by the modal (reliable from any form field, unlike a bare
+        leader-then-letter which the focused Input swallows)."""
+        entries = [
+            ("s", "Skills — activate / deactivate for this role"),
+            ("m", "MCPs — activate / deactivate for this role"),
+            ("e", "Config — open this role in Configuration"),
+            ("a", "Apply — write role.yaml + dispatch ROLE_UPDATE"),
+        ]
+
+        def _dispatch(choice: str) -> None:
+            if choice == "s":
+                self._open_caps_editor("skills")
+            elif choice == "m":
+                self._open_caps_editor("mcps")
+            elif choice == "e":
+                self._jump_to_config()
+            elif choice == "a":
+                self.action_apply()
+
+        self.app.push_screen(
+            LeaderMenuModal("Nucleus menu — press a key", entries), _dispatch
+        )
+
+    def _open_caps_editor(self, kind: str) -> None:
+        """Open the Skills/MCPs toggler for the current role.  Lists the union
+        of installed capabilities and the role's current grant; the edited
+        allowed-set overlays the form (persisted to role.yaml on Apply)."""
+        skill_reg, mcp_reg = self._capability_registries()
+        if kind == "skills":
+            reg, list_attr, title = skill_reg, "list_skill_ids", "Skills — ← off · → on"
+        else:
+            reg, list_attr, title = mcp_reg, "list_server_ids", "MCPs — ← off · → on"
+        installed: list[str] = []
+        if reg is not None:
+            try:
+                installed = list(getattr(reg, list_attr)() or [])
+            except Exception:
+                logger.exception("infuse: %s list failed (caps editor)", kind)
+        allowed = set(self._caps_state.get(kind, set()))
+        ids = sorted(set(installed) | allowed)
+        if not ids:
+            self.status_text = f"No {kind} available to configure on this deploy"
+            return
+        inst_set = set(installed)
+        manifests = self._caps_manifests(reg)
+        rows = [
+            {
+                "id": cid,
+                "installed": cid in inst_set,
+                "risk": self._manifest_risk(manifests, cid),
+            }
+            for cid in ids
+        ]
+
+        def _done(result: "set | None") -> None:
+            if result is None:
+                return  # cancelled
+            self._caps_state[kind] = set(result)
+            self._caps_edited[kind] = True
+            self._paint_caps_from_state()
+            self.status_text = (
+                f"{kind.capitalize()} updated ({len(result)} allowed) — Apply to persist"
+            )
+
+        self.app.push_screen(
+            CapsEditorModal(kind=kind, title=title, rows=rows, allowed=allowed),
+            _done,
+        )
+
+    def _jump_to_config(self) -> None:
+        """Ctrl+A→e — switch to Configuration with this role pre-selected in the
+        role→model editor (best-effort; the target screen stashes + applies it
+        on mount if it hasn't composed yet)."""
+        role = str(self.query_one("#select-role", Select).value or "")
+        try:
+            cfg = self.app.get_screen("configuration")
+            if cfg is not None and hasattr(cfg, "preselect_role"):
+                cfg.preselect_role(role)
+        except Exception:
+            logger.exception("infuse: config preselect failed for %r", role)
+        self.post_message(NavigateTo("configuration"))
+
+    @staticmethod
+    def _caps_manifests(registry: Any) -> dict:
+        """Best-effort ``registry.manifests()`` → dict (``{}`` on any failure)."""
+        getter = getattr(registry, "manifests", None)
+        if callable(getter):
+            try:
+                value = getter()
+                if isinstance(value, dict):
+                    return value
+            except Exception:
+                pass
+        return {}
+
+    @staticmethod
+    def _manifest_risk(manifests: dict, cid: str) -> str:
+        man = manifests.get(cid)
+        return str(getattr(man, "risk_level", "") or "—") if man else "—"
+
     def action_apply(self) -> None:
         """Build ROLE_UPDATE payload and publish to NATS (REQ-INF-003/004)."""
         collective_id = self.query_one("#input-collective", Input).value.strip() or "sol-01"
@@ -650,6 +819,14 @@ class InfuseScreen(NavScreen):
         cat_b_overlay["token_budget"] = token_budget
         cat_b_overlay["rate_limit_rpm"] = rate_rpm
         form_overlay["category_b_overrides"] = cat_b_overlay
+
+        # Skills/MCPs edited via the Ctrl+A→s/m toggler overlay onto the role's
+        # grant; unedited kinds are NOT set here, so they pass through from the
+        # disk dump verbatim (preserving the prior "disk-only field" behaviour).
+        if self._caps_edited.get("skills"):
+            form_overlay["allowed_skills"] = sorted(self._caps_state.get("skills", set()))
+        if self._caps_edited.get("mcps"):
+            form_overlay["allowed_mcps"] = sorted(self._caps_state.get("mcps", set()))
 
         merged_role_def = {**full_role_def, **form_overlay}
 
@@ -1011,40 +1188,51 @@ class InfuseScreen(NavScreen):
         self._refresh_active_llm(role_name)
 
     def _refresh_caps_tables(self, role_def: Any) -> None:
-        """Browsable caps view (26.6.26 finding #4).
+        """Seed the working caps state from *role_def*, then paint the tables.
 
-        Lists EVERY allowed skill/MCP with its live install state (✓/·),
-        release (manifest version) + risk — so the window reflects the
-        role's membrane AND what's actually loaded, instead of an empty
-        intersection when nothing is installed on this deploy.
-        """
+        26.6.26 finding #4 — the tables list EVERY allowed skill/MCP with its
+        live install state (✓/·), release + risk.  The seeded ``_caps_state`` is
+        also what the Ctrl+A→s/m editor mutates and what Apply persists, so the
+        tables + editor + role.yaml stay one source of truth.  Switching roles
+        re-seeds from disk (edited flags reset)."""
+        self._caps_state = {
+            "skills": set(getattr(role_def, "allowed_skills", []) or []),
+            "mcps": set(getattr(role_def, "allowed_mcps", []) or []),
+        }
+        self._caps_edited = {"skills": False, "mcps": False}
+        self._paint_caps_from_state()
+
+    def _paint_caps_from_state(self) -> None:
+        """Repaint both caps tables from the working ``_caps_state`` so operator
+        edits from the Ctrl+A→s/m toggler show immediately."""
         from acc.capability_index import (  # noqa: PLC0415
             get_role_capability_rows,
         )
 
         skill_reg, mcp_reg = self._capability_registries()
+        shim = _CapsShim(
+            sorted(self._caps_state.get("skills", set())),
+            sorted(self._caps_state.get("mcps", set())),
+        )
         try:
-            skill_rows, mcp_rows = get_role_capability_rows(
-                role_def, skill_reg, mcp_reg,
-            )
+            skill_rows, mcp_rows = get_role_capability_rows(shim, skill_reg, mcp_reg)
         except Exception:
             logger.exception("infuse: capability rows failed")
             skill_rows, mcp_rows = [], []
+        self._paint_caps("#caps-skills-table", skill_rows)
+        self._paint_caps("#caps-mcps-table", mcp_rows)
 
-        def _paint(table_id: str, rows: list[dict]) -> None:
-            table = self.query_one(table_id, DataTable)
-            table.clear()
-            for r in rows:
-                mark = "[green]✓[/green]" if r.get("installed") else "[dim]·[/dim]"
-                table.add_row(
-                    r.get("id", "—"), mark,
-                    str(r.get("version", "—")), str(r.get("risk", "—")),
-                )
-            if not rows:
-                table.add_row("[dim]— none allowed —[/dim]", "", "", "")
-
-        _paint("#caps-skills-table", skill_rows)
-        _paint("#caps-mcps-table", mcp_rows)
+    def _paint_caps(self, table_id: str, rows: list[dict]) -> None:
+        table = self.query_one(table_id, DataTable)
+        table.clear()
+        for r in rows:
+            mark = "[green]✓[/green]" if r.get("installed") else "[dim]·[/dim]"
+            table.add_row(
+                r.get("id", "—"), mark,
+                str(r.get("version", "—")), str(r.get("risk", "—")),
+            )
+        if not rows:
+            table.add_row("[dim]— none allowed —[/dim]", "", "", "")
 
     def _role_model_id(self, role_name: str) -> str:
         """Return the model_id this role is BOUND to in collective.yaml
