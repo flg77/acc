@@ -74,8 +74,9 @@ def test_both_screens_inherit_navscreen():
 
 
 def test_ecosystem_exposes_marketplace_and_catalogs_entries():
-    """The nav strip (1–9) has no button for these two, so the roles/
-    packages hub (Ecosystem) is also a discoverable entry point (m / c)."""
+    """The roles/packages hub (Ecosystem) is also a discoverable entry point for
+    Marketplace/Catalogs via the m / c keys — alongside their nav-strip buttons
+    and the Ctrl+A leader."""
     assert hasattr(EcosystemScreen, "action_open_marketplace")
     assert hasattr(EcosystemScreen, "action_open_catalogs")
     keys = {b[0] if isinstance(b, tuple) else b.key for b in EcosystemScreen.BINDINGS}
@@ -189,3 +190,36 @@ async def test_leader_then_non_digit_disarms():
         await pilot.press("0")  # bare 0 is unbound → still nothing
         await pilot.pause()
         assert isinstance(app.screen, DashboardScreen)
+
+
+# --------------------------------------------------------------------------
+# Visible nav buttons — the overflow panes render a clickable nav-strip button.
+# They used to be button-less (reachable only via the Ctrl+A leader / Ctrl+P),
+# which made them effectively invisible; the fix gives them a keyless button.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_overflow_panes_render_visible_nav_buttons():
+    """Marketplace + Catalogs now render nav-strip buttons alongside the 1..9."""
+    from textual.widgets import Button
+
+    app = _LeaderNavApp()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        nav = app.screen.query_one("#nav", NavigationBar)
+        for name in ("soma", "marketplace", "catalogs"):
+            assert nav.query_one(f"#nav-btn-{name}", Button), name
+
+
+@pytest.mark.asyncio
+async def test_clicking_catalogs_nav_button_navigates():
+    """Clicking the (previously absent) Catalogs button switches to it — the
+    button posts the same NavigateTo the app already handles."""
+    app = _LeaderNavApp()
+    async with app.run_test(size=(160, 40)) as pilot:
+        await pilot.pause()
+        assert isinstance(app.screen, DashboardScreen)
+        await pilot.click("#nav-btn-catalogs")
+        await pilot.pause()
+        assert isinstance(app.screen, CatalogsScreen)

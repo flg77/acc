@@ -1,7 +1,9 @@
-"""ACC TUI NavigationBar widget — persistent 9-screen navigation.
+"""ACC TUI NavigationBar widget — persistent screen navigation.
 
-Displays nine named screen buttons; the active screen is highlighted.
-Keys ``1``–``9`` navigate directly from any screen (REQ-TUI-004).
+Displays the nine ``1``–``9`` keyed screen buttons plus the keyless overflow
+panes (Marketplace, Catalogs); the active screen is highlighted. Keys ``1``–``9``
+navigate directly from any screen (REQ-TUI-004); the overflow panes are reached
+by their button, the ``Ctrl+A`` leader, or ``Ctrl+P``.
 
 Pane 8 (Configuration) was added by proposal 003 PR-4; it absorbs
 the LLM endpoints + Skills + MCPs surfaces that previously crowded
@@ -47,8 +49,10 @@ _SCREENS: list[tuple[str, str, str]] = [
 # Option-char with an irregular key name).  The leader uses only plain, stable
 # key names (ctrl+a, then 0–9), so it works on every terminal.  A screen that
 # binds Ctrl+A itself (Nucleus = Apply) shadows the leader via the MRO — use
-# Ctrl+P to reach the panes there.  These panes carry no nav-strip button (the
-# strip stays at 1–9 to fit narrow terminals).  The list index IS the digit.
+# Ctrl+P to reach the panes there.  These panes now carry a keyless nav-strip
+# button too — they were button-less, which made them effectively invisible
+# unless you knew the leader; the Ctrl+A leader + Ctrl+P stay as the keyboard
+# paths.  The list index IS the leader digit.
 _SCREENS_EXT: list[tuple[str, str]] = [
     ("marketplace", "Marketplace"),   # Ctrl+A 0  → screen 10
     ("catalogs",    "Catalogs"),      # Ctrl+A 1  → screen 11
@@ -88,7 +92,7 @@ class NavigationBar(Widget):
         padding: 0 1;
     }
     NavigationBar Button {
-        min-width: 14;
+        min-width: 11;
         margin: 0 1 0 0;
         background: $surface;
         border: none;
@@ -125,7 +129,12 @@ class NavigationBar(Widget):
         self._active_screen = active_screen
 
     def compose(self) -> ComposeResult:
-        for _key, screen_name, label in _SCREENS:
+        # The 1..9 keyed panes first, then the overflow panes (Marketplace,
+        # Catalogs).  The overflow panes carry a visible, clickable button too —
+        # they used to be button-less (reachable only via the Ctrl+A leader /
+        # Ctrl+P), which made them effectively invisible.  They keep no digit
+        # key; the button + Ctrl+A leader + palette are the ways in.
+        for screen_name, label in self._all_panes():
             css_classes = "active-nav" if screen_name == self._active_screen else ""
             yield Button(
                 label,
@@ -133,10 +142,17 @@ class NavigationBar(Widget):
                 classes=css_classes,
             )
 
+    @staticmethod
+    def _all_panes() -> list[tuple[str, str]]:
+        """(screen_name, display_label) for every nav button — the 1..9 keyed
+        panes plus the keyless overflow panes."""
+        return [(name, label) for _key, name, label in _SCREENS] + list(_SCREENS_EXT)
+
     def set_active(self, screen_name: str) -> None:
-        """Update the highlighted button to *screen_name*."""
+        """Update the highlighted button to *screen_name* (covers the overflow
+        panes too, so Marketplace/Catalogs highlight when active)."""
         self._active_screen = screen_name
-        for _key, sname, _label in _SCREENS:
+        for sname, _label in self._all_panes():
             btn = self.query_one(f"#nav-btn-{sname}", Button)
             if sname == screen_name:
                 btn.add_class("active-nav")
