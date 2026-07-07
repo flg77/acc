@@ -13,6 +13,69 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 _Nothing yet — the entries below shipped across the 0.3.x–0.5.x line._
 
+## [0.5.17 – 0.5.49] — 2026-06-29 → 2026-07-06
+
+> Published incrementally across the 0.5.x line; the authoritative
+> per-version boundaries are the annotated git tags (`git tag`,
+> `git show vX.Y.Z`) and the GitHub release notes. Latest release:
+> **v0.5.49** (2026-07-06). Everything below is additive and opt-in.
+
+### Added
+
+- **OpenShell kernel-enforced exec sandbox (Model 2).** An opted-in agent's
+  code execution (`shell_exec` / `python_exec`) is delegated into a per-agent
+  [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox
+  (Landlock + seccomp + per-binary egress) carrying the corpus's Cat-A/B/C
+  policy — the operator provisions it (policy `ConfigMap` +
+  `openshell sandbox create` initContainer + OIDC/SPIFFE gateway auth) and the
+  runtime (`acc/sandbox`) delegates **fail-closed**. Opt-in via `spec.sandbox`
+  + `gatewayURL`; default-OFF and inert otherwise; live kernel-denial smoke
+  pending. Adds a `[sandbox]` extra (the `openshell` CLI) + `features/sandbox.yaml`
+  + `spec.sandbox.{image,credentialsSecret}`. (v0.5.49)
+- **Golden-prompt eval-history + MLflow experiments (045/G).** Run-by-`task_id`
+  enrichment (tokens · compliance · verdict), golden→eval-pack promotion,
+  MLflow run-logging (TUI + CLI) with RHOAI trace deep-links, and an
+  edge↔DC round-trip via MLflow; the WebGUI Diagnostics screen reaches parity
+  (run / history / MLflow / promote). (v0.5.25, v0.5.27–28, v0.5.35, v0.5.42)
+- **Golden-prompt portability.** Golden-pack boot auto-detect, an `acc-pkg`
+  golden-pack export, and a Diagnostics → Pack button. (v0.5.36–38)
+- **Golden Prompt pane redesign (047).** A stacked focus-resize layout, a
+  version picker + a Form editor (Title/Desc, New/Export/Save), CSV + JSON
+  import/export (human + agentic interchange), and a watch-dir picker. (v0.5.39–42)
+- **Global command palette (`Ctrl+P`) + navigation unification (050).** A shared
+  `NavScreen` base, the palette, and a `Ctrl+A` leader for the overflow panes
+  (Marketplace / Catalogs). (v0.5.44, v0.5.48)
+- **Writable, cosign-verifying catalog endpoint (marketplace P0)** — publishes
+  and verifies packages against the catalog's `required_signer`. (v0.5.29)
+- **Signed-image release build.** The `flavour` builder gains `--signer-key` +
+  cosign; **acc-deploy semantic versioning** ties image tags + the TUI banner to
+  the git code release. (v0.5.30–31)
+- **TUI prompt persistence + durable sessions** — sent-prompt history and
+  detach/resume survive restarts (+ `acc-deploy restart`). (v0.5.34)
+- **Visible role→model mapping + assistant-loop closers (044).** `models.yaml`
+  `role_models` + `/model`, surfaced in Nucleus + Configuration; an inline GATE
+  CARD resolves oversight from the Prompt window; the assistant continues after
+  an infuse install; promoted-role model re-resolve on `ROLE_ASSIGN`; golden
+  prompts gain durable export/import. (v0.5.17–24)
+
+### Changed
+
+- **TUI 050 layout convergence** — `%`→`fr` + min-height sizing, a single
+  styling home, help coverage, and a dead-rule sweep. (v0.5.45–47)
+- Diagnostics reachability + catalog-discovery UX polish (045 slices 1–2). (v0.5.33)
+
+### Fixed
+
+- Marketplace / Catalogs **crash-on-open** (a shared `NavScreen` base) + the
+  Ecosystem `m` / `c` entries. (v0.5.43)
+- Operator `AgentCorpus` **admission** — empty-OTel-endpoint backfill (G1) and
+  Milvus gated on `vectorBackend` (G2). (v0.5.32, PR #147)
+
+### Security
+
+- Overlay `allow_unsigned` **prod-guard** + CLI roots-root alignment. (v0.5.22, PR #135)
+- **Dependabot** clearance — `uv.lock` refresh + `cryptography` 48.0.1. (v0.5.26, PR #141)
+
 ## [0.3.1 – 0.5.16] — 2026-05-14 → 2026-06-28
 
 > These changes were published incrementally across the 0.3.x and 0.5.x
