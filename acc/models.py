@@ -238,3 +238,127 @@ def apply_role_model_env(
     for k, v in applied.items():
         env[k] = v
     return applied
+
+
+# ---------------------------------------------------------------------------
+# Write path — Configuration-pane CRUD of models.yaml.
+#
+# models.yaml is normally hand-edited, but the Config pane can now Add / Edit /
+# Delete registry entries + map roles.  Writes go through
+# :func:`acc._atomic_write.atomic_write_text` (EBUSY-fallback + ``.bak`` +
+# POSIX flock — the same writer collective.yaml uses).  ruamel is NOT a
+# dependency, so inline per-entry comments are NOT preserved on save; the
+# file's leading header block IS kept, and a clean machine-managed body is
+# emitted (empty optional fields dropped).  Editing role_models here + a
+# ``config.reload`` broadcast makes running agents live-swap within one
+# heartbeat (agent re-reads models.yaml when no ACC_LLM_* key is in the reload).
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MODELS_HEADER = (
+    "# Central model registry.\n"
+    "#\n"
+    "# Each entry is a model_id an agentset assigns to a role (role_models\n"
+    "# below) or a sub-agent (collective.yaml AgentSpec.model).  api_key_env\n"
+    "# names the env var holding the key — the key itself never lives here.\n"
+    "# NOTE: inline comments are not preserved when saved from the TUI.\n\n"
+)
+
+
+def load_registry(path: Optional[Path] = None) -> ModelRegistry:
+    """Load the FULL registry (``models`` + ``role_models``).  Best-effort: a
+    missing / malformed file yields an empty :class:`ModelRegistry`."""
+    p = path or models_path()
+    try:
+        raw = yaml.safe_load(Path(p).read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("models: cannot read %s (%s)", p, exc)
+        return ModelRegistry()
+    try:
+        return ModelRegistry.model_validate(raw)
+    except Exception as exc:
+        logger.warning("models: invalid registry %s (%s)", p, exc)
+        return ModelRegistry()
+
+
+def _registry_header(path: Path) -> str:
+    """Keep the file's leading comment block (up to the first non-comment,
+    non-blank line) so the operator's explanatory header survives a TUI save."""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return _DEFAULT_MODELS_HEADER
+    lines: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped == "":
+            lines.append(line)
+        else:
+            break
+    header = "\n".join(lines).rstrip()
+    return (header + "\n\n") if header else _DEFAULT_MODELS_HEADER
+
+
+def _entry_to_dict(entry: ModelEntry) -> dict:
+    """Emit only meaningful fields (drop empty optionals) for a tidy file."""
+    out: dict[str, str] = {"model_id": entry.model_id, "backend": entry.backend}
+    for field in ("model", "base_url", "api_key_env", "label", "notes"):
+        val = getattr(entry, field, "")
+        if val:
+            out[field] = val
+    return out
+
+
+def save_registry(registry: ModelRegistry, path: Optional[Path] = None) -> Path:
+    """Atomically write *registry* to models.yaml (keeps the header block).
+    Returns the path written."""
+    from acc._atomic_write import atomic_write_text  # noqa: PLC0415
+
+    p = Path(path or models_path())
+    body: dict = {"models": [_entry_to_dict(e) for e in registry.models]}
+    if registry.role_models:
+        body["role_models"] = dict(registry.role_models)
+    text = _registry_header(p) + yaml.safe_dump(
+        body, sort_keys=False, default_flow_style=False, allow_unicode=True
+    )
+    atomic_write_text(p, text, mode=0o644)
+    return p
+
+
+def upsert_model(entry: ModelEntry, path: Optional[Path] = None) -> Path:
+    """Add or replace (by model_id, in place) a registry entry, then save."""
+    reg = load_registry(path)
+    new_models: list[ModelEntry] = []
+    replaced = False
+    for existing in reg.models:
+        if existing.model_id == entry.model_id:
+            new_models.append(entry)
+            replaced = True
+        else:
+            new_models.append(existing)
+    if not replaced:
+        new_models.append(entry)
+    reg.models = new_models
+    return save_registry(reg, path)
+
+
+def delete_model(model_id: str, path: Optional[Path] = None) -> Path:
+    """Remove a registry entry + drop any role_models pointing at it, then save."""
+    reg = load_registry(path)
+    reg.models = [e for e in reg.models if e.model_id != model_id]
+    reg.role_models = {r: m for r, m in reg.role_models.items() if m != model_id}
+    return save_registry(reg, path)
+
+
+def set_role_model(
+    role: str, model_id: Optional[str], path: Optional[Path] = None,
+) -> Path:
+    """Map (or, with a falsy *model_id*, unmap) a role → model_id in
+    ``role_models``, then save.  Unmapped roles fall back to the global
+    default."""
+    reg = load_registry(path)
+    role = (role or "").strip()
+    if model_id:
+        reg.role_models[role] = model_id
+    else:
+        reg.role_models.pop(role, None)
+    return save_registry(reg, path)
