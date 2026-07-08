@@ -29,6 +29,7 @@ import json
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger("acc.docstore")
@@ -43,6 +44,73 @@ _POST_FILTER_FETCH_FACTOR = 4
 
 DOCUMENTS_TABLE = "documents"
 CHUNKS_TABLE = "doc_chunks"
+
+# OKF P3 — the sensitivity ladder for the retrieval boundary.  A concept whose
+# `okf-sensitivity:<S>` tag ranks above the retrieving role's clearance is
+# withheld.  Unknown labels rank as ``internal`` (the filter is a best-effort
+# membrane over a shared corpus; true isolation uses separate sub-bundles —
+# proposal §7.4).
+_SENSITIVITY_RANK = {"public": 0, "internal": 1, "confidential": 2, "secret": 3}
+
+
+def _sensitivity_rank(label: str) -> int:
+    return _SENSITIVITY_RANK.get(str(label).strip().lower(), 1)
+
+
+def _row_tags(row: dict) -> list[str]:
+    """The tag list denormalized onto a chunk row (empty on any anomaly)."""
+    try:
+        tags = json.loads(row.get("tags_json") or "[]")
+        return tags if isinstance(tags, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+@dataclass(frozen=True)
+class RetrievalBoundary:
+    """A governance-sourced filter on what a role may retrieve (OKF P3).
+
+    Built from the *retrieving* role's config at agent boot — never from model
+    input, mirroring the collective-scope allowlist rule — and applied on every
+    :meth:`DocumentStore.retrieve`.  Concepts carry ``okf-domain:``,
+    ``okf-type:`` and ``okf-sensitivity:`` tags (stamped by
+    :func:`acc.lib.okf.concept_tags`); an *untagged* document is treated as
+    shared and always passes, so enabling a boundary never hides ordinary
+    (non-OKF) RAG documents.
+
+    * ``domains`` — allow-list; a doc tagged with a domain NOT in the set is
+      withheld (``None`` disables the domain gate).
+    * ``types`` — optional ``type`` allow-list (``None`` disables it).
+    * ``max_sensitivity`` — the role's clearance; a doc tagged more sensitive is
+      withheld (``None`` disables the sensitivity gate).
+    """
+
+    domains: frozenset[str] | None = None
+    types: frozenset[str] | None = None
+    max_sensitivity: str | None = None
+
+    @property
+    def is_active(self) -> bool:
+        return bool(self.domains) or bool(self.types) or bool(self.max_sensitivity)
+
+    def permits(self, tags: list[str]) -> bool:
+        domain = typ = sens = None
+        for raw in tags or []:
+            t = str(raw)
+            if t.startswith("okf-domain:"):
+                domain = t[len("okf-domain:"):]
+            elif t.startswith("okf-type:"):
+                typ = t[len("okf-type:"):]
+            elif t.startswith("okf-sensitivity:"):
+                sens = t[len("okf-sensitivity:"):]
+        if self.domains is not None and domain is not None and domain not in self.domains:
+            return False
+        if self.types is not None and typ is not None and typ not in self.types:
+            return False
+        if (self.max_sensitivity is not None and sens is not None
+                and _sensitivity_rank(sens) > _sensitivity_rank(self.max_sensitivity)):
+            return False
+        return True
 
 
 def chunk_text(text: str, *, chunk_chars: int = _CHUNK_CHARS,
@@ -91,10 +159,14 @@ class DocumentStore:
         vector: Any,
         embed_fn: Callable[[str], Awaitable[list[float]]],
         collective_id: str,
+        boundary: "RetrievalBoundary | None" = None,
     ) -> None:
         self._vector = vector
         self._embed = embed_fn
         self.collective_id = collective_id
+        # OKF P3 — a governance-sourced retrieval filter (None ⇒ no filtering,
+        # behaviour byte-identical to before).
+        self.boundary = boundary
 
     # -- ingest ---------------------------------------------------------
 
@@ -126,6 +198,10 @@ class DocumentStore:
                 # a record-read extension.
                 "title": title,
                 "source": source,
+                # OKF P3 — tags denormalized onto the chunk (like the citation
+                # fields above) so the retrieval boundary filters with no second
+                # lookup, on every backend.
+                "tags_json": json.dumps(tags or []),
                 "created_at": now,
                 "embedding": embedding,
             })
@@ -159,13 +235,17 @@ class DocumentStore:
         optionally to one document).  Result rows carry citation fields
         (doc_id, seq, title, source)."""
         query_embedding = await self._embed(query[:2000])
+        # OKF P3 — when a boundary is active the post-filter may drop rows, so
+        # over-fetch enough that the top-k survivors still fill the request.
+        bounded = self.boundary is not None and self.boundary.is_active
+        overfetch = _POST_FILTER_FETCH_FACTOR if bounded else 1
         search_filtered = getattr(self._vector, "search_filtered", None)
         if callable(search_filtered):
             # Kernel-enforced scope (TurboVec F8) — the allowlist is
             # computed from the record store, never from model input,
             # and an empty scope is a denial.
             rows = search_filtered(
-                CHUNKS_TABLE, query_embedding, top_k,
+                CHUNKS_TABLE, query_embedding, top_k * overfetch,
                 allow_ids=self._scoped_chunk_ids(doc_id),
             )
         else:
@@ -175,13 +255,18 @@ class DocumentStore:
             # they grow an equivalent kernel seam.
             fetched = self._vector.search(
                 CHUNKS_TABLE, query_embedding,
-                top_k * _POST_FILTER_FETCH_FACTOR,
+                top_k * _POST_FILTER_FETCH_FACTOR * overfetch,
             )
             rows = [
                 r for r in fetched
                 if r.get("collective_id") == self.collective_id
                 and (doc_id is None or r.get("doc_id") == doc_id)
-            ][:top_k]
+            ]
+        # OKF P3 — governance retrieval boundary (domain / type / sensitivity),
+        # sourced from the role, applied after scope enforcement.
+        if bounded:
+            rows = [r for r in rows if self.boundary.permits(_row_tags(r))]
+        rows = rows[:top_k]
         results = [{
             "doc_id": r.get("doc_id", ""),
             "seq": r.get("seq", 0),

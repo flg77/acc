@@ -30,11 +30,19 @@ class _IngestStore(Protocol):
 
 
 def concept_tags(concept, extra: list[str] | None = None) -> list[str]:
-    """The tag set stamped on a concept's document: its own front-matter tags
-    plus the OKF ``type`` and ``path`` markers (+ any *extra*)."""
+    """The tag set stamped on a concept's document: its own front-matter tags,
+    the OKF ``type`` / ``path`` markers, and — when the front matter declares
+    them — the ``okf-domain:`` / ``okf-sensitivity:`` markers the P3 retrieval
+    boundary (``acc.docstore.RetrievalBoundary``) filters on (+ any *extra*)."""
     tags = [str(t) for t in (concept.frontmatter.get("tags") or [])]
     tags.append(f"okf-type:{concept.type or 'untyped'}")
     tags.append(f"okf-path:{concept.rel_path}")
+    domain = str(concept.frontmatter.get("domain", "") or "").strip()
+    if domain:
+        tags.append(f"okf-domain:{domain}")
+    sensitivity = str(concept.frontmatter.get("sensitivity", "") or "").strip()
+    if sensitivity:
+        tags.append(f"okf-sensitivity:{sensitivity}")
     tags.extend(extra or [])
     return tags
 

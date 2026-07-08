@@ -182,6 +182,18 @@ class RoleDefinitionConfig(BaseModel):
     # backends post-filter.  See acc/docstore.py.
     document_store: bool = False
 
+    # OKF P3 — governance retrieval boundary.  When ``memory_domain_scoping`` is
+    # True, the agent binds a ``RetrievalBoundary`` (from this role's
+    # ``domain_receptors`` + ``memory_sensitivity_clearance``) onto the document
+    # store, so RAG retrieval is filtered to concepts within the role's domain /
+    # sensitivity — a *filter over the shared corpus*, not a copy.  Default off:
+    # retrieval is unfiltered and byte-identical, so existing RAG roles are
+    # untouched.  Untagged (non-OKF) documents are treated as shared and always
+    # pass.  ``memory_sensitivity_clearance`` (e.g. "internal") withholds
+    # concepts tagged more sensitive; empty ⇒ no sensitivity gate.
+    memory_domain_scoping: bool = False
+    memory_sensitivity_clearance: str = ""
+
     # Proactive wakeup (operator decision 2026-06-09) — when ``True`` the
     # agent runs a periodic self-check loop (acc/agent.py::_proactive_wakeup_loop)
     # in addition to the reactive activator: every ``wakeup_interval_s`` it

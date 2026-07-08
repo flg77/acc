@@ -706,11 +706,26 @@ class Agent:
             role_def = getattr(self.config, "role_definition", None)
             if role_def is None or not getattr(role_def, "document_store", False):
                 return
-            from acc.docstore import DocumentStore, set_active_document_store  # noqa: PLC0415
+            from acc.docstore import (  # noqa: PLC0415
+                DocumentStore,
+                RetrievalBoundary,
+                set_active_document_store,
+            )
+            # OKF P3 — opt-in governance retrieval boundary from the role.  Off
+            # by default (boundary=None ⇒ unfiltered, as before).
+            boundary = None
+            if getattr(role_def, "memory_domain_scoping", False):
+                receptors = frozenset(getattr(role_def, "domain_receptors", []) or [])
+                clearance = str(getattr(role_def, "memory_sensitivity_clearance", "") or "").strip()
+                boundary = RetrievalBoundary(
+                    domains=receptors or None,
+                    max_sensitivity=clearance or None,
+                )
             store = DocumentStore(
                 vector=self.backends.vector,
                 embed_fn=self.backends.llm.embed,
                 collective_id=self.config.agent.collective_id,
+                boundary=boundary,
             )
             set_active_document_store(store)
             logger.info(
