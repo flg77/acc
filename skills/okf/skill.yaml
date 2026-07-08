@@ -1,0 +1,72 @@
+# skills/okf/skill.yaml — Open Knowledge Format conformance helper (OKF P1).
+#
+# PURE + LOW risk: no filesystem, no network — it only transforms text the
+# caller already holds.  That is *why* it can be granted to every role by
+# default (the `_grant_okf_skill` validator in acc/config.py): it hands out an
+# OKF *format discipline*, not an access primitive.  The disk-touching half
+# (read a bundle, write a bundle, convert a vault) lives in the separate,
+# workspace-gated `okf_transform` skill so this one never escalates a role's
+# filesystem reach.
+#
+# Every agent can therefore self-check that the knowledge it emits is
+# OKF-conformant (validate_text), render a conformant concept (format), and get
+# a sensible default `type` (infer_type) — the foundation for the shared
+# curated-knowledge tier (proposal "Open Knowledge Format (OKF) in ACC").
+
+purpose:        "Produce & self-check OKF-conformant knowledge (pure text ops)."
+version:        "0.1.0"
+adapter_class:  "OkfSkill"
+risk_level:     "LOW"
+domain_id:      "knowledge"
+tags:           ["okf", "knowledge", "format", "pure"]
+
+input_schema:
+  type: object
+  properties:
+    op:
+      type: string
+      enum: ["format", "validate_text", "infer_type"]
+      description: "Which pure operation to run."
+    frontmatter:
+      type: object
+      description: "For format/infer_type: the concept's front-matter mapping."
+    body:
+      type: string
+      description: "For format: the markdown body."
+    text:
+      type: string
+      description: "For validate_text: the raw concept markdown (front matter + body)."
+    path_hint:
+      type: string
+      description: "Intended bundle-relative path — drives type inference and naming (e.g. 'runbooks/Restart.md')."
+  required: ["op"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    op:          {type: string}
+    markdown:    {type: string}
+    type:        {type: string}
+    conformant:  {type: boolean}
+    errors:      {type: array, items: {type: string}}
+    warnings:    {type: array, items: {type: string}}
+    summary:     {type: string}
+  required: ["op"]
+  additionalProperties: false
+
+description: |
+  Open Knowledge Format (OKF v0.1) conformance helper — pure, no I/O.  Three
+  operations, chosen by ``op``:
+
+  * ``format`` — given ``frontmatter`` + ``body`` (+ optional ``path_hint``),
+    ensure a non-empty ``type`` (inferred if absent) and return the concept as
+    OKF-conformant ``markdown`` (a ``---`` front-matter block + body).
+  * ``validate_text`` — given a concept's raw ``text``, return whether it is
+    conformant plus any ``errors`` / ``warnings`` (the three OKF rules).
+  * ``infer_type`` — given a ``path_hint`` (+ optional ``frontmatter``), return
+    a sensible default ``type`` from ACC's opinionated starter vocabulary.
+
+  Granted to every role by default because it grants format discipline, not
+  data access.  To read/write bundles on disk or convert an Obsidian vault,
+  use the workspace-gated ``okf_transform`` skill instead.

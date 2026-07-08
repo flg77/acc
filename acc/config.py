@@ -402,6 +402,10 @@ class RoleDefinitionConfig(BaseModel):
 
     _WORKSPACE_SKILLS = ("fs_read", "fs_write")
     _DOC_STORE_SKILLS = ("doc_ingest", "doc_retrieve")
+    # OKF P1 — the pure conformance helper is granted to EVERY role (it is
+    # LOW-risk and touches nothing: format discipline, not data access).  The
+    # disk-touching ``okf_transform`` is NOT auto-granted (workspace-gated).
+    _OKF_SKILL = "okf"
     _RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
     # OpenSpec `20260603-capability-pool` Phase 1 — the universal
@@ -487,6 +491,28 @@ class RoleDefinitionConfig(BaseModel):
                 self.allowed_skills.append(sid)
             if sid not in self.default_skills:
                 self.default_skills.append(sid)
+        return self
+
+    @model_validator(mode="after")
+    def _grant_okf_skill(self) -> "RoleDefinitionConfig":
+        """OKF P1 — grant the pure ``okf`` conformance helper to EVERY role.
+
+        The operator's decision (proposal "Open Knowledge Format (OKF) in
+        ACC", §14) is that every agent should be able to produce and self-check
+        OKF-conformant knowledge.  ``okf`` is LOW-risk and pure (no filesystem,
+        no network — it only reshapes text the caller already holds), so
+        granting it universally does not widen any role's data reach and always
+        clears the A-017 ``max_skill_risk_level`` ceiling (LOW ≤ default
+        MEDIUM).  The disk-touching ``okf_transform`` skill is deliberately NOT
+        granted here — it is workspace-gated and opt-in per role.
+
+        Unconditional + idempotent: composes with the other granters (disjoint
+        skill set)."""
+        sid = self._OKF_SKILL
+        if sid not in self.allowed_skills:
+            self.allowed_skills.append(sid)
+        if sid not in self.default_skills:
+            self.default_skills.append(sid)
         return self
 
 

@@ -138,7 +138,9 @@ def test_mcp_toggle_respects_ceiling():
 
 def test_empty_overlay_leaves_role_defaults_and_no_block():
     prof = resolve_overlay(_role(), [])
-    assert prof.effective_default_skills == ["echo"]
+    # "okf" is auto-granted to every role (OKF P1); the role's own default
+    # ("echo") is preserved alongside it.
+    assert prof.effective_default_skills == ["echo", "okf"]
     assert prof.block == ""
 
 

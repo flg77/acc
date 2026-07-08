@@ -1,0 +1,105 @@
+# skills/okf_transform/skill.yaml — OKF bundle read/write/convert (OKF P1).
+#
+# The disk-touching half of the OKF toolkit.  HIGH risk because it WRITES to
+# the workspace (a conformant bundle, a converted vault), so — unlike the pure
+# `okf` skill — it is NOT granted to every role.  Reads resolve through
+# acc.workspace.safe_resolve (containment); writes go through
+# require_writable_workspace (containment + the operator trust flag), exactly
+# like fs_write.  Intended for the `okf-transformer` role and any
+# workspace_access role that opts in via allowed_skills.
+#
+# Non-destructive by contract: from_vault emits a *parallel* new bundle and
+# never mutates the source vault (proposal decision §14).
+
+purpose:        "Read, validate, query, write & convert OKF bundles in the workspace."
+version:        "0.1.0"
+adapter_class:  "OkfTransformSkill"
+risk_level:     "HIGH"
+domain_id:      "workspace"
+tags:           ["okf", "knowledge", "workspace", "write", "convert"]
+
+input_schema:
+  type: object
+  properties:
+    op:
+      type: string
+      enum: ["validate_bundle", "query", "write_concept", "from_vault"]
+    path:
+      type: string
+      description: "Bundle directory, relative to the workspace root (validate_bundle/query/write_concept)."
+    rel_path:
+      type: string
+      description: "Concept path within the bundle, e.g. 'runbooks/Restart.md' (write_concept)."
+    frontmatter:
+      type: object
+      description: "Concept front matter (write_concept)."
+    body:
+      type: string
+      description: "Concept markdown body (write_concept)."
+    type:
+      type: string
+      description: "Filter concepts by exact type (query)."
+    tags:
+      type: array
+      items: {type: string}
+      description: "Filter concepts that carry ALL of these tags (query)."
+    limit:
+      type: integer
+      minimum: 1
+      maximum: 1000
+      description: "Cap the number of query results."
+    vault:
+      type: string
+      description: "Obsidian vault directory to convert, relative to the workspace root (from_vault)."
+    dest:
+      type: string
+      description: "Destination bundle directory, relative to the workspace root (from_vault)."
+    now:
+      type: string
+      description: "Optional RFC-3339 timestamp used to fill a missing concept timestamp (from_vault)."
+  required: ["op"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    op:          {type: string}
+    conformant:  {type: boolean}
+    n_concepts:  {type: integer, minimum: 0}
+    errors:      {type: array, items: {type: string}}
+    warnings:    {type: array, items: {type: string}}
+    summary:     {type: string}
+    written:     {type: string}
+    type:        {type: string}
+    dest:        {type: string}
+    concepts:
+      type: array
+      items:
+        type: object
+        properties:
+          rel_path:    {type: string}
+          type:        {type: string}
+          title:       {type: string}
+          description: {type: string}
+        required: ["rel_path", "type"]
+        additionalProperties: false
+  required: ["op"]
+  additionalProperties: false
+
+description: |
+  Read, validate, query, write and convert OKF bundles that live in the
+  operator's trusted workspace.  Operations (``op``):
+
+  * ``validate_bundle`` — load ``path`` and report OKF conformance.
+  * ``query`` — list concepts in ``path``, optionally filtered by ``type`` and
+    ``tags`` (all-match), capped by ``limit``.
+  * ``write_concept`` — write one concept (``frontmatter`` + ``body``) at
+    ``path``/``rel_path``, ensuring a non-empty ``type``.  Requires a trusted
+    workspace.
+  * ``from_vault`` — convert an Obsidian ``vault`` into a NEW conformant bundle
+    at ``dest`` (non-destructive: the source is never modified), then report
+    conformance.  Requires a trusted workspace for ``dest``.
+
+  Paths are sandboxed to the workspace root; writes additionally require the
+  operator's trust flag.  Pair with the pure ``okf`` skill for no-I/O
+  conformance checks.
