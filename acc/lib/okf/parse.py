@@ -3,7 +3,7 @@
 Front matter is a YAML block delimited by a leading ``---`` line and a closing
 ``---`` line, exactly as Obsidian + OKF use it.  Parsing is tolerant: a file
 with no block, an unterminated block, invalid YAML, or a non-mapping block all
-yield ``fm_ok=False`` (which :mod:`acc.okf.validate` reports) rather than
+yield ``fm_ok=False`` (which :mod:`acc.lib.okf.validate` reports) rather than
 raising — the library never crashes the caller on a messy vault.
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from acc.okf.models import RESERVED_FILENAMES, Bundle, Concept
+from acc.lib.okf.models import RESERVED_FILENAMES, Bundle, Concept
 
 
 def split_frontmatter(text: str) -> tuple[dict, str, bool]:

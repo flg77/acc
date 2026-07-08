@@ -14,7 +14,7 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 ### Added
 
 - **Open Knowledge Format (OKF) foundation — P0–P2.** A pure-Python
-  [`acc.okf`](acc/okf/) toolkit for OKF v0.1 bundles: parse, three-rule
+  [`acc.lib.okf`](acc/lib/okf/) toolkit for OKF v0.1 bundles: parse, three-rule
   conformance validation (tolerant of the soft failures the spec says
   consumers MUST accept), emit, and a **non-destructive** `from_obsidian`
   transform (a messy vault → a conformant *parallel* bundle: type inference,
@@ -24,7 +24,7 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   **granted to every role by default** (format discipline, not data access) —
   and the workspace-gated **`okf_transform`** (`validate_bundle` / `query` /
   `write_concept` / `from_vault`, HIGH-risk, trust-flag enforced). P2 indexes a
-  bundle into the collective document store (`acc.okf.index_bundle`), stamping
+  bundle into the collective document store (`acc.lib.okf.index_bundle`), stamping
   each concept's `type`/path as tags to seed the future per-domain retrieval
   filter. See ACC Roadmap: *Open Knowledge Format (OKF) in ACC*.
 

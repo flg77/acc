@@ -1,6 +1,6 @@
 """okf — Open Knowledge Format conformance helper (OKF P1, pure).
 
-Backed entirely by :mod:`acc.okf` (the pure P0 library).  No filesystem, no
+Backed entirely by :mod:`acc.lib.okf` (the pure P0 library).  No filesystem, no
 network — every op transforms text the caller already holds, which is what
 makes it safe to grant to every role.  The disk-touching operations live in the
 workspace-gated ``okf_transform`` skill.
@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from acc.okf import (
+from acc.lib.okf import (
     Bundle,
     Concept,
     concept_to_markdown,

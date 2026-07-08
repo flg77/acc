@@ -78,7 +78,7 @@ class ConformanceIssue:
 
 @dataclass
 class ConformanceReport:
-    """Result of :func:`acc.okf.validate.validate`."""
+    """Result of :func:`acc.lib.okf.validate.validate`."""
 
     conformant: bool
     n_concepts: int

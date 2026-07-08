@@ -1,6 +1,6 @@
 """Serialize OKF concepts + bundles back to disk.
 
-Emission is the inverse of :mod:`acc.okf.parse`: a concept becomes a ``---``
+Emission is the inverse of :mod:`acc.lib.okf.parse`: a concept becomes a ``---``
 YAML front-matter block followed by its markdown body, and a bundle becomes a
 directory of those files plus a generated ``index.md`` (the reserved directory
 listing, §6 of the spec).  Front-matter keys are emitted in a stable,
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import yaml
 
-from acc.okf.models import Bundle, Concept
+from acc.lib.okf.models import Bundle, Concept
 
 # Preferred front-matter key order (spec-recommended fields first); any other
 # keys follow in their existing order.

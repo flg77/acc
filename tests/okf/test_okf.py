@@ -1,4 +1,4 @@
-"""Golden-fixture tests for the ``acc.okf`` P0 library.
+"""Golden-fixture tests for the ``acc.lib.okf`` P0 library.
 
 The core promise: a *messy* Obsidian vault (missing front matter, missing
 ``type``, Obsidian wikilinks) converts — **non-destructively** — into a
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from acc.okf import (
+from acc.lib.okf import (
     DEFAULT_TYPE,
     Bundle,
     Concept,

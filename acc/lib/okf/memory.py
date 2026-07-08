@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from acc.okf.models import Bundle
-from acc.okf.parse import load_bundle
+from acc.lib.okf.models import Bundle
+from acc.lib.okf.parse import load_bundle
 
 
 class _IngestStore(Protocol):

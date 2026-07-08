@@ -5,7 +5,7 @@ mutates the source (operator decision, proposal §14).  Per file it:
 
   * splits front matter + body (tolerant — a note with none still converts);
   * ensures a non-empty ``type`` (existing wins, else folder-hint, else
-    :data:`acc.okf.types.DEFAULT_TYPE`);
+    :data:`acc.lib.okf.types.DEFAULT_TYPE`);
   * enriches ``title`` / ``description`` only when absent (existing keys are
     preserved verbatim);
   * rewrites Obsidian ``[[wikilinks]]`` into ordinary bundle-relative markdown
@@ -24,9 +24,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from acc.okf.models import RESERVED_FILENAMES, Bundle, Concept
-from acc.okf.parse import split_frontmatter
-from acc.okf.types import infer_type
+from acc.lib.okf.models import RESERVED_FILENAMES, Bundle, Concept
+from acc.lib.okf.parse import split_frontmatter
+from acc.lib.okf.types import infer_type
 
 # [[target]] · [[target#heading]] · [[target|alias]] · ![[embed]]
 _WIKILINK = re.compile(
@@ -130,6 +130,6 @@ def from_obsidian(vault: Path | str, dest: Path | str, *,
 
     bundle = Bundle(root=Path(dest), concepts=concepts)
     if write:
-        from acc.okf.emit import write_bundle
+        from acc.lib.okf.emit import write_bundle
         write_bundle(bundle, dest)
     return bundle

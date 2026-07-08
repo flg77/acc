@@ -1,6 +1,6 @@
 """okf_transform — OKF bundle read/write/convert in the workspace (OKF P1).
 
-The disk-touching half of the OKF toolkit, backed by :mod:`acc.okf`.  Every
+The disk-touching half of the OKF toolkit, backed by :mod:`acc.lib.okf`.  Every
 path is sandboxed to the workspace root via :mod:`acc.workspace`; writes
 additionally require the operator's trust flag.  ``from_vault`` is
 non-destructive — it emits a parallel new bundle and never mutates the source.
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from acc.okf import (
+from acc.lib.okf import (
     Concept,
     concept_to_markdown,
     from_obsidian,

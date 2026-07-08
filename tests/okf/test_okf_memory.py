@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from acc.okf import from_obsidian, index_bundle, index_bundle_path, load_bundle
+from acc.lib.okf import from_obsidian, index_bundle, index_bundle_path, load_bundle
 
 NOW = "2026-07-08T00:00:00Z"
 

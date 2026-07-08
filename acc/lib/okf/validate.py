@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from acc.okf.models import Bundle, ConformanceIssue, ConformanceReport
+from acc.lib.okf.models import Bundle, ConformanceIssue, ConformanceReport
 
 
 def validate(bundle: Bundle) -> ConformanceReport:
