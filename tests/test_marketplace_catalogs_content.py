@@ -46,7 +46,7 @@ async def test_marketplace_shows_builtin_packages_with_counts():
         labels = [str(c.label) for c in table.columns.values()]
         assert labels == [
             "Package", "Description", "Version", "Tier",
-            "Catalog", "Origin/Signer", "Skills", "MCPs", "★",
+            "Catalog", "Origin/Signer", "Skills", "MCPs", "Bundles", "★",
         ]
         assert table.row_count >= 5  # the 5 bundled family packs, day-0
 
