@@ -223,6 +223,22 @@ class McpRef(BaseModel):
     path: str = Field(..., description="Path inside the package, e.g. mcps/<name>/")
 
 
+class BundleRef(BaseModel):
+    """An OKF knowledge bundle shipped inside the package tree (OKF P5).
+
+    A *knowledge* pack carries curated content, not capabilities: one or more
+    OKF v0.1 bundles under ``bundles/<name>/``.  On install the tree is
+    extracted like any other; a collective indexes the bundles into its
+    document store (``acc.pkg.knowledge.index_installed_bundles``) so agents
+    retrieve them.  Nothing here ships with core, so no tier/baseline check
+    applies."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., min_length=1)
+    path: str = Field(..., description="Path inside the package, e.g. bundles/<name>/")
+
+
 class SignedDepEntry(BaseModel):
     """One row of the signed dependency closure (Stage 1).
 
@@ -262,6 +278,7 @@ class AccPkgManifest(BaseModel):
     roles: list[RoleRef] = Field(default_factory=list)
     skills: list[SkillRef] = Field(default_factory=list)
     mcps: list[McpRef] = Field(default_factory=list)
+    bundles: list[BundleRef] = Field(default_factory=list)   # OKF knowledge content (P5)
     signed_dep_closure: list[SignedDepEntry] = Field(default_factory=list)
     content_sha256: str = Field(
         "",
@@ -306,6 +323,7 @@ class AccPkgManifest(BaseModel):
         _check_unique([r.name for r in self.roles], "role")
         _check_unique([s.name for s in self.skills], "skill")
         _check_unique([m.name for m in self.mcps], "mcp")
+        _check_unique([b.name for b in self.bundles], "bundle")
         _check_unique([d.name for d in self.depends_on], "dependency")
 
         # content_sha256, when present, must look like a sha256 hex.

@@ -736,6 +736,32 @@ class Agent:
         except Exception as exc:  # noqa: BLE001 — never abort boot
             logger.warning("docstore: registration failed: %s", exc)
 
+    async def _maybe_index_knowledge_packs(self) -> None:
+        """OKF P5 — index installed OKF knowledge-pack bundles into the
+        collective document store, for a role that opts in
+        (``index_knowledge_packs: true``).  Requires ``document_store`` (the
+        store to index into); idempotent per (pack, collective).  Best-effort:
+        a failure logs but never aborts boot (the OODA/heartbeat invariant)."""
+        try:
+            role_def = getattr(self.config, "role_definition", None)
+            if role_def is None or not getattr(role_def, "index_knowledge_packs", False):
+                return
+            from acc.docstore import active_document_store  # noqa: PLC0415
+            from acc.pkg.knowledge import index_installed_bundles  # noqa: PLC0415
+            try:
+                store = active_document_store()
+            except RuntimeError:
+                logger.info("okf knowledge: index_knowledge_packs set but no "
+                            "document store (role needs document_store: true)")
+                return
+            result = await index_installed_bundles(
+                store, collective_id=self.config.agent.collective_id)
+            if result.get("indexed_bundles"):
+                logger.info("okf knowledge: indexed %d bundle(s) → %d doc(s)",
+                            result["indexed_bundles"], result["documents"])
+        except Exception as exc:  # noqa: BLE001 — never abort boot
+            logger.warning("okf knowledge: indexing failed: %s", exc)
+
     async def _maybe_start_reward_harness(self) -> None:
         """Construct + subscribe the policy-layer reward harness when
         ``ACC_POLICY_LAYER_ENABLED`` is set.
@@ -3264,6 +3290,10 @@ class Agent:
             # every other role; needs a vector backend + an embedding-
             # capable LLM backend (both already built).
             self._maybe_register_document_store()
+            # OKF P5 — index installed knowledge-pack bundles into the store for
+            # a role that opts in (index_knowledge_packs: true).  No-op for every
+            # other role; idempotent per (pack, collective).
+            await self._maybe_index_knowledge_packs()
             # Run heartbeat, task, role-update, bridge-result, centroid,
             # (arbiter only) oversight-decision and plan-orchestration
             # loops concurrently.  Non-arbiter agents' plan / oversight

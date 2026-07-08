@@ -194,6 +194,15 @@ class RoleDefinitionConfig(BaseModel):
     memory_domain_scoping: bool = False
     memory_sensitivity_clearance: str = ""
 
+    # OKF P5 — when True (and ``document_store`` is on), the agent indexes any
+    # installed OKF *knowledge-pack* bundles (``bundles/<name>/`` under
+    # ACC_PACKAGES_ROOT) into the collective document store at boot, so agents
+    # retrieve that curated content.  Idempotent per (pack, collective).  Set it
+    # on ONE role per collective (e.g. okf_transformer / document_curator) to
+    # avoid redundant indexing.  Default off ⇒ installed bundles ship but are
+    # not indexed until something asks.
+    index_knowledge_packs: bool = False
+
     # Proactive wakeup (operator decision 2026-06-09) — when ``True`` the
     # agent runs a periodic self-check loop (acc/agent.py::_proactive_wakeup_loop)
     # in addition to the reactive activator: every ``wakeup_interval_s`` it

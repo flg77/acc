@@ -13,6 +13,17 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **OKF knowledge packs — P5 (runtime).** A `.accpkg` can now ship curated OKF
+  *content*, not just capabilities: an `AccPkgManifest.bundles` list points at
+  OKF v0.1 bundles under `bundles/<name>/`. Build + install carry them like any
+  other tree; [`acc.pkg.knowledge`](acc/pkg/knowledge.py) discovers installed
+  bundles and indexes them into the collective document store
+  (`index_installed_bundles`, idempotent per pack+collective via a marker) so
+  agents **retrieve** the content — the P3 boundary then scopes it per role.
+  Opt-in via the role flag `index_knowledge_packs` (bind it to ONE role per
+  collective, e.g. the `okf_transformer`); default off. Marketplace/Catalogs
+  surfacing lands with the first published knowledge pack.
+
 - **Open Knowledge Format (OKF) foundation — P0–P3.** A pure-Python
   [`acc.lib.okf`](acc/lib/okf/) toolkit for OKF v0.1 bundles: parse, three-rule
   conformance validation (tolerant of the soft failures the spec says
