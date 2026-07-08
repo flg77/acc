@@ -488,7 +488,13 @@ def _validate_draft(role_def: RoleDefinitionConfig, role_md: str) -> list[str]:
         errors.append("purpose is empty (LLM fill did not produce a purpose)")
     if not role_def.task_types:
         errors.append("task_types is empty (no routable task type)")
-    if not role_def.allowed_skills and not role_def.allowed_mcps:
+    # ``okf`` is auto-granted to every role (OKF P1, RoleDefinitionConfig.
+    # _grant_okf_skill) — it is a universal freebie, not an evidence-derived
+    # capability, so it must NOT satisfy the "carry at least one candidate
+    # capability" gate on its own.
+    _auto = {"okf"}
+    purposeful_skills = [s for s in role_def.allowed_skills if s not in _auto]
+    if not purposeful_skills and not role_def.allowed_mcps:
         errors.append(
             "draft grants no skills and no MCPs — a new_role gap must carry at "
             "least one candidate capability from the evidence"

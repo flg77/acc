@@ -102,7 +102,8 @@ def test_persona_estimator_strategy_and_cap(persona: str):
     # adds the OS-basics + git skills.  Compare against the role-specific
     # defaults only, sourcing the auto-injected sets from the model
     # instance so this never needs restating when either set grows.
-    injected = set(rd._WORKSPACE_SKILLS) | set(rd._OS_BASIC_SKILLS) | set(rd._GIT_SKILLS)
+    injected = (set(rd._WORKSPACE_SKILLS) | set(rd._OS_BASIC_SKILLS)
+                | set(rd._GIT_SKILLS) | {rd._OKF_SKILL})
     role_specific = [s for s in rd.default_skills if s not in injected]
     assert role_specific == default_skills
 

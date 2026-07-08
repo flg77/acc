@@ -11,7 +11,27 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
-_Nothing yet — the entries below shipped across the 0.3.x–0.5.x line._
+### Added
+
+- **Open Knowledge Format (OKF) foundation — P0–P3.** A pure-Python
+  [`acc.lib.okf`](acc/lib/okf/) toolkit for OKF v0.1 bundles: parse, three-rule
+  conformance validation (tolerant of the soft failures the spec says
+  consumers MUST accept), emit, and a **non-destructive** `from_obsidian`
+  transform (a messy vault → a conformant *parallel* bundle: type inference,
+  `[[wikilink]]` → bundle-relative markdown links, front-matter enrichment,
+  generated `index.md`). Surfaced to agents as two skills: the pure **`okf`**
+  conformance helper (`format` / `validate_text` / `infer_type`) — LOW-risk and
+  **granted to every role by default** (format discipline, not data access) —
+  and the workspace-gated **`okf_transform`** (`validate_bundle` / `query` /
+  `write_concept` / `from_vault`, HIGH-risk, trust-flag enforced). P2 indexes a
+  bundle into the collective document store (`acc.lib.okf.index_bundle`), stamping
+  each concept's `type` / `domain` / `sensitivity` / path as tags. **P3** adds a
+  governance-sourced **retrieval boundary** (`acc.docstore.RetrievalBoundary`):
+  opt-in per role (`memory_domain_scoping` + `memory_sensitivity_clearance`),
+  it filters RAG retrieval to concepts within the role's `domain_receptors` /
+  sensitivity — a *filter over the shared corpus, not a copy*; untagged
+  (non-OKF) documents stay shared, and it is **off by default** (retrieval
+  byte-identical). See ACC Roadmap: *Open Knowledge Format (OKF) in ACC*.
 
 ## [0.5.17 – 0.5.49] — 2026-06-29 → 2026-07-06
 
