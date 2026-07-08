@@ -49,6 +49,7 @@ class _MarketDisplayRow:
     signer: str
     n_skills: str          # "7" or "—"
     n_mcps: str            # "2" or "—"
+    n_bundles: str         # OKF knowledge bundles: "1" or "—"
     install_marker: str
 
 
@@ -102,7 +103,7 @@ class MarketplaceScreen(NavScreen):
         table = self.query_one("#market-table", DataTable)
         table.add_columns(
             "Package", "Description", "Version", "Tier",
-            "Catalog", "Origin/Signer", "Skills", "MCPs", "★",
+            "Catalog", "Origin/Signer", "Skills", "MCPs", "Bundles", "★",
         )
         table.cursor_type = "row"
         self.refresh_rows()
@@ -132,6 +133,7 @@ class MarketplaceScreen(NavScreen):
                 signer=cat.signer or "—",
                 n_skills=str(pkg.n_skills),
                 n_mcps=str(pkg.n_mcps),
+                n_bundles=str(pkg.n_bundles) if pkg.n_bundles else "—",
                 install_marker=_format_install_marker(
                     pkg.name, f"^{pkg.version.split('-')[0]}"),
             ))
@@ -162,6 +164,7 @@ class MarketplaceScreen(NavScreen):
             signer=mr.signer,
             n_skills="—",
             n_mcps="—",
+            n_bundles="—",
             install_marker=mr.install_marker,
         )
 
@@ -179,7 +182,7 @@ class MarketplaceScreen(NavScreen):
             table.add_row(
                 r.name, (r.description or "—")[:44], r.version, r.tier_badge,
                 r.catalog_name[:22], r.signer[:24], r.n_skills, r.n_mcps,
-                stars_glyph(get_rating(r.name)),
+                r.n_bundles, stars_glyph(get_rating(r.name)),
                 key=f"{r.name}@{r.version}@{r.catalog_name}",
             )
         if not self._rows:

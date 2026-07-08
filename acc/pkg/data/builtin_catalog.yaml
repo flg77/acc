@@ -20,6 +20,7 @@ packages:
   n_roles: 25
   n_skills: 0
   n_mcps: 1
+  n_bundles: 0
   roles:
   - account_executive
   - business_analyst
@@ -49,6 +50,7 @@ packages:
   skills: []
   mcps:
   - web_fetch
+  bundles: []
 - name: '@acc/control-roles'
   version: 1.0.0
   description: ACC core CONTROL roles (base layer) — arbiter, assistant, compliance_officer, ingester,
@@ -56,6 +58,7 @@ packages:
   n_roles: 7
   n_skills: 2
   n_mcps: 1
+  n_bundles: 0
   roles:
   - arbiter
   - assistant
@@ -69,12 +72,14 @@ packages:
   - test_execution
   mcps:
   - web_fetch
+  bundles: []
 - name: '@acc/devops-roles'
   version: 1.0.0
   description: Engineering family with shell_exec workflows.
   n_roles: 4
   n_skills: 0
   n_mcps: 1
+  n_bundles: 0
   roles:
   - data_engineer
   - devops_engineer
@@ -83,12 +88,14 @@ packages:
   skills: []
   mcps:
   - web_fetch
+  bundles: []
 - name: '@acc/research-roles'
   version: 1.0.0
   description: Multi-agent research collective.
   n_roles: 6
   n_skills: 6
   n_mcps: 3
+  n_bundles: 0
   roles:
   - research_competitor
   - research_critic
@@ -107,12 +114,14 @@ packages:
   - web_browser_harness
   - web_fetch
   - web_search_brave
+  bundles: []
 - name: '@acc/workspace-roles'
   version: 1.0.0
   description: Coding family + analyst + synthesizer.
   n_roles: 8
   n_skills: 7
   n_mcps: 2
+  n_bundles: 0
   roles:
   - coding_agent
   - coding_agent_architect
@@ -133,3 +142,4 @@ packages:
   mcps:
   - echo_server
   - web_fetch
+  bundles: []

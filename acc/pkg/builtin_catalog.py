@@ -35,9 +35,11 @@ class BuiltinPackage(BaseModel):
     n_roles: int = 0
     n_skills: int = 0
     n_mcps: int = 0
+    n_bundles: int = 0                                    # OKF knowledge bundles (P5)
     roles: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     mcps: list[str] = Field(default_factory=list)
+    bundles: list[str] = Field(default_factory=list)     # OKF knowledge-pack bundle names
 
 
 class BuiltinCatalog(BaseModel):
