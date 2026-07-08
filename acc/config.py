@@ -216,6 +216,14 @@ class RoleDefinitionConfig(BaseModel):
     # behaviour-identical until the bulk role.yaml flip lands.
     os_basics: bool = False
 
+    # ACC Implementation 053 (agentset orchestration, P0) — when ``True`` the
+    # ``## Orchestration shapes`` guidance block is appended to this role's system
+    # prompt, teaching the six orchestration shapes + the task->shape heuristic so
+    # the role NAMES the shape it picks in its reasoning (describe-only; no new
+    # dispatch — the arbiter still signs every ROLE_ASSIGN).  Default off; the
+    # Assistant opts in.  See acc/orchestration/patterns.py.
+    orchestration_hint: bool = False
+
     # D-003 (PR-L) — operator-controlled autonomy gate.
     # ``AUTO`` (default) matches today's behaviour: Cat-A blocks,
     # Cat-B observes, all other invocations run.  Other valid
