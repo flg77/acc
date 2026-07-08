@@ -21,8 +21,9 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   (`index_installed_bundles`, idempotent per pack+collective via a marker) so
   agents **retrieve** the content — the P3 boundary then scopes it per role.
   Opt-in via the role flag `index_knowledge_packs` (bind it to ONE role per
-  collective, e.g. the `okf_transformer`); default off. Marketplace/Catalogs
-  surfacing lands with the first published knowledge pack.
+  collective, e.g. the `okf_transformer`); default off. The **Marketplace** pane
+  gains a **Bundles** column so a knowledge pack renders legibly (a role/skill
+  pack shows `—`).
 
 - **Open Knowledge Format (OKF) foundation — P0–P3.** A pure-Python
   [`acc.lib.okf`](acc/lib/okf/) toolkit for OKF v0.1 bundles: parse, three-rule
