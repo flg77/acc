@@ -339,6 +339,12 @@ role_definition:
   # dormant (/sleep). Env override: ACC_WAKEUP_INTERVAL_S.
   proactive_wakeup: true
   wakeup_interval_s: 300
+  # ACC Implementation 053 (agentset orchestration, P0) — teach the Assistant the
+  # six orchestration shapes + the task->shape heuristic so it NAMES the shape it
+  # picks (single agent / classify-&-act / fan-out / adversarial-verify /
+  # generate-&-filter / tournament / loop-until-done). Describe-only: no new
+  # dispatch marker. See acc/orchestration/patterns.py + ACC Implementation 053.
+  orchestration_hint: true
   # OpenSpec follow-up to `20260603-capability-pool` — operator-curated
   # skill set for the Assistant.  os_basics still auto-grants the 10
   # navigation primitives; this block names the extras the operator

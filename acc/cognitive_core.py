@@ -1772,6 +1772,21 @@ class CognitiveCore:
                     exc_info=True,
                 )
 
+        # ACC Implementation 053 (agentset orchestration, P0) — teach the shape
+        # vocabulary + selector heuristic to roles that opt in
+        # (``orchestration_hint: true``, the Assistant).  Static block, so it
+        # stays in the cacheable prefix; describe-only (no new dispatch).
+        # Non-fatal: a render error must not break the main prompt path.
+        if getattr(role, "orchestration_hint", False):
+            try:
+                from acc.orchestration import render_guidance_block  # noqa: PLC0415
+                parts.append("\n" + render_guidance_block())
+            except Exception:
+                logger.debug(
+                    "cognitive_core: orchestration guidance block render failed",
+                    exc_info=True,
+                )
+
         # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 —
         # inject the Observe step's PerceptionSnapshot as a
         # ``## Currently available`` block.  Populated per task in
