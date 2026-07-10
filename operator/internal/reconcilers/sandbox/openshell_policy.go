@@ -103,16 +103,23 @@ const (
 // catAReadOnlyPaths is the system read-only allow-list: the standard
 // distro/runtime trees an agent needs to execute but must never mutate.
 func catAReadOnlyPaths() []string {
+	// Only real DIRECTORIES — Landlock grants directory access-rights (ReadDir)
+	// here, which it rejects on non-directories (live bb3 finding: the supervisor
+	// aborts `incompatible directory-only access-rights: ReadDir`). So NO device
+	// files (/dev/urandom) and NO usrmerge SYMLINK dirs (/lib,/lib64,/bin,/sbin →
+	// symlinks to /usr/*, already covered by /usr). Device access is granted via
+	// the pod's own /dev, not the Landlock filesystem ruleset.
 	return []string{
-		"/usr", "/lib", "/lib64", "/bin", "/sbin",
-		"/etc", "/app", "/var/log", "/proc", "/dev/urandom",
+		"/usr", "/etc", "/app", "/var/log", "/proc",
 	}
 }
 
 // catAReadWritePaths mirrors acc/workspace.py's /workspace-only containment —
 // but enforced at the Landlock KERNEL level rather than by userland path checks.
+// Real directories only (see catAReadOnlyPaths): /dev/null is a device file, not
+// a directory, so it is NOT listed here (Landlock dir-rights would reject it).
 func catAReadWritePaths() []string {
-	return []string{"/workspace", "/tmp", "/dev/null"}
+	return []string{"/workspace", "/tmp"}
 }
 
 // --- Cat-B egress (hot-reloadable) -------------------------------------------
