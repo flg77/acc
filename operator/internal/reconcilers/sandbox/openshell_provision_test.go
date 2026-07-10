@@ -158,10 +158,32 @@ func TestApplyOpenShellSandbox_Active(t *testing.T) {
 	if !hasMount(agent.VolumeMounts, sandboxCLIConfigVolume) {
 		t.Errorf("agent missing %q mount", sandboxCLIConfigVolume)
 	}
-	if len(agent.EnvFrom) != 1 || agent.EnvFrom[0].SecretRef == nil ||
-		agent.EnvFrom[0].SecretRef.Name != "openshell-oidc" {
-		t.Errorf("agent EnvFrom = %v, want the creds Secret", agent.EnvFrom)
+	// OIDC client secret is projected via explicit secretKeyRef (#174), NOT
+	// envFrom (which drops the Secret's hyphenated keys).
+	if len(agent.EnvFrom) != 0 {
+		t.Errorf("agent should use secretKeyRef, not EnvFrom: %v", agent.EnvFrom)
 	}
+	if !hasSecretKeyEnv(agent.Env, "OPENSHELL_OIDC_CLIENT_SECRET", "openshell-oidc", "client-secret") {
+		t.Errorf("agent missing OPENSHELL_OIDC_CLIENT_SECRET secretKeyRef -> openshell-oidc/client-secret: %v", agent.Env)
+	}
+	if v, _ := envValue(agent.Env, "SSL_CERT_FILE"); v != sandboxCABundle {
+		t.Errorf("agent SSL_CERT_FILE = %q, want %q", v, sandboxCABundle)
+	}
+	if v, _ := envValue(agent.Env, "OPENSHELL_LOCAL_TLS_DIR"); v != sandboxCredsDir {
+		t.Errorf("agent OPENSHELL_LOCAL_TLS_DIR = %q, want %q", v, sandboxCredsDir)
+	}
+}
+
+// hasSecretKeyEnv reports whether env has a var of the given name sourced from
+// the given Secret name + key via secretKeyRef.
+func hasSecretKeyEnv(env []corev1.EnvVar, name, secretName, key string) bool {
+	for _, e := range env {
+		if e.Name == name && e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil &&
+			e.ValueFrom.SecretKeyRef.Name == secretName && e.ValueFrom.SecretKeyRef.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 func TestApplyOpenShellSandbox_InertWhenGateOff(t *testing.T) {
@@ -204,11 +226,17 @@ func TestApplyOpenShellSandbox_NoCredsSecret(t *testing.T) {
 	ApplyOpenShellSandbox(pod, corpus, "n", "cm", testAgentImage)
 
 	agent := findContainer(pod.Spec.Containers, "agent")
-	if len(agent.EnvFrom) != 0 {
-		t.Errorf("no creds Secret configured but agent has EnvFrom: %v", agent.EnvFrom)
+	if _, ok := envValue(agent.Env, "OPENSHELL_OIDC_CLIENT_SECRET"); ok {
+		t.Errorf("no creds Secret configured but agent has OIDC env: %v", agent.Env)
 	}
 	init := findContainer(pod.Spec.InitContainers, sandboxCreateInit)
-	if len(init.EnvFrom) != 0 {
-		t.Errorf("no creds Secret configured but init has EnvFrom: %v", init.EnvFrom)
+	if _, ok := envValue(init.Env, "OPENSHELL_OIDC_ISSUER"); ok {
+		t.Errorf("no creds Secret configured but init has OIDC env: %v", init.Env)
+	}
+	// The creds-source Secret volume must NOT be added when unconfigured.
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == sandboxCredsSrcVolume {
+			t.Errorf("no creds Secret configured but creds-src volume present")
+		}
 	}
 }
