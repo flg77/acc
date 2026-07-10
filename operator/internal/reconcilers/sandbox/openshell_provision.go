@@ -213,8 +213,15 @@ func ApplyOpenShellSandbox(
 		`if [ -n "$OPENSHELL_OIDC_ISSUER" ]; then ` +
 		`OIDC_ARGS="--oidc-issuer $OPENSHELL_OIDC_ISSUER --oidc-client-id $OPENSHELL_OIDC_CLIENT_ID --oidc-audience $OPENSHELL_OIDC_AUDIENCE"; fi` + "\n" +
 		`openshell gateway add "$OPENSHELL_GATEWAY_URL" --name "$OPENSHELL_GATEWAY" $OIDC_ARGS` + "\n" +
+		// Idempotent sandbox provisioning (#177): REUSE an existing caged
+		// workspace across agent-pod restarts rather than delete-recreate (which
+		// would drop the running cage and race the supervisor). `sandbox create`
+		// errors "already exists" on restart, so guard on `sandbox get` and skip
+		// create when the workspace is already present.
+		`if openshell sandbox get "$ACC_SANDBOX_NAME" >/dev/null 2>&1; then ` +
+		`echo "sandbox $ACC_SANDBOX_NAME already exists — reusing"; else ` +
 		`openshell sandbox create --name "$ACC_SANDBOX_NAME" --from "$OPENSHELL_SANDBOX_IMAGE" --policy ` +
-		sandboxPolicyDir + "/" + sandboxPolicyFile + "\n"
+		sandboxPolicyDir + "/" + sandboxPolicyFile + "; fi\n"
 
 	initEnv := append([]corev1.EnvVar{
 		{Name: "OPENSHELL_GATEWAY_URL", Value: s.GatewayURL},

@@ -123,10 +123,18 @@ func TestApplyOpenShellSandbox_Active(t *testing.T) {
 	for _, want := range []string{
 		"gateway add", "sandbox create --name",
 		sandboxPolicyDir + "/" + sandboxPolicyFile,
+		// #177: idempotent — guard on `sandbox get` and reuse an existing cage
+		// across restarts rather than fail "already exists".
+		"sandbox get", "already exists — reusing",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("create script missing %q:\n%s", want, script)
 		}
+	}
+	// #177: `sandbox create` must be gated behind the existence check, not
+	// executed unconditionally (else a restart CrashLoops on "already exists").
+	if !strings.Contains(script, `if openshell sandbox get "$ACC_SANDBOX_NAME"`) {
+		t.Errorf("sandbox create not guarded by an existence check:\n%s", script)
 	}
 	if v, _ := envValue(init.Env, "OPENSHELL_GATEWAY_URL"); v != "https://openshell.openshell.svc:8080" {
 		t.Errorf("init OPENSHELL_GATEWAY_URL = %q", v)
