@@ -181,12 +181,17 @@ func endpointEnforcement(np *accv1alpha1.NetworkPolicySpec) string {
 // buildSandboxPolicy renders the corpus's Cat-A/B governance into an OpenShell
 // SandboxPolicy document.
 func buildSandboxPolicy(corpus *accv1alpha1.AgentCorpus) *sandboxPolicyDoc {
-	// Cat-A landlock posture follows fail-closed (D3): a mandatory Cat-A cage
-	// means kernel filesystem enforcement must not silently degrade, so require
-	// Landlock; otherwise best-effort (degrade cleanly where absent).
+	// Cat-A landlock posture. An explicit spec.sandbox.landlockCompatibility wins
+	// (#178 — the declarative RHCOS best_effort escape hatch, reconcile-stable so
+	// it survives the policy-CM upsert). When unset it follows fail-closed (D3): a
+	// mandatory Cat-A cage must not silently degrade, so require Landlock;
+	// otherwise best-effort (degrade cleanly where absent).
 	compat := landlockBestEffort
 	if sandboxFailClosed(corpus) {
 		compat = landlockHardRequirement
+	}
+	if s := corpus.Spec.Sandbox; s != nil && s.LandlockCompatibility != "" {
+		compat = s.LandlockCompatibility
 	}
 
 	// Cat-B: the egress allow-set from the SINGLE shared source, so the

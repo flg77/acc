@@ -74,6 +74,29 @@ func TestBuildSandboxPolicy_FailClosedControlsLandlock(t *testing.T) {
 	}
 }
 
+// #178: an explicit spec.sandbox.landlockCompatibility overrides the
+// failClosed-derived default (both directions), so the RHCOS best_effort escape
+// hatch is declarative + reconcile-stable; unset keeps the constitutional default.
+func TestBuildSandboxPolicy_LandlockCompatibilityOverride(t *testing.T) {
+	// failClosed defaults true (→ hard) but best_effort override wins.
+	be := buildSandboxPolicy(policyCorpus(
+		&accv1alpha1.SandboxSpec{Enabled: ptr.To(true), LandlockCompatibility: "best_effort"}, nil))
+	if be.Landlock.Compatibility != landlockBestEffort {
+		t.Errorf("landlockCompatibility=best_effort → %q, want %q", be.Landlock.Compatibility, landlockBestEffort)
+	}
+	// failClosed=false (→ best) but hard_requirement override wins.
+	hr := buildSandboxPolicy(policyCorpus(
+		&accv1alpha1.SandboxSpec{Enabled: ptr.To(true), FailClosed: ptr.To(false), LandlockCompatibility: "hard_requirement"}, nil))
+	if hr.Landlock.Compatibility != landlockHardRequirement {
+		t.Errorf("landlockCompatibility=hard_requirement → %q, want %q", hr.Landlock.Compatibility, landlockHardRequirement)
+	}
+	// Unset → constitutional default (hard, since failClosed defaults true).
+	def := buildSandboxPolicy(policyCorpus(&accv1alpha1.SandboxSpec{Enabled: ptr.To(true)}, nil))
+	if def.Landlock.Compatibility != landlockHardRequirement {
+		t.Errorf("unset landlockCompatibility → %q, want %q", def.Landlock.Compatibility, landlockHardRequirement)
+	}
+}
+
 // Cat-B: egress endpoints derive from the built-in default allow-set, enforced.
 func TestBuildSandboxPolicy_CatBEgressDefault(t *testing.T) {
 	doc := buildSandboxPolicy(policyCorpus(&accv1alpha1.SandboxSpec{Enabled: ptr.To(true)}, nil))

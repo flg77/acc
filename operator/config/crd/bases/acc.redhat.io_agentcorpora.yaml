@@ -1225,6 +1225,21 @@ spec:
                       policy at the kernel. Override for a slimmer or purpose-built sandbox
                       image; it must carry whatever the agent's exec'd code needs.
                     type: string
+                  landlockCompatibility:
+                    default: hard_requirement
+                    description: |-
+                      LandlockCompatibility selects the OpenShell Cat-A Landlock filesystem
+                      enforcement mode: "hard_requirement" (the constitutional default — the
+                      kernel FS cage MUST apply or the sandbox fails closed) or "best_effort"
+                      (apply Landlock where the kernel ABI supports it, skip incompatible rules
+                      instead of aborting). best_effort is the escape hatch for kernels whose
+                      Landlock ABI the OpenShell supervisor cannot fully satisfy (e.g. RHCOS with
+                      openshell 0.0.76 — #176/#178); the netns network egress cage is enforced
+                      regardless of this setting. Leave unset for the fail-closed default.
+                    enum:
+                    - hard_requirement
+                    - best_effort
+                    type: string
                   mode:
                     default: 2
                     description: |-

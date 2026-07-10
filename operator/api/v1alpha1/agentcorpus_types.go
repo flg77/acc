@@ -279,6 +279,19 @@ type SandboxSpec struct {
 	// CLI is expected to find its own credentials (e.g. a dev/local gateway).
 	// +optional
 	CredentialsSecret string `json:"credentialsSecret,omitempty"`
+
+	// LandlockCompatibility selects the OpenShell Cat-A Landlock filesystem
+	// enforcement mode: "hard_requirement" (the constitutional default — the
+	// kernel FS cage MUST apply or the sandbox fails closed) or "best_effort"
+	// (apply Landlock where the kernel ABI supports it, skip incompatible rules
+	// instead of aborting). best_effort is the escape hatch for kernels whose
+	// Landlock ABI the OpenShell supervisor cannot fully satisfy (e.g. RHCOS with
+	// openshell 0.0.76 — #176/#178); the netns network egress cage is enforced
+	// regardless of this setting. Leave unset for the fail-closed default.
+	// +kubebuilder:validation:Enum=hard_requirement;best_effort
+	// +kubebuilder:default=hard_requirement
+	// +optional
+	LandlockCompatibility string `json:"landlockCompatibility,omitempty"`
 }
 
 // TUISpec configures the acc-tui interaction surface (proposal 023 / ADR
