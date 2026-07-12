@@ -3,7 +3,13 @@
 # app as UID 1001. When the container is already non-root, skip chown.
 set -e
 # Non-interactive sh often has a tiny PATH; runuser(8) is in /usr/sbin, su(1) in /usr/bin.
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# PREPEND the s2i virtualenv (/opt/app-root/bin) so the bare `python` from the
+# image CMD resolves. On OpenShift the pod runs as an arbitrary non-root UID and
+# takes the `exec "$@"` else-branch below directly — if the venv is dropped from
+# PATH, `python` (which lives ONLY in /opt/app-root/bin, not /usr/bin) is not
+# found and the container CrashLoops with `exec: python: not found`. Keep the
+# system dirs too so runuser(8)/setpriv(1)/su(1) stay reachable in the root branch.
+export PATH="/opt/app-root/bin:/opt/app-root/src/bin:/opt/app-root/src/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 if [ "$(id -u)" = 0 ]; then
   DATA_ROOT="/app/data/lancedb"
