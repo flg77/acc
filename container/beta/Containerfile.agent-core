@@ -40,11 +40,18 @@ RUN pip install --no-cache-dir --upgrade pip \
         redis
 
 # ── Layer 2: Download embedding model at build time ───────────────────────
-# Bake all-MiniLM-L6-v2 into the image so no internet access is needed at runtime
+# Bake all-MiniLM-L6-v2 into the image so no internet access is needed at runtime.
+# Save it as a PLAIN SentenceTransformer directory (top-level config.json +
+# modules.json + weights + tokenizer), NOT a HF hub cache tree — the runtime loads
+# it via `SentenceTransformer('/app/models/all-MiniLM-L6-v2')` (a directory path).
+# A `cache_folder=` bake nests the files under `models--…/snapshots/<hash>/` with
+# no top-level config.json → "Unrecognized model … model_type" at load and RAG
+# breaks.  Download to scratch, save the plain dir, drop the scratch tree.
 ENV TRANSFORMERS_CACHE=/app/models
 RUN python -c "\
 from sentence_transformers import SentenceTransformer; \
-SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-v2')"
+SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/tmp/st-cache').save('/app/models/all-MiniLM-L6-v2')" \
+ && rm -rf /tmp/st-cache
 
 # Runtime: fix named-volume ownership for /app/data/lancedb (root-owned by default)
 COPY deploy/entrypoint-agent.sh /app/entrypoint.sh
