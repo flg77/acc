@@ -43,11 +43,20 @@ RUN pip install --no-cache-dir --upgrade pip \
         redis
 
 # ── Layer 2: Download embedding model at build time ───────────────────────
-# Bake all-MiniLM-L6-v2 into the image so no internet access is needed at runtime
+# Bake all-MiniLM-L6-v2 into the image so no internet access is needed at runtime.
+# Save it as a PLAIN SentenceTransformer directory (config.json + modules.json +
+# weights + tokenizer at the top level) — NOT a HuggingFace hub cache tree.  The
+# runtime loads it via `SentenceTransformer('/app/models/all-MiniLM-L6-v2')`
+# (a directory path); a `cache_folder=` bake instead produces a
+# `models--…/snapshots/<hash>/` layout with no top-level config.json, which fails
+# at load with "Unrecognized model … should have a model_type key in its
+# config.json" (RAG/episode-persist embedding breaks).  Download to a scratch
+# cache, save the plain dir, then drop the scratch tree.
 ENV TRANSFORMERS_CACHE=/app/models
 RUN python -c "\
 from sentence_transformers import SentenceTransformer; \
-SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-v2')"
+SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/tmp/st-cache').save('/app/models/all-MiniLM-L6-v2')" \
+ && rm -rf /tmp/st-cache
 
 # Runtime: fix named-volume ownership for /app/data/lancedb (root-owned by default)
 COPY deploy/entrypoint-agent.sh /app/entrypoint.sh

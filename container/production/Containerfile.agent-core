@@ -61,11 +61,19 @@ subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir'] + deps
 # ── Bake embedding model (offline startup) ────────────────────────────────
 ENV SENTENCE_TRANSFORMERS_HOME=/app/models \
     TRANSFORMERS_CACHE=/app/models
+# Save a PLAIN SentenceTransformer directory (top-level config.json + modules.json
+# + weights + tokenizer), NOT a HF hub cache tree.  The runtime loads it via
+# `SentenceTransformer('/app/models/all-MiniLM-L6-v2')` (a directory path); a
+# `cache_folder=` bake instead nests the real files under
+# `models--…/snapshots/<hash>/` with no top-level config.json → load fails with
+# "Unrecognized model … should have a model_type key in its config.json" and
+# RAG/episode-persist embedding breaks.  Download to scratch, save, drop scratch.
 RUN for attempt in 1 2 3; do \
         python3 -c "\
 from sentence_transformers import SentenceTransformer; \
-SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models/all-MiniLM-L6-v2')" \
-        && echo "Model download succeeded on attempt ${attempt}" && break; \
+SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/tmp/st-cache').save('/app/models/all-MiniLM-L6-v2')" \
+        && rm -rf /tmp/st-cache \
+        && echo "Model saved on attempt ${attempt}" && break; \
         echo "Attempt ${attempt} failed — waiting before retry..."; \
         sleep 10; \
     done
