@@ -1191,7 +1191,20 @@ class ACCConfig(BaseModel):
                     "vector_db.milvus_uri is required when vector_db.backend is "
                     "'milvus' in rhoai deploy_mode"
                 )
-            if not self.llm.vllm_inference_url and not self.llm.llama_stack_url:
+            # Hosted-API backends (e.g. ``anthropic``) reach a managed cloud
+            # endpoint (api.anthropic.com) and need only an API key — supplied
+            # via the ACC_ANTHROPIC_API_KEY env/secret and validated by the
+            # backend at call time — so they require NO in-cluster inference
+            # URL.  Only URL-based backends must point at a reachable inference
+            # service in rhoai deploy_mode.  (Without this exemption an operator
+            # that renders ``llm.backend: anthropic`` — the supported cloud
+            # backend on OpenShift — fails config validation at agent startup.)
+            _URLLESS_LLM_BACKENDS = ("anthropic",)
+            if (
+                self.llm.backend not in _URLLESS_LLM_BACKENDS
+                and not self.llm.vllm_inference_url
+                and not self.llm.llama_stack_url
+            ):
                 raise ValueError(
                     "llm.vllm_inference_url or llm.llama_stack_url is required in rhoai deploy_mode"
                 )
