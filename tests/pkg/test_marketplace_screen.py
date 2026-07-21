@@ -61,3 +61,26 @@ def test_marketplace_screen_class_attrs():
     assert hasattr(MarketplaceScreen, "on_mount")
     assert hasattr(MarketplaceScreen, "refresh_rows")
     assert hasattr(MarketplaceScreen, "action_install_highlighted")
+
+
+def test_knowledge_pack_surfaces_bundle_count():
+    """OKF P5 — an OKF knowledge pack shows its bundle count; a capability pack
+    (roles/skills/mcps, no bundles) shows an em-dash in the Bundles column."""
+    from acc.pkg.builtin_catalog import BuiltinCatalog, BuiltinPackage
+
+    cat = BuiltinCatalog(
+        name="ACC Built-in Roles", tier="trusted", signer="oidc:gh~flg77/",
+        packages=[
+            BuiltinPackage(name="@acc/okf-acc-basics", version="0.1.0",
+                           description="sample OKF knowledge bundle",
+                           n_bundles=1, bundles=["acc-basics"]),
+            BuiltinPackage(name="@acc/business-roles", version="1.0.0", n_roles=25),
+        ],
+    )
+    scr = MarketplaceScreen()
+    with patch("acc.tui.screens.marketplace.load_builtin_catalog", return_value=cat), \
+         patch("acc.tui.screens.marketplace.render_rows", return_value=[]):
+        rows = {r.name: r for r in scr._collect_rows()}
+
+    assert rows["@acc/okf-acc-basics"].n_bundles == "1"     # knowledge pack
+    assert rows["@acc/business-roles"].n_bundles == "—"     # capability pack, none

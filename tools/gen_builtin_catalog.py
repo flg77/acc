@@ -67,6 +67,7 @@ def _package_entry(manifest: dict) -> dict:
     roles = [r["name"] for r in manifest.get("roles", []) if r.get("name")]
     skills = [s["name"] for s in manifest.get("skills", []) if s.get("name")]
     mcps = [m["name"] for m in manifest.get("mcps", []) if m.get("name")]
+    bundles = [b["name"] for b in manifest.get("bundles", []) if b.get("name")]
     return {
         "name": manifest["name"],
         "version": str(manifest["version"]),
@@ -74,9 +75,11 @@ def _package_entry(manifest: dict) -> dict:
         "n_roles": len(roles),
         "n_skills": len(skills),
         "n_mcps": len(mcps),
+        "n_bundles": len(bundles),       # OKF knowledge bundles (P5)
         "roles": roles,
         "skills": skills,
         "mcps": mcps,
+        "bundles": bundles,
     }
 
 

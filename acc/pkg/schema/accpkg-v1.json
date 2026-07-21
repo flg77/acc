@@ -1,5 +1,27 @@
 {
   "$defs": {
+    "BundleRef": {
+      "additionalProperties": false,
+      "description": "An OKF knowledge bundle shipped inside the package tree (OKF P5).\n\nA *knowledge* pack carries curated content, not capabilities: one or more\nOKF v0.1 bundles under ``bundles/<name>/``.  On install the tree is\nextracted like any other; a collective indexes the bundles into its\ndocument store (``acc.pkg.knowledge.index_installed_bundles``) so agents\nretrieve them.  Nothing here ships with core, so no tier/baseline check\napplies.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path inside the package, e.g. bundles/<name>/",
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "path"
+      ],
+      "title": "BundleRef",
+      "type": "object"
+    },
     "Dependency": {
       "additionalProperties": false,
       "description": "A semver-pinned reference to another `.accpkg`.\n\nCycle detection + version-range resolution happens in\n``acc/pkg/install.py`` against the catalog index; this model only\nvalidates the *shape* of the constraint string.",
@@ -137,6 +159,13 @@
   "additionalProperties": false,
   "description": "The top-level ``accpkg.yaml`` model \u2014 v1.\n\nA package MAY ship zero of any one component type (a memory-seed-\nonly pack has no roles + no skills + no mcps), but the manifest\nmust declare ``name`` + ``version`` + ``schema_version`` always.",
   "properties": {
+    "bundles": {
+      "items": {
+        "$ref": "#/$defs/BundleRef"
+      },
+      "title": "Bundles",
+      "type": "array"
+    },
     "content_sha256": {
       "default": "",
       "description": "sha256 over the deterministic tarball content; populated by `acc-pkg build`, empty in a source manifest.",
