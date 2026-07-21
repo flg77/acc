@@ -1,51 +1,85 @@
-# ACC Redis — Production UBI9 (minimal) + EPEL
+# ACC Redis — support-tier-aware build (Production)
 #
-# Fixes / improvements vs beta/Containerfile.redis:
-#   - Uses epel-release-latest-9 via URL; no SHA256 pin (EPEL RPM is frequently
-#     updated by Fedora; pinning causes stale-hash build failures)
-#   - Version label uses semantic version (7.x) not just "7"
-#   - All build tools removed after install (already done in beta; retained)
+# ACC ships Redis to two audiences from ONE build, selected by ACC_SUPPORT_TIER.
+# The tiers use DIFFERENT base images (because Redis has no subscription-free RPM
+# on RHEL — see below) but produce the SAME ACC contract: redis-server on :6379,
+# /etc/redis.conf, non-root UID 1001 (OCP restricted SCC), a REDIS_PASSWORD-aware
+# entrypoint + healthcheck.
 #
-# Note: registry.access.redhat.com/ubi8/redis-6 and ubi9/redis-7 require an
-# active Red Hat subscription to pull. This Containerfile builds Redis 7 on
-# the subscription-free UBI9 minimal base using EPEL, which is explicitly
-# supported on UBI without a subscription.
+#   upstream (DEFAULT) — community / no Red Hat subscription. Redis comes from the
+#       official community image (docker.io/library/redis), which ships
+#       redis-server + redis-cli and all their runtime libs. This is the ONLY
+#       tier that builds on a host with NO RHEL entitlement (CI, upstream
+#       contributors, the upstream test host).
+#       WHY not an RPM: on RHEL 9, `redis` lives in the *entitled* AppStream and
+#       is NOT carried by EPEL nor by the subscription-free UBI mirror — an
+#       unentitled `microdnf install redis` fails with "No package matches
+#       'redis'". So the upstream tier cannot be RPM-based.
 #
-# Compatible with OpenShift restricted SCC (non-root UID 1001)
+#   rhel — RHEL / RHOAI fully supported. Redis is the *entitled* RHEL AppStream
+#       RPM installed onto UBI9 minimal (the Red Hat-supported package). The
+#       build MUST carry a valid RHEL entitlement — a subscribed build host, or
+#       mounted certs:
+#         ACC_SUPPORT_TIER=rhel ./acc-deploy.sh build          # derives the base
+#         # or directly:
+#         buildah bud --build-arg ACC_SUPPORT_TIER=rhel \
+#           --build-arg REDIS_BASE=registry.access.redhat.com/ubi9/ubi-minimal:latest \
+#           --volume /etc/pki/entitlement:/etc/pki/entitlement:O \
+#           --volume /etc/rhsm:/etc/rhsm:O \
+#           -f container/production/Containerfile.redis -t localhost/acc-redis:7.2 .
+#       Without entitlement, microdnf fails with "No package matches 'redis'" —
+#       the intended signal to build the `upstream` tier on this host instead.
 #
-# Build:
-#   podman build -f container/production/Containerfile.redis \
-#     -t localhost/acc-redis:7.2 .
+# acc-deploy.sh derives REDIS_BASE from ACC_SUPPORT_TIER (set the tier there);
+# the compose files pass both build args. Build directly with the wrapper:
+#   ./acc-deploy.sh build                 # upstream (default)
+#   ACC_SUPPORT_TIER=rhel ./acc-deploy.sh build   # supported (needs entitlement)
 
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+# ── Base is derived from the tier (acc-deploy.sh / compose set REDIS_BASE) ─────
+#   upstream → docker.io/library/redis:<ver>            (community image w/ redis)
+#   rhel     → registry.access.redhat.com/ubi9/ubi-minimal:latest (install RPM)
+ARG REDIS_BASE=docker.io/library/redis:7.2
+FROM ${REDIS_BASE}
 
+# ARGs are reset by FROM — re-declare the ones used below.
+ARG ACC_SUPPORT_TIER=upstream
 ARG REDIS_VERSION=7.2
-ARG EPEL_RPM_URL=https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
 
 LABEL org.opencontainers.image.title="acc-redis" \
-      org.opencontainers.image.description="Redis ${REDIS_VERSION} on UBI9 for ACC (subscription-free)" \
+      org.opencontainers.image.description="Redis ${REDIS_VERSION} for ACC (support tier: ${ACC_SUPPORT_TIER})" \
       org.opencontainers.image.version="${REDIS_VERSION}" \
-      org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.base.name="registry.access.redhat.com/ubi9/ubi-minimal"
+      org.opencontainers.image.licenses="BSD-3-Clause" \
+      com.redhat.acc.support-tier="${ACC_SUPPORT_TIER}"
 
-# Explicit root for all install operations
+# Explicit root for install + filesystem prep.
 USER 0
 
-# Install EPEL, then Redis, then verify the binary exists
-RUN curl -fL -o /tmp/epel-release.rpm "${EPEL_RPM_URL}" \
-    && rpm -ivh /tmp/epel-release.rpm \
-    && microdnf install -y --nodocs redis \
-    && microdnf clean all \
-    && rm -rf /var/cache/dnf /tmp/epel-release.rpm \
-    && redis-server --version
+# rhel tier: install the entitled RHEL AppStream redis RPM (no EPEL).
+# upstream tier: the community base already ships redis-server/redis-cli (no-op).
+# Either way, assert the binary is present before continuing.
+RUN set -eux; \
+    case "${ACC_SUPPORT_TIER}" in \
+      rhel) \
+        microdnf install -y --nodocs redis; \
+        microdnf clean all; \
+        rm -rf /var/cache/dnf ;; \
+      upstream) \
+        : ;; \
+      *) \
+        echo "ERROR: ACC_SUPPORT_TIER must be 'upstream' or 'rhel', got '${ACC_SUPPORT_TIER}'" >&2; \
+        exit 2 ;; \
+    esac; \
+    command -v redis-server; \
+    command -v redis-cli; \
+    redis-server --version
 
-# Data directory with correct ownership for non-root UID 1001
+# Data directory with correct ownership for the arbitrary non-root OCP UID (1001).
 RUN mkdir -p /var/lib/redis/data \
     && chown -R 1001:0 /var/lib/redis \
     && chmod -R g=u /var/lib/redis
 
-# Minimal redis.conf
-# requirepass is injected at runtime via entrypoint when REDIS_PASSWORD is set
+# Minimal redis.conf (same for both tiers).
+# requirepass is injected at runtime via the entrypoint when REDIS_PASSWORD is set.
 RUN printf '\
 bind 0.0.0.0\n\
 protected-mode no\n\
@@ -57,12 +91,12 @@ loglevel notice\n\
 logfile ""\n\
 ' > /etc/redis.conf
 
-# Entrypoint: appends --requirepass only when REDIS_PASSWORD is non-empty
+# Entrypoint: appends --requirepass only when REDIS_PASSWORD is non-empty.
 RUN printf '#!/bin/sh\nexec redis-server /etc/redis.conf ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}\n' \
     > /usr/local/bin/redis-entrypoint.sh \
     && chmod +x /usr/local/bin/redis-entrypoint.sh
 
-# Healthcheck: authenticates with password when set
+# Healthcheck: authenticates with the password when set.
 RUN printf '#!/bin/sh\nexec redis-cli -h 127.0.0.1 ${REDIS_PASSWORD:+-a "$REDIS_PASSWORD"} ping\n' \
     > /usr/local/bin/redis-healthcheck.sh \
     && chmod +x /usr/local/bin/redis-healthcheck.sh

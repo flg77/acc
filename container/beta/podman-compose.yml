@@ -52,6 +52,12 @@ services:
     build:
       context: ..
       dockerfile: deploy/Containerfile.redis
+      args:
+        # Support tier + its derived base image (acc-deploy.sh sets both):
+        #   upstream (default) = community image docker.io/library/redis (no subscription)
+        #   rhel               = entitled RHEL AppStream redis on UBI9 (supported)
+        ACC_SUPPORT_TIER: ${ACC_SUPPORT_TIER:-upstream}
+        REDIS_BASE: ${REDIS_BASE:-docker.io/library/redis:7.2}
     image: localhost/acc-redis:7
     container_name: acc-redis
     env_file:

@@ -72,6 +72,18 @@
 #             arguments to acc-cli.  See docs/acc-cli.md for the full surface.
 #
 # Options (set as env vars or flags):
+#   ACC_SUPPORT_TIER=upstream|rhel
+#                            Where subscription-gated packages (Redis) come from
+#                            at BUILD time (default: upstream).
+#                              upstream — community redis image (docker.io/library/
+#                                         redis); no Red Hat subscription. The only
+#                                         tier that builds with no RHEL entitlement
+#                                         (CI / upstream contributors / this host).
+#                              rhel     — entitled RHEL AppStream redis on UBI9
+#                                         (RHEL/RHOAI fully supported); needs a
+#                                         subscribed build host or mounted
+#                                         /etc/pki/entitlement.
+#                            See container/production/Containerfile.redis.
 #   STACK=beta|production    Which compose file to use (default: production)
 #   TUI=true|false           Include TUI container (production only; default: true)
 #   CODING_SPLIT=true|false  Include the 3 peer coding_agent demo services
@@ -140,6 +152,27 @@ export ACC_VERSION
 # ── Parse options ──────────────────────────────────────────────────────────────
 COMMAND="${1:-up}"
 shift 2>/dev/null || true   # remaining args passed directly to podman-compose
+
+# ── Support tier — Redis (and any subscription-gated pkg) build source ─────────
+# `redis` has no subscription-free RPM on RHEL 9 (entitled AppStream only — not
+# in EPEL nor the UBI mirror), so the two tiers use DIFFERENT base images:
+#   upstream (default) — community / no Red Hat subscription: Redis from the
+#       official community image (docker.io/library/redis). The ONLY tier that
+#       builds on a host with no RHEL entitlement (CI, upstream contributors,
+#       this upstream test host).
+#   rhel — RHEL / RHOAI fully supported: the *entitled* RHEL AppStream redis RPM
+#       on UBI9 minimal. Requires a subscribed build host (or mounted
+#       /etc/pki/entitlement); see container/production/Containerfile.redis.
+# REDIS_BASE is derived from the tier and exported alongside it so the compose
+# files interpolate both into the acc-redis build args.
+ACC_SUPPORT_TIER="${ACC_SUPPORT_TIER:-upstream}"
+case "$ACC_SUPPORT_TIER" in
+    upstream) : "${REDIS_BASE:=docker.io/library/redis:7.2}" ;;
+    rhel)     : "${REDIS_BASE:=registry.access.redhat.com/ubi9/ubi-minimal:latest}" ;;
+    *) echo "ERROR: ACC_SUPPORT_TIER must be 'upstream' or 'rhel', got '$ACC_SUPPORT_TIER'" >&2
+       exit 2 ;;
+esac
+export ACC_SUPPORT_TIER REDIS_BASE
 
 STACK="${STACK:-production}"
 TUI="${TUI:-true}"
@@ -419,6 +452,8 @@ echo "╔═══════════════════════�
 echo "║  ACC Deploy — $STACK_LABEL"
 echo "╚═══════════════════════════════════════════════════╝"
 echo "  Compose file : $COMPOSE_FILE"
+echo "  Support tier : $ACC_SUPPORT_TIER$([[ "$ACC_SUPPORT_TIER" == "upstream" ]] && echo "  (Redis: community image, subscription-free)" || echo "  (Redis: entitled RHEL AppStream — needs subscription)")"
+echo "  Redis base   : $REDIS_BASE"
 [[ "$TUI" == "true" && "$STACK" == "production" ]] && echo "  TUI profile  : enabled"
 [[ "$CODING_SPLIT" == "true" && "$STACK" == "production" ]] && echo "  CODING_SPLIT : enabled (3 peer coding_agent services)"
 [[ "$MCP_ECHO" == "true" && "$STACK" == "production" ]] && echo "  MCP_ECHO     : enabled (diagnostic JSON-RPC echo server)"
