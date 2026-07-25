@@ -212,10 +212,23 @@ def test_handle_assistant_proposals_queues_with_cache_and_announce():
     )
     # Submitted to the oversight queue.
     rt._oversight_queue.submit.assert_awaited_once()
-    # Cached under acc:{cid}:assistant_proposal:{oversight_id}.
-    rt.backends.working_memory.setex.assert_awaited_once()
-    key = rt.backends.working_memory.setex.await_args.args[0]
-    assert key.startswith("acc:sol-01:assistant_proposal:")
+    # Cached under acc:{cid}:assistant_proposal:{oversight_id} PLUS a companion
+    # meta marker; both share a TTL decoupled from (never shorter than) the
+    # 300s oversight timeout so a valid approval near the window still dispatches.
+    assert rt.backends.working_memory.setex.await_count == 2
+    setex_keys = [
+        c.args[0] for c in rt.backends.working_memory.setex.await_args_list
+    ]
+    assert any(
+        k.startswith("acc:sol-01:assistant_proposal:") for k in setex_keys
+    )
+    assert any(
+        k.startswith("acc:sol-01:assistant_proposal_meta:") for k in setex_keys
+    )
+    assert all(
+        c.args[1] >= 300
+        for c in rt.backends.working_memory.setex.await_args_list
+    )
     # Announced on subject_assistant_proposal.
     subjects = [
         c.args[0] for c in rt.backends.signaling.publish.await_args_list
@@ -287,10 +300,49 @@ def test_maybe_dispatch_loads_cached_proposal_and_publishes():
     )
     # Published the underlying mutation on the bus.
     assert rt.backends.signaling.publish.await_count == 1
-    # Cache entry deleted to prevent double-dispatch.
-    rt.backends.working_memory.delete.assert_awaited_once()
-    deleted_key = rt.backends.working_memory.delete.await_args.args[0]
-    assert deleted_key == "acc:sol-01:assistant_proposal:ov-123"
+    # Payload + meta both deleted to prevent double-dispatch.
+    assert rt.backends.working_memory.delete.await_count == 2
+    deleted = [
+        c.args[0] for c in rt.backends.working_memory.delete.await_args_list
+    ]
+    assert "acc:sol-01:assistant_proposal:ov-123" in deleted
+    assert "acc:sol-01:assistant_proposal_meta:ov-123" in deleted
+
+
+def test_maybe_dispatch_missing_payload_but_meta_present_notifies():
+    """Stale-approval guard: an APPROVED oversight item that WAS a proposal but
+    whose payload expired must NOT die silently — it publishes a dispatch-failed
+    notice and clears the meta marker so the operator learns the click had no
+    effect (regression for the silent-stale-infuse bug)."""
+    from acc.agent import Agent  # noqa: PLC0415
+
+    rt = _FakeRuntime()
+    # Use the REAL notice method (it publishes on the bus) so we exercise the
+    # actual operator-feedback path, not a mock.
+    rt._notify_proposal_dispatch_failed = (
+        Agent._notify_proposal_dispatch_failed.__get__(rt)
+    )
+
+    def _get(k):
+        if k.endswith(":assistant_proposal_meta:ov-stale"):
+            return json.dumps(
+                {"kind": "infuse", "proposal_id": "p1", "summary": "s"}
+            ).encode("utf-8")
+        return None  # payload gone / expired
+
+    rt.backends.working_memory.get = AsyncMock(side_effect=_get)
+    asyncio.run(
+        Agent._maybe_dispatch_assistant_proposal(rt, "sol-01", "ov-stale")
+    )
+    # Exactly one publish — the dispatch-failed notice, not a mutation.
+    assert rt.backends.signaling.publish.await_count == 1
+    _subject, payload = rt.backends.signaling.publish.await_args.args
+    assert payload["trigger"] == "proposal_dispatch_failed"
+    assert payload["kind"] == "infuse"
+    # Only the meta marker is cleared (payload was already gone).
+    rt.backends.working_memory.delete.assert_awaited_once_with(
+        "acc:sol-01:assistant_proposal_meta:ov-stale",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -376,9 +428,13 @@ def test_discard_cache_deletes_key():
             rt, "sol-01", "ov-999",
         )
     )
-    rt.backends.working_memory.delete.assert_awaited_once_with(
-        "acc:sol-01:assistant_proposal:ov-999",
-    )
+    # Both the payload and the companion meta marker are cleared on REJECT.
+    assert rt.backends.working_memory.delete.await_count == 2
+    deleted = [
+        c.args[0] for c in rt.backends.working_memory.delete.await_args_list
+    ]
+    assert "acc:sol-01:assistant_proposal:ov-999" in deleted
+    assert "acc:sol-01:assistant_proposal_meta:ov-999" in deleted
 
 
 def test_discard_cache_safe_when_no_redis():

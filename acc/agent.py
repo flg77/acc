@@ -258,6 +258,18 @@ STATE_DORMANT = "DORMANT"
 # a runtime ROLE_ASSIGN (D-001).
 _NO_COGNITIVE_ROLES = {"observer", "dormant", ""}
 
+# Assistant-proposal payload cache (see ``_handle_assistant_proposals`` →
+# ``_maybe_dispatch_assistant_proposal``).  The proposal payload the arbiter
+# needs on approval is cached in Redis under
+# ``acc:{cid}:assistant_proposal:{oversight_id}``.  Give it a lifetime
+# DECOUPLED from — and never shorter than — the (short, default 300 s)
+# oversight timeout so a valid approval near or just past the oversight window
+# still dispatches instead of racing an expired cache (the silent-stale-infuse
+# bug).  A companion ``…assistant_proposal_meta:{oversight_id}`` marker shares
+# this TTL so a payload-miss on approval can be told apart from a non-proposal
+# oversight item and surfaced loudly instead of dying silently.
+_ASSISTANT_PROPOSAL_CACHE_TTL_S: int = 3600
+
 
 # ---------------------------------------------------------------------------
 # ACC-11: Membrane receptor model
@@ -915,10 +927,38 @@ class Agent:
                                 f"acc:{collective_id}:"
                                 f"assistant_proposal:{oversight_id}"
                             )
-                            ttl = getattr(queue, "_timeout_s", 300) or 300
+                            meta_key = (
+                                f"acc:{collective_id}:"
+                                f"assistant_proposal_meta:{oversight_id}"
+                            )
+                            # Decouple the payload lifetime from the short
+                            # oversight timeout (never shorter) so a valid
+                            # approval near / just past the window still
+                            # dispatches; the meta marker lets a later
+                            # payload-miss be told apart from a non-proposal
+                            # oversight item (see _maybe_dispatch_...).
+                            ov_ttl = getattr(queue, "_timeout_s", 300) or 300
+                            ttl = max(
+                                int(ov_ttl), _ASSISTANT_PROPOSAL_CACHE_TTL_S,
+                            )
                             await redis.setex(
-                                key, int(ttl),
+                                key, ttl,
                                 json.dumps(p.to_payload(), default=str),
+                            )
+                            await redis.setex(
+                                meta_key, ttl,
+                                json.dumps(
+                                    {
+                                        "kind": p.kind,
+                                        "proposal_id": p.proposal_id,
+                                        "summary": p.summary,
+                                    },
+                                    default=str,
+                                ),
+                            )
+                            logger.debug(
+                                "assistant_proposal: cached payload "
+                                "key=%s ttl=%ss", key, ttl,
                             )
                         except Exception:
                             logger.exception(
@@ -960,6 +1000,9 @@ class Agent:
         if redis is None or not oversight_id:
             return
         key = f"acc:{collective_id}:assistant_proposal:{oversight_id}"
+        meta_key = (
+            f"acc:{collective_id}:assistant_proposal_meta:{oversight_id}"
+        )
         try:
             raw = await redis.get(key)
         except Exception:
@@ -969,7 +1012,45 @@ class Agent:
             )
             return
         if not raw:
-            return  # not a proposal-backed oversight item
+            # Payload absent.  Tell a never-a-proposal oversight item (the
+            # common case → silent no-op) apart from a proposal whose payload
+            # is gone (expired / lost before approval).  The latter is a
+            # stale-approval that would otherwise die SILENTLY — surface it so
+            # the operator learns the click did nothing and can re-request.
+            meta_raw = None
+            try:
+                meta_raw = await redis.get(meta_key)
+            except Exception:
+                logger.debug(
+                    "assistant_proposal: meta lookup failed for %s",
+                    oversight_id, exc_info=True,
+                )
+            if meta_raw:
+                kind = "?"
+                try:
+                    if isinstance(meta_raw, (bytes, bytearray)):
+                        meta_raw = meta_raw.decode("utf-8", errors="replace")
+                    kind = (json.loads(meta_raw) or {}).get("kind", "?")
+                except Exception:
+                    pass
+                logger.warning(
+                    "assistant_proposal: approved oversight_id=%s was a %r "
+                    "proposal but its payload is missing/expired — NOT "
+                    "dispatched; the operator must re-request it",
+                    oversight_id, kind,
+                )
+                await self._notify_proposal_dispatch_failed(
+                    collective_id, oversight_id, kind,
+                    reason="proposal payload missing or expired before approval",
+                )
+                try:
+                    await redis.delete(meta_key)
+                except Exception:
+                    logger.debug(
+                        "assistant_proposal: meta delete failed for %s",
+                        oversight_id, exc_info=True,
+                    )
+            return  # not a proposal-backed oversight item (or payload gone)
         try:
             if isinstance(raw, (bytes, bytearray)):
                 raw = raw.decode("utf-8", errors="replace")
@@ -1000,13 +1081,48 @@ class Agent:
                 oversight_id,
             )
             return
-        # Drop the cache so a replayed decision can't re-dispatch.
+        # Drop the payload + meta so a replayed decision can't re-dispatch.
+        for k in (key, meta_key):
+            try:
+                await redis.delete(k)
+            except Exception:
+                logger.debug(
+                    "assistant_proposal: cache delete failed for %s (%s)",
+                    oversight_id, k, exc_info=True,
+                )
+
+    async def _notify_proposal_dispatch_failed(
+        self,
+        collective_id: str,
+        oversight_id: str,
+        kind: str,
+        *,
+        reason: str,
+    ) -> None:
+        """Best-effort operator notice that an APPROVED Assistant proposal
+        could not be dispatched (payload missing/expired).
+
+        Published on the assistant-proposal subject so the Compliance / Prompt
+        surfaces can show that the approval had no effect.  Never raises — a
+        bus failure is logged at DEBUG (the WARNING at the call site is the
+        durable signal).
+        """
         try:
-            await redis.delete(key)
+            from acc.signals import subject_assistant_proposal  # noqa: PLC0415
+            await self.backends.signaling.publish(
+                subject_assistant_proposal(collective_id),
+                {
+                    "trigger": "proposal_dispatch_failed",
+                    "oversight_id": oversight_id,
+                    "kind": kind,
+                    "reason": reason,
+                    "ts": time.time(),
+                },
+            )
         except Exception:
             logger.debug(
-                "assistant_proposal: cache delete failed for %s",
-                oversight_id, exc_info=True,
+                "assistant_proposal: dispatch-failed notice publish failed "
+                "for %s", oversight_id, exc_info=True,
             )
 
     async def _discard_assistant_proposal_cache(
@@ -1022,14 +1138,17 @@ class Agent:
         redis = getattr(self.backends, "working_memory", None)
         if redis is None or not oversight_id:
             return
-        key = f"acc:{collective_id}:assistant_proposal:{oversight_id}"
-        try:
-            await redis.delete(key)
-        except Exception:
-            logger.debug(
-                "assistant_proposal: cache delete failed for %s",
-                oversight_id, exc_info=True,
-            )
+        for key in (
+            f"acc:{collective_id}:assistant_proposal:{oversight_id}",
+            f"acc:{collective_id}:assistant_proposal_meta:{oversight_id}",
+        ):
+            try:
+                await redis.delete(key)
+            except Exception:
+                logger.debug(
+                    "assistant_proposal: cache delete failed for %s",
+                    oversight_id, exc_info=True,
+                )
 
     async def _restore_dormancy_state(self) -> None:
         """Read the Assistant's persisted dormancy flag from Redis and
