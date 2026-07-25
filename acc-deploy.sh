@@ -278,6 +278,54 @@ if [[ "$STACK" == "production" && -n "$USERNS_VAL" && -f "$USERNS_OVERLAY" ]]; t
     BASE_CMD+=(-f "$USERNS_OVERLAY")
 fi
 
+# ── Operator-local compose overrides (gitignored) ──────────────────────────────
+# Instance-specific mounts / env that must NOT live in the tracked compose —
+# e.g. a local package catalog for infuse.  Auto-included LAST (so it wins) when
+# present, so a plain `up` carries it and it survives git checkouts / rebuilds.
+LOCAL_OVERLAY="$REPO_ROOT/container/production/podman-compose.local.yml"
+if [[ "$STACK" == "production" && -f "$LOCAL_OVERLAY" ]]; then
+    BASE_CMD+=(-f "$LOCAL_OVERLAY")
+fi
+
+# ── Operator-chosen agent workspace (freely-choosable host dir) ─────────────────
+# The agents mount ${ACC_WORKSPACE_HOST_DIR} at /workspace (compose default:
+# ../../workspaces).  This script does not source .env into its own env, so read
+# the persisted choice explicitly and export it for the compose interpolation —
+# so a plain `up` honours whatever `apply-workspace` last chose.
+if [[ -z "${ACC_WORKSPACE_HOST_DIR:-}" && -f "$REPO_ROOT/.env" ]]; then
+    ACC_WORKSPACE_HOST_DIR="$(grep -E '^ACC_WORKSPACE_HOST_DIR=' "$REPO_ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+fi
+[[ -n "${ACC_WORKSPACE_HOST_DIR:-}" ]] && export ACC_WORKSPACE_HOST_DIR
+
+# Guarantee a chosen workspace host dir is USABLE by the agents — it must exist,
+# be writable by the container's rootless-mapped (non-root) UID, and carry the
+# trust sentinel — else fs_write goes stale ("workspace is not trusted" / EACCES,
+# the exact symptom when an operator picks a fresh or root-owned dir).  Idempotent.
+_ensure_workspace_writable_trusted() {
+    local dir="$1"
+    [[ -z "$dir" ]] && return 0
+    mkdir -p "$dir" || { echo "ERROR: cannot create workspace dir (own it?): $dir" >&2; return 1; }
+    # World-writable ROOT so the mapped container UID can write; the operator
+    # stays owner and can still read the agents' world-readable output on the
+    # host.  Rootless podman maps the agent UID (1001) to a high sub-UID that an
+    # operator-owned 0755 dir would deny.
+    chmod 0777 "$dir" 2>/dev/null || { echo "ERROR: cannot chmod workspace dir (own it?): $dir" >&2; return 1; }
+    printf 'trusted_at=%s\nnote=%s\n' "$(date +%s)" "acc-deploy workspace setup" \
+        > "$dir/.acc-workspace-trust" 2>/dev/null || true
+    if [[ ! -f "$dir/.acc-workspace-trust" ]]; then
+        echo "ERROR: cannot write the trust sentinel to $dir." >&2
+        echo "       Pick a directory you own + can write to (e.g. under \$HOME)," >&2
+        echo "       not a root-owned/system path like /home or /." >&2
+        return 1
+    fi
+    return 0
+}
+
+if [[ -n "${ACC_WORKSPACE_HOST_DIR:-}" && "$COMMAND" =~ ^(up|start|rebuild)$ ]]; then
+    _ensure_workspace_writable_trusted "$ACC_WORKSPACE_HOST_DIR" \
+        || echo "WARN: workspace $ACC_WORKSPACE_HOST_DIR not usable — agents may fail to write." >&2
+fi
+
 # TUI profile only available in production
 if [[ "$TUI" == "true" ]]; then
     if [[ "$STACK" != "production" ]]; then
@@ -841,17 +889,12 @@ case "$COMMAND" in
                 ;;
         esac
         echo "▶ Workspace → $PATH_REAL"
-        mkdir -p "$PATH_REAL" || { echo "ERROR: mkdir failed" >&2; exit 1; }
-        # Establish trust HOST-side (correct uid) so the container never
-        # needs write access to the operator's home just to browse.  The
-        # sentinel sits at the mount root; once the agents mount this dir
-        # as /workspace, acc.workspace.is_trusted() sees it and fs_write
-        # is permitted.
-        if [[ ! -f "$PATH_REAL/.acc-workspace-trust" ]]; then
-            printf 'trusted_at=%s\nnote=%s\n' "$(date +%s)" \
-                "selected via TUI (apply-workspace)" \
-                > "$PATH_REAL/.acc-workspace-trust"
-        fi
+        # Exist + writable-by-the-container-UID + trusted, or fail loud.  This
+        # is the fix for the "workspace is not trusted" / permission-denied
+        # stale writes: previously the trust sentinel could silently fail to
+        # write (root-owned target) and the mount was never made writable by
+        # the agents' mapped UID.
+        _ensure_workspace_writable_trusted "$PATH_REAL" || exit 1
         # Persist for subsequent `up` so the mount survives a manual
         # restart.  Upsert into ./.env (touch first if absent).
         ENV_FILE="$REPO_ROOT/.env"
@@ -866,10 +909,18 @@ case "$COMMAND" in
         # though the rest of the service definition is unchanged.  Profile
         # agents (coding-split / worker pool) re-apply the same way; pass
         # them explicitly or re-run with the relevant profile.
-        echo "▶ Recreating agents on the new workspace (acc-tui untouched)..."
+        # Recreate ALL running agent services — not just ingester/analyst/arbiter.
+        # The assistant / coding-agent / compliance-officer (the roles the
+        # operator prompts, and that write the session log) must remount too, or
+        # they keep the OLD workspace and every write silently goes stale.
+        mapfile -t _AGENT_SVCS < <(
+            podman ps --filter "name=acc-agent-" --format '{{.Names}}' 2>/dev/null | sort
+        )
+        [[ ${#_AGENT_SVCS[@]} -eq 0 ]] && _AGENT_SVCS=(acc-agent-ingester acc-agent-analyst acc-agent-arbiter)
+        echo "▶ Recreating agents on the new workspace (acc-tui untouched): ${_AGENT_SVCS[*]}"
         ACC_WORKSPACE_HOST_DIR="$PATH_REAL" "${BASE_CMD[@]}" up -d --force-recreate \
-            acc-agent-ingester acc-agent-analyst acc-agent-arbiter
-        echo "✓ Agents now mount $PATH_REAL at /workspace."
+            "${_AGENT_SVCS[@]}"
+        echo "✓ Agents now mount $PATH_REAL at /workspace (writable + trusted)."
         podman ps --filter "name=acc-agent-" \
             --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || true
         ;;
