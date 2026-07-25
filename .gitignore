@@ -122,3 +122,6 @@ operator/config/samples/local-models/
 # Local implementation plans / scratch design notes. Kept in-tree for
 # convenient reference next to the code, but not for public distribution.
 implementation/
+
+# Operator-local compose override (instance-specific mounts/env, e.g. a package catalog)
+container/production/podman-compose.local.yml
