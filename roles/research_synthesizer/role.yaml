@@ -1,0 +1,41 @@
+# roles/research_synthesizer/role.yaml
+#
+# Spearhead-native AI-research role (no ecosystem pack).  Surveys a body of work
+# and produces a structured literature synthesis: an executive summary, the
+# retrieval methodology used, and a cited reference list.
+role_definition:
+  purpose: >
+    Synthesise a research area into a structured survey: summarise the state of
+    the art, explain how the source material was retrieved and selected, and
+    ground every claim in citations.
+  persona: analytical
+  task_types:
+  - SURVEY
+  - SYNTHESIS
+  - LITERATURE_REVIEW
+  seed_context: >
+    Structure the answer with these sections: (1) Executive Summary; (2)
+    Retrieval methodology — how sources were found, filtered, and selected;
+    (3) Findings — themes with inline citations; (4) References — a list of the
+    sources/citations cited. Attribute every non-trivial claim to a source and
+    flag gaps or contested points. Research only; do not fabricate references.
+  allowed_actions:
+  - read_vector_db
+  - read_working_memory
+  - write_working_memory
+  - search_episodes
+  - publish_eval_outcome
+  - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 20
+  version: 0.1.0
+  knowledge_tags:
+  - research_synthesis
+  - literature_survey
+  - retrieval
+  domain_id: research
+  domain_receptors:
+  - research
+  reasoning_trace: true
+  os_basics: true

@@ -1,0 +1,279 @@
+# podman-compose.specialists.yml — specialist-role agents for the golden-prompt
+# suite (SPECIALISTS=true ./acc-deploy.sh up).
+#
+# The e2e golden prompts route by target_role: a prompt reaches an agent only
+# when a running agent's ACC_AGENT_ROLE matches.  The base stack runs 6 agents
+# (assistant, analyst, arbiter, coding_agent, compliance_officer, ingester); the
+# research_* / prototype_* / demo_* golden prompts target specialist roles that
+# had no running agent, so they never routed.  This overlay deploys one agent
+# per remaining target role.  Role definitions live under roles/<role>/ (mounted
+# read-only at /app/roles, same as the base agents) — 5 are extracted from the
+# ecosystem catalog packs; 3 (coding_agent_architect, devops_engineer,
+# research_synthesizer) are spearhead-native.
+#
+# Opt-in and additive: bringing this up leaves the base 6 agents untouched.
+services:
+
+  acc-agent-coding-agent-architect:
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    container_name: acc-agent-coding-agent-architect
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: coding_agent_architect
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/coding_agent_architect
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
+      # so ACC_AGENT_ROLE resolves at boot instead of falling to the generic
+      # default (which would boot the agent DORMANT to await a pack).
+      - ../../roles:/app/roles:ro,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../logs:/logs:z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  acc-agent-devops-engineer:
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    container_name: acc-agent-devops-engineer
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: devops_engineer
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/devops_engineer
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
+      # so ACC_AGENT_ROLE resolves at boot instead of falling to the generic
+      # default (which would boot the agent DORMANT to await a pack).
+      - ../../roles:/app/roles:ro,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../logs:/logs:z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  acc-agent-research-synthesizer:
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    container_name: acc-agent-research-synthesizer
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: research_synthesizer
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/research_synthesizer
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
+      # so ACC_AGENT_ROLE resolves at boot instead of falling to the generic
+      # default (which would boot the agent DORMANT to await a pack).
+      - ../../roles:/app/roles:ro,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../logs:/logs:z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  acc-agent-macro-strategist:
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    container_name: acc-agent-macro-strategist
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: macro_strategist
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/macro_strategist
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
+      # so ACC_AGENT_ROLE resolves at boot instead of falling to the generic
+      # default (which would boot the agent DORMANT to await a pack).
+      - ../../roles:/app/roles:ro,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../logs:/logs:z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  acc-agent-quant-researcher:
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    container_name: acc-agent-quant-researcher
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: quant_researcher
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/quant_researcher
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
+      # so ACC_AGENT_ROLE resolves at boot instead of falling to the generic
+      # default (which would boot the agent DORMANT to await a pack).
+      - ../../roles:/app/roles:ro,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../logs:/logs:z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  acc-agent-financial-analyst:
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    container_name: acc-agent-financial-analyst
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: financial_analyst
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/financial_analyst
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
+      # so ACC_AGENT_ROLE resolves at boot instead of falling to the generic
+      # default (which would boot the agent DORMANT to await a pack).
+      - ../../roles:/app/roles:ro,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../logs:/logs:z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  acc-agent-contract-analyst:
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    container_name: acc-agent-contract-analyst
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: contract_analyst
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/contract_analyst
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
+      # so ACC_AGENT_ROLE resolves at boot instead of falling to the generic
+      # default (which would boot the agent DORMANT to await a pack).
+      - ../../roles:/app/roles:ro,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../logs:/logs:z
+    networks:
+      - acc-net
+    restart: unless-stopped
+
+  acc-agent-okf-transformer:
+    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    container_name: acc-agent-okf-transformer
+    depends_on:
+      nats:
+        condition: service_healthy
+      acc-redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      ACC_AGENT_ROLE: okf_transformer
+      ACC_COLLECTIVE_ID: sol-01
+      ACC_NATS_URL: nats://nats:4222
+      ACC_LANCEDB_PATH: /app/data/lancedb/okf_transformer
+      ACC_REDIS_URL: redis://acc-redis:6379
+      ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
+    volumes:
+      - lancedb-data:/app/data/lancedb:U,z
+      - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
+      # so ACC_AGENT_ROLE resolves at boot instead of falling to the generic
+      # default (which would boot the agent DORMANT to await a pack).
+      - ../../roles:/app/roles:ro,z
+      - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
+      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ../../logs:/logs:z
+    networks:
+      - acc-net
+    restart: unless-stopped
