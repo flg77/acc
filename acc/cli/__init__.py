@@ -77,6 +77,7 @@ def _build_parser() -> argparse.ArgumentParser:
         nats_cmd,
         llm_cmd,
         trace_cmd,
+        sessions_cmd,
         oversight_cmd,
         plan_cmd,
         schedule_cmd,
@@ -87,6 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
     nats_cmd.register(sub)
     llm_cmd.register(sub)
     trace_cmd.register(sub)
+    sessions_cmd.register(sub)
     oversight_cmd.register(sub)
     plan_cmd.register(sub)
     schedule_cmd.register_schedule_subparser(sub)

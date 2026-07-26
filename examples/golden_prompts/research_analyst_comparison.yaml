@@ -1,0 +1,23 @@
+name: research_analyst_comparison
+description: |
+  Focused analytical benchmark for the control `analyst` role (persona
+  `analytical`).  A bounded compare-and-contrast task that should yield a
+  concise, structured comparison — a decision-oriented trade-off table or
+  bullets plus a recommendation — not a vague essay.  Companion to
+  analyst_short_summary but exercises comparative reasoning + a verdict.
+prompt: |
+  Compare REST and gRPC for a new internal microservice API and recommend
+  one.  Cover, side by side: performance / latency, streaming support,
+  browser and tooling ecosystem, schema / contract evolution, and
+  developer ergonomics.  End with a one-line recommendation and the single
+  most important reason for it.
+target_role: analyst
+timeout_s: 45.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 45000
+  blocked: false
+  output_contains:
+    - "REST"
+    - "gRPC"
+  output_matches_regex: "(?i)(recommend|trade-?off)"

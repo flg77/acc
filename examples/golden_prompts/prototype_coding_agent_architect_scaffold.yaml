@@ -1,0 +1,29 @@
+name: prototype_coding_agent_architect_scaffold
+description: |
+  Prototype-architecture benchmark for coding_agent_architect (the
+  architect sub-role from docs/CODING_AGENT_SUBROLES.md, used in
+  collectives/demo-coding.yaml).  Its job is to propose a scaffold / plan —
+  NOT to write the implementation — so we run it in PLAN mode and assert a
+  structured plan: components, the directory layout, and at least one
+  explicit trade-off.  Feeds a follow-on implementer step in a real cluster.
+prompt: |
+  I want to prototype a small URL-shortener service.  As the architect,
+  propose the scaffold and the plan (do NOT write the full implementation):
+    - the components and how they interact (API, storage, ID generation),
+    - a proposed directory / file layout for the repo,
+    - the API surface (endpoints),
+    - the key technical decisions and at least one explicit trade-off
+      (e.g. hash-based vs counter-based short codes, SQL vs KV store),
+    - the order in which an implementer should build it.
+  Present it as a numbered plan a reviewer can sign off before coding starts.
+target_role: coding_agent_architect
+operating_mode: PLAN
+timeout_s: 90.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 90000
+  blocked: false
+  output_contains:
+    - "component"
+    - "trade-off"
+  output_matches_regex: "(?i)(directory|layout|structure)"

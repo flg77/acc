@@ -1,0 +1,33 @@
+name: research_quant_researcher_backtest
+description: |
+  AI-research benchmark for quant_researcher (from @acc/capital-markets).
+  Asks the role to design + critique a backtest methodology for a factor
+  signal.  The role's seed_context demands the hypothesis BEFORE results and
+  a reproducibility block with lookahead_checked, so the reply must reason
+  about overfitting / look-ahead bias / out-of-sample and transaction costs —
+  not fabricate return numbers.  Guards the methodology-discipline behaviour.
+prompt: |
+  I want to test whether a 12-month price-momentum signal predicts forward
+  1-month returns on the S&P 500 constituents.
+
+  Design the research methodology (do NOT fabricate performance numbers):
+    1. State the hypothesis explicitly before any results.
+    2. Describe the factor construction, the universe, and the rebalance
+       cadence.
+    3. Specify how you guard against look-ahead bias and survivorship bias,
+       and how you split in-sample vs out-of-sample.
+    4. State the transaction-cost assumptions and how you would detect
+       overfitting.
+    5. Give the reproducibility details a reviewer would need to re-run it.
+
+  Flag the biggest threats to validity in this study.
+target_role: quant_researcher
+timeout_s: 120.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 120000
+  blocked: false
+  output_contains:
+    - "hypothesis"
+    - "out-of-sample"
+  output_matches_regex: "(?i)(look-?ahead|overfit|survivorship)"

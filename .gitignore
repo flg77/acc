@@ -125,3 +125,6 @@ implementation/
 
 # Operator-local compose override (instance-specific mounts/env, e.g. a package catalog)
 container/production/podman-compose.local.yml
+
+# Durable, gitignored session tracelog (acc.tracelog) — persistent, never committed
+/logs/

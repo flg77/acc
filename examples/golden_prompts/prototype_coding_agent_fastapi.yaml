@@ -1,0 +1,28 @@
+name: prototype_coding_agent_fastapi
+description: |
+  Prototype benchmark for coding_agent — build a small, self-contained
+  artifact.  Asks for a minimal but runnable FastAPI service with a health
+  route and one resource endpoint plus a curl example.  Testable via
+  output_contains (FastAPI / endpoint path) + a regex that a real FastAPI
+  app must satisfy (the app constructor + a route decorator).  Companion to
+  coding_webscraper_basic for the "prototype a service" shape.
+prompt: |
+  Prototype a minimal FastAPI service in a single file (main.py) that:
+    - exposes GET /health returning {"status": "ok"},
+    - exposes GET /todos returning an in-memory list of todo items,
+    - exposes POST /todos to append a new todo (validated with a Pydantic
+      model).
+  Keep it self-contained and runnable with `uvicorn main:app`.  After the
+  code, show the curl command to create a todo.
+target_role: coding_agent
+operating_mode: AUTO
+timeout_s: 60.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 60000
+  blocked: false
+  output_contains:
+    - "FastAPI"
+    - "/health"
+    - "uvicorn"
+  output_matches_regex: "(?i)@app\\.(get|post)\\("

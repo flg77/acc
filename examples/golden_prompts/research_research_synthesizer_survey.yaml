@@ -1,0 +1,36 @@
+name: research_research_synthesizer_survey
+description: |
+  AI-research benchmark for research_synthesizer (from @acc/research-roles,
+  the autoresearcher synthesizer cluster).  Exercises the role's core job —
+  fold several source findings into ONE structured, cited report with an
+  executive summary and a references section (its report_drafter /
+  citation_tracker skills).  Re-run after a role-prompt or model change to
+  confirm the synthesizer still produces a sectioned, sourced write-up
+  rather than an unstructured blob.
+prompt: |
+  You are given the following research findings to synthesise into a single
+  survey-style briefing on "the state of retrieval-augmented generation (RAG)
+  for enterprise knowledge bases":
+
+    - Finding A (vector search): dense embeddings + ANN indexes (FAISS,
+      LanceDB) give strong recall but drift as the corpus grows; hybrid
+      BM25 + dense retrieval mitigates this.
+    - Finding B (chunking): fixed-size chunking loses cross-section context;
+      semantic / hierarchical chunking improves answer faithfulness.
+    - Finding C (evaluation): faithfulness + context-precision metrics
+      (RAGAS-style) matter more than raw retrieval recall for end quality.
+
+  Write a structured briefing with: an Executive Summary, a Findings section
+  that reconciles the three sources (note where they agree and where they
+  tension), a short Recommendation, and a References section that cites each
+  finding you drew on.  Do not invent sources beyond A/B/C.
+target_role: research_synthesizer
+timeout_s: 120.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 120000
+  blocked: false
+  output_contains:
+    - "Executive Summary"
+    - "retrieval"
+  output_matches_regex: "(?i)(references|citations|sources)"
