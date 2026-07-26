@@ -29,5 +29,10 @@ expects:
   blocked: false
   output_contains:
     - "hypothesis"
-    - "out-of-sample"
-  output_matches_regex: "(?i)(look-?ahead|overfit|survivorship)"
+    # The prompt explicitly asks "how you would detect overfitting", so the
+    # reply must address it — a robust, unambiguous methodology-discipline anchor.
+    - "overfit"
+  # Out-of-sample awareness — accept the spelled form OR the canonical "OOS"
+  # abbreviation (the role's own JSON field name), so the assertion isn't
+  # over-fitted to one exact spelling.
+  output_matches_regex: "(?i)(out.?of.?sample|\\boos\\b)"
