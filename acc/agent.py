@@ -284,6 +284,24 @@ def _redteam_enabled(config) -> bool:
     return getattr(config, "deploy_mode", "") == "edge"
 
 
+# Task-content fields, most-canonical first — mirrors the resolution order in
+# CognitiveCore (``content`` → ``task_description``; ``prompt`` / ``text`` are
+# accepted by the tracelog and older callers).  A TASK_ASSIGN with none of
+# these carries nothing to act on: sending it to the LLM yields an empty user
+# message and an Anthropic 400 ("user messages must have non-empty content").
+_TASK_CONTENT_FIELDS = ("content", "task_description", "prompt", "text")
+
+
+def _task_has_content(data: dict) -> bool:
+    """True when a TASK_ASSIGN payload carries actionable user content in any
+    recognised field.  Empty/whitespace-only in every field → False, so the
+    task loop can drop stray/heartbeat publishes before the LLM call instead of
+    burning a request that 400s on empty content."""
+    return any(
+        str(data.get(k, "") or "").strip() for k in _TASK_CONTENT_FIELDS
+    )
+
+
 # ---------------------------------------------------------------------------
 # ACC-11: Membrane receptor model
 # ---------------------------------------------------------------------------
@@ -1550,6 +1568,23 @@ class Agent:
                         target_role, my_role,
                     )
                     return
+
+            # Drop no-op tasks — a TASK_ASSIGN with no user content in any
+            # recognised field would reach the LLM as an empty user message and
+            # fail with Anthropic 400 "user messages must have non-empty
+            # content".  These are stray / heartbeat publishes with nothing to
+            # act on; ignore them silently rather than burn an LLM call and log
+            # a spurious Cat-A governance block.  (Publishers that carry the
+            # instruction only in ``task_description`` — the wakeup scan, Slack,
+            # schedule, plan steps — still pass: CognitiveCore resolves
+            # ``content`` → ``task_description``.)
+            if not _task_has_content(data):
+                logger.debug(
+                    "task_loop: drop TASK_ASSIGN with empty content "
+                    "(task_id=%r target_role=%r)",
+                    data.get("task_id", ""), data.get("target_role", ""),
+                )
+                return
 
             # Phase progress-emit — publish TASK_PROGRESS at every step
             # boundary so the prompt pane (PR #19) can render live
@@ -3485,7 +3520,10 @@ class Agent:
             "target_role": self.config.agent.role,
             "target_agent_id": self.agent_id,
             "task_type": "WAKEUP_SCAN",
+            # Set both fields (like the TUI channel) — ``content`` is what
+            # CognitiveCore reads; ``task_description`` is the legacy field.
             "task_description": self._WAKEUP_PROMPT,
+            "content": self._WAKEUP_PROMPT,
             "operating_mode": mode,
             "priority": "LOW",
             "iteration_n": 0,
