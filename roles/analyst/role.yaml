@@ -1,0 +1,45 @@
+# roles/analyst/role.yaml
+#
+# Generic analyst — a base stack role that had no role.yaml, so the agent fell
+# to the generic default and (per the pack-role boot-and-wait guard) booted
+# DORMANT, silently dropping every task routed to `analyst`.  This is the
+# minimal, domain-neutral definition: read/summarise/compare and reason, with
+# memory retrieval on so "what did we do earlier?" recall works.
+role_definition:
+  purpose: >
+    Analyse and summarise information for the operator: distil inputs into a
+    concise, well-structured answer, compare options on explicit criteria, and
+    recall relevant prior context when asked.  Reason before concluding and
+    state the basis for each claim.
+  persona: analytical
+  task_types:
+  - SUMMARY
+  - COMPARISON
+  - ANALYSIS
+  - RECALL
+  seed_context: >
+    Lead with the answer, then the reasoning.  For a summary, be concise and
+    keep the key points.  For a comparison, name the criteria and judge each
+    option against them.  When asked what was done earlier, ground the answer in
+    the retrieved prior episodes rather than guessing.
+  allowed_actions:
+  - read_vector_db
+  - read_working_memory
+  - write_working_memory
+  - search_episodes
+  - publish_eval_outcome
+  - publish_knowledge_share
+  category_b_overrides:
+    token_budget: 4096
+    rate_limit_rpm: 60
+  version: 0.1.0
+  knowledge_tags:
+  - analysis
+  - summarisation
+  - comparison
+  domain_id: general
+  domain_receptors:
+  - general
+  reasoning_trace: true
+  memory_retrieval: true
+  os_basics: true
