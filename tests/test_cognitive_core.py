@@ -178,6 +178,37 @@ class TestPreReasoningGate:
         # the displayed utilisation reflects the heal too
         assert core._stress.token_budget_utilization == pytest.approx(0.5)
 
+    def test_env_override_disables_gate(self, monkeypatch):
+        """ACC_ROLE_TOKEN_BUDGET=0 disables the Cat-B token_budget gate for
+        every role, so a large backend (e.g. Sonnet) is never wedged by the
+        local-model-sized per-role default."""
+        monkeypatch.setenv("ACC_ROLE_TOKEN_BUDGET", "0")
+        core = _make_core()
+        core._last_token_count = 100_000  # far over any per-role budget
+        role = _make_role(category_b_overrides={"token_budget": 2048.0})
+        blocked, _ = core._pre_reasoning_gate(role)
+        assert not blocked  # 0 → gate disabled
+
+    def test_env_override_replaces_role_budget(self, monkeypatch):
+        """ACC_ROLE_TOKEN_BUDGET wins over the per-role token_budget."""
+        core = _make_core()
+        core._last_token_count = 3000
+        role = _make_role(category_b_overrides={"token_budget": 2048.0})
+        # Role budget alone would block (3000/2048 ≥ 1.0)…
+        assert core._pre_reasoning_gate(role)[0]
+        # …but a raised env ceiling clears it (3000/32768 < 1.0).
+        monkeypatch.setenv("ACC_ROLE_TOKEN_BUDGET", "32768")
+        assert not core._pre_reasoning_gate(role)[0]
+
+    def test_env_override_ignores_non_numeric(self, monkeypatch):
+        """A malformed ACC_ROLE_TOKEN_BUDGET is ignored — the per-role budget
+        still applies (fail-safe, never raises)."""
+        monkeypatch.setenv("ACC_ROLE_TOKEN_BUDGET", "lots")
+        core = _make_core()
+        core._last_token_count = 3000
+        role = _make_role(category_b_overrides={"token_budget": 2048.0})
+        assert core._pre_reasoning_gate(role)[0]  # falls back to role budget → blocked
+
 
 class TestUnblockMessage:
     """N6 — a Cat-B block returns an actionable message, not an empty reply."""
