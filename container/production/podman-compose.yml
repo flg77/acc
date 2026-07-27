@@ -173,6 +173,10 @@ services:
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
     networks:
       - acc-net
     restart: unless-stopped
@@ -212,6 +216,10 @@ services:
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
     networks:
       - acc-net
     restart: unless-stopped
@@ -251,6 +259,10 @@ services:
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
     networks:
       - acc-net
     restart: unless-stopped
@@ -290,6 +302,10 @@ services:
       - acc-packages:/var/lib/acc/packages:U,z
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -330,6 +346,10 @@ services:
       - acc-packages:/var/lib/acc/packages:U,z
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -368,6 +388,10 @@ services:
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
       - ../../roles:/app/roles:ro,z
       - ../../regulatory_layer:/app/regulatory_layer:ro
     networks:
@@ -418,6 +442,10 @@ services:
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -456,6 +484,10 @@ services:
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -494,6 +526,10 @@ services:
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -742,6 +778,10 @@ services:
       # the image's built-in defaults (typically backend=ollama) and
       # silently misleads the operator about what's running.
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
+      # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
+      # (not :U) so the operator can read the JSONL on the host post-session.
+      - ../../logs:/logs:z
       # Mount the host's .env READ-WRITE so the Configuration screen's
       # Save button can persist operator-tunable LLM knobs.  Only the
       # acc-tui service gets :rw — agents/webgui keep RO env_file

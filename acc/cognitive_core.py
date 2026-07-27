@@ -376,6 +376,19 @@ def _extract_output_text(response: dict) -> str:
     return str(output_text)
 
 
+def resolve_user_content(task_payload: dict) -> str:
+    """Canonical user-message text for a TASK_ASSIGN payload.
+
+    Prefers ``content`` (the field the TUI sets), falling back to
+    ``task_description`` — the older field set by the proactive wakeup scan,
+    the Slack/schedule channels, and plan steps.  Without this fallback a
+    ``task_description``-only publisher reaches the LLM as an *empty* user
+    message and fails with Anthropic 400 ("user messages must have non-empty
+    content").  Returns ``""`` when neither is present (the agent task loop
+    drops such no-op tasks before they get here)."""
+    return str(task_payload.get("content") or task_payload.get("task_description") or "")
+
+
 # ---------------------------------------------------------------------------
 # B1 (proposal 044) — marker-or-retry guard for the assistant
 # ---------------------------------------------------------------------------
@@ -940,7 +953,7 @@ class CognitiveCore:
         # legacy mocks in tests) silently falls back to the legacy
         # prompt — RAG is an additive boost, NEVER a hard dependency
         # of the LLM call.
-        user_content: str = task_payload.get("content", "")
+        user_content: str = resolve_user_content(task_payload)
         retrieved_episodes: list[dict] = []
         if getattr(role, "memory_retrieval", True) and user_content:
             retrieved_episodes = await self._retrieve_episodes(

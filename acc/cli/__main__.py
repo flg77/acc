@@ -6,7 +6,12 @@ CLI via ``python -m acc.cli`` so they don't depend on the entry-point
 script being on ``$PATH``.  This thin shim exposes that surface.
 """
 
+import sys
+
 from acc.cli import main
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    # sys.exit(main()) so command exit codes propagate under `python -m acc.cli`
+    # (the console_script entry point already does this) — e.g. the non-zero
+    # `sessions verify` governance gate.
+    sys.exit(main())

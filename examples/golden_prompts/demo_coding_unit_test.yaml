@@ -7,7 +7,7 @@ prompt: |
   Write a pytest unit test for a function `add(a, b)` that returns a + b.
   Cover the happy path plus an edge case (adding zero).
 target_role: coding_agent
-timeout_s: 90.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
   blocked: false

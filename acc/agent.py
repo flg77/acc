@@ -271,6 +271,37 @@ _NO_COGNITIVE_ROLES = {"observer", "dormant", ""}
 _ASSISTANT_PROPOSAL_CACHE_TTL_S: int = 3600
 
 
+def _redteam_enabled(config) -> bool:
+    """Edge red-team switch for the durable session trace.
+
+    ``ACC_REDTEAM_ENABLED`` (1/0/true/false) wins when set; unset → auto-on
+    under ``deploy_mode: edge`` (the edge red-team scenario), off otherwise."""
+    raw = os.environ.get("ACC_REDTEAM_ENABLED", "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return getattr(config, "deploy_mode", "") == "edge"
+
+
+# Task-content fields, most-canonical first — mirrors the resolution order in
+# CognitiveCore (``content`` → ``task_description``; ``prompt`` / ``text`` are
+# accepted by the tracelog and older callers).  A TASK_ASSIGN with none of
+# these carries nothing to act on: sending it to the LLM yields an empty user
+# message and an Anthropic 400 ("user messages must have non-empty content").
+_TASK_CONTENT_FIELDS = ("content", "task_description", "prompt", "text")
+
+
+def _task_has_content(data: dict) -> bool:
+    """True when a TASK_ASSIGN payload carries actionable user content in any
+    recognised field.  Empty/whitespace-only in every field → False, so the
+    task loop can drop stray/heartbeat publishes before the LLM call instead of
+    burning a request that 400s on empty content."""
+    return any(
+        str(data.get(k, "") or "").strip() for k in _TASK_CONTENT_FIELDS
+    )
+
+
 # ---------------------------------------------------------------------------
 # ACC-11: Membrane receptor model
 # ---------------------------------------------------------------------------
@@ -1150,6 +1181,149 @@ class Agent:
                     oversight_id, exc_info=True,
                 )
 
+    def _tracelog_turn(self, data: dict, result, outcomes: list,
+                       collective_id: str) -> None:
+        """Emit the durable per-turn session trace (best-effort, never raises).
+
+        One turn produces: a ``prompt_in``, one ``tool_call`` per dispatched
+        invocation (with its execution output / error — an A-017/A-018 refusal
+        surfaces as ``ok=False``), a Cat A/B/C ``governance`` triple, a
+        ``reply_out``, and (once per session, edge/opt-in) a red-team
+        self-challenge record — so a session is fully reviewable + its
+        Cat-ABC governance verifiable AFTER the session."""
+        try:
+            from acc import tracelog  # noqa: PLC0415
+            if not tracelog.tracelog_enabled():
+                return
+            task_id = str(data.get("task_id", "") or "")
+            # Group turns into a session when the client threads a session_id;
+            # otherwise each turn is its own session file (keyed by task_id).
+            session_id = (str(data.get("session_id", "") or "")
+                          or task_id or "unknown")
+            role = (getattr(self.config.agent, "role", "")
+                    or getattr(self._active_role, "role", "") or "")
+            reply = getattr(result, "output", "") or ""
+            blocked = bool(getattr(result, "blocked", False))
+
+            for o in (outcomes or []):
+                p = o.parsed
+                out = "" if o.result is None else json.dumps(
+                    o.result, default=str)[:4000]
+                tracelog.log_tool_call(
+                    session_id, task_id=task_id, kind=p.kind, target=p.target,
+                    args=p.args, ok=o.ok, output=out, error=o.error)
+
+            # Cat A (constitutional, ENFORCED): a blocked LLM output or an
+            # A-017/A-018 tool refusal is a Cat-A block; else allow.
+            tool_refused = any((not o.ok) for o in (outcomes or []))
+            cat_a_block = blocked or tool_refused
+            tracelog.log_governance(
+                session_id, task_id=task_id, category=tracelog.CAT_A,
+                verdict=("block" if cat_a_block else "allow"),
+                detail=(getattr(result, "block_reason", "") or "")
+                if cat_a_block else "")
+            # Cat B (conditional, Cat-B-tunable): the operating-mode gate +
+            # token budget actually applied to the turn.
+            mode = (data.get("operating_mode")
+                    or getattr(self._active_role, "default_operating_mode", "AUTO"))
+            budget = getattr(getattr(self._active_role, "category_b_overrides",
+                                     None), "token_budget", None)
+            tracelog.log_governance(
+                session_id, task_id=task_id, category=tracelog.CAT_B,
+                verdict=str(mode),
+                detail=(f"token_budget={budget}" if budget else ""))
+            # Cat C (adaptive): the adaptive layer is in effect for the turn.
+            tracelog.log_governance(
+                session_id, task_id=task_id, category=tracelog.CAT_C,
+                verdict="present", detail="adaptive layer active")
+
+            tracelog.log_reply_out(
+                session_id, task_id=task_id, role=role, reply=reply,
+                blocked=blocked)
+
+            self._maybe_redteam(session_id, task_id)
+        except Exception:  # noqa: BLE001 — tracing must never perturb the loop
+            logger.debug("tracelog: turn emit failed", exc_info=True)
+
+    def _tracelog_prompt_in(self, data: dict, collective_id: str) -> None:
+        """Emit ``session_start`` (once) + ``prompt_in`` for a turn BEFORE the
+        LLM call, so the incoming prompt is captured even if the turn then
+        fails.  Best-effort; never raises."""
+        try:
+            from acc import tracelog  # noqa: PLC0415
+            if not tracelog.tracelog_enabled():
+                return
+            task_id = str(data.get("task_id", "") or "")
+            session_id = (str(data.get("session_id", "") or "")
+                          or task_id or "unknown")
+            role = (getattr(self.config.agent, "role", "")
+                    or getattr(self._active_role, "role", "") or "")
+            prompt = (data.get("prompt") or data.get("text")
+                      or data.get("content") or "")
+            agent_id = getattr(self, "_agent_id", "") or ""
+            seen = getattr(self, "_tracelog_sessions", None)
+            if seen is None:
+                seen = set()
+                self._tracelog_sessions = seen
+            if session_id not in seen:
+                seen.add(session_id)
+                tracelog.log_session_start(session_id, agent_id=agent_id,
+                                           collective_id=collective_id)
+            tracelog.log_prompt_in(session_id, task_id=task_id, role=role,
+                                   prompt=prompt, agent_id=agent_id,
+                                   collective_id=collective_id)
+        except Exception:  # noqa: BLE001
+            logger.debug("tracelog: prompt_in emit failed", exc_info=True)
+
+    def _tracelog_error(self, data: dict, collective_id: str, exc) -> None:
+        """Record a FAILED turn (process_task raised — LLM/backend error, e.g.
+        an out-of-credits 400): a Cat-A governance block + a blocked reply_out,
+        so the trace + Cat-ABC verification still see the turn.  Best-effort."""
+        try:
+            from acc import tracelog  # noqa: PLC0415
+            if not tracelog.tracelog_enabled():
+                return
+            task_id = str(data.get("task_id", "") or "")
+            session_id = (str(data.get("session_id", "") or "")
+                          or task_id or "unknown")
+            role = (getattr(self.config.agent, "role", "")
+                    or getattr(self._active_role, "role", "") or "")
+            err = f"{type(exc).__name__}: {exc}"[:1000]
+            tracelog.log_governance(session_id, task_id=task_id,
+                                    category=tracelog.CAT_A, verdict="block",
+                                    detail=f"turn error: {err}")
+            tracelog.log_reply_out(session_id, task_id=task_id, role=role,
+                                   reply="", blocked=True, error=err)
+        except Exception:  # noqa: BLE001
+            logger.debug("tracelog: error emit failed", exc_info=True)
+
+    def _maybe_redteam(self, session_id: str, task_id: str) -> None:
+        """Edge red-team: run the Cat-A self-challenge engine once per session
+        and record its adversarial findings, so the edge scenario carries a
+        verifiable red-team pass.  Enabled by ``ACC_REDTEAM_ENABLED`` (auto-on
+        under ``deploy_mode: edge``).  Best-effort."""
+        if not _redteam_enabled(self.config):
+            return
+        done = getattr(self, "_redteam_sessions", None)
+        if done is None:
+            done = set()
+            self._redteam_sessions = done
+        if session_id in done:
+            return
+        done.add(session_id)
+        try:
+            from acc import tracelog  # noqa: PLC0415
+            from acc.governance_inventory import load_all_layers  # noqa: PLC0415
+            from acc.self_challenge import challenge_cat_a  # noqa: PLC0415
+            report = challenge_cat_a(load_all_layers())
+            tracelog.log_redteam(
+                session_id, task_id=task_id, challenge="cat_a_self_challenge",
+                outcome=f"{report.total} adversarial finding(s)",
+                detail="; ".join(
+                    getattr(f, "rule_id", "") for f in report.findings[:8]))
+        except Exception:  # noqa: BLE001
+            logger.debug("tracelog: redteam self-challenge failed", exc_info=True)
+
     async def _restore_dormancy_state(self) -> None:
         """Read the Assistant's persisted dormancy flag from Redis and
         restore it onto the cognitive core's StressIndicators.
@@ -1395,6 +1569,23 @@ class Agent:
                     )
                     return
 
+            # Drop no-op tasks — a TASK_ASSIGN with no user content in any
+            # recognised field would reach the LLM as an empty user message and
+            # fail with Anthropic 400 "user messages must have non-empty
+            # content".  These are stray / heartbeat publishes with nothing to
+            # act on; ignore them silently rather than burn an LLM call and log
+            # a spurious Cat-A governance block.  (Publishers that carry the
+            # instruction only in ``task_description`` — the wakeup scan, Slack,
+            # schedule, plan steps — still pass: CognitiveCore resolves
+            # ``content`` → ``task_description``.)
+            if not _task_has_content(data):
+                logger.debug(
+                    "task_loop: drop TASK_ASSIGN with empty content "
+                    "(task_id=%r target_role=%r)",
+                    data.get("task_id", ""), data.get("target_role", ""),
+                )
+                return
+
             # Phase progress-emit — publish TASK_PROGRESS at every step
             # boundary so the prompt pane (PR #19) can render live
             # "agent thinking" lines.  Only build the callback when the
@@ -1495,11 +1686,22 @@ class Agent:
                     except Exception:
                         pass
 
-            result = await self._cognitive_core.process_task(  # type: ignore[union-attr]
-                task_payload=data,
-                role=self._active_role,
-                progress_callback=progress_callback,
-            )
+            # Durable trace — log the incoming prompt BEFORE the LLM call so the
+            # turn is captured even when process_task raises (e.g. an LLM /
+            # backend error, an out-of-credits 400).  See acc.tracelog.
+            self._tracelog_prompt_in(data, collective_id)
+            try:
+                result = await self._cognitive_core.process_task(  # type: ignore[union-attr]
+                    task_payload=data,
+                    role=self._active_role,
+                    progress_callback=progress_callback,
+                )
+            except Exception as _task_exc:
+                # A failed turn is still recorded — a blocked reply_out + a
+                # Cat-A governance block — then re-raised so existing error
+                # handling is unchanged.
+                self._tracelog_error(data, collective_id, _task_exc)
+                raise
 
             # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 2b —
             # Assistant proposal I/O.  Cognitive core parsed +
@@ -1561,6 +1763,12 @@ class Agent:
                         sum(1 for o in outcomes if o.ok),
                         sum(1 for o in outcomes if not o.ok),
                     )
+
+            # Durable per-turn session trace (prompt in → tool calls → Cat-ABC
+            # governance verdicts → reply out) for post-session review +
+            # red-team / governance verification.  Best-effort; never perturbs
+            # the OODA loop (see acc.tracelog).
+            self._tracelog_turn(data, result, outcomes, collective_id)
 
             # Bridge delegation routing (ACC-9 / A-010)
             if result.delegate_to:
@@ -3312,7 +3520,10 @@ class Agent:
             "target_role": self.config.agent.role,
             "target_agent_id": self.agent_id,
             "task_type": "WAKEUP_SCAN",
+            # Set both fields (like the TUI channel) — ``content`` is what
+            # CognitiveCore reads; ``task_description`` is the legacy field.
             "task_description": self._WAKEUP_PROMPT,
+            "content": self._WAKEUP_PROMPT,
             "operating_mode": mode,
             "priority": "LOW",
             "iteration_n": 0,

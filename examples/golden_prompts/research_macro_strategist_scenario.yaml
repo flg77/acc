@@ -1,0 +1,32 @@
+name: research_macro_strategist_scenario
+description: |
+  AI-research benchmark for macro_strategist (from @acc/capital-markets).
+  A top-down scenario question that must be answered with EXPLICIT
+  assumptions, a stated time horizon, the drivers behind the view, the
+  cross-asset implications, and the data that would falsify it (per the
+  role's seed_context).  Verifies the strategist reasons from cited macro
+  series to a recommendation rather than giving an unfalsifiable opinion.
+prompt: |
+  Sketch a 6-to-12-month macro view under the following scenario: core
+  inflation is sticky near 3.5% year-on-year while the labour market cools
+  and the policy rate is held restrictive.
+
+  In your answer:
+    - State your assumptions and the time horizon up front.
+    - Identify where in the growth/inflation cycle this puts us.
+    - List the key drivers (rates, growth, inflation, policy) behind the view.
+    - Give the cross-asset implications (rates, equities, FX, credit).
+    - State a clear recommendation / positioning bias.
+    - Give the data that would FALSIFY this view (what would make you wrong).
+
+  This is research only.
+target_role: macro_strategist
+timeout_s: 120.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 120000
+  blocked: false
+  output_contains:
+    - "assumption"
+    - "horizon"
+  output_matches_regex: "(?i)(inflation|cross-asset|falsif)"

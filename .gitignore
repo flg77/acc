@@ -126,6 +126,9 @@ implementation/
 # Operator-local compose override (instance-specific mounts/env, e.g. a package catalog)
 container/production/podman-compose.local.yml
 
+# Durable, gitignored session tracelog (acc.tracelog) — persistent, never committed
+/logs/
+
 # Ecosystem-owned specialist roles for the SPECIALISTS=true agent overlay.
 # Single source of truth is the acc-ecosystem catalog packs; regenerate locally
 # with scripts/extract-specialist-roles.sh (the 3 spearhead-native specialist

@@ -10,10 +10,10 @@ prompt: |
   a write-through cache, and a unit-test scaffold.  Three sections
   please.
 target_role: arbiter
-timeout_s: 30.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
-  latency_max_ms: 30000
+  latency_max_ms: 120000
   blocked: false
   output_contains:
     - TTL

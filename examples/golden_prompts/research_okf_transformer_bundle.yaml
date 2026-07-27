@@ -1,0 +1,36 @@
+name: research_okf_transformer_bundle
+description: |
+  AI-research / knowledge benchmark for okf_transformer (from
+  @acc/knowledge-roles).  Drives the role's assess -> propose types ->
+  convert -> validate method over a couple of raw notes.  Because the role
+  is HUMAN-IN-THE-LOOP and NON-DESTRUCTIVE, we run it in PLAN mode: it should
+  show the assessment + PROPOSED `type` mapping and the conformance checks it
+  would apply, without mutating any source vault.  Verifies the role reasons
+  in terms of OKF concepts / front-matter `type` / bundle conformance.
+prompt: |
+  Here are two raw notes from my Obsidian vault:
+
+    --- note: rag-pipeline.md ---
+    RAG pipeline: chunk docs, embed with a sentence-transformer, store in
+    LanceDB, retrieve top-k, stuff into the prompt. See [[embeddings]].
+
+    --- note: embeddings.md ---
+    Embeddings map text to vectors so similar text lands nearby. Used by the
+    RAG pipeline for retrieval.
+
+  Do an OKF readiness assessment: how many notes have front matter, how many
+  have a `type`, and the wikilink structure.  Then PROPOSE a `type` for each
+  untyped note (as a proposal for me to approve, not applied).  Describe the
+  conformant OKF bundle you would emit as a NEW parallel bundle and the
+  validation rules you would check.  Do not modify my source notes.
+target_role: okf_transformer
+operating_mode: PLAN
+timeout_s: 120.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 120000
+  blocked: false
+  output_contains:
+    - "OKF"
+    - "type"
+  output_matches_regex: "(?i)(front[- ]?matter|bundle|conform)"

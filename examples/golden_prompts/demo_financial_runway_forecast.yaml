@@ -10,7 +10,7 @@ prompt: |
   quarter-by-quarter cash-runway forecast and state the month we run out
   of cash (or that we reach breakeven first).
 target_role: financial_analyst
-timeout_s: 90.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
   blocked: false

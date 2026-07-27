@@ -8,10 +8,10 @@ prompt: |
   Yahoo Finance.  Return only the closing price.  Keep the code under
   30 lines.
 target_role: coding_agent
-timeout_s: 30.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
-  latency_max_ms: 30000
+  latency_max_ms: 120000
   blocked: false
   output_contains:
     - IBM

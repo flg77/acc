@@ -1,0 +1,27 @@
+name: prototype_coding_agent_cli
+description: |
+  Prototype benchmark for coding_agent — a small, self-contained CLI /
+  data-processing script.  Asks for an argparse-based tool that reads a CSV
+  and prints a per-column summary.  Testable without being brittle: the reply
+  must reference argparse + csv and define a runnable entrypoint, but the
+  exact code shape is free.
+prompt: |
+  Prototype a small Python CLI (summarize_csv.py) that:
+    - takes a path to a CSV file as a positional argument (argparse),
+    - reads it with the standard-library csv module,
+    - prints, per column, the count of non-empty values and — for columns
+      that parse as numbers — the min / max / mean,
+    - handles a missing file with a clean error message and a non-zero exit.
+  Include a `if __name__ == "__main__":` entrypoint and a one-line usage
+  example.
+target_role: coding_agent
+operating_mode: AUTO
+timeout_s: 120.0
+expects:
+  reply_non_empty: true
+  latency_max_ms: 120000
+  blocked: false
+  output_contains:
+    - "argparse"
+    - "csv"
+  output_matches_regex: "(?i)if\\s+__name__\\s*==\\s*[\"']__main__[\"']"

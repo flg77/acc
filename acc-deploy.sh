@@ -340,6 +340,15 @@ if [[ -n "${ACC_WORKSPACE_HOST_DIR:-}" && "$COMMAND" =~ ^(up|start|rebuild)$ ]];
         || echo "WARN: workspace $ACC_WORKSPACE_HOST_DIR not usable — agents may fail to write." >&2
 fi
 
+# Durable, gitignored session tracelog dir (acc.tracelog → /logs/sessions in the
+# agents, bind-mounted from ./logs).  Create it 0777 so the container's
+# rootless-mapped UID can write while the operator reads the JSONL on the host
+# (same rationale as the workspace).  Persistent for all further development.
+if [[ "$STACK" == "production" && "$COMMAND" =~ ^(up|start|rebuild|setup)$ ]]; then
+    mkdir -p "$REPO_ROOT/logs/sessions" 2>/dev/null \
+        && chmod 0777 "$REPO_ROOT/logs" "$REPO_ROOT/logs/sessions" 2>/dev/null || true
+fi
+
 # TUI profile only available in production
 if [[ "$TUI" == "true" ]]; then
     if [[ "$STACK" != "production" ]]; then

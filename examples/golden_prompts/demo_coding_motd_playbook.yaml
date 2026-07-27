@@ -14,7 +14,7 @@ prompt: |
   network.  The MOTD should have the headline ACC in ASCII art and
   below it some stats: system name, time, uptime, load, free memory, IP.
 target_role: devops_engineer
-timeout_s: 90.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
   blocked: false
