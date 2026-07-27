@@ -147,6 +147,7 @@ CODING_SPLIT="${CODING_SPLIT:-false}"
 MCP_ECHO="${MCP_ECHO:-false}"
 AUTORESEARCHER="${AUTORESEARCHER:-false}"
 WEBGUI="${WEBGUI:-false}"
+SPECIALISTS="${SPECIALISTS:-false}"
 DETACH="${DETACH:-true}"
 
 # ── Extract the --webgui flag from the pass-through args ───────────────────────
@@ -285,6 +286,19 @@ fi
 LOCAL_OVERLAY="$REPO_ROOT/container/production/podman-compose.local.yml"
 if [[ "$STACK" == "production" && -f "$LOCAL_OVERLAY" ]]; then
     BASE_CMD+=(-f "$LOCAL_OVERLAY")
+fi
+
+# ── Specialist-role agents (opt-in) ────────────────────────────────────────────
+# One agent per remaining golden-prompt target role (research_*, prototype_*,
+# demo_* specialists) so those prompts route.  Additive: leaves the base agents
+# untouched.  Enable with SPECIALISTS=true.  Role definitions: roles/<role>/
+# (5 ecosystem-pack roles are .gitignored — regenerate with
+# scripts/extract-specialist-roles.sh; 3 are spearhead-native + committed).
+SPECIALISTS_OVERLAY="$REPO_ROOT/container/production/podman-compose.specialists.yml"
+if [[ "$STACK" == "production" && "$SPECIALISTS" == "true" && -f "$SPECIALISTS_OVERLAY" ]]; then
+    BASE_CMD+=(-f "$SPECIALISTS_OVERLAY")
+elif [[ "$SPECIALISTS" == "true" && "$STACK" != "production" ]]; then
+    echo "WARNING: SPECIALISTS is only available in production. Ignoring SPECIALISTS=true." >&2
 fi
 
 # ── Operator-chosen agent workspace (freely-choosable host dir) ─────────────────
