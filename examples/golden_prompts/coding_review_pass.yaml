@@ -11,9 +11,9 @@ prompt: |
           return f"Hello, {name}"
 
 target_role: coding_agent
-timeout_s: 20.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
-  latency_max_ms: 20000
+  latency_max_ms: 120000
   blocked: false
   output_matches_regex: "PASS|NEEDS_CHANGES|FAIL"

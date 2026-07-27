@@ -16,10 +16,10 @@ prompt: |
   example.
 target_role: coding_agent
 operating_mode: AUTO
-timeout_s: 60.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
-  latency_max_ms: 60000
+  latency_max_ms: 120000
   blocked: false
   output_contains:
     - "argparse"

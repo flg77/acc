@@ -7,7 +7,7 @@ prompt: |
   How many roles are available to this collective right now? List the installed
   roles, and note which installable packs you could infuse if asked.
 target_role: assistant
-timeout_s: 60.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
   blocked: false

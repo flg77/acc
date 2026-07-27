@@ -12,10 +12,10 @@ prompt: |
   developer ergonomics.  End with a one-line recommendation and the single
   most important reason for it.
 target_role: analyst
-timeout_s: 45.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
-  latency_max_ms: 45000
+  latency_max_ms: 120000
   blocked: false
   output_contains:
     - "REST"

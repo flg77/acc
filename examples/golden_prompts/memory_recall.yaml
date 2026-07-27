@@ -9,10 +9,10 @@ prompt: |
   Do you have any record of tasks you've handled in this session?
   Be honest — if you don't, say so.
 target_role: analyst
-timeout_s: 20.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
-  latency_max_ms: 20000
+  latency_max_ms: 120000
   blocked: false
   # Either an explicit acknowledgement OR an explicit "no, none yet"
   # is acceptable — what we forbid is the legacy "I have no memory

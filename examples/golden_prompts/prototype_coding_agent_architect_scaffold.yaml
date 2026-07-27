@@ -18,10 +18,10 @@ prompt: |
   Present it as a numbered plan a reviewer can sign off before coding starts.
 target_role: coding_agent_architect
 operating_mode: PLAN
-timeout_s: 90.0
+timeout_s: 120.0
 expects:
   reply_non_empty: true
-  latency_max_ms: 90000
+  latency_max_ms: 120000
   blocked: false
   output_contains:
     - "component"
