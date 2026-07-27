@@ -21,6 +21,7 @@ import pytest
 from acc.capability_dispatch import (
     InvocationOutcome,
     ParsedInvocation,
+    _oversight_headless,
     dispatch_invocations,
 )
 from acc.config import RoleDefinitionConfig
@@ -188,3 +189,43 @@ async def test_low_risk_invocation_skips_gate_even_when_queue_present():
     # Queue must remain empty — nothing was submitted.
     assert await queue.pending_count() == 0
     assert core.calls == [("safe", {"text": "hi"})]
+
+
+@pytest.mark.parametrize("val,expected", [
+    ("1", True), ("true", True), ("YES", True), ("on", True),
+    ("0", False), ("false", False), ("", False), ("nope", False),
+])
+def test_oversight_headless_env_parsing(monkeypatch, val, expected):
+    monkeypatch.setenv("ACC_OVERSIGHT_HEADLESS", val)
+    assert _oversight_headless() is expected
+
+
+def test_oversight_headless_unset_is_false(monkeypatch):
+    monkeypatch.delenv("ACC_OVERSIGHT_HEADLESS", raising=False)
+    assert _oversight_headless() is False
+
+
+@pytest.mark.asyncio
+async def test_headless_auto_rejects_without_blocking(monkeypatch):
+    """ACC_OVERSIGHT_HEADLESS → a CRITICAL invocation is auto-rejected
+    immediately (no reviewer, no wait), so the agent's serial task loop is
+    never wedged for the oversight timeout.  Regression for issue #198."""
+    monkeypatch.setenv("ACC_OVERSIGHT_HEADLESS", "1")
+    # A large timeout_s: if the gate blocked, dispatch would hang far past the
+    # asyncio.wait_for cap below and fail the test.
+    queue = HumanOversightQueue(redis_client=None, collective_id="t", timeout_s=300)
+    core = _StubCore({"danger": _StubManifest("CRITICAL")})
+    role = RoleDefinitionConfig(allowed_skills=["danger"])
+
+    outcomes = await asyncio.wait_for(
+        dispatch_invocations(
+            [_crit_inv()], core, role, oversight_queue=queue, task_id="t-hl",
+        ),
+        timeout=5,  # must return well under the 300s oversight timeout
+    )
+    assert outcomes[0].ok is False
+    assert "oversight_auto_rejected_headless" in outcomes[0].error
+    assert core.calls == [], "adapter must not run when auto-rejected"
+    # Audit trail: the request was submitted then recorded resolved (not left
+    # dangling in PENDING).
+    assert await queue.pending_count() == 0

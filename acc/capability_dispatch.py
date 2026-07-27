@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -419,6 +420,27 @@ async def _dispatch_one(
 # ---------------------------------------------------------------------------
 
 
+def _oversight_headless() -> bool:
+    """Unattended-oversight switch (``ACC_OVERSIGHT_HEADLESS``).
+
+    When on, a CRITICAL invocation that would otherwise **block awaiting a
+    human decision** is auto-REJECTED immediately (the request is still
+    submitted so the audit trail records it).  This is the safe default for a
+    headless / e2e / edge agent with no reviewer: without it a single gated
+    tool marker wedges the agent's *serial* task loop for the full
+    ``oversight_timeout_s`` (300s) — and, with several markers in one reply,
+    for a multiple of it — before timing out to the same reject.  Off (default)
+    preserves the interactive block-and-wait so a human CAN approve.
+
+    Denying an unattended CRITICAL action is strictly safer than executing it,
+    and the timed-out path already ends in a reject — so this only removes the
+    dead wait, it does not change the security outcome.
+    """
+    return os.environ.get("ACC_OVERSIGHT_HEADLESS", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 def _resolve_manifest(
     inv: ParsedInvocation,
     core: "CognitiveCore",
@@ -478,6 +500,30 @@ async def _gate_on_oversight(
         err = f"oversight_submit_failed: {type(exc).__name__}: {exc}"
         logger.warning("capability_dispatch: %s — %s", inv.raw, err)
         return InvocationOutcome(parsed=inv, ok=False, error=err)
+
+    # Headless / unattended: no reviewer will ever resolve this, so blocking
+    # up to oversight_timeout_s only wedges the agent's serial task loop before
+    # the wait times out to the same reject.  Auto-reject now (the submit above
+    # already recorded the request for the audit trail).
+    if _oversight_headless():
+        reason = "auto-rejected: unattended CRITICAL action (ACC_OVERSIGHT_HEADLESS)"
+        try:
+            await queue.reject(oversight_id, "headless-auto", reason)
+        except Exception:  # noqa: BLE001 — audit-record best-effort; still deny
+            logger.debug(
+                "capability_dispatch: headless auto-reject record failed",
+                exc_info=True,
+            )
+        logger.warning(
+            "capability_dispatch: oversight AUTO-REJECTED (headless) "
+            "oversight_id=%s kind=%s target=%s",
+            oversight_id, inv.kind, inv.target,
+        )
+        return InvocationOutcome(
+            parsed=inv,
+            ok=False,
+            error=f"oversight_auto_rejected_headless: id={oversight_id}",
+        )
 
     logger.warning(
         "capability_dispatch: blocking on oversight oversight_id=%s "
