@@ -166,6 +166,10 @@ services:
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — without this the role
+      # falls to the generic default and the agent boots DORMANT, dropping
+      # every routed task.  Same mount the assistant/coding/compliance agents use.
+      - ../../roles:/app/roles:ro,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
@@ -205,6 +209,10 @@ services:
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — without this the role
+      # falls to the generic default and the agent boots DORMANT, dropping
+      # every routed task.  Same mount the assistant/coding/compliance agents use.
+      - ../../roles:/app/roles:ro,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
@@ -244,6 +252,10 @@ services:
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
+      # Role definitions (roles/<role>/role.yaml) — without this the role
+      # falls to the generic default and the agent boots DORMANT, dropping
+      # every routed task.  Same mount the assistant/coding/compliance agents use.
+      - ../../roles:/app/roles:ro,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
       - ../../acc-config.yaml:/app/acc-config.yaml:ro,z

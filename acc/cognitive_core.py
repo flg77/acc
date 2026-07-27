@@ -2014,6 +2014,24 @@ class CognitiveCore:
         # on its next task, instead of staying blocked on a ratio computed
         # against the old budget (N2, 25.6.26 images 3/4).
         token_budget = overrides.get("token_budget", 0)
+        # Deployment-level override.  The per-role token_budget defaults are
+        # calibrated for a small local model; a larger backend (e.g. Sonnet)
+        # emits far more tokens per reply, so a *normal* response trips this
+        # circuit-breaker and — because the block short-circuits the LLM call
+        # that refreshes _last_token_count — the agent then stays wedged until
+        # an operator raises the budget.  ACC_ROLE_TOKEN_BUDGET (when set) wins
+        # for every role, so the ceiling can be right-sized for the backend
+        # without editing each role.yaml; ``0`` disables the gate entirely.
+        import os  # noqa: PLC0415
+        _env_budget = os.environ.get("ACC_ROLE_TOKEN_BUDGET", "").strip()
+        if _env_budget:
+            try:
+                token_budget = float(_env_budget)
+            except ValueError:
+                logger.debug(
+                    "cat_b: ignoring non-numeric ACC_ROLE_TOKEN_BUDGET=%r",
+                    _env_budget,
+                )
         if token_budget > 0:
             last_tokens = getattr(self, "_last_token_count", 0)
             util = last_tokens / token_budget

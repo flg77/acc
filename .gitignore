@@ -128,3 +128,13 @@ container/production/podman-compose.local.yml
 
 # Durable, gitignored session tracelog (acc.tracelog) — persistent, never committed
 /logs/
+
+# Ecosystem-owned specialist roles for the SPECIALISTS=true agent overlay.
+# Single source of truth is the acc-ecosystem catalog packs; regenerate locally
+# with scripts/extract-specialist-roles.sh (the 3 spearhead-native specialist
+# roles are committed and NOT listed here).
+/roles/macro_strategist/
+/roles/quant_researcher/
+/roles/financial_analyst/
+/roles/contract_analyst/
+/roles/okf_transformer/
