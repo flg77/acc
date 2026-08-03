@@ -1204,17 +1204,26 @@ class DiagnosticsScreen(NavScreen):
     # ------------------------------------------------------------------
 
     def _editor_copy(self) -> None:
-        """Copy the editor's YAML to the system clipboard (OSC52 out)."""
+        """Copy the editor's YAML to the host clipboard (OSC52 out) and an
+        in-TUI buffer.
+
+        The buffer is what :meth:`_editor_paste` reads, so in-app Copy→Paste
+        works on the pinned ``textual < 1.0`` (which has no ``App.clipboard``)
+        and even when the terminal doesn't support the OSC52 host copy."""
         try:
             text = self._editor().text
         except Exception:
             return
+        # Stash the in-TUI buffer FIRST so Paste works regardless of whether
+        # the host OSC52 copy below succeeds.
+        self.app._acc_clipboard = text  # type: ignore[attr-defined]
         try:
             self.app.copy_to_clipboard(text)
         except Exception:
-            logger.debug("diagnostics: copy failed", exc_info=True)
+            logger.debug("diagnostics: host copy failed", exc_info=True)
             self._set_status(
-                "[yellow]copy unavailable in this terminal[/yellow]"
+                "[yellow]copied in-app; host clipboard unavailable in "
+                "this terminal[/yellow]"
             )
             return
         self._set_status(
@@ -1222,15 +1231,20 @@ class DiagnosticsScreen(NavScreen):
         )
 
     def _editor_paste(self) -> None:
-        """Insert the app clipboard at the editor cursor.
+        """Insert the in-TUI clipboard at the editor cursor.
 
-        Pastes text copied within the TUI (Copy / Ctrl+C).  Pasting from
-        the HOST clipboard is the terminal's own paste (Ctrl+Shift+V /
-        right-click) — bracketed paste lands in the focused TextArea."""
-        try:
-            clip = self.app.clipboard or ""
-        except Exception:
-            clip = ""
+        Pastes text copied within the TUI (Copy / Ctrl+C): reads the
+        in-app buffer set by :meth:`_editor_copy` (works on any Textual
+        version), falling back to ``App.clipboard`` on Textual >= 1.0.
+        Pasting from the HOST clipboard is the terminal's own paste
+        (Ctrl+Shift+V / right-click) — bracketed paste lands in the
+        focused TextArea."""
+        clip = getattr(self.app, "_acc_clipboard", "") or ""
+        if not clip:
+            try:
+                clip = self.app.clipboard or ""  # Textual >= 1.0
+            except Exception:
+                clip = ""
         if not clip:
             self._set_status(
                 "[yellow]app clipboard empty — use the terminal's paste "

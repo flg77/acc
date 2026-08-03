@@ -350,6 +350,10 @@ async def test_copy_button_writes_clipboard(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_paste_button_inserts_app_clipboard(tmp_path, monkeypatch):
+    # Exercise the real in-TUI Copy→Paste round-trip via the app buffer.
+    # (The prior version asserted ``app.clipboard``, which the pinned
+    # ``textual < 1.0`` does not expose — the property landed in Textual 1.0 —
+    # so the in-app buffer is what actually backs Paste here.)
     from textual.widgets import TextArea
     monkeypatch.setenv("ACC_GOLDEN_WRITABLE_ROOT", str(tmp_path))
     app = _Harness()
@@ -357,10 +361,10 @@ async def test_paste_button_inserts_app_clipboard(tmp_path, monkeypatch):
         await pilot.pause()
         screen = app.screen
         editor = screen.query_one("#golden-editor", TextArea)
-        editor.text = ""
-        app.copy_to_clipboard("PASTED")
+        editor.text = "PASTED"
+        screen._editor_copy()          # stashes the in-TUI buffer (+ OSC52)
         await pilot.pause()
-        assert app.clipboard == "PASTED"
+        editor.text = ""               # clear, then paste it back
         screen._editor_paste()
         await pilot.pause()
         assert "PASTED" in editor.text
