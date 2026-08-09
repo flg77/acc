@@ -39,6 +39,10 @@ dependencies = [
 a2a = [
     { name = "aiohttp" },
 ]
+catalog = [
+    { name = "fastapi" },
+    { name = "uvicorn", extra = ["standard"] },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -47,6 +51,9 @@ dev = [
 mlflow = [
     { name = "mlflow-skinny" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
+]
+sandbox = [
+    { name = "openshell" },
 ]
 slack = [
     { name = "aiohttp" },
@@ -78,6 +85,7 @@ requires-dist = [
     { name = "authlib", marker = "extra == 'webgui'", specifier = ">=1.3,<2.0" },
     { name = "bcrypt", marker = "extra == 'webgui'", specifier = ">=4.1,<5.0" },
     { name = "cryptography", specifier = ">=48.0.1,<49" },
+    { name = "fastapi", marker = "extra == 'catalog'", specifier = ">=0.115,<1.0" },
     { name = "fastapi", marker = "extra == 'webgui'", specifier = ">=0.115,<1.0" },
     { name = "faster-whisper", marker = "extra == 'speech'", specifier = ">=1.0,<2.0" },
     { name = "httpx", specifier = ">=0.27,<1.0" },
@@ -86,6 +94,7 @@ requires-dist = [
     { name = "mlflow-skinny", marker = "extra == 'mlflow'", specifier = ">=2.14,<3.0" },
     { name = "msgpack", specifier = ">=1.1,<2.0" },
     { name = "nats-py", specifier = ">=2.7,<3.0" },
+    { name = "openshell", marker = "extra == 'sandbox'", specifier = "==0.0.76" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.25,<2.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'mlflow'", specifier = ">=1.25,<2.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.25,<2.0" },
@@ -103,9 +112,10 @@ requires-dist = [
     { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.20,<2.0" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.80,<1.0" },
     { name = "turbovec", marker = "extra == 'turbovec'", specifier = "==0.8.0" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'catalog'", specifier = ">=0.30,<1.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'webgui'", specifier = ">=0.30,<1.0" },
 ]
-provides-extras = ["dev", "tui", "slack", "a2a", "mlflow", "turbovec", "webgui", "speech"]
+provides-extras = ["dev", "tui", "slack", "a2a", "mlflow", "sandbox", "turbovec", "webgui", "catalog", "speech"]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -954,14 +964,14 @@ wheels = [
 
 [[package]]
 name = "gitpython"
-version = "3.1.50"
+version = "3.1.58"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "gitdb" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/f6/354ae6491228b5eb40e10d89c4d13c651fe1cf7556e35ebdded50cff57ce/gitpython-3.1.50.tar.gz", hash = "sha256:80da2d12504d52e1f998772dc5baf6e553f8d2fcfe1fcc226c9d9a2ee3372dcc", size = 219798, upload-time = "2026-05-06T04:01:26.571Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/d6/5f358ff283325580c2003a6d953aea18cfe10ae87b46f5ebc80fa3a386dc/gitpython-3.1.58.tar.gz", hash = "sha256:621416df10ef3fd0e19fabf9172ddeed0fa704d353d04f194eec56a625a95b22", size = 228498, upload-time = "2026-08-04T15:05:49.47Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/7a/1c6e3562dfd8950adbb11ffbc65d21e7c89d01a6e4f137fa981056de25c5/gitpython-3.1.50-py3-none-any.whl", hash = "sha256:d352abe2908d07355014abdd21ddf798c2a961469239afec4962e9da884858f9", size = 212507, upload-time = "2026-05-06T04:01:23.799Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/0c/9d8752098bc442f0726e64aa6135940b3a96809915d1aa4206c1bb97881d/gitpython-3.1.58-py3-none-any.whl", hash = "sha256:d331e722577f0fd7fc1f857419b3ecc07af66282b933d2a4d95f84a042fdd50f", size = 220183, upload-time = "2026-08-04T15:05:48.025Z" },
 ]
 
 [[package]]
@@ -1905,6 +1915,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/10/e5/ca5cf012ccccb806c70e94aadfebca5606acc62b33eb88cec13352d0778f/onnxruntime-1.27.0-cp314-cp314-win_arm64.whl", hash = "sha256:856032937dd3bc7a7c141909c8d7ae4fde3e3f59bddf061ae627b9a051bda95c", size = 13456280, upload-time = "2026-06-15T22:43:29.693Z" },
     { url = "https://files.pythonhosted.org/packages/67/7b/dca330a8397e9d816c976d7aed4e24a4a2d279bb1e551e3d0221d1389b1d/onnxruntime-1.27.0-cp314-cp314t-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:c6197a02e3f620c4dc13cff51b80672409fc1ffab3aa2593911b19fd322ff48b", size = 16443274, upload-time = "2026-06-15T22:42:50.467Z" },
     { url = "https://files.pythonhosted.org/packages/b7/f6/2bac21f722aa45d876d4a51f26bd0ef30e704068a3cd5021a5a7cd784271/onnxruntime-1.27.0-cp314-cp314t-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:370d211e1ceeac4cd5f45301655463ac59e27cdc74d9f7aeb2d19ff4b7a76715", size = 18670781, upload-time = "2026-06-15T22:43:17.151Z" },
+]
+
+[[package]]
+name = "openshell"
+version = "0.0.76"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "grpcio" },
+    { name = "httpx" },
+    { name = "protobuf" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/9e/780d8a65b832be24703a8722b67493a6ccc98428d86f205d5bdf0914dd9a/openshell-0.0.76-py3-none-macosx_13_0_arm64.whl", hash = "sha256:6e4c49b1d05e035c2ae991902bc189158cfdc0ff61bdc26f182a3abc0bd60fae", size = 15923220, upload-time = "2026-07-03T15:20:44.579Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/32/6f935cdc9e16df4e1d256373395d12702b5df90f29185c41cd1d855c0e2e/openshell-0.0.76-py3-none-manylinux_2_39_aarch64.whl", hash = "sha256:b1aeb5474bdb9f003457101924439e3ca1009ce0f2fdaff4089f45e89eddaa6a", size = 19414517, upload-time = "2026-07-03T15:21:07.09Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/81/5750e8946fc3ee66ca4fd78bcbe6d6b69a673e88eddb41663fd9a3727c50/openshell-0.0.76-py3-none-manylinux_2_39_x86_64.whl", hash = "sha256:122552792b424646a1eb5cbb5847e6e1cd17b9a625e9e09cff392a0f88f183f0", size = 20260930, upload-time = "2026-07-03T15:21:27.919Z" },
 ]
 
 [[package]]
