@@ -90,18 +90,68 @@ models:
     api_key_env: "MAAS_API_KEY"
     label: "RHDP MaaS Llama Scout 17B (coding agents)"
 
+  # ── Additional MaaS endpoints — ONE KEY EACH (not the shared MAAS_API_KEY) ──
+  # PLACEHOLDERS: replace `model:` + `base_url:` with the real gateway values.
+  # Then put each key in .env under the api_key_env name shown here — the value
+  # NEVER lives in this file (it is git-tracked).  Convention: MAAS_<X>_API_KEY.
+  # api_key_env MUST be a valid POSIX env-var name: A-Z, 0-9, underscore only —
+  # NO hyphens, no lowercase (a name like "GPT-OSS-120b" can never resolve).
+  - model_id: maas-deepseek-r1-distill
+    backend: openai_compat
+    model: "REPLACE-ME"                 # e.g. deepseek-r1-distill-qwen-14b
+    base_url: "REPLACE-ME/v1"
+    api_key_env: "MAAS_DEEPSEEK_API_KEY"
+    label: "MaaS DeepSeek-R1-Distill (reasoning) [PLACEHOLDER]"
+  - model_id: maas-oss120b
+    backend: openai_compat
+    model: "REPLACE-ME"                 # e.g. gpt-oss-120b
+    base_url: "REPLACE-ME/v1"
+    api_key_env: "MAAS_OSS120B_API_KEY"
+    label: "MaaS gpt-oss-120b MoE (strong control plane) [PLACEHOLDER]"
+  - model_id: maas-qwen3-a3b
+    backend: openai_compat
+    model: "REPLACE-ME"                 # e.g. qwen3-30b-a3b
+    base_url: "REPLACE-ME/v1"
+    api_key_env: "MAAS_QWEN3_A3B_API_KEY"
+    label: "MaaS Qwen3 A3B (MoE worker) [PLACEHOLDER]"
+
 # ── Role → model mapping (B6, proposal 044) ────────────────────────────────
 # The ONE visible source of truth for which model each ROLE runs on.  Each
 # value is a model_id from the `models:` list above.  An agent resolves its
 # model at boot (acc.models.apply_role_model_env): a collective.yaml per-agent
 # `model:` override wins, else this `role_models` mapping, else the global
 # ACC_LLM_* default in .env.  Inspect live with `/model` (the Target role) or
-# `/model --all`.  Roles omitted here use the global default — so this block is
-# inert until you uncomment + populate it.  Keep keys = role names.
+# `/model --all`.  Roles omitted here use the global default.
 #
-# role_models:
-#   assistant: maas-qwen3-14b          # capable model for the gatekeeper
-#   orchestrator: maas-qwen3-14b       # routing needs reasoning
-#   reviewer: claude-sonnet            # strong critic
-#   research_synthesizer: claude-sonnet
-#   research_critic: claude-sonnet
+# KEYS MUST BE REAL ROLE NAMES.  An unknown key is silently ignored (the role
+# never exists, so nothing resolves it) and an unknown model_id falls back to
+# the global default — both fail QUIETLY.  List the live set first:
+#     python -m acc.pkg.cli list          # installed packs
+#     /model --all                        # what each agent ACTUALLY resolved
+#
+# Shape the mapping by JOB, not by taste:
+#   control plane (must emit well-formed markers + follow instructions)
+#     → assistant / orchestrator / arbiter / reviewer / compliance_officer
+#     A 3B model CANNOT do this reliably — it is why self-infusion stalls.
+#   workers (throughput over precision) → ingester / observer / analyst
+role_models:
+  # ── Control plane ──────────────────────────────────────────────────────
+  assistant: claude-sonnet             # emits PROPOSE_INFUSE — the demo hinge
+  orchestrator: maas-qwen3-14b         # routing needs reasoning
+  reviewer: claude-sonnet              # strong critic
+  compliance_officer: claude-sonnet    # Cat-A/B/C judgement
+  arbiter: maas-qwen3-14b              # signs ROLE_ASSIGN
+
+  # ── Workers ────────────────────────────────────────────────────────────
+  ingester: maas-llama-scout-17b
+  analyst: maas-qwen3-14b
+  # observer: <model_id>               # unmapped → global ACC_LLM_* default
+
+  # ── Pack roles — only map these once the pack is INSTALLED ─────────────
+  # research_synthesizer: claude-sonnet          # @acc/research-roles
+  # coding_agent_architect: maas-llama-scout-17b # @acc/workspace-roles
+
+  # ── Pending the three new MaaS endpoints (see PLACEHOLDER entries above)
+  # assistant: maas-oss120b
+  # arbiter: maas-qwen3-a3b
+  # research_critic: maas-deepseek-r1-distill    # VERIFY this role exists first
