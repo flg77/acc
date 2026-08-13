@@ -152,6 +152,10 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: ingester
+      # B6 (proposal 044) — the role->model registry MUST be readable
+      # in-container or acc.models.load_role_models() returns {} and every
+      # role silently falls back to the global ACC_LLM_* default.
+      ACC_MODELS_PATH: /app/models.yaml
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/ingester
@@ -177,6 +181,7 @@ services:
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
+      - ../../models.yaml:/app/models.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -195,6 +200,10 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: analyst
+      # B6 (proposal 044) — the role->model registry MUST be readable
+      # in-container or acc.models.load_role_models() returns {} and every
+      # role silently falls back to the global ACC_LLM_* default.
+      ACC_MODELS_PATH: /app/models.yaml
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/analyst
@@ -220,6 +229,7 @@ services:
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
+      - ../../models.yaml:/app/models.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -238,6 +248,10 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: arbiter
+      # B6 (proposal 044) — the role->model registry MUST be readable
+      # in-container or acc.models.load_role_models() returns {} and every
+      # role silently falls back to the global ACC_LLM_* default.
+      ACC_MODELS_PATH: /app/models.yaml
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/arbiter
@@ -263,6 +277,7 @@ services:
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
+      - ../../models.yaml:/app/models.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -285,6 +300,10 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: assistant
+      # B6 (proposal 044) — the role->model registry MUST be readable
+      # in-container or acc.models.load_role_models() returns {} and every
+      # role silently falls back to the global ACC_LLM_* default.
+      ACC_MODELS_PATH: /app/models.yaml
       ACC_AGENT_ID: assistant-1
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -306,6 +325,7 @@ services:
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
+      - ../../models.yaml:/app/models.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -329,6 +349,10 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
+      # B6 (proposal 044) — the role->model registry MUST be readable
+      # in-container or acc.models.load_role_models() returns {} and every
+      # role silently falls back to the global ACC_LLM_* default.
+      ACC_MODELS_PATH: /app/models.yaml
       ACC_AGENT_ID: coding-1
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -350,6 +374,7 @@ services:
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
+      - ../../models.yaml:/app/models.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -372,6 +397,10 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: compliance_officer
+      # B6 (proposal 044) — the role->model registry MUST be readable
+      # in-container or acc.models.load_role_models() returns {} and every
+      # role silently falls back to the global ACC_LLM_* default.
+      ACC_MODELS_PATH: /app/models.yaml
       ACC_AGENT_ID: compliance-1
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -392,6 +421,7 @@ services:
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
+      - ../../models.yaml:/app/models.yaml:ro,z
       - ../../roles:/app/roles:ro,z
       - ../../regulatory_layer:/app/regulatory_layer:ro
     networks:
@@ -424,6 +454,10 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
+      # B6 (proposal 044) — the role->model registry MUST be readable
+      # in-container or acc.models.load_role_models() returns {} and every
+      # role silently falls back to the global ACC_LLM_* default.
+      ACC_MODELS_PATH: /app/models.yaml
       ACC_AGENT_ID: coding-1
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -446,6 +480,7 @@ services:
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
+      - ../../models.yaml:/app/models.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -466,6 +501,10 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
+      # B6 (proposal 044) — the role->model registry MUST be readable
+      # in-container or acc.models.load_role_models() returns {} and every
+      # role silently falls back to the global ACC_LLM_* default.
+      ACC_MODELS_PATH: /app/models.yaml
       ACC_AGENT_ID: coding-2
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -488,6 +527,7 @@ services:
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
+      - ../../models.yaml:/app/models.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -508,6 +548,10 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
+      # B6 (proposal 044) — the role->model registry MUST be readable
+      # in-container or acc.models.load_role_models() returns {} and every
+      # role silently falls back to the global ACC_LLM_* default.
+      ACC_MODELS_PATH: /app/models.yaml
       ACC_AGENT_ID: coding-3
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -530,6 +574,7 @@ services:
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
+      - ../../models.yaml:/app/models.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
