@@ -937,7 +937,16 @@ class Agent:
         # ---- QUEUE branch (ASK_PERMISSIONS + ACCEPT_EDITS-for-structural) ----
         if queued:
             queue = self._oversight_queue
-            redis = getattr(self.backends, "working_memory", None)
+            # ``self._redis`` — NOT ``self.backends.working_memory``.  The
+            # backends bundle exposes only llm/metrics/signaling/vector; there
+            # is no working_memory attribute and nothing ever assigned one, so
+            # the old ``getattr(..., None)`` silently yielded None on every
+            # call.  The proposal cache below was therefore never written, and
+            # approving a queued INFUSE in the Compliance pane did NOTHING —
+            # no error, no install.  Dev mode hid it (INFUSE auto-executes and
+            # never reaches this branch); it only bit in prod, where the
+            # oversight gate is the whole point.
+            redis = self._redis
             for p in queued:
                 try:
                     oversight_id = ""
@@ -972,11 +981,11 @@ class Agent:
                             ttl = max(
                                 int(ov_ttl), _ASSISTANT_PROPOSAL_CACHE_TTL_S,
                             )
-                            await redis.setex(
+                            redis.setex(
                                 key, ttl,
                                 json.dumps(p.to_payload(), default=str),
                             )
-                            await redis.setex(
+                            redis.setex(
                                 meta_key, ttl,
                                 json.dumps(
                                     {
@@ -1027,7 +1036,7 @@ class Agent:
         a successful dispatch the cache entry is deleted so a replayed
         decision can't double-apply.
         """
-        redis = getattr(self.backends, "working_memory", None)
+        redis = self._redis
         if redis is None or not oversight_id:
             return
         key = f"acc:{collective_id}:assistant_proposal:{oversight_id}"
@@ -1035,7 +1044,7 @@ class Agent:
             f"acc:{collective_id}:assistant_proposal_meta:{oversight_id}"
         )
         try:
-            raw = await redis.get(key)
+            raw = redis.get(key)
         except Exception:
             logger.exception(
                 "assistant_proposal: redis lookup failed for %s",
@@ -1050,7 +1059,7 @@ class Agent:
             # the operator learns the click did nothing and can re-request.
             meta_raw = None
             try:
-                meta_raw = await redis.get(meta_key)
+                meta_raw = redis.get(meta_key)
             except Exception:
                 logger.debug(
                     "assistant_proposal: meta lookup failed for %s",
@@ -1075,7 +1084,7 @@ class Agent:
                     reason="proposal payload missing or expired before approval",
                 )
                 try:
-                    await redis.delete(meta_key)
+                    redis.delete(meta_key)
                 except Exception:
                     logger.debug(
                         "assistant_proposal: meta delete failed for %s",
@@ -1115,7 +1124,7 @@ class Agent:
         # Drop the payload + meta so a replayed decision can't re-dispatch.
         for k in (key, meta_key):
             try:
-                await redis.delete(k)
+                redis.delete(k)
             except Exception:
                 logger.debug(
                     "assistant_proposal: cache delete failed for %s (%s)",
@@ -1166,7 +1175,7 @@ class Agent:
 
         Best-effort; absent Redis or absent key is a silent no-op.
         """
-        redis = getattr(self.backends, "working_memory", None)
+        redis = self._redis
         if redis is None or not oversight_id:
             return
         for key in (
@@ -1174,7 +1183,7 @@ class Agent:
             f"acc:{collective_id}:assistant_proposal_meta:{oversight_id}",
         ):
             try:
-                await redis.delete(key)
+                redis.delete(key)
             except Exception:
                 logger.debug(
                     "assistant_proposal: cache delete failed for %s",
@@ -1341,7 +1350,7 @@ class Agent:
             return
         if self._cognitive_core is None:
             return
-        redis = getattr(self.backends, "working_memory", None)
+        redis = self._redis
         if redis is None:
             return
         try:
@@ -1349,7 +1358,7 @@ class Agent:
                 f"acc:{self.config.agent.collective_id}:"
                 f"{self.agent_id}:dormant"
             )
-            raw = await redis.get(key)
+            raw = redis.get(key)
             if not raw:
                 return
             if isinstance(raw, (bytes, bytearray)):
@@ -1955,17 +1964,17 @@ class Agent:
                 )
                 return
             # Best-effort Redis persistence so the flag survives a restart.
-            redis = getattr(self.backends, "working_memory", None)
+            redis = self._redis
             if redis is None:
                 return
             try:
                 key = f"acc:{collective_id}:{self.agent_id}:dormant"
                 if action == "sleep":
-                    await redis.set(key, json.dumps({
+                    redis.set(key, json.dumps({
                         "dormant": True, "dormant_at_ts": now,
                     }))
                 else:
-                    await redis.delete(key)
+                    redis.delete(key)
             except Exception:
                 logger.debug(
                     "assistant_control: redis persistence failed",
