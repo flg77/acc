@@ -837,9 +837,16 @@ services:
       # mount on this file.  Apply writes `.acc-apply.request` in the
       # same dir (the repo root) for a host-side watcher to pick up.
       - ../../collective.yaml:/app/collective.yaml:rw,z
-      # PR-MM2 -- central model registry, read-only, for the Agentset
-      # Model dropdown (acc.models.load_models).
-      - ../../models.yaml:/app/models.yaml:ro,z
+      # PR-MM2 -- central model registry for the Agentset Model dropdown
+      # (acc.models.load_models).  READ-WRITE (:z, not :ro,z): the
+      # Configuration pane's MODEL REGISTRY is a CRUD surface -- Add model /
+      # Edit / Delete / "Set default per role" call acc.models.upsert_model /
+      # delete_model / set_role_model, which rewrite this file.  Mounted :ro
+      # they all failed with "[Errno 30] Read-only file system:
+      # '/app/models.yaml'" while the pane still advertised "Edits save to
+      # models.yaml".  acc-tui is the ONLY writer -- acc-webgui and every
+      # agent keep :ro,z (they only read the registry).
+      - ../../models.yaml:/app/models.yaml:z
       # D-007 (PR-U2b) -- trusted workspace mount, SELinux-labelled (:z).
       # The TUI's "Select Directory" modal (WorkspaceSelectModal) browses
       # this shared host dir to let the operator pick / create + trust a

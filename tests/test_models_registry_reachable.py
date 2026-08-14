@@ -74,6 +74,44 @@ class TestBaselineCompose:
         assert not wrong, f"agent services with a bad {_ENV_KEY}: {wrong}"
 
 
+class TestRegistryWritability:
+    """acc-tui is the only writer; everyone else is read-only.
+
+    The Configuration pane's MODEL REGISTRY is a CRUD surface (Add / Edit /
+    Delete / "Set default per role" → ``acc.models.upsert_model`` /
+    ``delete_model`` / ``set_role_model``), all of which rewrite models.yaml.
+    Mounted ``:ro`` they fail with ``[Errno 30] Read-only file system`` while
+    the pane still claims "Edits save to models.yaml".  Conversely no agent
+    and not acc-webgui should ever be able to rewrite the registry.
+    """
+
+    def _mount(self, service: str) -> str:
+        doc = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))
+        mounts = [
+            v for v in (doc["services"][service].get("volumes") or [])
+            if isinstance(v, str) and ":/app/models.yaml" in v
+        ]
+        assert len(mounts) == 1, f"{service}: expected 1 models.yaml mount, got {mounts}"
+        return mounts[0]
+
+    def test_tui_mounts_registry_read_write(self):
+        mount = self._mount("acc-tui")
+        assert ":ro" not in mount, (
+            f"acc-tui mounts the registry read-only ({mount}) — the MODEL "
+            "REGISTRY CRUD surface will fail with Errno 30"
+        )
+
+    def test_webgui_mounts_registry_read_only(self):
+        assert ":ro" in self._mount("acc-webgui")
+
+    def test_agents_mount_registry_read_only(self):
+        writable = [
+            name for name in _agent_services()
+            if ":ro" not in self._mount(name)
+        ]
+        assert not writable, f"agents must not be able to rewrite the registry: {writable}"
+
+
 class TestSynthesizedOverlay:
     def _svc(self) -> dict:
         spec = CollectiveSpec(
