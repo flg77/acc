@@ -251,12 +251,37 @@ _RE_ROLE_UPDATE = re.compile(
 _RE_ROUTE = re.compile(
     r"\[PROPOSE_ROUTE:([^:\]]+):([^\]]+)\]"
 )
-# INFUSE: first group captures @scope/name@constraint (no colon, no
-# whitespace — constraint ranges like ">=1.2 <2.0" are NOT supported
-# in markers; use a caret/tilde/exact in the LLM's output instead).
+# INFUSE: first group captures @scope/name with an OPTIONAL @constraint
+# (no colon, no whitespace — constraint ranges like ">=1.2 <2.0" are NOT
+# supported in markers; use a caret/tilde/exact in the LLM's output).
+#
+# The constraint is optional on purpose.  Requiring it was the single
+# biggest cause of dropped infusion markers: the retry directive shows
+# the shape "@scope/pack@constraint", and models routinely emit
+# "[PROPOSE_INFUSE:@acc/research-roles:reason]" — dropping the version
+# they were never told a concrete value for.  The strict regex silently
+# skipped those, the operator saw "I did not take a concrete action",
+# and the intent was lost.  A missing constraint now means "any version"
+# (_INFUSE_DEFAULT_CONSTRAINT) and the resolver picks the newest match —
+# which is what an unversioned request means anyway.
 _RE_INFUSE = re.compile(
-    r"\[PROPOSE_INFUSE:(@[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_-]*@[^\s:\]]+):([^\]]+)\]"
+    r"\[PROPOSE_INFUSE:(@[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_-]*(?:@[^\s:\]]+)?):([^\]]+)\]"
 )
+
+# "Any version" for a marker that omitted the constraint.  ">=0.0.0"
+# rather than "*" because acc.pkg._semver has no wildcard atom; this
+# form matches every release including pre-releases.
+_INFUSE_DEFAULT_CONSTRAINT = ">=0.0.0"
+
+# Placeholder tokens from the marker's own documentation.  A model that
+# echoes the template verbatim ("@scope/pack", "@scope/name@constraint")
+# produces a syntactically VALID spec for a pack that cannot exist, which
+# would otherwise reach the oversight queue as a real install request.
+# Reject at parse time so the operator gets "no marker" (and the retry
+# path) rather than a bogus proposal to approve.
+_INFUSE_PLACEHOLDER_NAMES = frozenset({
+    "@scope/pack", "@scope/name", "@scope/role", "@acc/pack", "@acc/name",
+})
 
 
 # OpenSpec `20260602-role-proposal-assistant-blindspots` Phase 1.1 — marker-form
@@ -351,7 +376,20 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
     for spec, reason in _RE_INFUSE.findall(text):
         try:
             from acc.collective import parse_required_package  # noqa: PLC0415
-            name, constraint = parse_required_package(spec.strip())
+            raw = spec.strip()
+            # Constraint omitted (".../name" with no trailing "@x") —
+            # treat as "any version".  Guard on the LAST "@": the scope
+            # prefix always contributes one, so a bare "@scope/name" has
+            # exactly one and no "@" after the "/".
+            if "@" not in raw.split("/", 1)[-1]:
+                raw = f"{raw}@{_INFUSE_DEFAULT_CONSTRAINT}"
+            name, constraint = parse_required_package(raw)
+            if name.lower() in _INFUSE_PLACEHOLDER_NAMES:
+                logger.warning(
+                    "assistant_proposal: PROPOSE_INFUSE echoed the literal "
+                    "placeholder %r - skipping (not a real pack)", name,
+                )
+                continue
         except Exception:  # noqa: BLE001
             # Malformed spec — surface as a logged warning, skip the
             # marker.  Same posture as other malformed markers: we don't
