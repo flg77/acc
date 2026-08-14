@@ -40,9 +40,11 @@ deploy/.env.bak
 models.yaml
 acc-config.yaml
 collective.yaml
+catalogs.yaml
 !models.yaml.example
 !acc-config.yaml.example
 !collective.yaml.example
+!catalogs.yaml.example
 # Per-host acc-config overlays (acc-config.<host>.yaml) stay local too.
 acc-config.*.yaml
 !acc-config.*.yaml.example

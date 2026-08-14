@@ -156,6 +156,10 @@ services:
       # in-container or acc.models.load_role_models() returns {} and every
       # role silently falls back to the global ACC_LLM_* default.
       ACC_MODELS_PATH: /app/models.yaml
+      # Signed catalog the assistant resolves PROPOSE_INFUSE against.
+      # acc.pkg.catalog searches /etc/acc, ~/.acc and <cwd>/.acc — a
+      # catalogs.yaml at the repo root is NOT found without this.
+      ACC_SYSTEM_CATALOG: /app/catalogs.yaml
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/ingester
@@ -182,6 +186,7 @@ services:
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
       - ../../models.yaml:/app/models.yaml:ro,z
+      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -204,6 +209,10 @@ services:
       # in-container or acc.models.load_role_models() returns {} and every
       # role silently falls back to the global ACC_LLM_* default.
       ACC_MODELS_PATH: /app/models.yaml
+      # Signed catalog the assistant resolves PROPOSE_INFUSE against.
+      # acc.pkg.catalog searches /etc/acc, ~/.acc and <cwd>/.acc — a
+      # catalogs.yaml at the repo root is NOT found without this.
+      ACC_SYSTEM_CATALOG: /app/catalogs.yaml
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/analyst
@@ -230,6 +239,7 @@ services:
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
       - ../../models.yaml:/app/models.yaml:ro,z
+      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -252,6 +262,10 @@ services:
       # in-container or acc.models.load_role_models() returns {} and every
       # role silently falls back to the global ACC_LLM_* default.
       ACC_MODELS_PATH: /app/models.yaml
+      # Signed catalog the assistant resolves PROPOSE_INFUSE against.
+      # acc.pkg.catalog searches /etc/acc, ~/.acc and <cwd>/.acc — a
+      # catalogs.yaml at the repo root is NOT found without this.
+      ACC_SYSTEM_CATALOG: /app/catalogs.yaml
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/arbiter
@@ -278,6 +292,7 @@ services:
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
       - ../../models.yaml:/app/models.yaml:ro,z
+      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -304,6 +319,10 @@ services:
       # in-container or acc.models.load_role_models() returns {} and every
       # role silently falls back to the global ACC_LLM_* default.
       ACC_MODELS_PATH: /app/models.yaml
+      # Signed catalog the assistant resolves PROPOSE_INFUSE against.
+      # acc.pkg.catalog searches /etc/acc, ~/.acc and <cwd>/.acc — a
+      # catalogs.yaml at the repo root is NOT found without this.
+      ACC_SYSTEM_CATALOG: /app/catalogs.yaml
       ACC_AGENT_ID: assistant-1
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -326,6 +345,7 @@ services:
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
       - ../../models.yaml:/app/models.yaml:ro,z
+      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -353,6 +373,10 @@ services:
       # in-container or acc.models.load_role_models() returns {} and every
       # role silently falls back to the global ACC_LLM_* default.
       ACC_MODELS_PATH: /app/models.yaml
+      # Signed catalog the assistant resolves PROPOSE_INFUSE against.
+      # acc.pkg.catalog searches /etc/acc, ~/.acc and <cwd>/.acc — a
+      # catalogs.yaml at the repo root is NOT found without this.
+      ACC_SYSTEM_CATALOG: /app/catalogs.yaml
       ACC_AGENT_ID: coding-1
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -375,6 +399,7 @@ services:
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
       - ../../models.yaml:/app/models.yaml:ro,z
+      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -401,6 +426,10 @@ services:
       # in-container or acc.models.load_role_models() returns {} and every
       # role silently falls back to the global ACC_LLM_* default.
       ACC_MODELS_PATH: /app/models.yaml
+      # Signed catalog the assistant resolves PROPOSE_INFUSE against.
+      # acc.pkg.catalog searches /etc/acc, ~/.acc and <cwd>/.acc — a
+      # catalogs.yaml at the repo root is NOT found without this.
+      ACC_SYSTEM_CATALOG: /app/catalogs.yaml
       ACC_AGENT_ID: compliance-1
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -422,6 +451,7 @@ services:
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
       - ../../models.yaml:/app/models.yaml:ro,z
+      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
       - ../../roles:/app/roles:ro,z
       - ../../regulatory_layer:/app/regulatory_layer:ro
     networks:
@@ -458,6 +488,10 @@ services:
       # in-container or acc.models.load_role_models() returns {} and every
       # role silently falls back to the global ACC_LLM_* default.
       ACC_MODELS_PATH: /app/models.yaml
+      # Signed catalog the assistant resolves PROPOSE_INFUSE against.
+      # acc.pkg.catalog searches /etc/acc, ~/.acc and <cwd>/.acc — a
+      # catalogs.yaml at the repo root is NOT found without this.
+      ACC_SYSTEM_CATALOG: /app/catalogs.yaml
       ACC_AGENT_ID: coding-1
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -481,6 +515,7 @@ services:
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
       - ../../models.yaml:/app/models.yaml:ro,z
+      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -505,6 +540,10 @@ services:
       # in-container or acc.models.load_role_models() returns {} and every
       # role silently falls back to the global ACC_LLM_* default.
       ACC_MODELS_PATH: /app/models.yaml
+      # Signed catalog the assistant resolves PROPOSE_INFUSE against.
+      # acc.pkg.catalog searches /etc/acc, ~/.acc and <cwd>/.acc — a
+      # catalogs.yaml at the repo root is NOT found without this.
+      ACC_SYSTEM_CATALOG: /app/catalogs.yaml
       ACC_AGENT_ID: coding-2
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -528,6 +567,7 @@ services:
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
       - ../../models.yaml:/app/models.yaml:ro,z
+      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net
@@ -552,6 +592,10 @@ services:
       # in-container or acc.models.load_role_models() returns {} and every
       # role silently falls back to the global ACC_LLM_* default.
       ACC_MODELS_PATH: /app/models.yaml
+      # Signed catalog the assistant resolves PROPOSE_INFUSE against.
+      # acc.pkg.catalog searches /etc/acc, ~/.acc and <cwd>/.acc — a
+      # catalogs.yaml at the repo root is NOT found without this.
+      ACC_SYSTEM_CATALOG: /app/catalogs.yaml
       ACC_AGENT_ID: coding-3
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
@@ -575,6 +619,7 @@ services:
       # (not :U) so the operator can read the JSONL on the host post-session.
       - ../../logs:/logs:z
       - ../../models.yaml:/app/models.yaml:ro,z
+      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
       - ../../roles:/app/roles:ro,z
     networks:
       - acc-net

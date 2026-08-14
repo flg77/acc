@@ -474,7 +474,7 @@ case "$COMMAND" in
         # models.yaml 2x, and podman silently creates an empty DIRECTORY at a
         # mount point whose bind SOURCE is missing — which then shadows the
         # real config and fails at runtime in a confusing way.  Idempotent.
-        for _cfg in models.yaml acc-config.yaml collective.yaml; do
+        for _cfg in models.yaml acc-config.yaml collective.yaml catalogs.yaml; do
             _live="$REPO_ROOT/$_cfg"
             _tmpl="$REPO_ROOT/$_cfg.example"
             if [[ -f "$_live" ]]; then
@@ -1171,7 +1171,7 @@ case "$COMMAND" in
         # models.yaml 2x) — which then shadows the config and fails at runtime
         # in a way that looks like a code bug.  Fail loudly instead.
         _missing=()
-        for _cfg in models.yaml acc-config.yaml collective.yaml; do
+        for _cfg in models.yaml acc-config.yaml collective.yaml catalogs.yaml; do
             [[ -f "$REPO_ROOT/$_cfg" ]] || _missing+=("$_cfg")
         done
         if (( ${#_missing[@]} > 0 )); then

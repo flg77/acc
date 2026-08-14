@@ -1,0 +1,33 @@
+# Signed catalog registry — TEMPLATE.  Copy to ./catalogs.yaml
+# (`./acc-deploy.sh setup` does this) and edit per host; the live file is
+# gitignored because catalog URLs can be private/internal.
+#
+# Resolution layers (acc.pkg.catalog): /etc/acc/catalogs.yaml (override with
+# ACC_SYSTEM_CATALOG) -> ~/.acc/catalogs.yaml -> <cwd>/.acc/catalogs.yaml.
+# A catalogs.yaml at the repo root is NOT read on its own; the compose mounts
+# it to /app/catalogs.yaml and sets ACC_SYSTEM_CATALOG to point at it.
+#
+# EVERY tier requires a valid cosign signature against required_signer — the
+# signing floor is non-negotiable.  Tiers differ in policy depth, not in
+# whether a signature is checked.
+#
+# DERIVE the signer identity from the artefact, never copy it from an example:
+#   curl -s -o /tmp/b.json <catalog>/packages/acc/research-roles-<ver>.accpkg.bundle
+#   # extract the PEM from the bundle, then:
+#   openssl x509 -in /tmp/c.pem -noout -text | grep -A2 'Subject Alternative Name'
+# A published keys/ directory would mean keypair mode (set key_path) instead.
+catalogs:
+  # ACC-canonical trusted tier (flg77/acc-ecosystem via GitHub Pages).
+  # Keyless cosign, signed by the publish workflow's GitHub Actions OIDC
+  # identity.  subject_pattern is ANCHORED to the repo so a signature from any
+  # other workflow is rejected, but deliberately does NOT pin the workflow
+  # filename or tag, so a re-publish from a new tag still verifies.
+  # Single-quoted so YAML preserves the regex backslash.
+  - id: acc-canonical
+    tier: trusted
+    mode: https
+    url: https://flg77.github.io/acc-ecosystem
+    required_signer:
+      issuer: https://token.actions.githubusercontent.com
+      subject_pattern: '^https://github\.com/flg77/acc-ecosystem/'
+    priority: 100

@@ -128,3 +128,52 @@ class TestSynthesizedOverlay:
 
     def test_synthesized_agent_points_at_the_mounted_registry(self):
         assert self._svc()["environment"][_ENV_KEY] == _ENV_VAL
+
+class TestSignedCatalogReachable:
+    """Agents must be able to resolve PROPOSE_INFUSE against a signed catalog.
+
+    ``acc.pkg.catalog`` searches ``/etc/acc/catalogs.yaml`` (override:
+    ``ACC_SYSTEM_CATALOG``), ``~/.acc/catalogs.yaml`` and
+    ``<cwd>/.acc/catalogs.yaml``.  A ``catalogs.yaml`` at the repo root is NOT
+    read on its own — so mounting it is only half the wiring, and without the
+    env override infusion fails with "no catalogs are configured" (observed
+    live) even though the file is right there in the container.
+    """
+
+    def test_every_agent_mounts_the_catalog(self):
+        missing = [
+            name for name, svc in _agent_services().items()
+            if not any(
+                isinstance(v, str) and ":/app/catalogs.yaml" in v
+                for v in (svc.get("volumes") or [])
+            )
+        ]
+        assert not missing, f"agents missing the catalogs.yaml mount: {missing}"
+
+    def test_every_agent_points_at_the_mounted_catalog(self):
+        wrong = {
+            name: (svc.get("environment") or {}).get("ACC_SYSTEM_CATALOG")
+            for name, svc in _agent_services().items()
+            if (svc.get("environment") or {}).get("ACC_SYSTEM_CATALOG")
+            != "/app/catalogs.yaml"
+        }
+        assert not wrong, f"agents with a bad ACC_SYSTEM_CATALOG: {wrong}"
+
+    def test_template_signer_is_anchored_to_the_publishing_repo(self):
+        """An unanchored pattern would trust ANY GitHub Actions signature."""
+        import re
+
+        import yaml as _yaml
+        tmpl = REPO_ROOT / "catalogs.yaml.example"
+        cat = _yaml.safe_load(tmpl.read_text(encoding="utf-8"))["catalogs"][0]
+        signer = cat["required_signer"]
+        assert signer["issuer"] == "https://token.actions.githubusercontent.com"
+        pat = signer["subject_pattern"]
+        real = ("https://github.com/flg77/acc-ecosystem/.github/workflows/"
+                "publish-family-packs.yml@refs/tags/v1.2.4")
+        impostor = ("https://github.com/evil/acc-ecosystem/.github/workflows/"
+                    "x.yml@refs/tags/v1")
+        assert re.search(pat, real), "pattern rejects the real signing identity"
+        assert not re.search(pat, impostor), (
+            f"pattern {pat!r} accepts an impostor repo — it must be anchored"
+        )
