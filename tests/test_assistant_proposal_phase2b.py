@@ -301,10 +301,12 @@ def test_maybe_dispatch_loads_cached_proposal_and_publishes():
     )
     # Published the underlying mutation on the bus.
     assert rt.backends.signaling.publish.await_count == 1
-    # Payload + meta both deleted to prevent double-dispatch.
-    assert rt._redis.delete.call_count == 2
+    # Payload + meta both deleted to prevent double-dispatch.  They now go
+    # in ONE atomic DEL — the exactly-once claim that stops all N agents
+    # dispatching the same approval — so assert on the KEYS removed rather
+    # than on how many calls removed them.
     deleted = [
-        c.args[0] for c in rt._redis.delete.call_args_list
+        k for c in rt._redis.delete.call_args_list for k in c.args
     ]
     assert "acc:sol-01:assistant_proposal:ov-123" in deleted
     assert "acc:sol-01:assistant_proposal_meta:ov-123" in deleted
