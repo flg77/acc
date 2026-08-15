@@ -131,9 +131,10 @@ def _cosign_bin() -> str:
 
 def verify(
     pkg_path: Path,
-    signature_path: Path,
+    signature_path: Path | None,
     required_signer: RequiredSigner,
     *,
+    bundle_path: Path | None = None,
     attestations_path: Path | None = None,
     ec_policy_path: Path | None = None,
 ) -> VerifyResult:
@@ -148,7 +149,9 @@ def verify(
 
     Returns a :class:`VerifyResult` on success.  Raises:
 
-    * :class:`SignatureMissing` if ``signature_path`` doesn't exist.
+    * :class:`SignatureMissing` if NEITHER ``signature_path`` nor
+      ``bundle_path`` exists.  A publisher may ship only the bundle —
+      that is still a signed artefact, so it satisfies the floor.
     * :class:`CosignNotInstalled` if cosign isn't on PATH.
     * :class:`SignatureRejected` if cosign returns non-zero (carries
       the cosign stderr for audit).
@@ -157,9 +160,12 @@ def verify(
     pkg_path = pkg_path.resolve()
     if not pkg_path.is_file():
         raise VerifyError(f"package not found: {pkg_path}")
-    if not signature_path.is_file():
+    have_bundle = bundle_path is not None and Path(bundle_path).is_file()
+    have_sig = signature_path is not None and signature_path.is_file()
+    if not have_sig and not have_bundle:
         raise SignatureMissing(
-            f"signature not found at {signature_path}; the signing floor "
+            f"no signature at {signature_path} and no sigstore bundle; "
+            "the signing floor "
             "requires every install to carry a cosign signature "
             "(override with the operator-explicit --allow-unsigned)"
         )
@@ -167,6 +173,9 @@ def verify(
     cosign = _cosign_bin()
     cmd = [cosign, "verify-blob"]
     signer_identity: str
+    # Keypair mode verifies with --key + the detached signature; only the
+    # keyless path needs the bundle (for the cert).
+    use_bundle = False
     if required_signer.mode == "keypair":
         key = Path(required_signer.key_path).resolve()
         if not key.is_file():
@@ -190,8 +199,26 @@ def verify(
         signer_identity = (
             f"keyless:{required_signer.issuer} ~ {required_signer.subject_pattern}"
         )
+        # KEYLESS NEEDS THE CERTIFICATE.  A detached `.sig` is only the
+        # signature bytes — cosign has no key and no cert, and refuses with
+        # "provide a key with --key or --sk, a certificate to verify against
+        # with --certificate, or a bundle with --bundle".  ACC surfaced that
+        # as SignatureRejected, indistinguishable from a genuinely bad
+        # signature, so keyless verification could NEVER succeed
+        # (acc-spearhead#92).  The sigstore bundle carries signature + cert +
+        # Rekor entry, and publishers already emit it next to the .sig — pass
+        # it and drop --signature, which cosign rejects alongside --bundle.
+        use_bundle = have_bundle
 
-    cmd += ["--signature", str(signature_path), str(pkg_path)]
+    if use_bundle:
+        # --bundle supersedes --signature; cosign rejects both together.
+        cmd += ["--bundle", str(Path(bundle_path).resolve())]
+    else:
+        # Unreachable with signature_path=None: the floor check above already
+        # raised, since neither artefact would be present.
+        assert signature_path is not None
+        cmd += ["--signature", str(signature_path)]
+    cmd += [str(pkg_path)]
 
     logger.debug("running %s", " ".join(cmd))
     try:
