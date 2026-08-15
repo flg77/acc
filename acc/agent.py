@@ -1051,6 +1051,44 @@ class Agent:
                 oversight_id,
             )
             return
+        if raw:
+            # ---- EXACTLY-ONCE CLAIM ----------------------------------
+            # OVERSIGHT_DECISION is ENDOCRINE: it reaches every agent in
+            # the collective, and every agent holds an oversight queue
+            # (Phase 4.5 — the CRITICAL-capability gate fires on whatever
+            # agent the LLM runs on, not the arbiter).  So all of them
+            # arrive here for the same approval.  Without a claim each
+            # one dispatches: N bus publishes for spawn/role_update/route,
+            # and for infuse N independent fetch+cosign+install runs of
+            # the same pack (measured: 6 agents, 6 downloads, 6 cosign
+            # invocations, one winner and five idempotent no-ops).
+            #
+            # DEL is atomic and returns the number of keys it actually
+            # removed, so exactly one caller gets a non-zero result — the
+            # standard claim idiom, and it needs no new state because the
+            # code already deleted these keys post-dispatch for the same
+            # reason (replay protection).  Doing it BEFORE dispatch turns
+            # that intent into a guarantee instead of a TOCTOU race.
+            #
+            # Both keys go in one DEL on purpose: a loser must not fall
+            # into the payload-missing branch below, which would other-
+            # wise fire a bogus "expired — NOT dispatched" alarm and
+            # notify dispatch-failure.  With meta gone too, a loser is a
+            # silent no-op, which is what it is.
+            try:
+                claimed = redis.delete(key, meta_key)
+            except Exception:
+                logger.exception(
+                    "assistant_proposal: claim failed for %s",
+                    oversight_id,
+                )
+                return
+            if not claimed:
+                logger.debug(
+                    "assistant_proposal: %s claimed by a peer — skipping dispatch",
+                    oversight_id,
+                )
+                return
         if not raw:
             # Payload absent.  Tell a never-a-proposal oversight item (the
             # common case → silent no-op) apart from a proposal whose payload
@@ -1121,15 +1159,10 @@ class Agent:
                 oversight_id,
             )
             return
-        # Drop the payload + meta so a replayed decision can't re-dispatch.
-        for k in (key, meta_key):
-            try:
-                redis.delete(k)
-            except Exception:
-                logger.debug(
-                    "assistant_proposal: cache delete failed for %s (%s)",
-                    oversight_id, k, exc_info=True,
-                )
+        # No cache cleanup here: the claim above already removed both
+        # keys, which is also what makes a replayed decision a no-op.
+        # Re-adding a delete would be harmless but misleading — the
+        # payload is consumed at claim time, not at dispatch time.
 
     async def _notify_proposal_dispatch_failed(
         self,
@@ -3167,8 +3200,17 @@ class Agent:
           ``acc-cli oversight submit`` to inject synthetic items for
           demos and integration testing.
 
-        Non-arbiter roles return immediately (their ``_oversight_queue``
-        is None).  Unknown payloads are logged at WARNING and dropped.
+        NOTE: despite the section header, this is NOT arbiter-only.  As
+        of Phase 4.5 every agent is given a ``_oversight_queue`` (the
+        CRITICAL-capability gate fires on whichever agent the LLM runs
+        on), so the ``is None`` guard below never trips and EVERY agent
+        subscribes.  That is deliberate — each agent must learn the
+        outcome of items it submitted — but it means a single approval
+        reaches N agents, so any side effect triggered from here has to
+        be claimed exactly once.  See the claim in
+        ``_maybe_dispatch_assistant_proposal``.
+
+        Unknown payloads are logged at WARNING and dropped.
         """
         if self._oversight_queue is None:
             return
