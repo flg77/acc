@@ -101,7 +101,8 @@ def test_demo_multi_hosts_both_sub_collectives():
 @pytest.mark.parametrize("name", ["demo-coding", "demo-financial", "demo-multi"])
 def test_demo_models_are_registered(name):
     import yaml
-    models_yaml = _REPO_ROOT / "models.yaml"
+    # SHIPPED registry, not the live per-host one (gitignored, PR #210).
+    models_yaml = _REPO_ROOT / "models.yaml.example"
     data = yaml.safe_load(models_yaml.read_text(encoding="utf-8")) or {}
     known = {m["model_id"] for m in (data.get("models") or [])}
     spec = load_collective(_DEMO_DIR / f"{name}.yaml")

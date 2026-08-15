@@ -24,6 +24,30 @@ deploy/.env.bak
 # Allow .env.example AND every committed preset under env/.env.<model>.
 !.env.example
 !env/.env.*
+
+# ── Per-host runtime config — TEMPLATE-ONLY in git ─────────────────────────
+# These three are OPERATOR-EDITED on each node (lighthouse, acc1, edge) and
+# routinely accumulate confidential material: private gateway base_urls, and
+# — despite api_key_env being a NAME-only field — pasted API keys.  Only the
+# `.example` templates ship; the live files are scaffolded per host by
+# `./acc-deploy.sh setup` and never committed.
+#
+# ⚠ Do NOT simply delete a live file: acc-config.yaml is bind-mounted 11x and
+# models.yaml 2x in container/production/podman-compose.yml.  A MISSING bind
+# source makes podman silently create an empty DIRECTORY at the mount point
+# (the same failure that once broke .env → :8001).  Re-scaffold with
+# `./acc-deploy.sh setup`, don't hand-delete.
+models.yaml
+acc-config.yaml
+collective.yaml
+catalogs.yaml
+!models.yaml.example
+!acc-config.yaml.example
+!collective.yaml.example
+!catalogs.yaml.example
+# Per-host acc-config overlays (acc-config.<host>.yaml) stay local too.
+acc-config.*.yaml
+!acc-config.*.yaml.example
 *.egg-info/
 dist/
 build/

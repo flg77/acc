@@ -446,7 +446,11 @@ class TestShippedPresets:
         return repo_root / "collectives"
 
     def test_default_collective_yaml_parses(self, repo_root: Path):
-        spec = load_collective(repo_root / "collective.yaml")
+        # Assert on the SHIPPED template, not the live file.  collective.yaml
+        # is per-host + gitignored (PR #210): absent on a clean clone, and its
+        # contents are operator-specific, so `agents == []` would fail for any
+        # operator who configured an agentset.
+        spec = load_collective(repo_root / "collective.yaml.example")
         assert spec.collective_id == "sol-01"
         assert spec.agents == []  # shipped empty by design
 

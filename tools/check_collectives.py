@@ -42,7 +42,15 @@ except ImportError:  # pragma: no cover - PyYAML is a hard dep of acc
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PACKS_MANIFEST = _REPO_ROOT / "collectives" / "packs.yaml"
-_MODELS_YAML = _REPO_ROOT / "models.yaml"
+# models.yaml is per-host + gitignored; a fresh clone has only the template.
+# Mirror acc.models.models_path(): prefer the live file, fall back to the
+# shipped .example so preset alignment still validates on a clean checkout
+# (otherwise every `model:` reads as "not in models.yaml").
+_MODELS_YAML = (
+    _REPO_ROOT / "models.yaml"
+    if (_REPO_ROOT / "models.yaml").is_file()
+    else _REPO_ROOT / "models.yaml.example"
+)
 _ROLES_DIR = _REPO_ROOT / "roles"
 _COLLECTIVES_DIR = _REPO_ROOT / "collectives"
 _ROOT_SPEC = _REPO_ROOT / "collective.yaml"

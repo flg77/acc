@@ -467,6 +467,28 @@ case "$COMMAND" in
             echo "ERROR: $ENV_EXAMPLE not found — cannot scaffold." >&2
             exit 1
         fi
+        # Per-host runtime config — template-only in git (see .gitignore).
+        # models.yaml / acc-config.yaml / collective.yaml are operator-edited
+        # per node and gitignored; scaffold each from its committed .example.
+        # This is NOT cosmetic: acc-config.yaml is bind-mounted 11x and
+        # models.yaml 2x, and podman silently creates an empty DIRECTORY at a
+        # mount point whose bind SOURCE is missing — which then shadows the
+        # real config and fails at runtime in a confusing way.  Idempotent.
+        for _cfg in models.yaml acc-config.yaml collective.yaml catalogs.yaml; do
+            _live="$REPO_ROOT/$_cfg"
+            _tmpl="$REPO_ROOT/$_cfg.example"
+            if [[ -f "$_live" ]]; then
+                echo "✓ $_cfg already exists — left untouched."
+            elif [[ -f "$_tmpl" ]]; then
+                cp "$_tmpl" "$_live"
+                echo "✓ Created $_cfg from $_cfg.example."
+            else
+                echo "ERROR: neither $_cfg nor $_cfg.example found — cannot scaffold." >&2
+                exit 1
+            fi
+        done
+        echo "  Secrets stay in .env; *.yaml holds only api_key_env NAMES."
+
         # PR-X — scaffold the apply dir (bind-mounted into acc-tui) and
         # start the host-side workspace apply-watcher so the Prompt
         # screen's directory picker can recreate agents onto a chosen
@@ -1142,6 +1164,23 @@ case "$COMMAND" in
         ;;
 
     up)
+        # Preflight: the per-host runtime configs are gitignored templates
+        # (see .gitignore).  A FRESH CLONE has only the .example files, and
+        # bringing the stack up without them makes podman create an empty
+        # DIRECTORY at each bind-mount source (acc-config.yaml is mounted 11x,
+        # models.yaml 2x) — which then shadows the config and fails at runtime
+        # in a way that looks like a code bug.  Fail loudly instead.
+        _missing=()
+        for _cfg in models.yaml acc-config.yaml collective.yaml catalogs.yaml; do
+            [[ -f "$REPO_ROOT/$_cfg" ]] || _missing+=("$_cfg")
+        done
+        if (( ${#_missing[@]} > 0 )); then
+            echo "ERROR: missing per-host config: ${_missing[*]}" >&2
+            echo "       These are gitignored (template-only in git)." >&2
+            echo "       Run:  ./acc-deploy.sh setup" >&2
+            exit 1
+        fi
+
         # Soft cut for the deploy/.env -> ./.env migration.  If the
         # operator still has deploy/.env from a previous install and no
         # ./.env, symlink it so the new compose env_file: ../../.env

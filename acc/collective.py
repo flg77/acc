@@ -620,6 +620,11 @@ def roles_to_compose(
                 "ACC_LANCEDB_PATH": f"/app/data/lancedb/{aid}",
                 "ACC_REDIS_URL": "redis://acc-redis:6379",
                 "ACC_REDIS_PASSWORD": "${REDIS_PASSWORD:-}",
+                # B6 (proposal 044) — points acc.models.models_path() at the
+                # mounted registry (see the volumes list below).  Without it
+                # the lookup falls back to <repo>/models.yaml, which does not
+                # exist inside the container.
+                "ACC_MODELS_PATH": "/app/models.yaml",
             }
             if agent.cluster_id:
                 env["ACC_CLUSTER_ID"] = agent.cluster_id
@@ -661,6 +666,13 @@ def roles_to_compose(
                     # the base agent template).
                     "acc-packages:/var/lib/acc/packages:U,z",
                     "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
+                    # B6 (proposal 044) — the role->model registry.  Without
+                    # this mount (+ ACC_MODELS_PATH above) acc.models
+                    # .load_role_models() cannot read models.yaml, returns {},
+                    # and EVERY synthesized agent silently falls back to the
+                    # global ACC_LLM_* default — role_models looks configured
+                    # in the TUI but never reaches the agent.
+                    "../../models.yaml:/app/models.yaml:ro,z",
                     # roles/ is RW (:z, not :ro,z) so the assistant can
                     # self-author role.yaml and have the edit persist; writes
                     # stay gated by the role-authoring boundary + operator_mode.

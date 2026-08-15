@@ -73,15 +73,29 @@ def models_path() -> Path:
     """Resolve the central ``models.yaml``.
 
     Precedence: ``ACC_MODELS_PATH`` env > ``<repo>/models.yaml`` >
-    ``/app/models.yaml`` (the in-container mount).
+    ``<repo>/models.yaml.example`` > ``/app/models.yaml`` (in-container mount).
+
+    The ``.example`` step matters because ``models.yaml`` is per-host and
+    gitignored — a FRESH CLONE has only the template.  Without this fallback
+    ``load_models()`` returns ``[]`` on a clean checkout, which reads as "no
+    models are registered": the Agentset dropdown empties, every preset fails
+    alignment, and every role silently drops to the global ``ACC_LLM_*``
+    default.  Falling back to the shipped template makes a clean clone behave
+    like the release it shipped from, and the per-host file wins the moment
+    ``./acc-deploy.sh setup`` scaffolds it.
+
+    This is a read-side convenience only.  It is NOT a substitute for
+    scaffolding: ``acc-deploy.sh up`` still refuses to start without the live
+    file, because the compose bind-mounts it and podman would otherwise create
+    an empty directory at the mount point.
     """
     raw = os.environ.get("ACC_MODELS_PATH", "").strip()
     if raw:
         return Path(raw)
     repo_root = Path(__file__).resolve().parent.parent
-    candidate = repo_root / "models.yaml"
-    if candidate.is_file():
-        return candidate
+    for candidate in (repo_root / "models.yaml", repo_root / "models.yaml.example"):
+        if candidate.is_file():
+            return candidate
     return Path("/app/models.yaml")
 
 
