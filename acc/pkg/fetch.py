@@ -93,7 +93,7 @@ class FetchResult:
 
 def _materialise(
     resolved: ResolvedPackage, dest_dir: Path
-) -> tuple[Path, Path | None]:
+) -> tuple[Path, Path | None, Path | None]:
     """Place tarball + signature in ``dest_dir`` and return their paths.
 
     Signature path is ``None`` if the catalog entry doesn't supply
@@ -104,6 +104,9 @@ def _materialise(
     name_safe = entry.name.replace("/", "__").replace("@", "")
     tarball_dest = dest_dir / f"{name_safe}-{entry.version}.accpkg"
     sig_dest: Path | None = None
+    # Sigstore bundle — REQUIRED for keyless verification (it carries the
+    # cert cosign needs; a detached .sig alone cannot be verified keylessly).
+    bundle_dest: Path | None = None
 
     if cat.mode == "https":
         # tarball_url is documented to be relative to the catalog url
@@ -122,6 +125,14 @@ def _materialise(
             )
             sig_dest = dest_dir / (tarball_dest.name + ".sig")
             _download(sig_url, sig_dest)
+        if entry.bundle_url:
+            bundle_url = (
+                entry.bundle_url
+                if entry.bundle_url.startswith("http")
+                else cat.url.rstrip("/") + "/" + entry.bundle_url.lstrip("/")
+            )
+            bundle_dest = dest_dir / (tarball_dest.name + ".bundle")
+            _download(bundle_url, bundle_dest)
     else:  # file mode
         src = Path(entry.tarball_path)
         if not src.is_file():
@@ -134,8 +145,13 @@ def _materialise(
             if sig_src.is_file():
                 sig_dest = dest_dir / (tarball_dest.name + ".sig")
                 sig_dest.write_bytes(sig_src.read_bytes())
+        if entry.bundle_path:
+            bundle_src = Path(entry.bundle_path)
+            if bundle_src.is_file():
+                bundle_dest = dest_dir / (tarball_dest.name + ".bundle")
+                bundle_dest.write_bytes(bundle_src.read_bytes())
 
-    return tarball_dest, sig_dest
+    return tarball_dest, sig_dest, bundle_dest
 
 
 def _download(url: str, dest: Path) -> None:
@@ -205,11 +221,12 @@ def fetch_and_install(
 
     with tempfile.TemporaryDirectory(prefix="acc-pkg-fetch-") as tmp:
         tmp_dir = Path(tmp)
-        tarball_path, sig_path = _materialise(resolved, tmp_dir)
+        tarball_path, sig_path, bundle_path = _materialise(resolved, tmp_dir)
         install_result = _verify_and_install(
             resolved,
             tarball_path,
             sig_path,
+            bundle_path,
             allow_unsigned=allow_unsigned,
             registry=registry,
         )
@@ -226,6 +243,7 @@ def _verify_and_install(
     resolved: ResolvedPackage,
     tarball_path: Path,
     sig_path: Path | None,
+    bundle_path: Path | None = None,
     *,
     allow_unsigned: bool,
     registry: Registry | None,
@@ -237,7 +255,9 @@ def _verify_and_install(
             resolved.entry.name, resolved.entry.version,
         )
     else:
-        if sig_path is None or not sig_path.is_file():
+        have_sig = sig_path is not None and sig_path.is_file()
+        have_bundle = bundle_path is not None and bundle_path.is_file()
+        if not have_sig and not have_bundle:
             raise VerifyError(
                 f"catalog {resolved.catalog.id} did not provide a "
                 "signature for "
@@ -245,7 +265,12 @@ def _verify_and_install(
                 "the signing floor is non-negotiable — pass "
                 "allow_unsigned=True only with audit-logged approval"
             )
-        _verify(tarball_path, sig_path, resolved.catalog.required_signer)
+        _verify(
+            tarball_path,
+            sig_path,
+            resolved.catalog.required_signer,
+            bundle_path=bundle_path,
+        )
 
     return _install(tarball_path, registry=registry)
 
@@ -336,7 +361,7 @@ def _install_closure(
     )
 
     with tempfile.TemporaryDirectory(prefix="acc-pkg-fetch-") as tmp:
-        tarball_path, sig_path = _materialise(resolved, Path(tmp))
+        tarball_path, sig_path, bundle_path = _materialise(resolved, Path(tmp))
 
         # Install unsatisfied dependencies first (children before parent).
         manifest = read_manifest(tarball_path)
@@ -357,6 +382,7 @@ def _install_closure(
             resolved,
             tarball_path,
             sig_path,
+            bundle_path,
             allow_unsigned=allow_unsigned,
             registry=registry,
         )
