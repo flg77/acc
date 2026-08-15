@@ -462,17 +462,64 @@ def _has_actionable_marker(text: str) -> bool:
     return "[ROLE_GAP:" in text or "[DELEGATE:" in text
 
 
-_MARKER_RETRY_DIRECTIVE = (
-    "\n\n[SYSTEM — ACT NOW] Your previous reply did not take a concrete "
+_MARKER_RETRY_BASE = (
+    "\n\n[SYSTEM - ACT NOW] Your previous reply did not take a concrete "
     "action. The operator asked you to ACT. Emit EXACTLY ONE actionable "
-    "marker on its own line AFTER any </reasoning> block — do NOT describe "
+    "marker on its own line AFTER any </reasoning> block - do NOT describe "
     "what you would do, and do NOT call a no-op skill like `echo`:\n"
-    "  [PROPOSE_ROUTE:<running_role>:<why>]            — hand the task to a running role\n"
-    "  [PROPOSE_SPAWN:<installed_role>:<cluster>:<why>] — bring an INSTALLED role online\n"
-    "  [PROPOSE_INFUSE:@scope/pack@constraint:<why>]    — install a role pack you lack\n"
-    "  [ROLE_GAP:<goal_id>:{json}]                      — no role fits; propose a remedy\n"
-    "Pick the single best one for THIS task and emit it now."
+    "  [PROPOSE_ROUTE:<running_role>:<why>]            - hand the task to a running role\n"
+    "  [PROPOSE_SPAWN:<installed_role>:<cluster>:<why>] - bring an INSTALLED role online\n"
+    "  [PROPOSE_INFUSE:<@scope/pack>:<why>]             - install a role pack you lack\n"
+    "  [ROLE_GAP:<goal_id>:{json}]                      - no role fits; propose a remedy\n"
+    "\n"
+    "Copy this SHAPE exactly - a real example, not a template:\n"
+    "  [PROPOSE_INFUSE:@acc/research-roles:operator needs a research team]\n"
+    "The version is OPTIONAL - omit it and you get the newest. Never emit "
+    "the literal words `scope`, `pack` or `constraint`.\n"
+    "\n"
+    "Do NOT route a task to YOURSELF - if you are the right role, just do "
+    "the work and answer normally.\n"
 )
+
+_MARKER_RETRY_TAIL = "Pick the single best one for THIS task and emit it now."
+
+
+def _marker_retry_directive(perception: Any = None) -> str:
+    """The ACT-NOW retry directive, with the real installable packs inlined.
+
+    Two failure modes this addresses, both observed live on lighthouse with
+    a 120B model (so this is not a small-model formatting problem):
+
+    * the schema line showed ``@scope/pack@constraint``, and models emitted
+      either the literal placeholder or a name with no version - the latter
+      silently dropped by the previously-strict INFUSE regex;
+    * with no concrete pack names in front of it, a model told to acquire a
+      capability either invents a name or, as seen live, emits
+      ``[PROPOSE_ROUTE:assistant:...]`` and routes the task to itself.
+
+    Listing the packs the collective can ACTUALLY install turns an open
+    generation into a pick-from-this-list, which every model size handles
+    more reliably.  Best-effort: no snapshot (or an unexpected shape) just
+    omits the list rather than failing the retry.
+    """
+    names: list[str] = []
+    try:
+        for pkg in (getattr(perception, "available_packages", None) or [])[:12]:
+            name = pkg.get("name") if isinstance(pkg, dict) else None
+            if name:
+                names.append(str(name))
+    except Exception:  # noqa: BLE001
+        names = []
+    if not names:
+        return _MARKER_RETRY_BASE + _MARKER_RETRY_TAIL
+    listed = "\n".join(f"  {n}" for n in names)
+    return (
+        _MARKER_RETRY_BASE
+        + "Packs you can infuse RIGHT NOW (use one of these EXACT names):\n"
+        + listed
+        + "\n\n"
+        + _MARKER_RETRY_TAIL
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1153,7 +1200,9 @@ class CognitiveCore:
                     "marker (agent_id=%s); re-prompting once",
                     self._agent_id,
                 )
-                retry_user = llm_user_content + _MARKER_RETRY_DIRECTIVE
+                retry_user = llm_user_content + _marker_retry_directive(
+                    self._perception,
+                )
                 r2, l2, t2 = await self._call_llm(system_prompt, retry_user)
                 latency_ms += l2
                 token_count += t2
