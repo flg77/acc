@@ -16,7 +16,7 @@ Covers the end-to-end shape:
 
 The cognitive-core integration tests fake the LLM output text directly
 into a CognitiveResult-shaped flow; the agent I/O tests use AsyncMock
-fakes for signaling + working_memory + oversight_queue.
+fakes for signaling + the sync _redis client + oversight_queue.
 """
 
 from __future__ import annotations
@@ -159,10 +159,11 @@ class _FakeRuntime:
         self.backends = MagicMock()
         self.backends.signaling = MagicMock()
         self.backends.signaling.publish = AsyncMock()
-        self.backends.working_memory = MagicMock()
-        self.backends.working_memory.setex = AsyncMock()
-        self.backends.working_memory.get = AsyncMock()
-        self.backends.working_memory.delete = AsyncMock()
+        # The SYNC redis client the agent really holds (_build_redis_client).
+        # NOT backends.working_memory: that attribute does not exist in
+        # production, so the previous AsyncMock fixture green-lit a code path
+        # that always saw None.  Sync MagicMock — these are not awaited.
+        self._redis = MagicMock()
         self._oversight_queue = MagicMock()
         self._oversight_queue._timeout_s = 300
         self._oversight_queue.submit = AsyncMock(
@@ -215,9 +216,9 @@ def test_handle_assistant_proposals_queues_with_cache_and_announce():
     # Cached under acc:{cid}:assistant_proposal:{oversight_id} PLUS a companion
     # meta marker; both share a TTL decoupled from (never shorter than) the
     # 300s oversight timeout so a valid approval near the window still dispatches.
-    assert rt.backends.working_memory.setex.await_count == 2
+    assert rt._redis.setex.call_count == 2
     setex_keys = [
-        c.args[0] for c in rt.backends.working_memory.setex.await_args_list
+        c.args[0] for c in rt._redis.setex.call_args_list
     ]
     assert any(
         k.startswith("acc:sol-01:assistant_proposal:") for k in setex_keys
@@ -227,7 +228,7 @@ def test_handle_assistant_proposals_queues_with_cache_and_announce():
     )
     assert all(
         c.args[1] >= 300
-        for c in rt.backends.working_memory.setex.await_args_list
+        for c in rt._redis.setex.call_args_list
     )
     # Announced on subject_assistant_proposal.
     subjects = [
@@ -290,7 +291,7 @@ def test_maybe_dispatch_loads_cached_proposal_and_publishes():
         kind=PROPOSAL_ROUTE, params={"target_role": "analyst"},
         collective_id="sol-01",
     )
-    rt.backends.working_memory.get = AsyncMock(
+    rt._redis.get = MagicMock(
         return_value=json.dumps(p.to_payload()).encode("utf-8")
     )
     asyncio.run(
@@ -301,9 +302,9 @@ def test_maybe_dispatch_loads_cached_proposal_and_publishes():
     # Published the underlying mutation on the bus.
     assert rt.backends.signaling.publish.await_count == 1
     # Payload + meta both deleted to prevent double-dispatch.
-    assert rt.backends.working_memory.delete.await_count == 2
+    assert rt._redis.delete.call_count == 2
     deleted = [
-        c.args[0] for c in rt.backends.working_memory.delete.await_args_list
+        c.args[0] for c in rt._redis.delete.call_args_list
     ]
     assert "acc:sol-01:assistant_proposal:ov-123" in deleted
     assert "acc:sol-01:assistant_proposal_meta:ov-123" in deleted
@@ -330,7 +331,7 @@ def test_maybe_dispatch_missing_payload_but_meta_present_notifies():
             ).encode("utf-8")
         return None  # payload gone / expired
 
-    rt.backends.working_memory.get = AsyncMock(side_effect=_get)
+    rt._redis.get = MagicMock(side_effect=_get)
     asyncio.run(
         Agent._maybe_dispatch_assistant_proposal(rt, "sol-01", "ov-stale")
     )
@@ -340,7 +341,7 @@ def test_maybe_dispatch_missing_payload_but_meta_present_notifies():
     assert payload["trigger"] == "proposal_dispatch_failed"
     assert payload["kind"] == "infuse"
     # Only the meta marker is cleared (payload was already gone).
-    rt.backends.working_memory.delete.assert_awaited_once_with(
+    rt._redis.delete.assert_called_once_with(
         "acc:sol-01:assistant_proposal_meta:ov-stale",
     )
 
@@ -395,21 +396,21 @@ def test_maybe_dispatch_noop_when_cache_miss():
     from acc.agent import Agent  # noqa: PLC0415
 
     rt = _FakeRuntime()
-    rt.backends.working_memory.get = AsyncMock(return_value=None)
+    rt._redis.get = MagicMock(return_value=None)
     asyncio.run(
         Agent._maybe_dispatch_assistant_proposal(
             rt, "sol-01", "ov-not-a-proposal",
         )
     )
     rt.backends.signaling.publish.assert_not_called()
-    rt.backends.working_memory.delete.assert_not_called()
+    rt._redis.delete.assert_not_called()
 
 
 def test_maybe_dispatch_handles_malformed_cache_payload():
     from acc.agent import Agent  # noqa: PLC0415
 
     rt = _FakeRuntime()
-    rt.backends.working_memory.get = AsyncMock(return_value=b"not json")
+    rt._redis.get = MagicMock(return_value=b"not json")
     # Must not raise.
     asyncio.run(
         Agent._maybe_dispatch_assistant_proposal(
@@ -429,9 +430,9 @@ def test_discard_cache_deletes_key():
         )
     )
     # Both the payload and the companion meta marker are cleared on REJECT.
-    assert rt.backends.working_memory.delete.await_count == 2
+    assert rt._redis.delete.call_count == 2
     deleted = [
-        c.args[0] for c in rt.backends.working_memory.delete.await_args_list
+        c.args[0] for c in rt._redis.delete.call_args_list
     ]
     assert "acc:sol-01:assistant_proposal:ov-999" in deleted
     assert "acc:sol-01:assistant_proposal_meta:ov-999" in deleted
@@ -441,7 +442,7 @@ def test_discard_cache_safe_when_no_redis():
     from acc.agent import Agent  # noqa: PLC0415
 
     rt = _FakeRuntime()
-    rt.backends.working_memory = None
+    rt._redis = None
     # Must not raise.
     asyncio.run(
         Agent._discard_assistant_proposal_cache(
