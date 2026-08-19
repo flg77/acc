@@ -168,6 +168,13 @@ acc-channel-slack = "acc.channels.slack:main"
 # piper + sounddevice). Push-to-talk → STT → assistant → TTS. PR-PROPOSAL-C.
 acc-channel-voice = "acc.channels.voice_daemon:main"
 
+# MLflow request-header plugins — auto-discovered by the MLflow client at
+# import. WorkspaceHeaderProvider stamps X-MLflow-Workspace on tracking requests
+# when MLFLOW_WORKSPACE is set, so ACC can log to RHOAI's multi-tenant MLflow
+# (else 400 "Workspace context is required"). No-op when the env var is unset.
+[project.entry-points."mlflow.request_header_provider"]
+acc-workspace = "acc.backends.mlflow_headers:WorkspaceHeaderProvider"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["acc*"]
