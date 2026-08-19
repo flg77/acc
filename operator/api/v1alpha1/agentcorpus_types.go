@@ -902,6 +902,24 @@ type ObservabilitySpec struct {
 	// +kubebuilder:default=true
 	// +optional
 	GrafanaDashboard bool `json:"grafanaDashboard,omitempty"`
+
+	// MLflowTrackingURI, when set, is injected as ACC_MLFLOW_TRACKING_URI into
+	// the TUI and WebGUI pods so golden-suite runs log to an MLflow experiment
+	// and the eval-history "trace →" deep links resolve. This is the
+	// experiments/runs layer — INDEPENDENT of otelCollector.mlflowEndpoint,
+	// which fans TRACES to MLflow. It works with either backend (log or otel),
+	// since run-logging + deep-links need only the URI. Deliberately NOT
+	// injected into agent pods (agents never call the run logger, and keeping
+	// MLflow off agent pods preserves the FQDN-egress NetworkPolicy posture).
+	// Leave empty to disable (the edge/default posture).
+	// +optional
+	MLflowTrackingURI string `json:"mlflowTrackingUri,omitempty"`
+
+	// MLflowExperiment overrides the MLflow experiment name for run logging
+	// (ACC_MLFLOW_EXPERIMENT). Defaults to "acc-golden-prompts" in the runtime
+	// when empty. Only consulted when MLflowTrackingURI is set.
+	// +optional
+	MLflowExperiment string `json:"mlflowExperiment,omitempty"`
 }
 
 // OTelCollectorSpec configures the OTel collector deployment.

@@ -91,12 +91,15 @@ func keycloakFor(corpus *accv1alpha1.AgentCorpus) *accv1alpha1.WebGUIKeycloakSpe
 // tuiEnv is the env every acc-tui container needs to reach the corpus NATS
 // and observe its collectives (mirrors the agent + webgui wiring).
 func (r *TUIReconciler) tuiEnv(ctx context.Context, corpus *accv1alpha1.AgentCorpus) []corev1.EnvVar {
-	return []corev1.EnvVar{
+	env := []corev1.EnvVar{
 		{Name: "ACC_DEPLOY_MODE", Value: string(corpus.Spec.DeployMode)},
 		{Name: "ACC_NATS_URL", Value: fmt.Sprintf("nats://%s-nats:4222", corpus.Name)},
 		{Name: "ACC_CORPUS_NAME", Value: corpus.Name},
 		{Name: "ACC_COLLECTIVE_IDS", Value: strings.Join(r.collectiveIDs(ctx, corpus), ",")},
 	}
+	// experiments/runs layer — golden "Run all" logging + eval-history deep
+	// links when observability.mlflowTrackingUri is set (else no-op).
+	return append(env, mlflowEnv(corpus)...)
 }
 
 // collectiveIDs resolves each referenced AgentCollective's CollectiveID
