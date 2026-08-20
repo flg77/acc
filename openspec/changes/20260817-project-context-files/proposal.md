@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-project-context-files
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Parked — revisit when multi-project use of one role becomes common
 **Author:** flg
 
 ---
