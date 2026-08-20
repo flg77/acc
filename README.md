@@ -52,6 +52,11 @@ Highlights across the `0.5.x` → `0.7.x` release cycles — see [`CHANGELOG.md`
 
 | Feature | What it is | Status |
 |---|---|---|
+| **Operator command surface (v0.8.0)** | The whole unparked specification backlog landed as twenty capabilities — `acc-cli` now carries **28 commands**. Health (`doctor`, `status`), configuration (`config`, `profile`, `setup`), credentials (`auth`, `secrets`, `access`, `egress`), forensics (`logs`, `sessions`, `checkpoints`), governance (`objective`, `hooks`, `scan`) and `backup`/`restore`. Full matrix in [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md). | ✅ Landed (v0.8.0) |
+| **Identity from the substrate** | ACC does **not** define its own identity model: it resolves a principal from wherever it runs — real cluster RBAC on OpenShift, system authentication at the edge, the existing oauth2-proxy/Keycloak session in the web GUI. What ACC owns is what a principal may ask an *agent* to do, which no cluster can express. External requesters (chat, webhooks) are **default deny** and can never be promoted to operator by an allowlist entry. | ✅ Landed (v0.8.0) |
+| **Session lifecycle + governed retention** | Resume an investigation across restarts — a resume starts a new session recording which one it continues, so history is appended to, never rewritten. Retention is policy-driven and defaults to **keep forever**; there is **no removal path that leaves no trace**, and a session that recorded a block is kept regardless of age. | ✅ Landed (v0.8.0) |
+| **Workspace checkpoints + image input** | A snapshot before an agent write records the task that caused it *and the oversight decision that authorised it* — "what changed, when, and who approved it" becomes one question. Images attach to prompts with the durable record keeping a **reference, not the bytes**, so an image can age out while the record of what was attached survives. | ✅ Landed (v0.8.0, opt-in) |
+| **Inbound work, governed** | A standard chat-completions endpoint (a `model` names a **role**), signed webhook subscriptions, and channel access control — all sharing one gate. Gated work returns **202 with a handle**: never silently dropped, never hung until timeout. Nothing reaches dispatch unauthenticated or ungated. | ✅ Landed (v0.8.0) |
 | **Operator health & status commands** | `acc-cli doctor` reports deployment health in three classes — **BROKEN** (cannot work as configured; the only class that fails the command), **DEGRADED** (a dependency is unhealthy right now), **DRIFTED** (files correct but not in effect). `acc-cli status` reports per-agent state, the resolved model, and the bus/memory/oversight picture, distinguishing *not deployed* from *failed*. Both are read-only, need no TTY and define their exit codes, so they work as probes over SSH. | ✅ Landed |
 | **Configuration schema + typed access** | A schema **derived from the Pydantic models that already define the contract** — not a second description that drifts. `acc-cli config show/get/set/unset/check/migrate` gives typed access across all five files; writes **preserve comments and formatting** (a `set` produces a one-line diff), refuse values that would create an unresolvable reference, and never write `.env`. | ✅ Landed |
 | **LLM failover chains** | A role may declare an ordered chain of models. When the primary fails with a retryable error the next entry is used, the hop is recorded, and the chain is re-entered from the top on every call so recovery is automatic. A `401` never advances the chain. Cross-zone hops are refused by default and fail closed. | ✅ Landed |
@@ -357,6 +362,31 @@ The TUI panes (switch with the nav bar / `Tab`):
 See [`docs/howto-tui.md`](docs/howto-tui.md) for the full guide including deployment as a container pod.
 
 ---
+
+## Upgrading to v0.8.0
+
+One breaking change. **Channel access control is default deny**, so a Slack
+mention from a requester who has not been admitted is refused:
+
+```bash
+acc-cli access admit <slack-user-id> --channel slack
+```
+
+Run that *before* upgrading, or the first mention afterwards is denied. That is
+the control working as specified — but it is a behaviour change, and worth
+doing deliberately rather than debugging.
+
+Everything else in v0.8.0 is additive or opt-in: credential scoping
+(`ACC_SCOPE_SECRETS`), workspace checkpoints (`ACC_WORKSPACE_CHECKPOINTS`) and
+egress brokering (`ACC_EGRESS_BROKER`) are all **off by default**, and a role
+with no failover chain gets back the exact backend it always had.
+
+After upgrading, the two commands worth running first:
+
+```bash
+acc-cli doctor    # is this deployment configured correctly?
+acc-cli status    # what is running, and on what?
+```
 
 ## Operator surfaces
 
