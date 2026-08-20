@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -51,6 +51,14 @@ class ModelEntry(BaseModel):
     api_key_env: str = ""
     label: str = ""
     notes: str = ""
+    zone: str = ""
+    """Trust / data-residency zone, for the failover policy gate.
+
+    Free-form and optional.  Empty on every model means the deployment has not
+    adopted zones and :class:`acc.llm_failover.ZonePolicyGate` permits any hop;
+    the moment one model declares a zone, hops that cannot be shown to stay
+    inside it are refused.  Whether cross-boundary failover may ever proceed
+    automatically is an operator decision that is still open."""
 
     def display(self) -> str:
         return self.label or f"{self.model_id} ({self.backend})"
@@ -66,7 +74,14 @@ class ModelRegistry(BaseModel):
     # default.  A ``collective.yaml`` per-agent ``model:`` still OVERRIDES
     # this mapping (precedence: collective override > role_models > global
     # default) — see :func:`apply_role_model_env`.
-    role_models: dict[str, str] = Field(default_factory=dict)
+    #
+    # A value may be a single ``model_id`` or an ordered **chain** of them.  A
+    # chain declares a second choice for when the primary is unavailable (see
+    # :mod:`acc.llm_failover`); the scalar form is unchanged and is what every
+    # existing deployment has.  The union matters: typed as ``str`` alone, a
+    # chain fails validation and the WHOLE registry is discarded, so declaring
+    # one alternate would silently unbind every role in the file.
+    role_models: dict[str, Union[str, list[str]]] = Field(default_factory=dict)
 
 
 def models_path() -> Path:
@@ -185,12 +200,57 @@ def load_role_models(path: Optional[Path] = None) -> dict[str, str]:
     if not isinstance(block, dict):
         return {}
     # Coerce to str→str; drop empties so an explicit blank never shadows the
-    # global default.
-    return {
-        str(k): str(v)
-        for k, v in block.items()
-        if str(k).strip() and str(v).strip()
-    }
+    # global default.  A value may now also be an ordered *chain*; every
+    # existing caller wants a single id, so it sees the primary — the first
+    # entry — and behaves exactly as before.  Without this a list would be
+    # str()-ed into "['a', 'b']", a model id nothing can resolve.
+    out: dict[str, str] = {}
+    for k, v in block.items():
+        role = str(k).strip()
+        if not role:
+            continue
+        primary = _primary_of(v)
+        if primary:
+            out[role] = primary
+    return out
+
+
+def _primary_of(value: object) -> str:
+    """The first model id of a scalar-or-chain ``role_models`` value."""
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            if str(item).strip():
+                return str(item).strip()
+        return ""
+    return str(value).strip() if str(value).strip() else ""
+
+
+def load_role_chains(path: Optional[Path] = None) -> dict[str, list[str]]:
+    """The ``role_models`` mapping as ordered chains (role → [model_id, ...]).
+
+    A scalar value yields a one-element chain, so a deployment that never
+    declared an alternate is indistinguishable from today.  Same best-effort
+    contract as :func:`load_role_models`: an unreadable file yields ``{}``.
+    """
+    p = path or models_path()
+    try:
+        raw = yaml.safe_load(Path(p).read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("models: cannot read %s (%s)", p, exc)
+        return {}
+    block = raw.get("role_models") if isinstance(raw, dict) else None
+    if not isinstance(block, dict):
+        return {}
+    chains: dict[str, list[str]] = {}
+    for k, v in block.items():
+        role = str(k).strip()
+        if not role:
+            continue
+        items = v if isinstance(v, (list, tuple)) else [v]
+        chain = [str(i).strip() for i in items if str(i).strip()]
+        if chain:
+            chains[role] = chain
+    return chains
 
 
 def model_for_role(
