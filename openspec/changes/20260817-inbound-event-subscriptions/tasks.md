@@ -7,18 +7,25 @@
 
 ## Phase 1 — Ingress
 
-- [ ] `[1]` Subscription store: match, template, secret, target role, budget
-- [ ] `[2]` Signature verification; reject before any processing
-- [ ] `[3]` Rate limiting with a defined behaviour at the limit
+- [x] `[1]` Subscription store: match, template, secret, target role, budget
+- [x] `[2]` Signature verification; reject before any processing
+- [x] `[3]` Rate limiting with a defined behaviour at the limit
 
 ## Phase 2 — Task creation
 
-- [ ] `[4]` Render the template; attach payload as untrusted data
-- [ ] `[5]` Attribution and budget accounting per subscription
-- [ ] `[6]` Gated-action policy (open question 2)
+- [x] `[4]` Render the template; attach payload as untrusted data
+- [x] `[5]` Attribution and budget accounting per subscription
+- [x] `[6]` Gated-action policy (open question 2)
+      *(a subscription-created task is gated EXACTLY as any other task is. It carries
+      requester attribution and no elevated tier, so a gated action inside it still
+      requires approval. Anything else would make a webhook the way to obtain
+      approval-free execution -- the same reasoning as objectives.)*
 
 ## Phase 3 — Operate
 
-- [ ] `[7]` `list` / `test` / `remove` without restart
-- [ ] `[8]` Test: embedded instruction in a payload is not obeyed
+- [~] `[7]` `list` / `test` / `remove` without restart
+      *(create/remove/load are implemented and take effect per event -- no restart. A
+      `acc-cli subscriptions` surface is NOT built; the module is the API a receiver
+      endpoint calls.)*
+- [x] `[8]` Test: embedded instruction in a payload is not obeyed
 

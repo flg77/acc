@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-inbound-event-subscriptions
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (module; CLI surface outstanding)
 **Author:** flg
 
 ---
