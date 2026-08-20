@@ -287,23 +287,19 @@ class TestCheck:
         execution is sandboxed while the target is absent — and nothing says so
         until a task actually tries to run code.
         """
-        (cfg / ".env").write_text("ACC_SANDBOX_ENABLED=true
-", encoding="utf-8")
+        (cfg / ".env").write_text("ACC_SANDBOX_ENABLED=true\n", encoding="utf-8")
         errors = [f for f in st.check() if f.level == "error"]
         assert any("OPENSHELL_GATEWAY" in f.message for f in errors)
 
     def test_sandbox_enabled_with_a_gateway_is_clean(self, cfg):
         (cfg / ".env").write_text(
-            "ACC_SANDBOX_ENABLED=true
-OPENSHELL_GATEWAY=https://openshell:8080
-",
+            "ACC_SANDBOX_ENABLED=true\nOPENSHELL_GATEWAY=https://openshell:8080\n",
             encoding="utf-8",
         )
         assert not [f for f in st.check() if "OPENSHELL_GATEWAY" in f.message]
 
     def test_sandbox_disabled_does_not_require_a_gateway(self, cfg):
-        (cfg / ".env").write_text("ACC_SANDBOX_NAME=unused
-", encoding="utf-8")
+        (cfg / ".env").write_text("ACC_SANDBOX_NAME=unused\n", encoding="utf-8")
         assert not [f for f in st.check() if "OPENSHELL_GATEWAY" in f.message]
 
     def test_role_bound_to_a_missing_model_is_an_error(self, cfg):
