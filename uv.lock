@@ -39,6 +39,10 @@ dependencies = [
 a2a = [
     { name = "aiohttp" },
 ]
+catalog = [
+    { name = "fastapi" },
+    { name = "uvicorn", extra = ["standard"] },
+]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -47,6 +51,9 @@ dev = [
 mlflow = [
     { name = "mlflow-skinny" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
+]
+sandbox = [
+    { name = "openshell" },
 ]
 slack = [
     { name = "aiohttp" },
@@ -78,6 +85,7 @@ requires-dist = [
     { name = "authlib", marker = "extra == 'webgui'", specifier = ">=1.3,<2.0" },
     { name = "bcrypt", marker = "extra == 'webgui'", specifier = ">=4.1,<5.0" },
     { name = "cryptography", specifier = ">=48.0.1,<49" },
+    { name = "fastapi", marker = "extra == 'catalog'", specifier = ">=0.115,<1.0" },
     { name = "fastapi", marker = "extra == 'webgui'", specifier = ">=0.115,<1.0" },
     { name = "faster-whisper", marker = "extra == 'speech'", specifier = ">=1.0,<2.0" },
     { name = "httpx", specifier = ">=0.27,<1.0" },
@@ -86,6 +94,7 @@ requires-dist = [
     { name = "mlflow-skinny", marker = "extra == 'mlflow'", specifier = ">=2.14,<3.0" },
     { name = "msgpack", specifier = ">=1.1,<2.0" },
     { name = "nats-py", specifier = ">=2.7,<3.0" },
+    { name = "openshell", marker = "extra == 'sandbox'", specifier = "==0.0.76" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.25,<2.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'mlflow'", specifier = ">=1.25,<2.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.25,<2.0" },
@@ -103,9 +112,10 @@ requires-dist = [
     { name = "slack-bolt", marker = "extra == 'slack'", specifier = ">=1.20,<2.0" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.80,<1.0" },
     { name = "turbovec", marker = "extra == 'turbovec'", specifier = "==0.8.0" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'catalog'", specifier = ">=0.30,<1.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'webgui'", specifier = ">=0.30,<1.0" },
 ]
-provides-extras = ["dev", "tui", "slack", "a2a", "mlflow", "turbovec", "webgui", "speech"]
+provides-extras = ["dev", "tui", "slack", "a2a", "mlflow", "sandbox", "turbovec", "webgui", "catalog", "speech"]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -1908,6 +1918,22 @@ wheels = [
 ]
 
 [[package]]
+name = "openshell"
+version = "0.0.76"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "grpcio" },
+    { name = "httpx" },
+    { name = "protobuf" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/9e/780d8a65b832be24703a8722b67493a6ccc98428d86f205d5bdf0914dd9a/openshell-0.0.76-py3-none-macosx_13_0_arm64.whl", hash = "sha256:6e4c49b1d05e035c2ae991902bc189158cfdc0ff61bdc26f182a3abc0bd60fae", size = 15923220, upload-time = "2026-07-03T15:20:44.579Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/32/6f935cdc9e16df4e1d256373395d12702b5df90f29185c41cd1d855c0e2e/openshell-0.0.76-py3-none-manylinux_2_39_aarch64.whl", hash = "sha256:b1aeb5474bdb9f003457101924439e3ca1009ce0f2fdaff4089f45e89eddaa6a", size = 19414517, upload-time = "2026-07-03T15:21:07.09Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/81/5750e8946fc3ee66ca4fd78bcbe6d6b69a673e88eddb41663fd9a3727c50/openshell-0.0.76-py3-none-manylinux_2_39_x86_64.whl", hash = "sha256:122552792b424646a1eb5cbb5847e6e1cd17b9a625e9e09cff392a0f88f183f0", size = 20260930, upload-time = "2026-07-03T15:21:27.919Z" },
+]
+
+[[package]]
 name = "opentelemetry-api"
 version = "1.41.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3080,11 +3106,11 @@ wheels = [
 
 [[package]]
 name = "sqlparse"
-version = "0.5.5"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/90/76/437d71068094df0726366574cf3432a4ed754217b436eb7429415cf2d480/sqlparse-0.5.5.tar.gz", hash = "sha256:e20d4a9b0b8585fdf63b10d30066c7c94c5d7a7ec47c889a2d83a3caa93ff28e", size = 120815, upload-time = "2025-12-19T07:17:45.073Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5f/d3/3f06a1006f2261d1342aefb3c71eed02f5d4ca5bdbecd86ebc12ad38306e/sqlparse-0.6.0.tar.gz", hash = "sha256:113c35c75365ab9cc9c7231d68c6428fb11c085fc8e9eb1ad659b7ddbf6cd2b9", size = 178477, upload-time = "2026-08-13T19:16:06.396Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/4b/359f28a903c13438ef59ebeee215fb25da53066db67b305c125f1c6d2a25/sqlparse-0.5.5-py3-none-any.whl", hash = "sha256:12a08b3bf3eec877c519589833aed092e2444e68240a3577e8e26148acc7b1ba", size = 46138, upload-time = "2025-12-19T07:17:46.573Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/50/f00935da0ec7cbf325f8dc4f772ae46fbc7b672dd62876e73f0a94adda57/sqlparse-0.6.0-py3-none-any.whl", hash = "sha256:b861c0288ce2fa56209a9a6412d2e066ac664b3873b89c26c9d8415e8e32996f", size = 50070, upload-time = "2026-08-13T19:16:04.062Z" },
 ]
 
 [[package]]
