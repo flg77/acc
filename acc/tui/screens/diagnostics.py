@@ -105,6 +105,10 @@ class DiagnosticsScreen(NavScreen):
         # 047 Slice 2 — 'e' enters Edit on the Workspace (only when a text
         # widget isn't focused, so it never hijacks typing).
         Binding("e", "edit_mode", "Edit"),
+        # Deployment health, from the SAME check registry `acc-cli doctor`
+        # renders.  Two surfaces, one implementation — a second one is how the
+        # CLI and the TUI start disagreeing about whether a deployment is well.
+        Binding("h", "health_check", "Health"),
     ]
 
     snapshot: reactive["Any | None"] = reactive(None, layout=True)
@@ -546,6 +550,47 @@ class DiagnosticsScreen(NavScreen):
     @staticmethod
     def _row_key_value(row_key) -> str:
         return str(getattr(row_key, "value", None) or row_key or "")
+
+
+    def action_health_check(self) -> None:
+        """Render the deployment health report into the detail pane.
+
+        Calls :func:`acc.preflight.run` — the exact registry behind
+        ``acc-cli doctor``.  Nothing here re-derives a check, so the two
+        surfaces cannot drift into reporting different answers.
+        """
+        from acc import preflight  # noqa: PLC0415 — keeps TUI start-up light
+
+        try:
+            results = preflight.run()
+        except Exception as exc:  # noqa: BLE001 — diagnostics must not crash
+            self._set_status(f"health check failed: {exc}")
+            return
+
+        lines = ["[b]Deployment health[/b]", ""]
+        for r in results:
+            mark = {
+                preflight.Severity.OK: "[green]ok[/green]",
+                preflight.Severity.DRIFTED: "[yellow]DRIFT[/yellow]",
+                preflight.Severity.DEGRADED: "[yellow]DEGRADED[/yellow]",
+                preflight.Severity.BROKEN: "[red]BROKEN[/red]",
+            }[r.severity]
+            where = f" [dim]({r.subject})[/dim]" if r.subject and not r.ok else ""
+            lines.append(f"{mark}  [b]{r.name}[/b]{where} - {r.summary}")
+        broken = sum(1 for r in results if r.severity is preflight.Severity.BROKEN)
+        lines += ["", f"{broken} broken" if broken else "healthy - no faults found"]
+
+        try:
+            self.query_one("#diagnostics-detail", Static).update("\n".join(lines))
+        except Exception:  # pragma: no cover - pane absent in some layouts
+            pass
+        self._set_status("healthy" if not broken else f"{broken} broken check(s)")
+
+    def _set_status(self, message: str) -> None:
+        try:
+            self.query_one("#diagnostics-status", Static).update(message)
+        except Exception:  # pragma: no cover - status line absent
+            pass
 
     def _render_detail(self, name: str) -> None:
         panel = self.query_one("#diagnostics-detail", Static)

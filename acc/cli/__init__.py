@@ -72,6 +72,7 @@ def _build_parser() -> argparse.ArgumentParser:
     from acc.cli import (  # noqa: PLC0415
         collective_cmd,
         config_cmd,
+        doctor_cmd,
         e2e_cmd,
         overlay_cmd,
         role_cmd,
@@ -85,6 +86,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     role_cmd.register(sub)
     config_cmd.register(sub)
+    doctor_cmd.register(sub)
     overlay_cmd.register(sub)
     collective_cmd.register(sub)
     nats_cmd.register(sub)
