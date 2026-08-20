@@ -2,7 +2,7 @@
 
 **Change ID:** 20260820-sandbox-gateway-failover
 **Date:** 2026-08-20
-**Status:** Draft (equivalence settled: verified)
+**Status:** Draft (all four open questions settled; ready to build)
 **Author:** flg
 
 ---
@@ -52,8 +52,7 @@ Availability for caged execution **without weakening the cage**.
       gatewayURL: https://openshell.openshell.svc.cluster.local:8080
       fallbackGateways:
         - https://openshell-b.openshell.svc.cluster.local:8080
-      unavailable: retry        # retry | block | degrade
-      retryWindowSeconds: 30
+      retryWindowSeconds: 30    # 0 disables the hold; block is the only outcome
 
 Three behaviours, in increasing order of how much they concede:
 
@@ -142,16 +141,14 @@ not reach.
    gateway reports the Cat-A policy it is enforcing and ACC compares it locally.
    The asserted alternative is explicitly rejected. See
    *Verified equivalence* below for what that means precisely.
-2. **Does a retry window weaken fail-closed?** Holding an execution request is
-   not executing it, so the cage is intact — but a queued request that outlives
-   the decision context it belongs to is its own hazard. What is the safe
-   maximum?
-3. **Should a blocked collective raise a proposal?** A sustained gateway outage
-   is exactly the kind of thing an operator wants surfaced as a decision rather
-   than a log line. Shares its answer with the same question in the LLM chain.
-4. **Does `failClosed` keep its current meaning?** It is currently
-   provision-time. If it also governs run-time behaviour, one field means two
-   things; if not, the pair needs names that make the distinction obvious.
+2. ~~Does a retry window weaken fail-closed?~~ **Settled: no — but the real
+   hazard was misidentified.** Bounded at **30 s**, and the held request
+   re-validates before it fires. See *The retry window* below.
+3. ~~Should a blocked collective raise a proposal?~~ **Settled: surface it, do
+   not propose.** And it does **not** share an answer with the LLM chain — see
+   *Surfacing a blocked collective* below.
+4. ~~Does `failClosed` keep its current meaning?~~ **Settled: yes, unchanged —
+   and no second field is added.** See *`failClosed` stays what it is* below.
 
 ## Verified equivalence
 
@@ -241,6 +238,93 @@ Offering an "asserted" downgrade for this case would make it the path of least
 resistance under pressure — which is exactly when the control matters. A site
 that cannot verify runs a single gateway and accepts the availability
 consequence, which is today's behaviour and is honest about what it is.
+
+## The retry window
+
+**Settled 2026-08-20. Bounded at 30 seconds, and the hold re-validates before
+it fires.**
+
+The question asked whether holding a request weakens fail-closed. It does not —
+a held request is not an executing one, and the cage is intact throughout. But
+the question named the real hazard in passing and then asked the wrong thing
+about it: *"a queued request that outlives the decision context it belongs to"*.
+
+That hazard is **staleness, not containment**. An agent decided to run something
+against the world as it stood at T. If the request fires at T+5 minutes, three
+things may have changed underneath it: the task may have been cancelled
+(`TASK_CANCEL` exists and is published), the role may have been updated by a
+countersigned `ROLE_UPDATE`, or the oversight decision that authorised it may
+have been withdrawn. The cage would hold perfectly while ACC executed work
+nobody still wanted.
+
+So the answer is structural before it is numeric:
+
+* **A held request re-validates before firing** — task not cancelled, role
+  unchanged, authorisation still standing. A hold is a deferral, not a licence
+  banked at the moment it was granted.
+* **30 seconds, hard.** A gateway restart is seconds; a task that fails because
+  it landed during one is a false failure worth absorbing. Beyond half a minute
+  the operator would rather be told the gateway is gone than have a socket held
+  open pretending otherwise.
+* **Each request holds independently; there is no queue.** This closes the
+  second-order hazard the question did not reach: a backlog that drains all at
+  once when the gateway returns is a thundering herd against a service that has
+  just finished restarting. N held requests fail at N deadlines, or fire as the
+  gateway recovers — never as a burst.
+* **`retryWindowSeconds: 0` disables the hold**, for a deployment that would
+  rather see every blip. Block is then immediate.
+
+## Surfacing a blocked collective
+
+**Settled 2026-08-20. Raise an alert, not a proposal — and this does *not*
+share an answer with the LLM chain.**
+
+The question assumed the two cases match. They do not, and the difference is
+worth stating because it is the kind of symmetry that looks right and is not.
+
+For the LLM chain, a proposal is appropriate: *"this role has run on its
+secondary for six hours — change the binding?"* Approving that swaps one model
+for another. Nothing is weakened; a capability decision is made.
+
+For a gateway outage, ask what a proposal could actually offer. The options are
+to point at a different gateway — which is failover, and already automatic when
+equivalence verifies — or to relax containment. **Every action a proposal could
+present here reduces the control.** "Approve running without the cage" must
+never become a one-click button, and least of all during an incident, which is
+exactly when it would appear, when pressure is highest and judgement worst.
+
+So a sustained gateway outage produces an **alert**: this is broken, a human
+should look. Not a proposal, because a proposal implies an action ACC can take
+on approval, and here there is no such action that is safe to pre-load.
+
+> This retro-answers the same question in `20260817-llm-failover-chain`, which
+> was left open. The two answers differ: a proposal there, an alert here. The
+> shared machinery is the event stream; the decision is not shared.
+
+## `failClosed` stays what it is
+
+**Settled 2026-08-20. Unchanged, provision-time, and no second field is added.**
+
+The concern was one field meaning two things. Answering it exposed a
+contradiction in this document, now corrected: the behaviour sketch offered
+`unavailable: retry | block | degrade` while the scope section already excluded
+degrading to local execution as *"not a fallback; a removal of the control"*.
+Both cannot be true, and the scope section is the one that is right.
+
+With `degrade` gone, run-time has exactly one permissible behaviour: **retry
+within the window, then block.** A configuration field with one legal value is
+not a field — so there is nothing to name, and `failClosed` keeps its current
+provision-time meaning without ambiguity:
+
+| | Governs | Field |
+|---|---|---|
+| **Provision time** | the sandbox cannot be created → agent not rolled, `SandboxBlocked` | `failClosed` (unchanged) |
+| **Run time** | the gateway went away → hold, then block | no field; it is the only option |
+| **How long to hold** | | `retryWindowSeconds` |
+
+`failClosed: false` remains what it already is — a deliberate, alerted
+provision-time downgrade. This change does not extend it to run-time, and a
+deployment that sets it does not thereby permit uncaged execution later.
 
 ## Upstream dependencies
 

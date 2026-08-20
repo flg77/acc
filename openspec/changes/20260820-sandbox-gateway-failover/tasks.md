@@ -5,7 +5,7 @@
 
 ---
 
-## Phase 0 — Settle the question the rest depends on
+## Phase 0 — Settle the questions the rest depends on (all four settled 2026-08-20)
 
 - [x] `[1]` Answer open question 1: is equivalence **verified** (gateway reports a
       policy digest ACC compares) or **asserted** (operator states it, ACC records it)?
@@ -29,13 +29,25 @@
 - [ ] `[5]` `status`: report the active gateway and whether it is the primary
 - [ ] `[6]` Emit a durable event on every gateway transition, matching the shape the
       LLM chain already emits
+- [ ] `[6b]` A sustained outage raises an **alert**, never a proposal (open question 3).
+      Every action a proposal could offer here reduces the control — "approve running
+      without the cage" must not become a one-click button, least of all during the
+      incident that would surface it. Note this DIFFERS from the LLM chain, where a
+      proposal is appropriate because swapping models weakens nothing
 
 ## Phase 2 — Availability
 
 - [ ] `[7]` Generalise chain + health + gate out of `acc/llm_failover.py` so both
       callers share one implementation rather than growing a second that drifts
-- [ ] `[8]` Bounded retry window for transient unavailability, with the maximum from
-      open question 2
+- [ ] `[8a]` Bounded retry window: **30 s hard maximum**, `retryWindowSeconds: 0`
+      disables the hold entirely
+- [ ] `[8b]` A held request **re-validates before it fires** — task not cancelled
+      (`TASK_CANCEL`), role unchanged, authorisation still standing. The hazard a hold
+      creates is staleness, not containment: the cage would hold perfectly while ACC
+      executed work nobody still wanted
+- [ ] `[8c]` Each request holds **independently — no queue**. A backlog draining at once
+      when the gateway returns is a thundering herd against a service that has just
+      finished restarting
 - [ ] `[9]` Ordered gateway list in the CRD (`fallbackGateways`) and its runtime
       counterpart
 - [ ] `[10a]` Compute this corpus's Cat-A digest — SHA-256 of the loaded WASM module
@@ -57,8 +69,12 @@
 
 - [ ] `[12]` Provision-time: choose a healthy gateway when emitting the Sandbox CR,
       so a single unreachable gateway does not block the whole rollout
-- [ ] `[13]` Keep or split `failClosed` per open question 4 — one field must not
-      silently mean two different things
+- [x] `[13]` Keep or split `failClosed` per open question 4 — one field must not
+      silently mean two different things.
+      **KEPT, unchanged, and no second field added.** With degrade-to-local excluded,
+      run-time has exactly one permissible behaviour (hold, then block), and a field
+      with one legal value is not a field. `failClosed` stays provision-time; setting
+      it false does NOT permit uncaged execution later.
 
 ## Phase 4 — Verification
 
@@ -74,6 +90,12 @@
       treated as unverifiable, not as a match
 - [ ] `[15e]` Test: a policy rotated between two hop decisions is caught by the second
 - [ ] `[16]` Test: gateway restart shorter than the retry window → task does not fail
+- [ ] `[16b]` Test: a task cancelled while its request is held does **not** execute when
+      the gateway returns
+- [ ] `[16c]` Test: N requests held during one outage do not fire as a burst on recovery
+- [ ] `[16d]` Test: a sustained outage produces an alert and **no oversight proposal** —
+      asserted on the absence, since the dangerous version of this feature is the one
+      that helpfully offers to relax containment
 - [ ] `[17]` Test: gateway answers and **refuses** → no failover (a policy decision is
       not an outage)
 - [ ] `[18]` Test: no fallback configured → behaviour byte-identical to today
