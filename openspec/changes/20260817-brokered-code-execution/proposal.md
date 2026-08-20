@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-brokered-code-execution
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Parked — revisit when category evaluation can assess a program, or the declarative form is chosen
 **Author:** flg
 
 ---
