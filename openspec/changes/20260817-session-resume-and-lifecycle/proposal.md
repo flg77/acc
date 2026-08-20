@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-session-resume-and-lifecycle
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (TUI resume outstanding)
 **Author:** flg
 
 ---
@@ -101,6 +101,21 @@ worth having, and the parent link gives the operator continuity in practice.
    expensive; a summary is cheaper and lossy.
 3. Who may remove a session — anyone with shell, or an oversight-approved action?
    The compliance framing suggests the latter.
+
+## Retention policy — the operator's answer (2026-08-20)
+
+Session resume and lifecycle were confirmed as a **must have**. The retention
+*period* is deliberately not chosen here: the policy is declared in
+configuration and defaults to **keep forever**, which is what deployments do
+today. An upgrade must never begin deleting records because a new default said
+so.
+
+Two safety properties come with it:
+
+* a session that recorded a **block** is kept regardless of age by default —
+  those are the records an incident review needs most;
+* an unreadable policy keeps everything. Failing towards deletion on a parse
+  error would destroy records because of a typo.
 
 ## Assumptions
 
