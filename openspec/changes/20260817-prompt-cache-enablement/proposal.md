@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-prompt-cache-enablement
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Partially implemented (guarantee landed; measurement outstanding)
 **Author:** flg
 
 ---
@@ -101,6 +101,24 @@ Decide after measuring. Recording the number is the actual deliverable here.
    caching is enabled?
 3. Is there a workload representative enough to measure against, or does this
    need the golden-prompt suite to stand in?
+
+## Answered during implementation
+
+**Open question 1 — where retrieved memory belongs — is already settled in the
+code, and more strongly than the question assumed.** PR-CA1 does not place
+retrieved episodes late in the system prompt; it keeps them out of it entirely
+and prepends them to the *user* message. The system prompt is therefore stable
+per role with no variable content to order around at all.
+
+That is the better answer, and it was undocumented and unguarded. The tests
+added here are what stop it being undone by someone who reasonably assumes
+memory belongs in the system prompt -- an edit that would break nothing, fail
+nothing, and quietly end prompt caching.
+
+**Task [5] was already complete.** `cache_read_tokens` flows backend ->
+`StressIndicators` -> heartbeat -> TUI Performance pane, golden-prompt results
+and MLflow. The measurement surface exists; what is missing is a deployment to
+measure on.
 
 ## Assumptions
 
