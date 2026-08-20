@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-evaluation-batch-runs
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Parked — revisit when a configuration change needs evidence to justify it
 **Author:** flg
 
 ---
