@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-usage-insights
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Parked — revisit when cost modelling becomes a decision input
 **Author:** flg
 
 ---
