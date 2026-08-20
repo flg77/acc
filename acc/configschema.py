@@ -307,8 +307,25 @@ ENV_KEYS: tuple[Key, ...] = tuple(
         ("ACC_OLLAMA_MODEL", False, "Model id for the ollama backend."),
         ("ACC_MLFLOW_TRACKING_URI", False, "MLflow tracking endpoint."),
         ("ACC_SUPPORT_TIER", False, "Build-time package source: upstream | rhel."),
+        # OpenShell (Model 2): the runtime delegates code execution to a
+        # gateway sandbox.  Read by acc/sandbox/runner.py; the operator injects
+        # them from the AgentCorpus CRD's spec.sandbox block, so on an
+        # operator-managed deployment they arrive from there rather than .env.
+        ("ACC_SANDBOX_ENABLED", False, "Delegate code execution to an OpenShell sandbox."),
+        ("ACC_SANDBOX_NAME", False, "Sandbox resource name for this agent."),
+        ("OPENSHELL_GATEWAY", False, "OpenShell gateway URL the runtime delegates to."),
+        ("OPENSHELL_BIN", False, "Path to the OpenShell client binary."),
     )
 )
+
+
+#: Env keys that only mean something together.  ``ACC_SANDBOX_ENABLED`` without
+#: a gateway is the OpenShell version of the backend-without-a-credential
+#: fault: the agent believes execution is sandboxed, the delegation target is
+#: absent, and nothing says so until a task tries to run code.
+REQUIRES: dict[str, tuple[str, ...]] = {
+    "ACC_SANDBOX_ENABLED": ("OPENSHELL_GATEWAY",),
+}
 
 
 #: Credential each LLM backend needs, by ``llm.backend`` value.  Consumed by

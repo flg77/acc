@@ -753,6 +753,10 @@ def check(*, repo_root: Path | None = None) -> list[Finding]:
     return findings
 
 
+def _truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _first_line(exc: Exception) -> str:
     return str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
 
@@ -775,10 +779,31 @@ def _check_references(*, repo_root: Path | None = None) -> list[Finding]:
                     )
                 )
 
+    # Co-required env keys (today: OpenShell sandbox delegation).  Same shape
+    # of fault as the backend credential below — a switch is on and the thing
+    # it points at was never configured.
+    env_names = read("env", repo_root=repo_root)
+    for trigger, required in cs.REQUIRES.items():
+        enabled = trigger in env_names or _truthy(os.environ.get(trigger))
+        if not enabled:
+            continue
+        for name in required:
+            if name in env_names or os.environ.get(name):
+                continue
+            findings.append(
+                Finding(
+                    "error",
+                    "env",
+                    f"env.{name}",
+                    f"{trigger} is set but {name} is not — the agent believes "
+                    f"execution is sandboxed while the delegation target is "
+                    f"absent, and nothing reports it until a task runs code",
+                )
+            )
+
     backend, _ = _dig(read("acc-config", repo_root=repo_root), "llm.backend")
     needed = cs.BACKEND_CREDENTIALS.get(str(backend or ""))
     if needed:
-        env_names = read("env", repo_root=repo_root)
         if needed not in env_names and not os.environ.get(needed):
             findings.append(
                 Finding(

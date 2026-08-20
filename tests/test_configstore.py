@@ -280,6 +280,32 @@ class TestCheck:
         errors = [f for f in st.check() if "ANTHROPIC_API_KEY" in f.message]
         assert not errors
 
+    def test_sandbox_enabled_without_a_gateway_is_an_error(self, cfg):
+        """The OpenShell version of backend-without-a-credential.
+
+        With delegation switched on and no gateway, the agent believes its code
+        execution is sandboxed while the target is absent — and nothing says so
+        until a task actually tries to run code.
+        """
+        (cfg / ".env").write_text("ACC_SANDBOX_ENABLED=true
+", encoding="utf-8")
+        errors = [f for f in st.check() if f.level == "error"]
+        assert any("OPENSHELL_GATEWAY" in f.message for f in errors)
+
+    def test_sandbox_enabled_with_a_gateway_is_clean(self, cfg):
+        (cfg / ".env").write_text(
+            "ACC_SANDBOX_ENABLED=true
+OPENSHELL_GATEWAY=https://openshell:8080
+",
+            encoding="utf-8",
+        )
+        assert not [f for f in st.check() if "OPENSHELL_GATEWAY" in f.message]
+
+    def test_sandbox_disabled_does_not_require_a_gateway(self, cfg):
+        (cfg / ".env").write_text("ACC_SANDBOX_NAME=unused
+", encoding="utf-8")
+        assert not [f for f in st.check() if "OPENSHELL_GATEWAY" in f.message]
+
     def test_role_bound_to_a_missing_model_is_an_error(self, cfg):
         (cfg / "models.yaml").write_text(
             "models:\n  - model_id: only-this\n    backend: ollama\n"
