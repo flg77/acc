@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-inter-collective-messaging
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Parked — revisit when a real two-deployment need appears
 **Author:** flg
 
 ---
