@@ -874,6 +874,31 @@ class PromptScreen(NavScreen):
         textarea.move_cursor(textarea.document.end)
         return True
 
+
+    def _expand_references(self, prompt: str) -> "str | None":
+        """Attach `@file` content to the prompt, or refuse and explain.
+
+        Returns None when a reference could not be resolved, in which case the
+        operator has been told why and nothing was dispatched.
+        """
+        from acc import references  # noqa: PLC0415
+
+        if not references.find(prompt):
+            return prompt
+        try:
+            expanded, resolution = references.expand(prompt)
+        except references.ReferenceError as exc:
+            self.notify(str(exc), severity="error", timeout=10.0)
+            return None
+        attached = [r for r in resolution.references if r.ok]
+        if attached:
+            self.notify(
+                "attached "
+                + ", ".join(f"{r.target} ({r.bytes_read}B)" for r in attached),
+                timeout=4.0,
+            )
+        return expanded
+
     def action_send(self) -> None:
         """Read the form, dispatch a task, await the reply in a worker.
 
@@ -899,6 +924,14 @@ class PromptScreen(NavScreen):
         if prompt.startswith("/"):
             self._dispatch_slash(prompt)
             self.query_one("#prompt-textarea", TextArea).clear()
+            return
+
+        # Operator `@` references resolve BEFORE dispatch, inside the same
+        # workspace boundary that bounds agent writes. Refused rather than
+        # silently dropped: a prompt that loses the file it is about produces
+        # a confident answer to a different question.
+        prompt = self._expand_references(prompt)
+        if prompt is None:
             return
 
         # Proposal 044 (B14) — natural-language gate approval. When a gate is
