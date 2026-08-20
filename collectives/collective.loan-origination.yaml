@@ -1,0 +1,84 @@
+# ACC collective preset — regulated mortgage loan-origination desk.
+# =============================================================================
+# The flagship "regulated loan origination, the ACC way" proof-point — a
+# multi-agent mortgage desk that re-casts the Red Hat multi-agent-loan-
+# origination reference app onto ACC primitives (governed RBAC, HMAC audit,
+# REGO policy, OpenShell exec, edge<->DC bridge, MLflow trace/eval).
+#
+# Consumes the signed @acc/loan-origination-roles family pack (loan_intake,
+# loan_officer, underwriter, compliance_reviewer) — sources in
+# acc-ecosystem-spearhead. Control plane (assistant -> orchestrator ->
+# specialist -> reviewer) routes a prompt to the right desk role on capability;
+# compliance_reviewer holds the sole demographic (HMDA-analog) scope and the
+# in-tree compliance_officer CONTROL substrate backs the human-oversight queue.
+#
+# Install + run (single-host Podman dev/demo):
+#   ./acc-deploy.sh pkg add @acc/loan-origination-roles     # once published to a catalog
+#   ./acc-deploy.sh apply loan-origination
+#   ./acc-deploy.sh apply --dry-run loan-origination        # preview the reconcile diff
+# NOTE: the pack is @0.1 and not yet on the public catalog — build+publish from
+# acc-ecosystem-spearhead (`build_family_pkg.py --manifest manifests/loan-
+# origination.yaml`) or install via a `tier: self` local file catalog first.
+#
+# ---------------------------------------------------------------------------
+# EDGE<->DC + OpenShell (NOT expressible in a standalone Podman preset):
+# This preset groups agents by `cluster_id` (edge | dc) to model the intended
+# split; a single `apply` runs them co-located for dev. For the real
+# bidirectional proof-point, promote the two clusters to two operator
+# AgentCorpus deployments:
+#   * edge cell  -> AgentCorpus spec.deployMode=edge, spec.edge.hubNatsUrl ->
+#     the DC hub (NATS leaf); runs loan_intake + loan_officer on a local model.
+#   * DC hub     -> AgentCorpus (rhoai/standalone) hub; runs underwriter +
+#     compliance_reviewer. Set spec.sandbox {enabled:true, mode:2,
+#     failClosed:true, landlockCompatibility:hard_requirement} so the
+#     underwriter's DTI/LTV + risk tools execute inside the OpenShell cage.
+#   * loan_officer FILE_ROUTE -> underwriter crosses `acc.bridge.*.delegate`;
+#     the decision returns on `acc.bridge.*.result`; compliance_reviewer's
+#     Cat-C POLICY_UPDATE_PROPOSE hot-reloads down to the edge (ROLE_UPDATE).
+# See docs/howto-edge.md, docs/spiffe-edge.md, and the operator SandboxSpec.
+#
+# Models reference models.yaml ids. Edge roles use a cheap/local tier
+# (swap claude-haiku -> ollama-qwen25-14b / lighthouse-llama32-3b / maas-* for
+# an offline or MaaS edge); the topology is model-agnostic.
+# =============================================================================
+
+collective_id: loan-origination
+
+required_packages:
+  - "@acc/loan-origination-roles@^0.1"
+
+agents:
+  # --- control plane (in-tree CONTROL roles) ---
+  - role: assistant
+    cluster_id: ctl
+    model: claude-haiku          # gatekeeper: infuses this pack (beat 0) + learns from it (beat 6)
+  - role: orchestrator
+    cluster_id: ctl
+    model: claude-haiku          # capability routing + edge<->DC delegation
+  - role: reviewer
+    cluster_id: ctl
+    model: claude-sonnet         # critic loop on the stronger model
+
+  # --- edge cell (branch office) — small/local model ---
+  - role: loan_intake
+    cluster_id: edge
+    model: claude-haiku
+    purpose: "Capture the application + answer product/eligibility questions at the edge; no decision."
+    agent_id_prefix: intake
+  - role: loan_officer
+    cluster_id: edge
+    model: claude-haiku
+    purpose: "Manage the branch pipeline and route complete files to DC underwriting; advisory only."
+    agent_id_prefix: officer
+
+  # --- data center — heavy model + OpenShell cage (operator spec.sandbox) ---
+  - role: underwriter
+    cluster_id: dc
+    model: claude-sonnet
+    purpose: "Risk assessment + underwriting decision; DTI/LTV in the OpenShell cage; DECISION_RENDER=CRITICAL."
+    agent_id_prefix: uw
+  - role: compliance_reviewer
+    cluster_id: dc
+    model: claude-sonnet
+    purpose: "Fair-lending review, demographic isolation, oversight decisions, and Cat-C push-down to edge."
+    agent_id_prefix: compliance
