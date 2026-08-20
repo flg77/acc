@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-multimodal-image-input
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (API surface; browser form not built)
 **Author:** flg
 
 ---
@@ -88,6 +88,20 @@ and should be decided with whatever answer the session-retention work reaches.
 2. Should image input be role-restricted? Not every role has a reason to receive
    pixels, and restricting reduces the surface.
 3. What is the size limit, and is it per image or per task?
+
+## Open question 1 — what the durable record holds
+
+**A reference, with the bytes in a content-addressed side store.**
+
+Full images inflate a retained record indefinitely; a bare hash makes it
+unverifiable, because nothing can be proved about an image no longer held. So
+the record keeps digest, media type, size and dimensions — small and
+sufficient to say what was attached — and the bytes live under that digest,
+governed by the same retention policy as sessions.
+
+The property that makes this the right shape: **an image can age out while the
+record of what was attached survives**, and a pruned image is distinguishable
+from one that never existed.
 
 ## Assumptions
 

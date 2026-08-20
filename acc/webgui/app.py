@@ -50,7 +50,7 @@ def create_app():
     from acc.webgui.observers import ObserverHub
     from acc.webgui import (
         auth, routes_action, routes_auth,
-    routes_config, routes_governance, routes_read,
+    routes_attachments, routes_config, routes_governance, routes_read,
         routes_roles, routes_trace, ws,
     )
 
@@ -95,6 +95,7 @@ def create_app():
     # Governance / compliance / diagnostics / models parity (PR-W).  Each
     # endpoint gates itself (reads → viewer, actions → operator).
     app.include_router(routes_governance.router)
+    app.include_router(routes_attachments.router)  # each endpoint gates its own auth
     app.include_router(routes_config.router)  # each endpoint gates its own auth
     app.include_router(routes_roles.router)  # Stage 2.4 — each endpoint gates its own auth
     app.include_router(ws.router)
