@@ -48,6 +48,23 @@ class _FakeNATSMessage:
         self.data = msgpack.packb(json_bytes, use_bin_type=True)
 
 
+
+@pytest.fixture(autouse=True)
+def _admit_test_requester(tmp_path, monkeypatch):
+    """Slack mentions now pass through the shared channel-access gate.
+
+    Default deny is the point of that gate, so these tests admit their
+    requester explicitly — which is exactly what a real deployment must do
+    with `acc-cli access admit` before anyone can ask for work.
+    """
+    from acc import channel_access, identity
+
+    monkeypatch.setenv(identity.ACCESS_PATH_VAR, str(tmp_path / "access.yaml"))
+    identity.admit("U-TESTER", "slack", admitted_by="test")
+    channel_access.clear_journal()
+    yield
+
+
 def _build_connected_channel(monkeypatch) -> tuple[SlackPromptChannel, MagicMock]:
     """Construct + connect a channel with a mocked NATS client.
 
@@ -275,7 +292,11 @@ class _FakeChannel:
         self._send_raises = send_raises
         self._receive_raises = receive_raises
 
-    async def send(self, prompt, *, target_role, target_agent_id=None) -> str:
+    async def send(
+        self, prompt, *, target_role, target_agent_id=None, attribution=None
+    ) -> str:
+        # attribution carries who asked, from the shared channel-access gate.
+        self.attribution = attribution
         if self._send_raises:
             raise self._send_raises
         self.sends.append((prompt, target_role, target_agent_id))
@@ -318,7 +339,7 @@ async def test_app_mention_strips_bot_token_and_dispatches():
     ))
     daemon, says, fake_say = _build_daemon(channel)
 
-    event = {"text": "<@UABC> what is the time?", "ts": "100.000"}
+    event = {"user": "U-TESTER", "text": "<@UABC> what is the time?", "ts": "100.000"}
     await daemon._on_app_mention(event, fake_say)
 
     assert channel.sends == [("what is the time?", "coding_agent", None)]
@@ -335,7 +356,7 @@ async def test_app_mention_role_prefix_overrides_default():
     """``role=analyst summarise this`` dispatches to analyst."""
     channel = _FakeChannel()
     daemon, _, fake_say = _build_daemon(channel)
-    event = {"text": "<@UABC> role=analyst summarise this thread", "ts": "1"}
+    event = {"user": "U-TESTER", "text": "<@UABC> role=analyst summarise this thread", "ts": "1"}
     await daemon._on_app_mention(event, fake_say)
 
     assert channel.sends == [("summarise this thread", "analyst", None)]
@@ -345,7 +366,7 @@ async def test_app_mention_role_prefix_overrides_default():
 async def test_app_mention_empty_prompt_warns():
     channel = _FakeChannel()
     daemon, says, fake_say = _build_daemon(channel)
-    event = {"text": "<@UABC>   ", "ts": "1"}
+    event = {"user": "U-TESTER", "text": "<@UABC>   ", "ts": "1"}
     await daemon._on_app_mention(event, fake_say)
 
     assert channel.sends == []  # nothing dispatched
@@ -356,7 +377,7 @@ async def test_app_mention_empty_prompt_warns():
 async def test_app_mention_role_prefix_without_body_warns():
     channel = _FakeChannel()
     daemon, says, fake_say = _build_daemon(channel)
-    event = {"text": "<@UABC> role=analyst ", "ts": "1"}
+    event = {"user": "U-TESTER", "text": "<@UABC> role=analyst ", "ts": "1"}
     await daemon._on_app_mention(event, fake_say)
 
     assert channel.sends == []
@@ -368,7 +389,7 @@ async def test_app_mention_role_prefix_without_body_warns():
 async def test_app_mention_timeout_posts_warning():
     channel = _FakeChannel(receive_raises=asyncio.TimeoutError())
     daemon, says, fake_say = _build_daemon(channel)
-    event = {"text": "<@UABC> hello", "ts": "1"}
+    event = {"user": "U-TESTER", "text": "<@UABC> hello", "ts": "1"}
     await daemon._on_app_mention(event, fake_say)
 
     # First message: dispatched notice; second: timeout warning
@@ -385,7 +406,7 @@ async def test_app_mention_blocked_reply_renders_with_block_marker():
         block_reason="cat_a:A-017 denied",
     ))
     daemon, says, fake_say = _build_daemon(channel)
-    event = {"text": "<@UABC> please do something risky", "ts": "1"}
+    event = {"user": "U-TESTER", "text": "<@UABC> please do something risky", "ts": "1"}
     await daemon._on_app_mention(event, fake_say)
 
     blocked_msg = next(s for s in says if "blocked" in s["text"].lower())
@@ -399,6 +420,7 @@ async def test_app_mention_uses_thread_ts_when_replying_in_existing_thread():
     channel = _FakeChannel()
     daemon, says, fake_say = _build_daemon(channel)
     event = {
+        "user": "U-TESTER",
         "text": "<@UABC> hi",
         "ts": "200.001",
         "thread_ts": "100.000",  # bot was @-mentioned inside a thread
@@ -413,7 +435,7 @@ async def test_app_mention_uses_thread_ts_when_replying_in_existing_thread():
 async def test_app_mention_send_failure_posts_error():
     channel = _FakeChannel(send_raises=RuntimeError("nats unreachable"))
     daemon, says, fake_say = _build_daemon(channel)
-    event = {"text": "<@UABC> hi", "ts": "1"}
+    event = {"user": "U-TESTER", "text": "<@UABC> hi", "ts": "1"}
     await daemon._on_app_mention(event, fake_say)
 
     assert any("dispatch failed" in s["text"].lower() for s in says)
