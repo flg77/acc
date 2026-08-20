@@ -87,6 +87,7 @@ def _build_parser() -> argparse.ArgumentParser:
         sessions_cmd,
         oversight_cmd,
         plan_cmd,
+        profile_cmd,
         schedule_cmd,
     )
     role_cmd.register(sub)
@@ -105,6 +106,7 @@ def _build_parser() -> argparse.ArgumentParser:
     sessions_cmd.register(sub)
     oversight_cmd.register(sub)
     plan_cmd.register(sub)
+    profile_cmd.register(sub)
     schedule_cmd.register_schedule_subparser(sub)
     # PR-K (D-005) — golden-prompt suite runner (CLI mode).
     # Shares its loader / assertion engine (`acc.golden_prompts`) with
