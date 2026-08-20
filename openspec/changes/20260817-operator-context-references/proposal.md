@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-operator-context-references
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (file/folder/diff; URL held on open question 2)
 **Author:** flg
 
 ---
