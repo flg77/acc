@@ -48,7 +48,7 @@ The `deploy_mode` field in `acc-config.yaml` (or `spec.deployMode` in the `Agent
 
 ## Recent updates
 
-Highlights across the `0.5.x` → `0.7.x` cycles (latest release **v0.7.1**) — see [`CHANGELOG.md`](CHANGELOG.md) for the full list. Everything below ships **additive and opt-in**; existing `acc-config.yaml` files and deployments are byte-for-byte unchanged.
+Highlights across the `0.5.x` → `0.7.x` release cycles — see [`CHANGELOG.md`](CHANGELOG.md) for the full list and the current release. Everything below ships **additive and opt-in**; existing `acc-config.yaml` files and deployments are byte-for-byte unchanged.
 
 | Feature | What it is | Status |
 |---|---|---|
