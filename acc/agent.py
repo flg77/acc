@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 from acc.config import build_backends, build_llm_backend, load_config
 from acc.llm_failover import wrap_for_role
+from acc.hooks import Dispatcher as _HookDispatcher
 from acc.secret_scope import scrub
 from acc.cognitive_core import CognitiveCore, StressIndicators
 from acc.role_assign import RoleAssignRejectedError, verify_role_assign
@@ -405,6 +406,9 @@ class Agent:
             scrub(self.config.agent.role)
         except Exception:
             logger.debug("secret scoping skipped", exc_info=True)
+        # Operator hooks OBSERVE lifecycle events; they cannot gate anything
+        # (that is the oversight queue's job) and the agent never waits on one.
+        self._hooks = _HookDispatcher()
         self.backends = build_backends(self.config)
         # A role with an ordered chain gets a backend that can fall through to
         # its next entry; a role without one keeps exactly the backend built
@@ -583,6 +587,23 @@ class Agent:
     # ------------------------------------------------------------------
     # Cluster dispatch resolvers (PR #27 callback wiring)
     # ------------------------------------------------------------------
+
+
+    def _fire_hooks(self, event: str, payload: dict) -> None:
+        """Run operator hooks for *event* without waiting for them.
+
+        Fire-and-forget on purpose: a hook is a notification, and an agent that
+        awaited one would let a slow or hanging command apply back-pressure to
+        the collective — exactly what hooks must never do. Failures are recorded
+        by the dispatcher, not raised here.
+        """
+        try:
+            import asyncio as _asyncio
+
+            loop = _asyncio.get_running_loop()
+            loop.run_in_executor(None, self._hooks.dispatch, event, payload)
+        except Exception:
+            logger.debug("hooks: dispatch skipped for %s", event, exc_info=True)
 
     def _build_cluster_resolvers(self):
         """Return ``(role_resolver, skill_resolver)`` for PlanExecutor.
@@ -1871,6 +1892,11 @@ class Agent:
                 return
 
             # Publish TASK_COMPLETE
+            self._fire_hooks(SIG_TASK_COMPLETE, {
+                "agent_id": self.agent_id,
+                "collective_id": collective_id,
+                "blocked": bool(result.blocked),
+            })
             complete_body: dict[str, Any] = {
                 "signal_type": SIG_TASK_COMPLETE,
                 "agent_id": self.agent_id,
@@ -1968,6 +1994,11 @@ class Agent:
 
             # If task was blocked, publish ALERT_ESCALATE
             if result.blocked:
+                self._fire_hooks(SIG_ALERT_ESCALATE, {
+                    "agent_id": self.agent_id,
+                    "collective_id": collective_id,
+                    "reason": result.block_reason,
+                })
                 alert_payload = json.dumps({
                     "signal_type": SIG_ALERT_ESCALATE,
                     "agent_id": self.agent_id,

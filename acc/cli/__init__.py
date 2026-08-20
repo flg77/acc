@@ -76,6 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
         secrets_cmd,
         status_cmd,
         e2e_cmd,
+        hooks_cmd,
         overlay_cmd,
         role_cmd,
         nats_cmd,
@@ -89,6 +90,7 @@ def _build_parser() -> argparse.ArgumentParser:
     role_cmd.register(sub)
     config_cmd.register(sub)
     doctor_cmd.register(sub)
+    hooks_cmd.register(sub)
     secrets_cmd.register(sub)
     status_cmd.register(sub)
     overlay_cmd.register(sub)
