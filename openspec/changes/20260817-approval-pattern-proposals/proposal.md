@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-approval-pattern-proposals
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (detection + proposals; application deliberately absent)
 **Author:** flg
 
 ---
