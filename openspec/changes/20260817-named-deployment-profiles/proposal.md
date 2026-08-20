@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-named-deployment-profiles
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (signing question still open)
 **Author:** flg
 
 ---
