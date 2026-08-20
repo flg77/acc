@@ -29,6 +29,7 @@ and is visible to every agent that mounts the workspace.
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 import threading
@@ -41,6 +42,8 @@ except ImportError:  # pragma: no cover - exercised on the Windows dev host
 
 # The in-container mount point for the trusted workspace.  The host
 # directory the operator trusts is bind-mounted here (PR-U2 wiring).
+logger = logging.getLogger("acc.workspace")
+
 # Overridable for tests / non-container runs via ACC_WORKSPACE_DIR.
 _DEFAULT_WORKSPACE = "/workspace"
 
@@ -181,8 +184,30 @@ def safe_resolve(rel_path: str, *, root: Path | None = None) -> Path:
     return resolved
 
 
+
+
+#: Snapshot-before-write is opt-in. It costs disk on every agent write, and an
+#: edge node is the constrained case -- so a deployment turns it on knowing
+#: that, rather than discovering it when the volume fills.
+CHECKPOINTS_VAR = "ACC_WORKSPACE_CHECKPOINTS"
+
+
+def _checkpoints_enabled() -> bool:
+    return str(os.environ.get(CHECKPOINTS_VAR, "") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _relative_to_root(target: Path, root: Path) -> Path:
+    """The workspace-relative form of *target*, for the checkpoint record."""
+    try:
+        return Path(target).resolve().relative_to(Path(root).resolve())
+    except (ValueError, OSError):
+        return Path(target).name
+
 def locked_atomic_write(
     target: Path, data: bytes, *, root: Path | None = None,
+    task_id: str = "", agent_id: str = "", oversight_id: str = "",
 ) -> int:
     """Write *data* to *target* atomically, under a workspace-wide flock.
 
@@ -208,6 +233,28 @@ def locked_atomic_write(
     Returns the number of bytes written.
     """
     root = (root or workspace_root())
+
+    # Snapshot BEFORE the write, on the one path that already bounds agent
+    # writes. Best-effort by design: a checkpoint is the record of the work,
+    # not the work, and an agent must not be blocked because the snapshot
+    # store had a problem. A failure is logged, never raised.
+    if _checkpoints_enabled():
+        try:
+            from acc import checkpoints  # noqa: PLC0415
+
+            checkpoints.capture(
+                [str(_relative_to_root(target, root))],
+                workspace=root,
+                task_id=task_id,
+                agent_id=agent_id,
+                oversight_id=oversight_id,
+            )
+        except Exception:
+            logger.warning(
+                "workspace: checkpoint before write failed for %s", target,
+                exc_info=True,
+            )
+
     lock_path = root / _WRITE_LOCK
     lock_fd: int | None = None
     proc_lock = _proc_lock_for(root)

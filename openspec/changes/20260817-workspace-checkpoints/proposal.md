@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-workspace-checkpoints
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (opt-in)
 **Author:** flg
 
 ---
