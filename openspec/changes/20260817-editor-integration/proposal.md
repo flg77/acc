@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-editor-integration
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Parked — revisit when the coding role's product position is settled affirmatively
 **Author:** flg
 
 ---
