@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-external-memory-provider
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Parked — revisit when a deployment already runs a memory system it must use
 **Author:** flg
 
 ---
