@@ -91,7 +91,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.25,<2.0" },
     { name = "piper-tts", marker = "extra == 'speech'", specifier = ">=1.2,<2.0" },
     { name = "pydantic", specifier = ">=2.8,<3.0" },
-    { name = "pyjwt", specifier = ">=2.8,<3.0" },
+    { name = "pyjwt", specifier = ">=2.13.0,<3.0" },
     { name = "pymilvus", specifier = ">=2.4,<3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0,<10" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0,<2.0" },
