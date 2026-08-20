@@ -145,6 +145,19 @@ def scope_for(role: str, *, environ: dict[str, str] | None = None) -> RoleScope:
         required.add(name)
         reasons.setdefault(name, "collective infrastructure")
 
+    # A credential the egress broker injects is one the agent must NOT hold --
+    # that is the entire point of brokering it. Withdraw it here even if a
+    # model binding would otherwise justify it, so the two features cannot
+    # quietly cancel each other out.
+    try:
+        from acc.egress import credentials_withheld_from_agent  # noqa: PLC0415
+
+        for name in credentials_withheld_from_agent(role):
+            required.discard(name)
+            reasons[name] = "withheld: injected by the egress broker"
+    except Exception:  # pragma: no cover — egress policy optional
+        logger.debug("secret_scope: egress policy unavailable", exc_info=True)
+
     for name in sorted(_allowlist(environ)):
         required.add(name)
         reasons.setdefault(name, f"operator allowlist ({ALLOWLIST_VAR})")

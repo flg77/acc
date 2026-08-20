@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-egress-brokering
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (credential half; enforcement stays with the substrate)
 **Author:** flg
 
 ---
