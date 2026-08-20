@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-config-schema-and-crud
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented
 **Author:** flg
 
 ---
@@ -119,6 +119,33 @@ question below is which way the merged view leans.
 3. What happens to a key the schema does not know — reject, warn, or preserve?
    Preserving unknown keys is friendlier to forward-compatibility and worse for
    catching typos.
+
+## Decisions taken during implementation
+
+The three open questions above were answered as follows; the reasoning is in
+the module docstrings, and each is pinned by a test.
+
+1. **Per-file schemas behind one shared accessor.** Top-level keys are disjoint
+   across the four YAML surfaces, so one dotted namespace collides with
+   nothing while every key still resolves to exactly one owning file. `get`
+   and `path` report that file, because only some are gitignored and only some
+   are operator-owned.
+
+2. **`.env` is described but never written.** Key *names* are in the schema —
+   that is what turns "backend selected, credential absent" into a reported
+   fault. Values are never read into memory (`read("env")` returns presence
+   only) and `set` refuses the file outright.
+
+3. **Unknown keys are preserved and reported.** `check` reports them as
+   warnings so a typo surfaces; nothing deletes them, so a file written by a
+   newer release survives an older binary. `set` still refuses to *create* an
+   unknown key.
+
+A fourth decision was forced by the hard requirement on formatting: the writer
+**edits lines** rather than round-tripping YAML. A round-trip re-emits the
+whole document and can normalise quoting and indentation, which cannot meet
+the "one changed line" criterion. Line editing can, and does — the test suite
+asserts an add+unset restores the file byte for byte.
 
 ## Assumptions
 

@@ -85,6 +85,7 @@ def atomic_write_text(
     backup: bool = True,
     encoding: str = "utf-8",
     tmp_prefix: str | None = None,
+    newline: str | None = None,
 ) -> None:
     """Atomically write *text* to *path*.
 
@@ -100,6 +101,13 @@ def atomic_write_text(
         encoding: text encoding (defaults to utf-8).
         tmp_prefix: prefix for the same-dir tempfile.  Defaults to
             ``f".{path.name}.tmp."``.
+        newline: passed straight to :func:`open`.  ``None`` (default)
+            keeps the historical behaviour, which translates ``
+`` to
+            ``os.linesep`` — on Windows that silently rewrites an
+            LF file to CRLF and every line reads as changed.  Pass
+            ``""`` to write *text* byte-for-byte, which is what a
+            caller doing a surgical single-line edit needs.
 
     Raises:
         OSError: any I/O failure that isn't the bind-mount EBUSY case
@@ -130,6 +138,7 @@ def atomic_write_text(
             with tempfile.NamedTemporaryFile(
                 "w",
                 encoding=encoding,
+                newline=newline,
                 dir=str(parent),
                 prefix=tmp_prefix,
                 delete=False,
@@ -154,7 +163,7 @@ def atomic_write_text(
                     "refused by the kernel with EBUSY).",
                     str(path),
                 )
-                with open(path, "w", encoding=encoding) as fh:
+                with open(path, "w", encoding=encoding, newline=newline) as fh:
                     fh.write(text)
                 try:
                     os.unlink(tmp_path)
