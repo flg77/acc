@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-shell-completions
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Parked — revisit when someone has a spare afternoon
 **Author:** flg
 
 ---
