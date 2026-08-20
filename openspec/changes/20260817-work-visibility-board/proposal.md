@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-work-visibility-board
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Parked — revisit when an operator cannot follow a running plan and says so
 **Author:** flg
 
 ---
