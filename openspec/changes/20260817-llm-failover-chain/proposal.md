@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-llm-failover-chain
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (mechanism; policy still held)
 **Author:** flg
 
 ---
@@ -126,6 +126,32 @@ from policy, which this change requires.
    than running indefinitely on the secondary?
 4. Does the chain live in `role_models` (per role) or alongside the model registry
    (per model class)? The latter composes better with deployment profiles.
+
+## Decisions taken during implementation
+
+Open question 1 (cross-boundary failover) remains **held** — nothing here
+pre-empts it. The other three were answered as follows.
+
+2. **Retryable** defers to `LLMCallError.retryable`, which the backends already
+   set (429/5xx yes, 4xx client errors no), plus connection and timeout errors.
+   A bare `Exception` is never retryable: treating one as an outage would make
+   every bug in the call path look like a provider failure and burn the chain.
+
+3. **A proposal on sustained failover is not implemented.** It needs a
+   definition of "sustained" and an owner for the resulting proposal, neither
+   of which is settled. The event stream already carries what such a rule
+   would consume, so this stays additive.
+
+4. **The chain lives in `role_models`**, as the change's own example shows. Per
+   model class composes better with profiles, but it would move the mapping out
+   of the one place an operator currently looks for it.
+
+**The gate's default needed a real answer.** "Most restrictive" read literally —
+refuse every hop — ships a failover feature that never fails over. So
+`ZonePolicyGate` refuses only hops that cross a **declared** zone: undeclared on
+both sides means the deployment has not expressed a boundary and the hop
+proceeds; the moment one model is annotated, anything that cannot be shown to
+stay inside a zone is refused, fails closed, and names the reason.
 
 ## Assumptions
 

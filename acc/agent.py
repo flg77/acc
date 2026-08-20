@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from acc.config import ACCConfig
 
 from acc.config import build_backends, build_llm_backend, load_config
+from acc.llm_failover import wrap_for_role
 from acc.cognitive_core import CognitiveCore, StressIndicators
 from acc.role_assign import RoleAssignRejectedError, verify_role_assign
 from acc.role_store import RoleStore, RoleUpdateRejectedError
@@ -396,6 +397,12 @@ class Agent:
             logger.debug("models: role→model overlay skipped", exc_info=True)
         self.config = load_config(config_path)
         self.backends = build_backends(self.config)
+        # A role with an ordered chain gets a backend that can fall through to
+        # its next entry; a role without one keeps exactly the backend built
+        # above, so nothing changes for a deployment that declared no alternate.
+        self.backends.llm = wrap_for_role(
+            self.backends.llm, self.config.agent.role, self.config
+        )
         self.agent_id: str = os.environ.get(
             "ACC_AGENT_ID",
             f"{self.config.agent.role}-{uuid.uuid4().hex[:8]}",
@@ -2627,7 +2634,9 @@ class Agent:
             for k, v in env.items():
                 os.environ[k] = v
             new_cfg = load_config(self._config_path)
-            new_llm = build_llm_backend(new_cfg)
+            new_llm = wrap_for_role(
+                build_llm_backend(new_cfg), new_cfg.agent.role, new_cfg
+            )
             self.backends.llm = new_llm
             self.config = new_cfg
             try:
