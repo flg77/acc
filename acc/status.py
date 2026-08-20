@@ -131,6 +131,7 @@ class CollectiveStatus:
     memory_detail: str = ""
     oversight_pending: int | None = None
     key_names_present: dict[str, bool] = field(default_factory=dict)
+    credential_pools: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def healthy(self) -> bool:
@@ -153,6 +154,7 @@ class CollectiveStatus:
             },
             "oversight_pending": self.oversight_pending,
             "key_names_present": self.key_names_present,
+            "credential_pools": self.credential_pools,
             "agents": [a.as_dict() for a in self.agents],
         }
 
@@ -349,7 +351,26 @@ def collect(
         memory_detail=memory_detail,
         oversight_pending=pending,
         key_names_present=_key_names(cid),
+        credential_pools=_pool_health(),
     )
+
+
+def _pool_health() -> list[dict[str, Any]]:
+    """Credential-pool health, so a faulted key is visible here too.
+
+    A pool that silently masks a dead credential is how an operator finds out
+    at renewal that only one of four ever worked; status is where they look.
+    """
+    try:
+        from acc import credential_pool  # noqa: PLC0415
+
+        return [
+            row
+            for row in credential_pool.status()
+            if row["health"] != credential_pool.Health.HEALTHY or not row["present"]
+        ]
+    except Exception:  # pragma: no cover — pools are optional
+        return []
 
 
 def to_json(status: CollectiveStatus) -> str:
