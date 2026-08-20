@@ -52,6 +52,10 @@ Highlights across the `0.5.x` → `0.7.x` release cycles — see [`CHANGELOG.md`
 
 | Feature | What it is | Status |
 |---|---|---|
+| **Operator health & status commands** | `acc-cli doctor` reports deployment health in three classes — **BROKEN** (cannot work as configured; the only class that fails the command), **DEGRADED** (a dependency is unhealthy right now), **DRIFTED** (files correct but not in effect). `acc-cli status` reports per-agent state, the resolved model, and the bus/memory/oversight picture, distinguishing *not deployed* from *failed*. Both are read-only, need no TTY and define their exit codes, so they work as probes over SSH. | ✅ Landed |
+| **Configuration schema + typed access** | A schema **derived from the Pydantic models that already define the contract** — not a second description that drifts. `acc-cli config show/get/set/unset/check/migrate` gives typed access across all five files; writes **preserve comments and formatting** (a `set` produces a one-line diff), refuse values that would create an unresolvable reference, and never write `.env`. | ✅ Landed |
+| **LLM failover chains** | A role may declare an ordered chain of models. When the primary fails with a retryable error the next entry is used, the hop is recorded, and the chain is re-entered from the top on every call so recovery is automatic. A `401` never advances the chain. Cross-zone hops are refused by default and fail closed. | ✅ Landed |
+| **Scoped credential delivery** | An agent drops the credentials its role does not need **before the backends are built**, so a compromised agent no longer yields the whole deployment's credential inventory. Enforcement is at the receiving end, so no deployment topology has to change. Opt-in via `ACC_SCOPE_SECRETS`; `acc-cli secrets scope` previews exactly what it removes. | ✅ Landed (opt-in) |
 | **Self-infusion & proactive assistant** | The `assistant` CONTROL role runs a proactive wake-up loop, queries the catalog, and — when a task needs a capability the collective lacks — emits `[PROPOSE_INFUSE:@scope/pack]`. The proposal lands in the **Compliance oversight queue** (never auto-executed); on a single approval the pack is cosign-verified and installed **once**, and dormant roles self-promote. Verified end-to-end in prod mode. | ✅ Landed (v0.7.0/v0.7.1) |
 | **Durable session tracelog + `verify`** | Every agent session is recorded to a durable, hash-linked **tracelog**; `acc-cli sessions {list,show,verify}` replays it and **`verify` re-checks each recorded step against the Category A/B/C gates** — a tamper-evident, after-the-fact governance audit of what an agent actually did. | ✅ Landed (v0.6.0) |
 | **Unattended-run governance** | Headless / e2e deployments stay safe without a human at the console: `ACC_OVERSIGHT_HEADLESS` auto-**rejects** a CRITICAL action when no reviewer is present (audit-trailed, no dead wait), and `ACC_ROLE_TOKEN_BUDGET` is a per-role Category-B token circuit-breaker. | ✅ Landed (v0.6.0) |
@@ -354,6 +358,32 @@ See [`docs/howto-tui.md`](docs/howto-tui.md) for the full guide including deploy
 
 ---
 
+## Operator surfaces
+
+Three ways to drive a collective. They are **not** interchangeable — knowing
+which one owns a task saves looking for a control that was never there. Full
+matrix in [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md).
+
+| | `acc-cli` / `acc-pkg` | TUI (`acc-tui`) | Web GUI (`acc-webgui`) |
+|---|---|---|---|
+| **Best for** | automation, CI, SSH | day-to-day driving | demos, multi-user review |
+| **Needs a TTY** | no | yes | no (browser) |
+| **Changes configuration** | yes | partly | read-mostly |
+| **Runs unattended** | yes | no | yes (API) |
+
+Rule of thumb: **anything that must run unattended belongs on the CLI.**
+
+```bash
+acc-cli doctor          # is this deployment configured correctly?
+acc-cli status          # what is running, and on what?
+acc-cli config check    # what is missing, unknown or unresolvable?
+acc-cli secrets scope   # which credentials does each role actually need?
+```
+
+The TUI's Diagnostics screen (`h`) runs the **same check registry** `doctor`
+renders — two surfaces reporting different answers about whether a deployment is
+healthy is a failure mode in itself.
+
 ## Security
 
 ACC's security hardening follows a phased approach. Phases 0a, 0b, 0c, 1, 2, 3, and 5 are implemented (0c, 1, 2, 3, and 5 ship opt-in); phase 4 is planned:
@@ -574,6 +604,7 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 
 | Document | Description |
 |----------|-------------|
+| [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) | **Operator surfaces** — every CLI, TUI and Web GUI capability, which surface owns which task, what each one *cannot* do, and the exit codes |
 | [`docs/howto-build-deploy-infuse.md`](docs/howto-build-deploy-infuse.md) | **Start here** — the full role lifecycle (build → publish → deploy → infuse → verify) across the CLI, TUI, and WebGUI, with a worked connected/keypair-signed deploy |
 | [`docs/howto-standalone.md`](docs/howto-standalone.md) | Podman Compose setup, env vars, Redis auth, Ed25519 keys |
 | [`docs/howto-edge.md`](docs/howto-edge.md) | Edge node setup, NATS leaf topology, bridge delegation, offline operation |
