@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-channel-access-control
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented
 **Author:** flg
 
 ---
@@ -100,6 +100,22 @@ produces an audit record for free.
 2. Do requesters have distinct budgets, or do they draw on the role's?
 3. Should an admitted requester be able to trigger gated actions at all, or only
    ungated work?
+
+## Open question 1 — answered by the operator (2026-08-20)
+
+**A user is always RBAC controlled, and ACC consumes that rather than defining
+its own.** Inside OpenShift that is real cluster RBAC; at the edge it is system
+authentication; in the web GUI it is the existing oauth2-proxy/Keycloak session.
+ACC does not become a fourth identity provider.
+
+What ACC does own is what a principal may ask an *agent* to do — the substrate
+has no way to express whether someone may spend a collective's token budget.
+That mapping is keyed by an identity the substrate vouched for.
+
+External requesters (a chat account, an inbound webhook) are the exception,
+because nothing vouches for them: default deny, admitted only by an explicit
+operator action, and **never promotable to the operator tier by an allowlist
+entry** — approval authority stays with the substrate.
 
 ## Assumptions
 

@@ -167,8 +167,14 @@ class SlackPromptChannel:
         *,
         target_role: str,
         target_agent_id: str | None = None,
+        attribution: dict | None = None,
     ) -> str:
-        """Publish TASK_ASSIGN derived from *prompt*; return the task_id."""
+        """Publish TASK_ASSIGN derived from *prompt*; return the task_id.
+
+        *attribution* carries who asked, from the shared channel-access gate.
+        It is stamped onto the payload so "who requested this" is answerable
+        from the audit record rather than only from a chat scrollback.
+        """
         if self._nc is None:
             raise RuntimeError("SlackPromptChannel.send before connect()")
 
@@ -180,6 +186,7 @@ class SlackPromptChannel:
             "signal_type": SIG_TASK_ASSIGN,
             "task_id": task_id,
             "collective_id": self._collective_id,
+            **(attribution or {}),
             "from_agent": self._from_agent,
             "target_role": target_role,
             "ts": time.time(),
@@ -423,9 +430,27 @@ class SlackDaemon:
                 )
                 return
 
+        # Default deny, decided in the ONE place every channel shares. A
+        # per-adapter check would make the newest adapter the weakest.
+        from acc.channel_access import InboundRequest, admit_request, refusal_message
+
+        admission = admit_request(
+            InboundRequest(
+                channel="slack",
+                subject=str(event.get("user", "")),
+                text=prompt,
+                scope=str(event.get("channel", "")),
+            )
+        )
+        if not admission.allowed:
+            await say(text=refusal_message(admission), thread_ts=thread_ts)
+            return
+
         try:
             task_id = await self._channel.send(
-                prompt=prompt, target_role=target_role,
+                prompt=prompt,
+                target_role=target_role,
+                attribution=admission.task_attribution(),
             )
         except Exception as exc:
             logger.exception("slack_daemon: send failed")
