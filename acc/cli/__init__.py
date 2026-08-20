@@ -81,6 +81,7 @@ def _build_parser() -> argparse.ArgumentParser:
         hooks_cmd,
         overlay_cmd,
         role_cmd,
+        scan_cmd,
         nats_cmd,
         llm_cmd,
         logs_cmd,
@@ -109,6 +110,7 @@ def _build_parser() -> argparse.ArgumentParser:
     mcp_cmd.register(sub)
     trace_cmd.register(sub)
     sessions_cmd.register(sub)
+    scan_cmd.register(sub)
     setup_cmd.register(sub)
     oversight_cmd.register(sub)
     plan_cmd.register(sub)
