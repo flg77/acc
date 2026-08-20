@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-openai-compatible-endpoint
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (handler; HTTP route + dispatcher wiring outstanding)
 **Author:** flg
 
 ---
