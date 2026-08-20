@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-scoped-secret-delivery
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (scoping half; external source not built)
 **Author:** flg
 
 ---
