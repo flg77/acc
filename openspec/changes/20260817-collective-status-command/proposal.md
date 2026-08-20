@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-collective-status-command
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented
 **Author:** flg
 
 ---
