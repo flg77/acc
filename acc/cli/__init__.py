@@ -71,6 +71,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # dependencies (e.g. nats-py for `role list`) do not block startup.
     from acc.cli import (  # noqa: PLC0415
         auth_cmd,
+        backup_cmd,
         collective_cmd,
         config_cmd,
         doctor_cmd,
@@ -93,6 +94,7 @@ def _build_parser() -> argparse.ArgumentParser:
         schedule_cmd,
     )
     auth_cmd.register(sub)
+    backup_cmd.register(sub)
     role_cmd.register(sub)
     config_cmd.register(sub)
     doctor_cmd.register(sub)
