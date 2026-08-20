@@ -73,6 +73,7 @@ def _build_parser() -> argparse.ArgumentParser:
         collective_cmd,
         config_cmd,
         doctor_cmd,
+        secrets_cmd,
         status_cmd,
         e2e_cmd,
         overlay_cmd,
@@ -88,6 +89,7 @@ def _build_parser() -> argparse.ArgumentParser:
     role_cmd.register(sub)
     config_cmd.register(sub)
     doctor_cmd.register(sub)
+    secrets_cmd.register(sub)
     status_cmd.register(sub)
     overlay_cmd.register(sub)
     collective_cmd.register(sub)

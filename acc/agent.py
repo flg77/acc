@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 
 from acc.config import build_backends, build_llm_backend, load_config
 from acc.llm_failover import wrap_for_role
+from acc.secret_scope import scrub
 from acc.cognitive_core import CognitiveCore, StressIndicators
 from acc.role_assign import RoleAssignRejectedError, verify_role_assign
 from acc.role_store import RoleStore, RoleUpdateRejectedError
@@ -396,6 +397,14 @@ class Agent:
         except Exception:
             logger.debug("models: role→model overlay skipped", exc_info=True)
         self.config = load_config(config_path)
+        # Drop credentials this role does not need BEFORE the backends are
+        # built, so nothing downstream ever observes another provider's key.
+        # Opt-in (ACC_SCOPE_SECRETS) and a no-op otherwise; `acc-cli secrets
+        # scope` previews exactly what it removes.
+        try:
+            scrub(self.config.agent.role)
+        except Exception:
+            logger.debug("secret scoping skipped", exc_info=True)
         self.backends = build_backends(self.config)
         # A role with an ordered chain gets a backend that can fall through to
         # its next entry; a role without one keeps exactly the backend built
