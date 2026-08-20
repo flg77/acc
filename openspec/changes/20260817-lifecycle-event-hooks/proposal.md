@@ -2,7 +2,7 @@
 
 **Change ID:** 20260817-lifecycle-event-hooks
 **Date:** 2026-08-17
-**Status:** Draft
+**Status:** Implemented (observe-only, as designed)
 **Author:** flg
 
 ---
