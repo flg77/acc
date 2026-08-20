@@ -365,8 +365,45 @@ def schema(*, refresh: bool = False) -> tuple[Key, ...]:
             continue
         keys.extend(_walk_model(model, "", spec.id))
     keys.extend(ENV_KEYS)
+    keys.extend(_template_env_keys({k.path for k in ENV_KEYS}))
     _CACHE = keys
     return tuple(keys)
+
+
+def _template_env_keys(already: set[str]) -> list[Key]:
+    """Key names the shipped ``.env.example`` declares but this module does not.
+
+    The hand-written list above carries the semantics — which credential each
+    backend needs, what is secret.  The template is the other half of the
+    truth: anything it ships is by definition a recognised key, and without
+    this union those keys are reported as unknown, which reads as a typo in a
+    file ACC itself shipped.
+    """
+    root = Path(__file__).resolve().parent.parent
+    template = root / ".env.example"
+    if not template.is_file():
+        return []
+    out: list[Key] = []
+    seen: set[str] = set()
+    for raw in template.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        # Commented-out examples are documentation, not declarations.
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name = line.split("=", 1)[0].strip()
+        if not name or name in seen or f"env.{name}" in already:
+            continue
+        seen.add(name)
+        out.append(
+            Key(
+                path=f"env.{name}",
+                file="env",
+                type="str",
+                secret=_is_secret(name),
+                description="Declared by .env.example.",
+            )
+        )
+    return out
 
 
 def by_path() -> dict[str, Key]:
