@@ -154,15 +154,42 @@
 > (task `[1b]`). Nothing can reach the shared tier until promotion exists, so
 > the gap is not reachable today. It becomes reachable the moment Phase 4 lands.
 
-## Phase 4 — Promotion as a proposal
+## Phase 4 — Promotion as a proposal (done 2026-08-23)
 
-- [ ] `[17]` Fourth `assistant_proposal` kind: `publish`, carrying the note, its
-      source contexts, its destination context and its quorum evidence
-- [ ] `[18]` Classify `publish` **structural** (like `spawn` / `role_update`) and
-      gate at **Cat-B**, so the floor holds even in AUTO mode
-- [ ] `[19]` The Compliance queue renders **both** contexts — an approver who
-      cannot see the destination cannot judge the flow
-- [ ] `[20]` Approval recorded against a named principal, not "the operator"
+- [x] `[17]` Fourth kind `PROPOSAL_PUBLISH`, carrying the note, its source
+      context, its destination context and its quorum evidence.
+      `build_publish_proposal()` assembles it; `_dispatch_publish()` applies it
+- [x] `[17b]` **Publication is DIRECTED, and that dissolved the Phase 3
+      blocker.** Phase 3 modelled the shared tier as one broadcast blob, which
+      is exactly what made settled question 2 unenforceable: a broadcast has no
+      destination for a human to approve, so nothing could check where a note
+      ended up. Keyed on the destination instead, **a note is readable exactly
+      where a person put it** — and "may this fragment be retrieved in that
+      context?" is answered by the approval record rather than by a ceiling
+      comparison that does not exist yet
+- [x] `[18]` `publish` is HIGH risk and in `_NEVER_AUTOEXEC`, with **no escape
+      hatch** — unlike `INFUSE`'s dev-mode one, which was deliberately left
+      INFUSE-only. An auto-executing publication is not a faster version of the
+      decision; it is the absence of it
+- [x] `[19]` The proposal summary names **both** contexts and the count of
+      distinct requesters, and marks a single-source note as such. An approver
+      who cannot see where a note came from is clicking on prose
+- [x] `[20]` The approver reaches the proposal. `approver_id` already existed on
+      the oversight decision and was **dropped** between the queue and the
+      dispatcher; it is now stamped onto `operator_id` and carried on the
+      journal entry
+- [x] `[20b]` **A publication nobody can be named for is refused**, not warned.
+      `"tui:anonymous"` is the fallback when a surface sends no approver, and
+      accepting it would record an approval nobody can be held to — the same as
+      no approval. Refused rather than permitted because publication is new, so
+      nothing depends on the permissive behaviour, and a control that fails open
+      on its first day never gets tightened
+
+> **What ceilings would still add.** The approver is currently the *only* check
+> on whether a fragment may cross into a lower-authority context. Per-principal
+> ceilings (task `[1b]`) would put a hard floor **under** that judgement, so a
+> human could not approve a publication the policy forbids. That is a
+> strengthening, no longer a prerequisite.
 
 ## Phase 5 — Quorum, dissent, probation
 
@@ -197,7 +224,7 @@
       matters most, on the most-used path
 - [x] `[32]` Test: a note distilled from A's episodes does not reach B's prompt
 - [x] `[33]` Test: a webhook-sourced episode never enters a note
-- [ ] `[34]` Test: `publish` **never** auto-executes, in any operating mode —
+- [x] `[34]` Test: `publish` **never** auto-executes, in any operating mode —
       asserted on the absence, since the dangerous version of this feature is the
       one that publishes helpfully
 - [ ] `[35]` Test: ten episodes from one requester do not satisfy `k = 3`

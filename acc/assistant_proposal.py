@@ -73,10 +73,14 @@ PROPOSAL_ROLE_UPDATE = "role_update"
 PROPOSAL_ROUTE = "route"
 PROPOSAL_INFUSE = "infuse"  # Stage 1.4 — install an @scope/name@constraint pkg
 PROPOSAL_ROLE_GAP = "role_gap"  # Proposal 019 PR-OP4 — a finding, not a mutation
+# 20260823-attributed-memory Phase 4 — let one memory note cross from the
+# context it was distilled in into another.  Structurally a ROLE_UPDATE: it
+# changes what agents will say next, so it is approved, never applied.
+PROPOSAL_PUBLISH = "publish"
 
 PROPOSAL_KINDS: frozenset[str] = frozenset({
     PROPOSAL_SPAWN, PROPOSAL_ROLE_UPDATE, PROPOSAL_ROUTE, PROPOSAL_INFUSE,
-    PROPOSAL_ROLE_GAP,
+    PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH,
 })
 
 
@@ -89,6 +93,7 @@ DEFAULT_RISK_LEVEL: dict[str, str] = {
     PROPOSAL_ROUTE: "LOW",           # reversible by next prompt
     PROPOSAL_INFUSE: "HIGH",         # filesystem state; reversible only by uninstall
     PROPOSAL_ROLE_GAP: "LOW",        # informational finding; no mutation on its own
+    PROPOSAL_PUBLISH: "HIGH",        # moves information across a context boundary
 }
 
 
@@ -186,7 +191,22 @@ _ACCEPT_EDITS_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_ROUTE})
 # is reversible only by uninstall; per the Stage 1 proposal's open
 # decision Q2 the operator chose "always Compliance pane" over "AUTO
 # may infuse autonomously".
-_NEVER_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_INFUSE, PROPOSAL_ROLE_GAP})
+#: Kinds that always reach a human, whatever the operating mode.
+#:
+#: PROPOSAL_PUBLISH has NO escape hatch, unlike INFUSE's dev-mode one.  The
+#: point of a publication is that someone read the note and decided it may
+#: cross -- an auto-executing publication is not a faster version of that, it
+#: is the absence of it.  There is a test asserting the absence, because the
+#: dangerous version of this feature is the one that promotes helpfully.
+#: Approver values that name nobody.  `"default"` is the AssistantProposal
+#: field default; `"tui:anonymous"` is what the decision subscriber falls back
+#: to when a surface sends no approver_id.
+_ANONYMOUS_APPROVERS: frozenset[str] = frozenset({"default", "tui:anonymous", "unattributed"})
+
+
+_NEVER_AUTOEXEC: frozenset[str] = frozenset({
+    PROPOSAL_INFUSE, PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH,
+})
 
 
 def _operator_mode_env() -> str:
@@ -222,6 +242,9 @@ def decide_dispatch(operating_mode: str, kind: str, *, operator_mode: str | None
             and mode == MODE_AUTO
             and (operator_mode or _operator_mode_env()) == "dev"
         ):
+            # Deliberately INFUSE-only.  Widening this to PROPOSAL_PUBLISH
+            # would let a dev-mode collective move information between
+            # contexts with nobody reading it.
             return DISPATCH_EXECUTE
         return DISPATCH_QUEUE
     if mode == MODE_AUTO:
@@ -441,6 +464,7 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
 async def dispatch_approved_proposal(
     signaling,
     proposal: AssistantProposal,
+    redis_client: Any = None,
 ) -> bool:
     """Publish the actual mutation that fulfils ``proposal``.
 
@@ -474,6 +498,10 @@ async def dispatch_approved_proposal(
             return await _dispatch_infuse(signaling, cid, proposal)
         if proposal.kind == PROPOSAL_ROLE_GAP:
             return await _dispatch_role_gap(signaling, cid, proposal)
+        if proposal.kind == PROPOSAL_PUBLISH:
+            return await _dispatch_publish(
+                signaling, cid, proposal, redis_client,
+            )
     except Exception:
         logger.exception(
             "assistant_proposal: dispatch failed for kind=%s id=%s",
@@ -484,6 +512,119 @@ async def dispatch_approved_proposal(
         "assistant_proposal: unknown kind %r — no dispatcher", proposal.kind,
     )
     return False
+
+
+def build_publish_proposal(
+    note: Any,
+    destination_scope: str,
+    *,
+    collective_id: str = "",
+    agent_id: str = "",
+) -> "AssistantProposal":
+    """A proposal to let one note cross from its context into another.
+
+    The summary names **both** contexts and the number of distinct people
+    behind the note, because that is what an approver has to weigh: an approver
+    who cannot see where a note came from, or how many people it represents,
+    is clicking on prose.
+
+    A single-source note is marked as such.  Not to block it -- the most
+    valuable lessons are often exactly one person's ("the production database
+    is being migrated Thursday") -- but so anyone reading it later knows it is
+    one person's account.  The marking is the point; the permission is not the
+    interesting half.
+    """
+    requesters = [str(r) for r in (getattr(note, "source_requesters", None) or [])]
+    source_scope = str(getattr(note, "scope", "") or "")
+    summary_text = str(getattr(note, "summary", "") or "")
+    marker = " [single source]" if len(requesters) < 2 else ""
+    return AssistantProposal(
+        kind=PROPOSAL_PUBLISH,
+        params={
+            "note_id": str(getattr(note, "note_id", "") or ""),
+            "summary": summary_text,
+            "role_label": str(getattr(note, "role_label", "") or ""),
+            "source_scope": source_scope,
+            "source_ids": [str(i) for i in (getattr(note, "source_ids", None) or [])],
+            "source_requesters": requesters,
+            "destination_scope": destination_scope,
+            "single_source": len(requesters) < 2,
+        },
+        summary=(
+            f"Publish a lesson from {source_scope or 'an unnamed context'} "
+            f"into {destination_scope} "
+            f"({len(requesters)} distinct requester(s)){marker}"
+        ),
+        rationale=summary_text,
+        collective_id=collective_id,
+        agent_id=agent_id,
+    )
+
+
+async def _dispatch_publish(
+    signaling, cid: str, p: AssistantProposal, redis_client: Any = None,
+) -> bool:
+    """Make an approved note readable in the destination a human named.
+
+    Directed, not broadcast: the note lands in exactly the context the approval
+    named. That is what makes "may this fragment be retrieved here?" answerable
+    without per-principal ceilings -- the approval record answers it.
+
+    An approval with no destination is refused rather than defaulted. There is
+    no sensible default for *where information may go*, and picking one would
+    be the whole control lost to a convenience.
+    """
+    # The whole strength of this control is that a PERSON read the note and
+    # decided it may cross.  "tui:anonymous" is the fallback when the decision
+    # payload carried no approver, and accepting it would mean recording an
+    # approval nobody can be held to -- which is the same as no approval.
+    # Refused rather than warned: publication is new, so nothing depends on the
+    # permissive behaviour, and a control that fails open on its first day
+    # never gets tightened.
+    approver = str(p.operator_id or "").strip()
+    if not approver or approver in _ANONYMOUS_APPROVERS:
+        logger.warning(
+            "assistant_proposal: publish %s has no named approver (%r) — "
+            "refusing; the surface that approved it must send approver_id",
+            p.proposal_id, approver,
+        )
+        return False
+
+    params = p.params or {}
+    destination = str(params.get("destination_scope") or "").strip()
+    summary = str(params.get("summary") or "").strip()
+    role_label = str(params.get("role_label") or "").strip()
+    if not destination or not summary or not role_label:
+        logger.warning(
+            "assistant_proposal: publish %s missing destination/summary/role "
+            "— refusing", p.proposal_id,
+        )
+        return False
+
+    from acc.memory_reflection import publish_note  # noqa: PLC0415
+    ok = publish_note(redis_client, cid, role_label, summary, destination)
+
+    from acc.signals import subject_assistant_proposal  # noqa: PLC0415
+    try:
+        # Journalled even when the write failed: "a human approved moving this
+        # between contexts" is the fact worth keeping, and it is worth keeping
+        # whether or not the cache took it.
+        await signaling.publish(subject_assistant_proposal(cid), {
+            "trigger": "note_published",
+            "proposal_id": p.proposal_id,
+            "note_id": params.get("note_id", ""),
+            "source_scope": params.get("source_scope", ""),
+            "destination_scope": destination,
+            "source_requesters": params.get("source_requesters", []),
+            "approved_by": p.operator_id,
+            "written": ok,
+            "ts": time.time(),
+        })
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "assistant_proposal: publish ack failed for %s", p.proposal_id,
+        )
+    return ok
 
 
 async def _dispatch_spawn(signaling, cid: str, p: AssistantProposal) -> bool:
@@ -796,5 +937,7 @@ __all__ = [
     "decide_dispatch",
     "parse_proposal_markers",
     "dispatch_approved_proposal",
+    "PROPOSAL_PUBLISH",
+    "build_publish_proposal",
     "publish_proposal_pending",
 ]

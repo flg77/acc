@@ -155,9 +155,9 @@ def test_an_unrelated_scope_reads_nothing():
     assert read_hot_cache(redis, "c", "analyst", LOCAL_SCOPE) == []
 
 
-def test_the_shared_tier_is_read_alongside_the_private_one():
-    """Wired now so Phase 4's promotion is a change of state, not of shape.
-    Nothing writes this tier yet, which is why it has to be seeded by hand."""
+def test_a_context_reads_its_own_notes_and_what_was_published_into_it():
+    """Published notes are keyed on their DESTINATION (Phase 4), so a context
+    reads its own distillations plus whatever a person sent here."""
     from acc.signals import redis_shared_notes_key
 
     redis = _FakeRedis()
@@ -165,15 +165,20 @@ def test_the_shared_tier_is_read_alongside_the_private_one():
         MemoryNote(summary="mine", agent_id="a", role_label="analyst",
                    source_ids=["e1"], scope="slack#C1"),
     ])
-    redis.store[redis_shared_notes_key("c", "analyst")] = json.dumps(["everyone's"])
+    redis.store[redis_shared_notes_key("c", "analyst", "slack#C1")] = json.dumps(
+        ["sent here from elsewhere"],
+    )
 
     got = read_hot_cache(redis, "c", "analyst", "slack#C1")
-    assert got == ["mine", "everyone's"]
+    assert got == ["mine", "sent here from elsewhere"]
+    # Published into C1 only — C2 sees none of it.
+    assert read_hot_cache(redis, "c", "analyst", "slack#C2") == []
 
 
 def test_nothing_reaches_the_shared_tier_on_its_own():
     """The dangerous version of this feature is the one that promotes
-    helpfully. Reflection must never write the shared key."""
+    helpfully. Reflection must never write a destination key, even when handed
+    a note already marked shared."""
     from acc.signals import redis_shared_notes_key
 
     redis = _FakeRedis()
@@ -181,7 +186,8 @@ def test_nothing_reaches_the_shared_tier_on_its_own():
         MemoryNote(summary="mine", agent_id="a", role_label="analyst",
                    source_ids=["e1"], scope="slack#C1", tier=TIER_SHARED),
     ])
-    assert redis_shared_notes_key("c", "analyst") not in redis.store
+    for destination in ("slack#C1", "slack#C2", LOCAL_SCOPE):
+        assert redis_shared_notes_key("c", "analyst", destination) not in redis.store
 
 
 def test_the_prompt_reads_notes_for_the_asking_task_scope():

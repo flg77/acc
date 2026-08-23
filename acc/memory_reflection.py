@@ -293,21 +293,54 @@ def read_hot_cache(
     is Phase 4 — so today the second read is always a miss.  It is wired now so
     promotion is a change of state rather than a change of shape.
 
-    .. note::
-       The authority check that must gate the shared read — a fragment carries
-       the ceiling of the context that produced it and is not retrieved below it
-       — is **not enforced here**, because per-principal ceilings do not exist
-       yet (they are the separate piece of work recorded as task ``[1b]``).
-       Nothing can reach the shared tier until promotion ships, so the gap is
-       not reachable; it must be closed before it is.
+    Publication is **directed**: a note reaches this context only because a
+    person approved putting it here, naming both the context it came from and
+    this one. That is what answers settled question 2 — *may this fragment be
+    retrieved in this context?* — without the per-principal ceilings that do not
+    exist yet. The approval record is the check.
+
+    What ceilings would add later is a hard floor **under** that judgement, so a
+    human could not approve a publication the policy forbids. Until then the
+    human is the only check, which is why the proposal has to show them both
+    contexts rather than just the text.
     """
     if redis_client is None:
         return []
     out: list[str] = []
     for key in (redis_memory_notes_key(collective_id, role_label, scope),
-                redis_shared_notes_key(collective_id, role_label)):
+                redis_shared_notes_key(collective_id, role_label, scope)):
         out.extend(_read_note_key(redis_client, key))
     return out
+
+
+def publish_note(
+    redis_client: Any,
+    collective_id: str,
+    role_label: str,
+    summary: str,
+    destination: str,
+    *,
+    ttl_s: int = 21600,
+) -> bool:
+    """Make one note readable in *destination*.
+
+    The only way a note crosses a context boundary. Called from the approved
+    -proposal dispatcher and nowhere else -- reflection cannot reach it, which
+    is the property that keeps promotion a decision rather than a side effect.
+    """
+    if redis_client is None or not summary or not destination:
+        return False
+    key = redis_shared_notes_key(collective_id, role_label, destination)
+    existing = _read_note_key(redis_client, key)
+    if summary in existing:
+        return True
+    try:
+        redis_client.set(key, json.dumps([*existing, summary]))
+        redis_client.expire(key, ttl_s)
+        return True
+    except Exception as exc:
+        logger.warning("memory_reflection: publish failed: %s", exc)
+        return False
 
 
 def _read_note_key(redis_client: Any, key: str) -> list[str]:

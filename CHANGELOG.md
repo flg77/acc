@@ -58,12 +58,22 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   ingress cannot write what every future prompt reads. Reflection only ever
   writes `private`; nothing promotes to `shared` without a reviewed decision.
 
-  Known limits: both retrieval filters run *after* the vector search, so
+  **Phase 4** makes promotion a decision. A new `publish` proposal kind carries
+  the note, both contexts and its quorum evidence; it is HIGH risk, never
+  auto-executes in any operating mode (including AUTO, and unlike `infuse` it
+  has no dev-mode escape), and its summary names both contexts so an approver
+  can see the flow rather than just the text. Publication is **directed** — a
+  published note is keyed on its destination and is readable exactly where a
+  person put it, which is what answers "may this fragment be retrieved in that
+  context?" without the per-principal ceilings that do not exist yet. The
+  approving principal, which the oversight queue already had and was dropping
+  before dispatch, is now recorded on the proposal and the journal entry; a
+  publication with no nameable approver is **refused**.
+
+  Known limit: both retrieval filters run *after* the vector search, so
   retrieval over-fetches to protect recall — that bounds the problem rather than
-  removing it, and a backend-side prefilter is the real fix. And the shared-tier
-  read is wired but its authority check is not yet enforceable; nothing can
-  reach that tier until promotion ships, and it must be closed before it does.
-  Both are recorded as follow-up work.
+  removing it, and a backend-side prefilter is the real fix, recorded as
+  follow-up work.
 
 - **OKF knowledge packs — P5 (runtime).** A `.accpkg` can now ship curated OKF
   *content*, not just capabilities: an `AccPkgManifest.bundles` list points at

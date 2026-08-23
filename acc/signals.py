@@ -611,13 +611,25 @@ def redis_memory_notes_key(
     return f"acc:{collective_id}:memory_notes:{role_label}:{scope}"
 
 
-def redis_shared_notes_key(collective_id: str, role_label: str) -> str:
-    """Notes promoted out of a single context and readable across them.
+def redis_shared_notes_key(
+    collective_id: str, role_label: str, destination: str,
+) -> str:
+    """Notes published INTO *destination* from somewhere else.
+
+    Keyed on the destination, not global. Phase 3 modelled the shared tier as
+    one broadcast blob, and Phase 4 found that was the thing making the
+    authority rule unenforceable: a broadcast has no destination for a human to
+    approve, so nothing could check where a note ended up.
+
+    Directed publication removes the problem instead of deferring it. **A note
+    is readable exactly where a person put it** -- so "may this fragment be
+    retrieved in that context?" is answered by the approval record rather than
+    by a ceiling comparison that does not exist yet.
 
     A separate prefix rather than a reserved scope name, so a surface that
     happens to be called "shared" cannot land in it.
     """
-    return f"acc:{collective_id}:memory_notes_shared:{role_label}"
+    return f"acc:{collective_id}:memory_notes_shared:{role_label}:{destination}"
 
 
 # ---------------------------------------------------------------------------
