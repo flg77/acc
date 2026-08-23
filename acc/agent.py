@@ -959,7 +959,7 @@ class Agent:
         for p in executed:
             try:
                 ok = await dispatch_approved_proposal(
-                    self.backends.signaling, p,
+                    self.backends.signaling, p, self._redis,
                 )
                 logger.info(
                     "assistant_proposal: auto-executed kind=%s id=%s ok=%s",
@@ -1062,6 +1062,7 @@ class Agent:
         self,
         collective_id: str,
         oversight_id: str,
+        approver_id: str = "",
     ) -> None:
         """When ``oversight_id`` matches a cached Assistant proposal,
         publish the underlying mutation.
@@ -1175,6 +1176,12 @@ class Agent:
                 dispatch_approved_proposal,
             )
             proposal = AssistantProposal.from_payload(payload)
+            # WHO approved, not just that someone did.  The queue already had
+            # this and dropped it here; a publication whose approver cannot be
+            # named is a control that cannot be audited
+            # (20260823-attributed-memory task [20]).
+            if approver_id:
+                proposal.operator_id = approver_id
         except Exception:
             logger.exception(
                 "assistant_proposal: cached payload malformed for %s",
@@ -1183,7 +1190,7 @@ class Agent:
             return
         try:
             ok = await dispatch_approved_proposal(
-                self.backends.signaling, proposal,
+                self.backends.signaling, proposal, self._redis,
             )
             logger.info(
                 "assistant_proposal: approved + dispatched kind=%s "
@@ -3293,7 +3300,7 @@ class Agent:
                     # an Assistant proposal, load the cached payload
                     # and dispatch the underlying mutation.
                     await self._maybe_dispatch_assistant_proposal(
-                        collective_id, oversight_id,
+                        collective_id, oversight_id, approver,
                     )
                 elif decision == "REJECT":
                     await queue.reject(oversight_id, approver, reason)
