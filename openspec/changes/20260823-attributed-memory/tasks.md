@@ -63,18 +63,57 @@
       blindly makes every lookup miss, which reads as "no tables yet" and sends
       the caller down the create path. `_table_names()` handles both
 
-## Phase 2 — Scope at retrieval
+## Phase 2 — Scope at retrieval (done 2026-08-23)
 
-- [ ] `[11]` Requester filter in `_retrieve_episodes`, beside the existing
-      `agent_id` filter (`acc/cognitive_core.py:2264`) — **not** in the prompt.
-      A boundary the model is asked to respect is not a boundary
-- [ ] `[12]` Scope default resolved from the **surface**, not a global setting:
-      pooled for a single operator and a symmetric shared console, per-requester
-      for a mixed-authority collective, per-group for a channel, **isolated and
-      never pooled** for compat / webhook / subscription
-- [ ] `[13]` Single-operator path is a no-op — no new required configuration and
-      byte-identical retrieval. If this feature adds friction at the edge it gets
-      disabled, in exactly the deployments that later grow a second user
+- [x] `[11]` Scope filter in `_retrieve_episodes`, beside the existing `agent_id`
+      filter — **not** in the prompt. A boundary the model is asked to respect is
+      not a boundary
+- [x] `[11b]` **The settled answer to question 3 changed this task's shape.**
+      A requester filter cannot express "everyone in this channel": a channel is
+      a context and the people in it are not. So episodes carry a `scope` column
+      as well as a `requester`, and `acc/memory_scope.py` computes it. That
+      column was not in the Phase 1 plan — the group answer created it
+- [x] `[11c]` **The mode is applied at WRITE time, not read time.** Retrieval is
+      one equality test with no policy logic in it, so a mode cannot be
+      *almost* applied. It also means changing a surface's mode later does not
+      silently re-partition history: old episodes keep their old key and stop
+      being reachable rather than being re-sorted into groups nobody consented
+      to. Fails closed
+- [x] `[12]` Scope default resolved from the **surface**: pooled for tui/webgui,
+      per-group for slack, per-requester for voice, **isolated** for compat /
+      webhook / subscription — and **isolated for any surface not in the table**,
+      because the next adapter added is the one most likely to be missing from it
+      and the failure that matters is its callers quietly sharing a memory
+- [x] `[12b]` A **direct message is not a room**. Under a per-group mode a DM
+      falls back to per-requester, or every private conversation on the platform
+      would land in one memory
+- [x] `[13]` Single-operator path is a no-op: work that never passed admission
+      is scoped `local`, and the migration backfills pre-existing rows to the
+      same scope, so a lone operator's retrieval is unchanged and loses no
+      history
+- [x] `[13b]` Task `[10]` now has teeth: an **attributed** context never sees
+      unattributed history. Pre-attribution rows stay reachable from the console
+      and cannot surface inside a channel
+
+- [x] `[13c]` **Recall, found while building.** Both filters run *after* the
+      vector search, so a busy neighbouring scope can fill the top-k and leave
+      the requester with nothing — which reads as "the agent forgot", not as a
+      partition working. With one operator this barely mattered; scopes
+      partition far harder. Retrieval now over-fetches and truncates, which
+      turns the common case from empty into fewer
+
+> **Follow-up this creates.** Over-fetching bounds the damage; it does not
+> remove it. A deployment with many active scopes can still starve a quiet one.
+> The real fix is a **prefilter in the backend query** (LanceDB `.where()`),
+> which changes the `VectorBackend.search` contract and has to hold across
+> LanceDB, TurboVec and Milvus — a separate change, not a line in this one.
+
+> **Open, and deliberately not built here.** Scenario S2 — a mixed-authority
+> collective — is not expressible by a table keyed on the *surface*, because a
+> compliance officer and an ML engineer share one. Distinguishing them needs the
+> per-principal category ceiling recorded in `[1b]`, not another scope mode.
+> Building a config override for it now would be guessing at the shape of a
+> decision that has not been made.
 
 ## Phase 3 — Two tiers
 
@@ -124,9 +163,9 @@
       `admission.principal.attribution()`
 - [x] `[29]` Test: a pre-migration row reads unattributed and never appears in a
       scoped result
-- [ ] `[30]` Test: two requesters on one agent cannot retrieve each other's
+- [x] `[30]` Test: two requesters on one agent cannot retrieve each other's
       episodes under per-requester scope
-- [ ] `[31]` Test: single-operator retrieval is unchanged — the regression that
+- [x] `[31]` Test: single-operator retrieval is unchanged — the regression that
       matters most, on the most-used path
 - [ ] `[32]` Test: a note distilled from A's episodes does not reach B's prompt
 - [ ] `[33]` Test: a webhook-sourced episode never enters a note
