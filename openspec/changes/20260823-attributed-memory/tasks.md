@@ -36,21 +36,32 @@
 > None of the five changes Phase 1 or Phase 2. Attribution and scoping are correct
 > under every one of them, which is why they were built first.
 
-## Phase 1 — Attribute
+## Phase 1 — Attribute (done 2026-08-23)
 
-- [ ] `[5]` `requester` column (utf8, indexed) on the `episodes` schema in
+- [x] `[5]` `requester` column (utf8, indexed) on the `episodes` schema in
       `acc/backends/vector_lancedb.py`
-- [ ] `[6]` Populate it from the task payload's `requested_by` at
+- [x] `[6]` Populate it from the task payload's `requested_by` at
       `acc/cognitive_core.py:2317`
-- [ ] `[7]` `owner` field on `SessionInfo` (`acc/sessions.py:58`), populated from
+- [x] `[7]` `owner` field on `SessionInfo` (`acc/sessions.py:58`), populated from
       the admitting principal
-- [ ] `[8]` Replace `source_count` on `memory_notes` with `source_ids` and
+- [x] `[8]` Replace `source_count` on `memory_notes` with `source_ids` and
       `source_requesters`; keep `source_count` derivable so nothing that reads it
       today breaks
-- [ ] `[9]` Migration: pre-existing rows read as **unattributed** — never as
+- [x] `[9]` Migration: pre-existing rows read as **unattributed** — never as
       belonging to the current requester. A migration that silently assigns
       ownership is worse than one that admits it cannot
-- [ ] `[10]` Unattributed rows are excluded from every scoped result
+- [x] `[10]` Unattributed rows are excluded from every scoped result —
+      `attribution.distinct_requesters()` counts *people*, and the sentinel is
+      never one of them
+- [x] `[10b]` **Found while building:** `create_table(exist_ok=True)` RAISES on a
+      schema mismatch, so the migration had to run *before* it, not after. As
+      first written this change would have made every existing LanceDB fail to
+      open. `create_table_if_absent` now pre-checks — which is what the Milvus
+      backend already did
+- [x] `[10c]` **Found while building:** `list_tables()` supersedes
+      `table_names()` but returns a response *object*, not names. Swapping them
+      blindly makes every lookup miss, which reads as "no tables yet" and sends
+      the caller down the create path. `_table_names()` handles both
 
 ## Phase 2 — Scope at retrieval
 
@@ -109,9 +120,9 @@
 
 ## Phase 7 — Verification
 
-- [ ] `[28]` Test: an admitted task produces an episode whose `requester` matches
+- [x] `[28]` Test: an admitted task produces an episode whose `requester` matches
       `admission.principal.attribution()`
-- [ ] `[29]` Test: a pre-migration row reads unattributed and never appears in a
+- [x] `[29]` Test: a pre-migration row reads unattributed and never appears in a
       scoped result
 - [ ] `[30]` Test: two requesters on one agent cannot retrieve each other's
       episodes under per-requester scope

@@ -60,10 +60,19 @@ pipe**. The only difference between them is governance. That reframes the work:
 this is not an enhancement competing with the rest of the roadmap, it is the
 governance of a flow that already exists.
 
-`memory_reflection` defaults **off** per role (`acc/agent.py:3476`), so today
-the exposure is latent. It goes live the first time reflection is enabled for a
-role reachable from a shared channel — precisely the configuration an operator
-chooses when they want this behaviour.
+**Correction to this document's first draft, which said reflection defaults
+off per role.** It does not. `RoleDefinitionConfig.memory_reflection` defaults
+to `True` — flipped deliberately in v0.3.41 so reflection runs across the whole
+roster, with roles expected to opt *out*. The `getattr(role,
+"memory_reflection", False)` at `acc/agent.py:3476` is a fallback for objects
+lacking the attribute, not the default a real role gets.
+
+What *is* off by default is the deployment-level env gate
+`ACC_REFLECTION_INTERVAL_S`, which is `0` until set. So the decision is **one
+environment variable, deployment-wide**: setting it turns distillation on for
+every role at once, including every role reachable from a shared surface. There
+is no per-role step at which anyone weighs who can reach that role, and nothing
+in the variable's name connects it to prompt surfaces.
 
 ## Three defects, stated separately
 

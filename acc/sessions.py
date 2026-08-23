@@ -50,6 +50,9 @@ REMOVAL_JOURNAL = "removals.jsonl"
 KEEP_FOREVER = 0
 
 
+from acc.attribution import UNATTRIBUTED, is_attributed
+
+
 class SessionError(Exception):
     """A session operation was refused. The message is operator-facing."""
 
@@ -67,6 +70,9 @@ class SessionInfo:
     turns: int = 0
     blocked: bool = False
     parent: str = ""
+    #: Who this session belongs to.  Without it `resume` is an unaudited read of
+    #: someone else's investigation the moment two people share a deployment.
+    owner: str = UNATTRIBUTED
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +85,7 @@ class SessionInfo:
             "turns": self.turns,
             "blocked": self.blocked,
             "parent": self.parent,
+            "owner": self.owner,
         }
 
     def age_s(self, now: float | None = None) -> float:
@@ -100,6 +107,7 @@ def _summarise(session_id: str, records: list[dict[str, Any]]) -> SessionInfo:
     started = ended = 0.0
     title = ""
     parent = ""
+    owner = UNATTRIBUTED
     blocked = False
 
     for record in records:
@@ -123,6 +131,17 @@ def _summarise(session_id: str, records: list[dict[str, Any]]) -> SessionInfo:
             models.append(model)
         if str(record.get("verdict", "")).lower() in ("block", "blocked", "deny"):
             blocked = True
+        # The owner is whoever the session was opened for -- taken from the
+        # first record that names one, not from session_start alone: a session
+        # predating this field still carries `requested_by` on its task
+        # records, so an existing trace log gains an owner instead of staying
+        # anonymous.  Deliberately outside the kind chain above; it applies to
+        # every record kind.
+        if owner == UNATTRIBUTED:
+            for key in ("owner", "requested_by"):
+                if is_attributed(record.get(key)):
+                    owner = str(record[key]).strip()
+                    break
 
     if not started and records:
         started = float(records[0].get("ts", 0) or 0)
@@ -136,6 +155,7 @@ def _summarise(session_id: str, records: list[dict[str, Any]]) -> SessionInfo:
         turns=len(tasks),
         blocked=blocked,
         parent=parent,
+        owner=owner,
     )
 
 
