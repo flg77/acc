@@ -29,6 +29,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from acc.attribution import distinct_requesters
 from acc.signals import redis_memory_notes_key
 
 logger = logging.getLogger("acc.memory_reflection")
@@ -41,11 +42,25 @@ class MemoryNote:
     summary: str
     agent_id: str
     role_label: str
-    source_count: int
+    #: The episodes this note was distilled from, and the distinct people behind
+    #: them.  `source_count` recorded how many and nothing else, so a
+    #: contribution could not be traced back or removed once the note existed --
+    #: and a quorum could not tell ten episodes from one person apart from one
+    #: episode each from ten.
+    source_ids: list[str] = field(default_factory=list)
+    source_requesters: list[str] = field(default_factory=list)
+    source_count: int = 0
     confidence: float = 0.0
     note_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     ts: float = field(default_factory=time.time)
     embedding: list[float] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # Derived, so nothing that reads source_count today changes behaviour.
+        # An explicit count still wins: notes built before provenance existed
+        # carry a number and no ids.
+        if not self.source_count:
+            self.source_count = len(self.source_ids)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -159,6 +174,8 @@ async def consolidate(
             summary=summary,
             agent_id=agent_id,
             role_label=role_label,
+            source_ids=[str(m.get("id") or "") for m in members if m.get("id")],
+            source_requesters=distinct_requesters(members),
             source_count=len(members),
             confidence=min(1.0, len(members) / (min_cluster * 2)),
             embedding=list(embedding or []),
@@ -177,6 +194,8 @@ def persist_notes(notes: list[MemoryNote], vector: Any) -> int:
         "role_label": n.role_label,
         "ts": n.ts,
         "summary": n.summary,
+        "source_ids": json.dumps(list(n.source_ids)),
+        "source_requesters": json.dumps(list(n.source_requesters)),
         "source_count": int(n.source_count),
         "confidence": float(n.confidence),
         "embedding": n.embedding or [0.0] * 384,

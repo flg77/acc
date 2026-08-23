@@ -1,38 +1,67 @@
 # Tasks: 20260823-attributed-memory
 
-## Phase 0 — Decisions
+## Phase 0 — Decisions (all settled 2026-08-23)
 
-- [ ] `[1]` Settle **floor vs delegation** for action authority (carried from OC-04).
-      Recommendation: floor — 2604.08567 measures models failing to hold a
-      delegation boundary across turns, and the floor rule does not ask them to
-- [ ] `[2]` Settle the **information rule**: does a memory fragment carry the
-      authority level of the context that produced it, and may it be refused
-      retrieval into a lower context? Neither OC-04 candidate covers this,
-      because both govern actions and this leak is in retrieval
-- [ ] `[3]` Settle the **group-channel default**: one pooled context, or N private
-      ones? This is the row of the scope table with real consequences
-- [ ] `[4]` Settle **quorum size *k***, and whether an operator may override to
-      promote a single-source note
+- [x] `[1]` **Floor vs delegation** → **FLOOR**, and delegation is not offered as
+      a mode. Its only benefit — a low-authority requester getting a high-category
+      action done — is already provided by the oversight queue, *with an approver*.
+      Delegation is not a missing capability; it is a way to skip an approval that
+      already exists
+- [x] `[1b]` **Consequence to record, not build here:** tiers and categories are
+      different axes, so the floor rule needs a **per-principal category ceiling**
+      (`effective = role grants ∩ principal ceiling`), which ACC cannot currently
+      express. Separate change; noted so it is not rediscovered later
+- [x] `[2]` **Information rule** → **STANDS.** A fragment carries the effective
+      category ceiling of the task that produced it and is not retrieved below it.
+      It uses authority as an imperfect proxy for sensitivity — chosen because the
+      alternative (content classification) is the model-centric approach measured
+      at 15.8–50.9%. It will over-restrict, which is the recoverable direction to
+      fail in, and that is what makes Phase 4 load-bearing rather than optional
+- [x] `[3]` **Group-channel default** → **POOLED, keyed on the channel, never on
+      the participant set.** Per-person memory would make the agent worse at what a
+      channel is for. Keying on participants would drag their DMs in. Invariant:
+      *a channel's memory approximates its scrollback*. DMs are their own scope
+- [x] `[4]` **Quorum** → **k = 2**, not 3. The epistemic jump is 1 → 2; a fixed k
+      does not survive team size (k = 3 promotes nothing on a team of four and is
+      trivial in a channel of fifty). The **approver** is the real check and must
+      see the sources, since two people in one channel are not independent.
+      Operator override to a single source is permitted, and the note is **marked
+      single-source** — the marking is the point, not the permission
+- [x] `[4b]` **Erasure vs audit immutability** → **different objects.** The audit
+      records *that* something happened; memory records *what was said*. Constraint
+      this imposes: episode `payload_json` is content, so the audit trail must not
+      depend on episode content for its integrity — break that coupling before
+      Phase 6 if it exists
 
-> `[1]`–`[4]` gate Phase 3 onward. **Phases 1–2 are unblocked by all of them** —
-> attribution and scoping are correct under either authority rule, and shipping
-> them early is the whole sequencing argument.
+> None of the five changes Phase 1 or Phase 2. Attribution and scoping are correct
+> under every one of them, which is why they were built first.
 
-## Phase 1 — Attribute
+## Phase 1 — Attribute (done 2026-08-23)
 
-- [ ] `[5]` `requester` column (utf8, indexed) on the `episodes` schema in
+- [x] `[5]` `requester` column (utf8, indexed) on the `episodes` schema in
       `acc/backends/vector_lancedb.py`
-- [ ] `[6]` Populate it from the task payload's `requested_by` at
+- [x] `[6]` Populate it from the task payload's `requested_by` at
       `acc/cognitive_core.py:2317`
-- [ ] `[7]` `owner` field on `SessionInfo` (`acc/sessions.py:58`), populated from
+- [x] `[7]` `owner` field on `SessionInfo` (`acc/sessions.py:58`), populated from
       the admitting principal
-- [ ] `[8]` Replace `source_count` on `memory_notes` with `source_ids` and
+- [x] `[8]` Replace `source_count` on `memory_notes` with `source_ids` and
       `source_requesters`; keep `source_count` derivable so nothing that reads it
       today breaks
-- [ ] `[9]` Migration: pre-existing rows read as **unattributed** — never as
+- [x] `[9]` Migration: pre-existing rows read as **unattributed** — never as
       belonging to the current requester. A migration that silently assigns
       ownership is worse than one that admits it cannot
-- [ ] `[10]` Unattributed rows are excluded from every scoped result
+- [x] `[10]` Unattributed rows are excluded from every scoped result —
+      `attribution.distinct_requesters()` counts *people*, and the sentinel is
+      never one of them
+- [x] `[10b]` **Found while building:** `create_table(exist_ok=True)` RAISES on a
+      schema mismatch, so the migration had to run *before* it, not after. As
+      first written this change would have made every existing LanceDB fail to
+      open. `create_table_if_absent` now pre-checks — which is what the Milvus
+      backend already did
+- [x] `[10c]` **Found while building:** `list_tables()` supersedes
+      `table_names()` but returns a response *object*, not names. Swapping them
+      blindly makes every lookup miss, which reads as "no tables yet" and sends
+      the caller down the create path. `_table_names()` handles both
 
 ## Phase 2 — Scope at retrieval
 
@@ -91,9 +120,9 @@
 
 ## Phase 7 — Verification
 
-- [ ] `[28]` Test: an admitted task produces an episode whose `requester` matches
+- [x] `[28]` Test: an admitted task produces an episode whose `requester` matches
       `admission.principal.attribution()`
-- [ ] `[29]` Test: a pre-migration row reads unattributed and never appears in a
+- [x] `[29]` Test: a pre-migration row reads unattributed and never appears in a
       scoped result
 - [ ] `[30]` Test: two requesters on one agent cannot retrieve each other's
       episodes under per-requester scope

@@ -31,6 +31,7 @@ from acc.backends.pipeline_tracing import (
 from acc.config import ComplianceConfig, RoleDefinitionConfig
 from acc.governance_capabilities import CapabilityDecision, CapabilityGuard
 from acc.progress import ProgressContext
+from acc.attribution import requester_of
 from acc.signals import redis_centroid_key, redis_stress_key
 
 # Total steps in the canonical process_task pipeline (PRE-GATE → DRIFT).
@@ -2309,6 +2310,11 @@ class CognitiveCore:
         row = {
             "id": episode_id,
             "agent_id": self._agent_id,
+            # Stamped at admission by channel_access; UNATTRIBUTED when the task
+            # never passed through one (internal reconciliation, or a payload
+            # from before v0.8.0).  Duplicated out of payload_json on purpose --
+            # a scope has to be enforceable at query time.
+            "requester": requester_of(task_payload),
             "ts": time.time(),
             "signal_type": task_payload.get("signal_type", "TASK_ASSIGN"),
             "payload_json": json.dumps(task_payload),

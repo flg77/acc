@@ -2,7 +2,7 @@
 
 **Change ID:** 20260823-attributed-memory
 **Date:** 2026-08-23
-**Status:** Draft (three decisions open; P1 and P2 are unblocked)
+**Status:** Draft (all five questions settled 2026-08-23; Phase 1 in progress)
 **Author:** flg
 
 ---
@@ -60,10 +60,19 @@ pipe**. The only difference between them is governance. That reframes the work:
 this is not an enhancement competing with the rest of the roadmap, it is the
 governance of a flow that already exists.
 
-`memory_reflection` defaults **off** per role (`acc/agent.py:3476`), so today
-the exposure is latent. It goes live the first time reflection is enabled for a
-role reachable from a shared channel — precisely the configuration an operator
-chooses when they want this behaviour.
+**Correction to this document's first draft, which said reflection defaults
+off per role.** It does not. `RoleDefinitionConfig.memory_reflection` defaults
+to `True` — flipped deliberately in v0.3.41 so reflection runs across the whole
+roster, with roles expected to opt *out*. The `getattr(role,
+"memory_reflection", False)` at `acc/agent.py:3476` is a fallback for objects
+lacking the attribute, not the default a real role gets.
+
+What *is* off by default is the deployment-level env gate
+`ACC_REFLECTION_INTERVAL_S`, which is `0` until set. So the decision is **one
+environment variable, deployment-wide**: setting it turns distillation on for
+every role at once, including every role reachable from a shared surface. There
+is no per-role step at which anyone weighs who can reach that role, and nothing
+in the variable's name connects it to prompt surfaces.
 
 ## Three defects, stated separately
 
@@ -219,6 +228,8 @@ decides whether it may cross. "Approve running without the cage" cannot be read.
 
 ## Sequencing
 
+None of the five answers changes Phase 1 or Phase 2: attribution and scoping are correct under every one of them, which is why they were built first.
+
 Order is forced by one constraint: **provenance cannot be retrofitted onto a pool
 that already exists.**
 
@@ -227,23 +238,137 @@ multiply the number of unattributed writers into a shared pool. An access-contro
 gap becomes visible the day it is exploited; a contaminated memory pool does not
 become visible at all.
 
-## Open questions
+## Settled questions
 
-1. **Floor rule or delegation rule** for *action* authority — carried over from
-   `OC-04`, still unanswered. Recommendation: **floor**, since 2604.08567 shows
-   models do not hold a delegation boundary across turns and the floor rule does
-   not ask them to.
-2. **Does the information rule above stand** — a fragment carries its originating
-   context's authority and may not be retrieved below it?
-3. **Default scope for a group channel** — one pooled context or N private ones?
-   The consequential row of the scope table.
-4. **Quorum size *k***, and whether a single-source note may ever be promoted by
-   operator override.
-5. **Erasure versus audit immutability.** These pull against each other; the
-   tension is real, not a wording problem.
+All five settled 2026-08-23. Two came out differently from the recommendation
+that accompanied them, and one of those changes what has to be built.
 
-Questions 1–2 gate step 3 onward. **Steps 1 and 2 are unblocked by all five** —
-attribution and scoping are correct under either authority rule.
+### 1. Floor — and delegation is not offered at all
+
+~~Floor rule or delegation rule for action authority?~~ **Floor.**
+
+The two rules are usually presented as a safety/usefulness trade: floor is the
+intersection of what the role may do and what the requester may ask for;
+delegation lets the agent act with the *role's* authority on the requester's
+behalf, which is what makes it useful to someone who could not perform the
+action themselves. That is also precisely the confused-deputy shape.
+
+**The trade does not exist here, because ACC already has the useful half.** The
+benefit claimed for delegation — a low-authority requester getting a
+high-category action done — is what the **oversight queue** is for: the action
+is proposed, and a human who *does* hold the authority approves it. Delegation
+is therefore not a way to gain a capability ACC lacks; it is a way to skip an
+approval ACC already has. Choosing floor loses nothing real and removes a
+standing escalation path.
+
+**What this actually requires**, and it is not what the question implied: the
+tier ladder (`NONE`/`VIEWER`/`REQUESTER`/`OPERATOR`) and the role categories
+(Cat-A/B/C) are **different axes**. Tiers govern *may you ask, may you approve*;
+categories govern *what may be done*. The floor rule needs both on the same
+scale, so a principal must carry a **category ceiling** — and ACC currently
+cannot express one. `OC-04` said as much: *"a Cat-C-capable role reachable from
+Slack by anyone is not a defensible configuration, and ACC currently cannot even
+express the constraint."*
+
+    effective categories = role grants ∩ principal ceiling
+
+The ceiling defaults from the tier and is narrowable per admission. This is a
+distinct piece of work from the memory scoping in this change; it is recorded
+here because the answer produced it and it should not be discovered later.
+
+### 2. Yes — the information rule stands, as a default with a way out
+
+~~Does a fragment carry the authority of the context that produced it?~~
+**Yes.** A memory fragment carries the effective category ceiling of the task
+that produced it, and is not retrieved into a context below that level.
+
+Two honest qualifications, because the rule is weaker than it sounds:
+
+**It uses authority as a proxy for sensitivity, and the proxy is imperfect.** A
+Cat-C session may produce an entirely mundane lesson. The justification is that
+the note is derived from a session the lower-authority principal was not
+permitted to cause, so its subject matter is about things they could not
+trigger. The alternative — classifying content by sensitivity — is the
+model-centric approach measured at 15.8–50.9% (2604.21308), so the imperfect
+substrate-derived signal wins on the evidence, not on elegance.
+
+**It will over-restrict, and that is the correct direction to fail in.**
+Over-restriction is recoverable: the fragment is promoted through the `publish`
+proposal, where a human reads it and decides. Under-restriction is not
+recoverable, because it has already happened.
+
+This makes Phase 4 **load-bearing rather than optional**. Without a promotion
+path the rule strands useful lessons permanently; with one, the strictness is
+what creates the reviewable decision.
+
+### 3. A channel is one pooled context, keyed on the channel
+
+~~One pooled context or N private ones?~~ **Pooled — but keyed on the
+channel, not on the participant set.**
+
+Per-person memory inside a shared channel would make the agent *worse at the
+thing a channel is for*. If someone asks a question in a channel and a colleague
+follows up, the colleague expects the agent to remember it — it is in the
+scrollback in front of them. An agent that has forgotten what everyone present
+can still read is not protecting anything.
+
+Keying on the **channel** rather than the participants is what makes that safe,
+and it is the part that is easy to get wrong. Pooling by participant set would
+mean the channel's memory contains everything those people ever did anywhere,
+including their direct messages. Keying on the channel means it contains what
+happened *in that channel*. The resulting invariant is testable:
+
+> **A channel's memory approximates its scrollback.** Anything the agent can
+> recall in a channel should be something a participant could have read there.
+
+Direct messages are their own scope and are never pooled with any channel.
+Membership changes need no special handling: a joiner sees the channel's
+history, which is what the scrollback would have given them anyway.
+
+### 4. k = 2, not 3 — and the approver is the real check
+
+~~Quorum size, and may a single source ever be promoted?~~ **k = 2. Operator
+override to 1 is permitted, and the note is marked single-source.**
+
+The recommendation said 3. Two arguments moved it:
+
+**The epistemic jump is 1 → 2.** That is where one person's account becomes a
+corroborated one. Going 2 → 3 adds confidence but the governance property — *this
+is not one person's opinion* — is already achieved at 2.
+
+**A fixed k does not survive contact with team size.** On a team of four, k = 3
+means nearly nothing is ever promoted; in a channel of fifty it is trivially
+met. A number cannot carry this. What carries it is the **approver**, who sees
+the sources and can judge whether they are genuinely independent — two people in
+one channel who saw each other's messages are not. So *k* is a floor that
+excludes the degenerate case, not a substitute for judgement, and the proposal
+must show its sources rather than assert a count.
+
+**Single-source promotion stays available**, because the most valuable lessons
+are often exactly that ("the production database is being migrated Thursday").
+It requires an operator, and the note is **visibly marked single-source** so
+anyone reading it later knows it is one person's account. The marking is the
+point; the permission is not the interesting half.
+
+### 5. Erasure and audit immutability are not in conflict
+
+~~How do these compose?~~ **They operate on different objects.**
+
+> The **audit trail** records *that something happened*. **Memory** records
+> *what was said*. Erasure removes what was said, never that it happened.
+
+The audit record keeps who asked, when, which role, which category, what was
+decided — retained as a record of processing, and never erased. The memory tier
+holds retrievable content that shapes future behaviour, and is erasable. A note
+that falls below quorum after an erasure is **demoted, not deleted**, and the
+demotion is journalled, so the audit shows that a note lost sources without
+showing whose.
+
+**One constraint this imposes**, which is worth naming now rather than
+discovering in Phase 6: episode `payload_json` is content, so episodes belong to
+the erasable tier. **The audit trail must therefore not depend on episode
+content for its integrity.** If any part of it does today, that coupling has to
+be broken before erasure can ship.
 
 ## Related
 
