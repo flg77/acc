@@ -47,10 +47,23 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   on open, with pre-existing rows backfilled as *unattributed* — never as the
   current requester.
 
-  Known limit: both retrieval filters run *after* the vector search, so
-  retrieval over-fetches to protect recall. That bounds the problem rather than
-  removing it; a backend-side prefilter is the real fix and is recorded as
-  follow-up work.
+  **Phase 3** adds the private/shared split. Notes bypass episode retrieval
+  entirely, so none of the scoping above reached them: reflection clustered the
+  whole recent ring and wrote the result to one per-role Redis key read on every
+  prompt-build, meaning a single note could be distilled from two channels at
+  once — a leak that arrives *already summarised*. Clustering now happens
+  strictly within a scope, notes carry `tier` + `scope`, and the hot cache is
+  per scope. Episodes from **isolated** surfaces (compat, webhook, subscription,
+  and any surface not in the mode table) are never distilled, so unattended
+  ingress cannot write what every future prompt reads. Reflection only ever
+  writes `private`; nothing promotes to `shared` without a reviewed decision.
+
+  Known limits: both retrieval filters run *after* the vector search, so
+  retrieval over-fetches to protect recall — that bounds the problem rather than
+  removing it, and a backend-side prefilter is the real fix. And the shared-tier
+  read is wired but its authority check is not yet enforceable; nothing can
+  reach that tier until promotion ships, and it must be closed before it does.
+  Both are recorded as follow-up work.
 
 - **OKF knowledge packs — P5 (runtime).** A `.accpkg` can now ship curated OKF
   *content*, not just capabilities: an `AccPkgManifest.bundles` list points at

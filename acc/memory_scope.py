@@ -123,6 +123,48 @@ def scope_key(task_payload: dict[str, Any] | None) -> str:
     return f"{source}@{_who(task_payload, source)}"
 
 
+def source_of_scope(scope: str) -> str:
+    """The surface a scope key came from.
+
+    Keys are built here and take three shapes — ``source``, ``source#group``
+    and ``source@who`` — so the source is everything before the first
+    separator. Kept next to :func:`scope_key` on purpose: the two have to agree,
+    and they will not stay in agreement if they live apart.
+    """
+    text = str(scope or "").strip() or LOCAL_SCOPE
+    for sep in ("#", "@"):
+        if sep in text:
+            return text.split(sep, 1)[0]
+    return text
+
+
+def is_distillable(scope: str) -> bool:
+    """Whether episodes in *scope* may be folded into a durable note.
+
+    Isolated surfaces — the compat endpoint, webhooks, subscriptions — are
+    excluded. **Anything that can prompt the collective must not be able to
+    write what every future prompt reads**, and unattended ingress is the
+    cheapest way in: nobody is watching, and the poisoning is invisible until
+    it has been read a thousand times.
+
+    Note what this deliberately does *not* exclude: the operator's own
+    ``local`` scope, which is unattributed because the TUI never passes through
+    admission. Excluding unattributed episodes outright — the obvious reading —
+    would switch reflection off for every single-operator deployment, which is
+    to say for the case it was built for. The unattributed material is instead
+    held back at the *promotion* boundary, where a quorum counts distinct
+    people and finds none.
+    """
+    text = str(scope or "").strip() or LOCAL_SCOPE
+    if text == LOCAL_SCOPE:
+        # The operator's own scope is not a surface and is not in the mode
+        # table, so it would otherwise fall through to the unknown-source
+        # default and be treated as isolated -- switching reflection off for
+        # every single-operator deployment.
+        return True
+    return resolve_mode(source_of_scope(text)) != ISOLATED
+
+
 def row_scope(row: dict[str, Any] | None) -> str:
     """The scope of a stored row.
 

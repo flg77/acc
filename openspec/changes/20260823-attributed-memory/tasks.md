@@ -115,16 +115,44 @@
 > Building a config override for it now would be guessing at the shape of a
 > decision that has not been made.
 
-## Phase 3 — Two tiers
+## Phase 3 — Two tiers (done 2026-08-23)
 
-- [ ] `[14]` `tier` on `memory_notes`: `private` | `shared`. `memory_reflection`
-      writes `private`
-- [ ] `[15]` Prompt-build reads the requester's private notes plus the shared
-      notes their context admits (`acc/cognitive_core.py:2002`)
-- [ ] `[16]` Exclude unattributed episodes **and** episodes from unattended
-      ingress from distillation entirely. Anything that can prompt the collective
-      must not be able to write what every future prompt reads — this is the
-      cheapest attack in the change and the hardest to notice
+- [x] `[14]` `tier` on `memory_notes`: `private` | `shared`. `memory_reflection`
+      writes `private`, and there is a test asserting it cannot write the shared
+      key even when handed a note already marked shared — the dangerous version
+      of this feature is the one that promotes helpfully
+- [x] `[14b]` **The defect this phase actually had to fix.** `consolidate()`
+      clustered the *whole* recent ring and summarised across it, so one note
+      could be distilled from two channels at once. Phase 2's retrieval filter
+      would never have caught it: notes bypass episode retrieval entirely, so
+      the leak arrives **already summarised**, in every prompt, attributed to
+      nobody. Clustering now happens strictly within a scope
+- [x] `[14c]` The Redis hot cache is **per scope**, not per role. One key held
+      notes from every context and was read on every prompt-build. Old keys are
+      not deleted — nothing reads them, and the existing TTL retires them
+- [x] `[15]` Prompt-build reads the asking task's private notes plus the shared
+      tier. Nothing writes shared yet (Phase 4), so the second read is always a
+      miss — wired now so promotion is a change of *state*, not of shape
+- [x] `[16]` Episodes from **isolated** surfaces — compat, webhook,
+      subscription, and any surface not in the mode table — are dropped before
+      clustering, not filtered after
+- [x] `[16b]` **Task `[16]` as written would have broken the main use case.**
+      "Exclude unattributed episodes" reads well until you notice the TUI never
+      passes through admission, so *every* single-operator episode is
+      unattributed: the blanket rule switches reflection off for the deployment
+      it was built for. Caught by an existing test, not by review. The
+      discriminator is the **scope's mode**, not attribution; unattributed
+      material is instead held back at the *promotion* boundary, where the
+      Phase 5 quorum counts distinct people and finds none. Local notes stay
+      private to local forever, which is the intended outcome by a route that
+      does not regress anything
+
+> **Open, and it must be closed before Phase 4 ships.** The shared read is wired
+> but the authority check that has to gate it — settled question 2, *a fragment
+> carries the ceiling of the context that produced it and is not retrieved below
+> it* — is **not enforced**, because per-principal ceilings do not exist yet
+> (task `[1b]`). Nothing can reach the shared tier until promotion exists, so
+> the gap is not reachable today. It becomes reachable the moment Phase 4 lands.
 
 ## Phase 4 — Promotion as a proposal
 
@@ -167,8 +195,8 @@
       episodes under per-requester scope
 - [x] `[31]` Test: single-operator retrieval is unchanged — the regression that
       matters most, on the most-used path
-- [ ] `[32]` Test: a note distilled from A's episodes does not reach B's prompt
-- [ ] `[33]` Test: a webhook-sourced episode never enters a note
+- [x] `[32]` Test: a note distilled from A's episodes does not reach B's prompt
+- [x] `[33]` Test: a webhook-sourced episode never enters a note
 - [ ] `[34]` Test: `publish` **never** auto-executes, in any operating mode —
       asserted on the absence, since the dangerous version of this feature is the
       one that publishes helpfully

@@ -105,6 +105,11 @@ _SCHEMAS: dict[str, pa.Schema] = {
         # not tell ten episodes from one person from one episode each from ten.
         pa.field("source_ids", pa.utf8()),
         pa.field("source_requesters", pa.utf8()),
+        # WHICH context produced this note, and whether it has been allowed out
+        # of it.  Reflection writes `private`; nothing promotes to `shared`
+        # without a reviewed decision (Phase 4).
+        pa.field("tier", pa.utf8()),
+        pa.field("scope", pa.utf8()),
         # Kept and still written: derived from source_ids, so existing readers
         # are unaffected.
         pa.field("source_count", pa.int64()),
@@ -148,6 +153,9 @@ _BACKFILL: dict[str, str] = {
     # Pre-attribution rows go to the operator's own scope: still reachable
     # from the console, never surfacing inside a channel or a person's memory.
     "scope": f"'{LOCAL_SCOPE}'",
+    # An existing note was distilled from whatever the agent had; it is treated
+    # as the operator's own and stays private, rather than being assumed shared.
+    "tier": "'private'",
     "source_ids": "'[]'",
     "source_requesters": "'[]'",
 }
