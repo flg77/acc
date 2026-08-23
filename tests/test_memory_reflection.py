@@ -146,8 +146,11 @@ def test_hot_cache_roundtrip():
     got = read_hot_cache(r, "sol-01", "analyst")
     assert got == ["note1", "note2", "note3"]  # capped at top_n
     # TTL set.
+    # Per-scope since 20260823-attributed-memory Phase 3: notes default to the
+    # operator's `local` scope, so that is the key they land under.
+    from acc.memory_scope import LOCAL_SCOPE
     from acc.signals import redis_memory_notes_key
-    assert r.ttls[redis_memory_notes_key("sol-01", "analyst")] == 999
+    assert r.ttls[redis_memory_notes_key("sol-01", "analyst", LOCAL_SCOPE)] == 999
 
 
 def test_hot_cache_miss_returns_empty():
@@ -157,5 +160,7 @@ def test_hot_cache_miss_returns_empty():
 
 def test_hot_cache_read_never_raises_on_garbage():
     r = _FakeRedis()
-    r.store[__import__("acc.signals", fromlist=["redis_memory_notes_key"]).redis_memory_notes_key("sol-01", "analyst")] = b"{not json"
+    from acc.memory_scope import LOCAL_SCOPE
+    from acc.signals import redis_memory_notes_key
+    r.store[redis_memory_notes_key("sol-01", "analyst", LOCAL_SCOPE)] = b"{not json"
     assert read_hot_cache(r, "sol-01", "analyst") == []

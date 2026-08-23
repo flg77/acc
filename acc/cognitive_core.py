@@ -1021,7 +1021,7 @@ class CognitiveCore:
         # injected silently; now the operator sees "Checking prior learnings").
         memory_notes: list[str] = []
         if getattr(role, "memory_retrieval", True):
-            memory_notes = self._read_memory_notes()
+            memory_notes = self._read_memory_notes(scope_key(task_payload))
         emit_stage("acc.pipeline.memory_retrieve", {
             "episodes_count": len(retrieved_episodes),
             "notes_count": len(memory_notes),
@@ -1996,13 +1996,22 @@ class CognitiveCore:
         )
         return "\n".join(lines)
 
-    def _read_memory_notes(self) -> list[str]:
+    def _read_memory_notes(self, scope: str = LOCAL_SCOPE) -> list[str]:
         """PR-MEM3 — O(1) read of this role's consolidated memory notes
         from the Redis hot-cache.  Best-effort: returns ``[]`` on miss or
-        any error (no LanceDB hit on the hot path)."""
+        any error (no LanceDB hit on the hot path).
+
+        Scoped since ``20260823-attributed-memory`` Phase 3.  One per-role key
+        held notes distilled from every context and was read on every
+        prompt-build -- a cross-context leak that arrived already summarised,
+        and one the Phase 2 retrieval filter could not see, because notes never
+        pass through episode retrieval.
+        """
         try:
             from acc.memory_reflection import read_hot_cache  # noqa: PLC0415
-            return read_hot_cache(self._redis, self._collective_id, self._role_label)
+            return read_hot_cache(
+                self._redis, self._collective_id, self._role_label, scope,
+            )
         except Exception:
             return []
 

@@ -30,11 +30,18 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from acc.attribution import distinct_requesters
-from acc.signals import redis_memory_notes_key
+from acc.memory_scope import LOCAL_SCOPE, is_distillable, row_scope
+from acc.signals import redis_memory_notes_key, redis_shared_notes_key
 
 logger = logging.getLogger("acc.memory_reflection")
 
 _MEMORY_NOTE_SIGNAL = "MEMORY_NOTE"
+
+#: A note distilled inside one context and readable only there.
+TIER_PRIVATE = "private"
+#: A note a human has allowed out of its context (Phase 4 promotes; nothing
+#: in this phase does).
+TIER_SHARED = "shared"
 
 
 @dataclass
@@ -50,6 +57,11 @@ class MemoryNote:
     source_ids: list[str] = field(default_factory=list)
     source_requesters: list[str] = field(default_factory=list)
     source_count: int = 0
+    #: The context this note was distilled inside.  A note that spans two is a
+    #: leak with a summary in front of it.
+    scope: str = LOCAL_SCOPE
+    #: `private` until a human decides otherwise.
+    tier: str = TIER_PRIVATE
     confidence: float = 0.0
     note_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     ts: float = field(default_factory=time.time)
@@ -144,14 +156,35 @@ async def consolidate(
     source = [e for e in episodes if e.get("signal_type") != _MEMORY_NOTE_SIGNAL]
     if not source:
         return []
-    clusters = [c for c in _cluster_episodes(source, cluster_threshold)
-                if len(c) >= min_cluster]
+
+    # Cluster WITHIN a scope, never across.  Clustering the whole ring and
+    # summarising the result is how a note comes to be distilled from two
+    # channels at once -- and notes bypass episode retrieval entirely, so the
+    # scope filter added in Phase 2 would never see it.  The leak would arrive
+    # already summarised, in every prompt, attributed to nobody.
+    #
+    # Isolated surfaces are dropped here rather than filtered later: unattended
+    # ingress must not be able to write what every future prompt reads.
+    by_scope: dict[str, list[dict]] = {}
+    for episode in source:
+        scope = row_scope(episode)
+        if is_distillable(scope):
+            by_scope.setdefault(scope, []).append(episode)
+    if not by_scope:
+        return []
+
+    clusters: list[tuple[str, list[dict]]] = []
+    for scope, in_scope in by_scope.items():
+        clusters.extend(
+            (scope, c) for c in _cluster_episodes(in_scope, cluster_threshold)
+            if len(c) >= min_cluster
+        )
     # Largest (most-recurring) clusters first; cap the count.
-    clusters.sort(key=len, reverse=True)
+    clusters.sort(key=lambda pair: len(pair[1]), reverse=True)
     clusters = clusters[:max_notes]
 
     notes: list[MemoryNote] = []
-    for members in clusters:
+    for scope, members in clusters:
         try:
             resp = await llm.complete(
                 "You distil an agent's experience into durable memory notes.",
@@ -177,6 +210,7 @@ async def consolidate(
             source_ids=[str(m.get("id") or "") for m in members if m.get("id")],
             source_requesters=distinct_requesters(members),
             source_count=len(members),
+            scope=scope,
             confidence=min(1.0, len(members) / (min_cluster * 2)),
             embedding=list(embedding or []),
         ))
@@ -196,6 +230,8 @@ def persist_notes(notes: list[MemoryNote], vector: Any) -> int:
         "summary": n.summary,
         "source_ids": json.dumps(list(n.source_ids)),
         "source_requesters": json.dumps(list(n.source_requesters)),
+        "scope": n.scope,
+        "tier": n.tier,
         "source_count": int(n.source_count),
         "confidence": float(n.confidence),
         "embedding": n.embedding or [0.0] * 384,
@@ -221,27 +257,60 @@ def write_hot_cache(
     O(1) prompt-build reads.  Best-effort; returns success."""
     if redis_client is None:
         return False
-    key = redis_memory_notes_key(collective_id, role_label)
-    payload = json.dumps([n.summary for n in notes[:top_n]])
-    try:
-        redis_client.set(key, payload)
-        redis_client.expire(key, ttl_s)
-        return True
-    except Exception as exc:
-        logger.warning("memory_reflection: hot-cache write failed: %s", exc)
-        return False
+
+    # One cache per scope.  A single per-role key held notes from every context
+    # at once and was read on every prompt-build; splitting it is the whole
+    # point of the tier.  Old single-key caches are not deleted -- they are no
+    # longer read, and the existing TTL retires them.
+    by_scope: dict[str, list[MemoryNote]] = {}
+    for note in notes:
+        by_scope.setdefault(note.scope or LOCAL_SCOPE, []).append(note)
+
+    ok = True
+    for scope, in_scope in by_scope.items():
+        key = redis_memory_notes_key(collective_id, role_label, scope)
+        payload = json.dumps([n.summary for n in in_scope[:top_n]])
+        try:
+            redis_client.set(key, payload)
+            redis_client.expire(key, ttl_s)
+        except Exception as exc:
+            logger.warning("memory_reflection: hot-cache write failed: %s", exc)
+            ok = False
+    return ok
 
 
 def read_hot_cache(
     redis_client: Any, collective_id: str, role_label: str,
+    scope: str = LOCAL_SCOPE,
 ) -> list[str]:
-    """Read the role's memory-note summaries from the Redis hot-cache.
+    """Read the role's memory-note summaries for *scope*, plus shared ones.
 
     O(1); returns ``[]`` on miss or ANY error — the prompt build must
-    never block or raise on memory."""
+    never block or raise on memory.
+
+    Two tiers are read: the notes distilled inside this context, and the ones a
+    human has allowed out of theirs.  Nothing writes the shared tier yet — that
+    is Phase 4 — so today the second read is always a miss.  It is wired now so
+    promotion is a change of state rather than a change of shape.
+
+    .. note::
+       The authority check that must gate the shared read — a fragment carries
+       the ceiling of the context that produced it and is not retrieved below it
+       — is **not enforced here**, because per-principal ceilings do not exist
+       yet (they are the separate piece of work recorded as task ``[1b]``).
+       Nothing can reach the shared tier until promotion ships, so the gap is
+       not reachable; it must be closed before it is.
+    """
     if redis_client is None:
         return []
-    key = redis_memory_notes_key(collective_id, role_label)
+    out: list[str] = []
+    for key in (redis_memory_notes_key(collective_id, role_label, scope),
+                redis_shared_notes_key(collective_id, role_label)):
+        out.extend(_read_note_key(redis_client, key))
+    return out
+
+
+def _read_note_key(redis_client: Any, key: str) -> list[str]:
     try:
         raw = redis_client.get(key)
     except Exception:

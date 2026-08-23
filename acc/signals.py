@@ -593,13 +593,31 @@ def redis_collective_key(collective_id: str) -> str:
     return f"acc:{collective_id}:registry"
 
 
-def redis_memory_notes_key(collective_id: str, role_label: str) -> str:
+def redis_memory_notes_key(
+    collective_id: str, role_label: str, scope: str,
+) -> str:
     """PR-MEM1 — Redis hot-cache of a role's top memory-reflection notes.
 
-    Per-role (not per-agent) so peers on the same role share the
-    consolidated summaries.  The out-of-band reflection loop writes the
-    top-N notes here; the prompt-build hot path reads them in O(1)."""
-    return f"acc:{collective_id}:memory_notes:{role_label}"
+    Per-role (not per-agent) so peers on the same role share the consolidated
+    summaries, and **per-scope** since ``20260823-attributed-memory`` Phase 3:
+    without the scope one key held notes distilled from every context at once
+    and was read on every prompt-build, which is the cross-context leak in its
+    purest form -- and one the retrieval filter cannot see, because notes do
+    not go through episode retrieval.
+
+    ``scope`` is required rather than defaulted. A caller that forgets it
+    should fail loudly here, not silently share a cache.
+    """
+    return f"acc:{collective_id}:memory_notes:{role_label}:{scope}"
+
+
+def redis_shared_notes_key(collective_id: str, role_label: str) -> str:
+    """Notes promoted out of a single context and readable across them.
+
+    A separate prefix rather than a reserved scope name, so a surface that
+    happens to be called "shared" cannot land in it.
+    """
+    return f"acc:{collective_id}:memory_notes_shared:{role_label}"
 
 
 # ---------------------------------------------------------------------------
