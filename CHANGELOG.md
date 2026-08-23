@@ -13,6 +13,45 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Added
 
+- **Attributed memory — who asked survives past admission**
+  (`20260823-attributed-memory`, Phases 1–2). v0.8.0 resolved a requester at the
+  admission boundary and then lost it one hop later: not a column on `episodes`,
+  not a field on `SessionInfo`, not a property of a memory note. Retrieval
+  filtered on `agent_id` alone — the right axis for one operator, the wrong one
+  for two, so **two people on one surface shared an episode pool** and either
+  one's prompt could retrieve the other's history.
+
+  Episodes now carry `requester` and `scope` columns;
+  [`acc.attribution`](acc/attribution.py) names the "nobody in particular"
+  sentinel so a row that never had a requester can never be mistaken for one;
+  [`acc.memory_scope`](acc/memory_scope.py) decides which memory an episode
+  belongs to. `memory_notes` gain `source_ids` + `source_requesters` in place of
+  a bare `source_count` — provenance was destroyed at distillation, so a
+  contribution could not be traced back or removed, and a quorum could not tell
+  ten episodes from one person apart from one episode each from ten.
+  `SessionInfo` gains `owner`. `source_count` is kept and derived, so nothing
+  that reads it changes behaviour.
+
+  **The scoping mode is applied when an episode is written, not when it is
+  read**, so retrieval is one equality test with no policy in it, and changing a
+  surface's mode later cannot silently re-partition history. Defaults are per
+  surface and deliberately not uniform — pooled for tui/webgui, **per channel**
+  for Slack (a DM is not a room, and falls back to per-requester), **isolated**
+  for compat/webhook/subscription, and **isolated for any surface not in the
+  table**, because the next adapter added is the one most likely to be missing
+  from it.
+
+  **A single-operator deployment is unaffected**: work that never passed
+  admission scopes to `local`, existing rows are backfilled to the same scope,
+  and retrieval is unchanged. Existing LanceDB databases are migrated in place
+  on open, with pre-existing rows backfilled as *unattributed* — never as the
+  current requester.
+
+  Known limit: both retrieval filters run *after* the vector search, so
+  retrieval over-fetches to protect recall. That bounds the problem rather than
+  removing it; a backend-side prefilter is the real fix and is recorded as
+  follow-up work.
+
 - **OKF knowledge packs — P5 (runtime).** A `.accpkg` can now ship curated OKF
   *content*, not just capabilities: an `AccPkgManifest.bundles` list points at
   OKF v0.1 bundles under `bundles/<name>/`. Build + install carry them like any

@@ -32,7 +32,13 @@ from acc.config import ComplianceConfig, RoleDefinitionConfig
 from acc.governance_capabilities import CapabilityDecision, CapabilityGuard
 from acc.progress import ProgressContext
 from acc.attribution import requester_of
+from acc.memory_scope import LOCAL_SCOPE, row_scope, scope_key
 from acc.signals import redis_centroid_key, redis_stress_key
+
+#: How far to over-fetch before the post-search filters (agent + scope) thin the
+#: results.  Not a guarantee -- a deployment with many active scopes can still
+#: starve a quiet one -- but it turns the common case from "empty" into "fewer".
+_SCOPE_OVERFETCH = 5
 
 # Total steps in the canonical process_task pipeline (PRE-GATE → DRIFT).
 # Used as ``total_steps_estimated`` in every progress emission so the
@@ -1006,6 +1012,7 @@ class CognitiveCore:
         if getattr(role, "memory_retrieval", True) and user_content:
             retrieved_episodes = await self._retrieve_episodes(
                 user_content, role, top_k=5,
+                scope=scope_key(task_payload),
             )
         # PR-MEM3 — O(1) hot-cache read of durable memory notes (gated by
         # the same memory_retrieval flag as RAG; empty/miss → no block).
@@ -2190,6 +2197,7 @@ class CognitiveCore:
         *,
         top_k: int = 5,
         freshness_window_s: float = 86400.0,
+        scope: str = LOCAL_SCOPE,
     ) -> list[dict]:
         """PR-I (D-002) — RAG: top-K past episodes for the current task.
 
@@ -2238,7 +2246,16 @@ class CognitiveCore:
             logger.exception("rag: embed failed; skip retrieval")
             return []
         try:
-            raw_results = search_fn("episodes", query_embedding, top_k)
+            # Over-fetch, because both filters below run AFTER the search.
+            # With one operator that hardly mattered; with scopes it does --
+            # a busy neighbouring channel can fill the top-k and leave the
+            # requester with nothing, which reads as "the agent forgot" rather
+            # than as a partition working.  A prefilter in the backend query is
+            # the real fix and would change the VectorBackend contract; this
+            # bounds the damage without it.
+            raw_results = search_fn(
+                "episodes", query_embedding, top_k * _SCOPE_OVERFETCH,
+            )
         except Exception:
             # LanceDB table missing on a fresh agent boot is the
             # most common case — log at DEBUG only.
@@ -2264,6 +2281,13 @@ class CognitiveCore:
                 row_aid = str(row.get("agent_id", "") or "")
                 if row_aid and row_aid != self._agent_id:
                     continue
+                # Same-agent was the only filter here, which is the right
+                # axis for one operator and the wrong one for two: same
+                # agent, different person, nothing separating them.  The
+                # scope is decided at write time, so this is one equality
+                # test with no policy in it (20260823-attributed-memory).
+                if row_scope(row) != scope:
+                    continue
                 signal_type = str(row.get("signal_type") or "TASK_ASSIGN")
                 payload_json = row.get("payload_json") or ""
                 excerpt = ""
@@ -2287,6 +2311,8 @@ class CognitiveCore:
                     "signal_type": signal_type,
                     "excerpt": excerpt,
                 })
+                if len(out) >= top_k:
+                    break
             except Exception:
                 logger.debug(
                     "rag: skipped malformed episode row",
@@ -2315,6 +2341,7 @@ class CognitiveCore:
             # from before v0.8.0).  Duplicated out of payload_json on purpose --
             # a scope has to be enforceable at query time.
             "requester": requester_of(task_payload),
+            "scope": scope_key(task_payload),
             "ts": time.time(),
             "signal_type": task_payload.get("signal_type", "TASK_ASSIGN"),
             "payload_json": json.dumps(task_payload),

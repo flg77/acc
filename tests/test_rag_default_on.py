@@ -118,7 +118,14 @@ def test_role_can_opt_out_via_yaml_field():
 @pytest.mark.asyncio
 async def test_retrieve_is_called_with_query_embedding():
     """PR-I — process_task with a non-empty user content triggers
-    vector.search('episodes', embedding, k=5)."""
+    vector.search('episodes', embedding, k>=5).
+
+    The fetch is deliberately WIDER than the 5 episodes that reach the prompt:
+    the agent and scope filters both run after the search, so asking for
+    exactly 5 lets a busy neighbouring scope crowd out the requester's own
+    history (20260823-attributed-memory Phase 2).  What stays bounded at 5 is
+    the RESULT — asserted in tests/test_memory_scope.py.
+    """
     vector = _mock_vector_with_episodes([])
     core = _make_core(vector=vector)
     await core.process_task(
@@ -130,7 +137,7 @@ async def test_retrieve_is_called_with_query_embedding():
     table_arg = args[0] if args else kwargs.get("table")
     top_k_arg = args[2] if len(args) >= 3 else kwargs.get("top_k")
     assert table_arg == "episodes"
-    assert top_k_arg == 5
+    assert top_k_arg >= 5
 
 
 @pytest.mark.asyncio

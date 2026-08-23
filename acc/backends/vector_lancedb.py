@@ -16,6 +16,7 @@ logger = logging.getLogger("acc.backends.vector_lancedb")
 
 # Standard ACC table schemas (v0.1.0 §7.2)
 from acc.attribution import UNATTRIBUTED
+from acc.memory_scope import LOCAL_SCOPE
 
 _SCHEMAS: dict[str, pa.Schema] = {
     "episodes": pa.schema([
@@ -26,6 +27,12 @@ _SCHEMAS: dict[str, pa.Schema] = {
         # query time -- an attribute buried in a JSON blob cannot be filtered,
         # indexed or redacted (20260823-attributed-memory).
         pa.field("requester", pa.utf8()),
+        # WHICH memory this episode belongs to.  Distinct from `requester`:
+        # a channel is a context and the people in it are not, so a per-group
+        # memory cannot be expressed by matching on who asked.  The mode is
+        # applied here, at write time, so retrieval stays a single equality
+        # test (acc/memory_scope.py).
+        pa.field("scope", pa.utf8()),
         pa.field("ts", pa.float64()),
         pa.field("signal_type", pa.utf8()),
         pa.field("payload_json", pa.utf8()),
@@ -138,6 +145,9 @@ _STANDARD_TABLES = list(_SCHEMAS.keys())
 #: assigns ownership is worse than one that admits it cannot.
 _BACKFILL: dict[str, str] = {
     "requester": f"'{UNATTRIBUTED}'",
+    # Pre-attribution rows go to the operator's own scope: still reachable
+    # from the console, never surfacing inside a channel or a person's memory.
+    "scope": f"'{LOCAL_SCOPE}'",
     "source_ids": "'[]'",
     "source_requesters": "'[]'",
 }
