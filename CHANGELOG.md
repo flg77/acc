@@ -9,7 +9,7 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
-## [Unreleased]
+## [0.9.0] — 2026-08-24
 
 ### Added
 
