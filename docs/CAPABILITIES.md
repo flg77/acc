@@ -60,6 +60,13 @@ to ignore the page.
 | `acc-cli sessions retention [--apply]` | Governed removal. Defaults to keep-forever; **no removal path leaves no trace**. |
 | `acc-cli checkpoints list/show/restore/prune` | Snapshots before agent writes, linked to the task **and the approving decision**. |
 
+### Memory
+
+| Command | What it does |
+|---|---|
+| `acc-cli memory notes [--scope]` | The durable lessons a given context would read. Scoped: a channel's memory approximates its scrollback. |
+| `acc-cli memory forget --person <id> [--apply]` | Remove a person's episodes and reconcile the notes drawn from them. **Dry run by default.** A note with no sources left is deleted; one below quorum is demoted *and* unpublished; one still above quorum is rebuilt. Erasure touches memory only — the audit record of the request survives it. |
+
 ### Work and governance
 
 | Command | What it does |
@@ -223,6 +230,7 @@ Anything used by a monitor needs a defined exit code.
 | `profile apply` | applied | validation failed (nothing written) | — |
 | `restore` | restored | refused (missing secrets, or would overwrite) | not a readable archive |
 | `access check` | admitted | denied | — |
+| `memory forget` | reported (dry run or applied) | — | **the backend cannot erase** — nothing was removed |
 
 `status` counts a role that configuration declares but nothing runs as
 **unhealthy** — while still reporting it as *not deployed* rather than *failed*,

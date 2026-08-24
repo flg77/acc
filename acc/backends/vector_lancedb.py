@@ -110,6 +110,8 @@ _SCHEMAS: dict[str, pa.Schema] = {
         # without a reviewed decision (Phase 4).
         pa.field("tier", pa.utf8()),
         pa.field("scope", pa.utf8()),
+        # What in the source episodes contradicted the lesson, if anything.
+        pa.field("dissent", pa.utf8()),
         # Kept and still written: derived from source_ids, so existing readers
         # are unaffected.
         pa.field("source_count", pa.int64()),
@@ -156,6 +158,7 @@ _BACKFILL: dict[str, str] = {
     # An existing note was distilled from whatever the agent had; it is treated
     # as the operator's own and stays private, rather than being assumed shared.
     "tier": "'private'",
+    "dissent": "''",
     "source_ids": "'[]'",
     "source_requesters": "'[]'",
 }
@@ -271,6 +274,55 @@ class LanceDBBackend:
         tbl = self._db.open_table(table)
         tbl.add(records)
         return len(records)
+
+    # ---- Erasure support (20260823-attributed-memory Phase 6) ----------
+    #
+    # Deliberately NOT added to the VectorBackend protocol.  Erasure has to
+    # hold across LanceDB, TurboVec and Milvus to be part of the contract, and
+    # widening the contract for one implementation would make every other
+    # backend silently non-compliant.  Callers probe for these with getattr and
+    # report "unsupported" rather than "done" when they are absent -- an
+    # erasure that quietly does not erase is the worst outcome available.
+
+    def rows(self, table: str) -> list[dict]:
+        """Every row in *table*, without a vector query.
+
+        Erasure needs to find rows by field, not by similarity.
+        """
+        try:
+            tbl = self._db.open_table(table)
+            return tbl.to_arrow().to_pylist()
+        except Exception:
+            logger.debug("lancedb: cannot scan %s", table, exc_info=True)
+            return []
+
+    def delete_where(self, table: str, predicate: str) -> bool:
+        """Delete rows matching an SQL *predicate*.  True when it ran."""
+        try:
+            self._db.open_table(table).delete(predicate)
+            return True
+        except Exception:
+            logger.warning(
+                "lancedb: delete on %s failed (%s)", table, predicate,
+                exc_info=True,
+            )
+            return False
+
+    def replace_row(self, table: str, row_id: str, row: dict) -> bool:
+        """Rewrite one row wholesale, keyed on ``id``.
+
+        A rebuild after erasure changes a JSON column, which LanceDB's typed
+        update cannot express, so the row is deleted and re-inserted.
+        """
+        quoted = str(row_id).replace("'", "''")
+        if not self.delete_where(table, f"id = '{quoted}'"):
+            return False
+        try:
+            self.insert(table, [row])
+            return True
+        except Exception:
+            logger.warning("lancedb: re-insert of %s failed", row_id, exc_info=True)
+            return False
 
     def search(self, table: str, embedding: list[float], top_k: int) -> list[dict]:
         """Return up to *top_k* results ordered by cosine similarity descending.

@@ -90,6 +90,7 @@ def _build_parser() -> argparse.ArgumentParser:
         logs_cmd,
         mcp_cmd,
         trace_cmd,
+        memory_cmd,
         sessions_cmd,
         setup_cmd,
         objective_cmd,
@@ -116,6 +117,7 @@ def _build_parser() -> argparse.ArgumentParser:
     logs_cmd.register(sub)
     mcp_cmd.register(sub)
     trace_cmd.register(sub)
+    memory_cmd.register(sub)
     sessions_cmd.register(sub)
     scan_cmd.register(sub)
     setup_cmd.register(sub)

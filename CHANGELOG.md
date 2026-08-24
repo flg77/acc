@@ -82,10 +82,22 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   how much distilled memory reaches a prompt goes through `ROLE_UPDATE` and is
   countersigned; the default matches the constant it replaced.
 
-  Known limit: both retrieval filters run *after* the vector search, so
+  **Phase 6** makes erasure possible. `acc-cli memory forget --person <id>`
+  removes a person's episodes and reconciles every note drawn from them: a note
+  with no sources left is deleted, one that falls below quorum is **demoted to
+  private and pulled out of every context it was published into**, and one still
+  above quorum is rebuilt without the erased sources. It **defaults to a dry
+  run**. Erasure touches the memory tier only — the audit record of a request
+  survives it, and the erasure leaves its own journal entry, so there is no path
+  that produces a silent deletion. A vector backend that cannot erase is
+  reported as *unsupported* rather than as done.
+
+  Known limits: both retrieval filters run *after* the vector search, so
   retrieval over-fetches to protect recall — that bounds the problem rather than
-  removing it, and a backend-side prefilter is the real fix, recorded as
-  follow-up work.
+  removing it, and a backend-side prefilter is the real fix. And a rebuilt note
+  keeps its original summary, which was distilled from episodes that no longer
+  exist; erasure removes the sources and the attribution and cannot unwrite a
+  sentence already written from them. Both are recorded as follow-up work.
 
 - **OKF knowledge packs — P5 (runtime).** A `.accpkg` can now ship curated OKF
   *content*, not just capabilities: an `AccPkgManifest.bundles` list points at
