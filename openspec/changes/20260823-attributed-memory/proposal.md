@@ -2,7 +2,7 @@
 
 **Change ID:** 20260823-attributed-memory
 **Date:** 2026-08-23
-**Status:** Draft (all five questions settled 2026-08-23; Phase 1 in progress)
+**Status:** **Implemented** 2026-08-24 (PRs #291–#296; all 37 tasks closed)
 **Author:** flg
 
 ---
@@ -369,6 +369,30 @@ discovering in Phase 6: episode `payload_json` is content, so episodes belong to
 the erasable tier. **The audit trail must therefore not depend on episode
 content for its integrity.** If any part of it does today, that coupling has to
 be broken before erasure can ship.
+
+## What is still open
+
+Three things this change deliberately did not do, recorded so they are not
+rediscovered as surprises.
+
+**A backend-side prefilter for retrieval.** Both retrieval filters run after the
+vector search, so retrieval over-fetches to protect recall. That bounds the
+problem; it does not remove it, and a deployment with many active scopes can
+still starve a quiet one. The fix changes the `VectorBackend.search` contract
+and has to hold across LanceDB, TurboVec and Milvus.
+
+**Per-principal category ceilings.** Settled question 1 chose the floor rule,
+which needs `effective = role grants ∩ principal ceiling` — and ACC cannot
+express a principal ceiling. Two consequences: scenario **S2**, a
+mixed-authority collective sharing one surface, is still not expressible; and
+the approver is currently the *only* check on whether a fragment may be
+published into a lower-authority context. A ceiling would put a hard floor
+under that judgement.
+
+**Re-derivation of a rebuilt summary.** After an erasure, a note that keeps
+quorum keeps its original text — distilled from episodes that no longer exist.
+Erasure removes the sources and the attribution; it cannot unwrite a sentence
+already written from them.
 
 ## Related
 
