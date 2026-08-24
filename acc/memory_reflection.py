@@ -29,7 +29,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from acc.attribution import distinct_requesters
+from acc.attribution import distinct_requesters, people_in
 from acc.memory_scope import LOCAL_SCOPE, is_distillable, row_scope
 from acc.signals import redis_memory_notes_key, redis_shared_notes_key
 
@@ -42,6 +42,29 @@ TIER_PRIVATE = "private"
 #: A note a human has allowed out of its context (Phase 4 promotes; nothing
 #: in this phase does).
 TIER_SHARED = "shared"
+
+#: Distinct PEOPLE required before a note may be proposed for publication.
+#:
+#: Two, not three. The epistemic jump is one to two -- where one person's
+#: account becomes a corroborated one -- and a fixed number does not survive
+#: team size: three promotes nothing on a team of four and is trivial in a
+#: channel of fifty. What carries it is the approver, who can see the sources
+#: and judge whether they are genuinely independent. This is a floor that
+#: excludes the degenerate case, not a substitute for that judgement.
+QUORUM_DEFAULT = 2
+
+#: How long a published note waits before it is read on the prompt path.
+#:
+#: Honest about what this is: a **revocation window**, not a mitigation of
+#: drift. It gives a human time to see the publication in the journal and undo
+#: it before the note starts shaping replies. The drift the scaling laws
+#: describe is addressed by the quorum and by bounded bandwidth, not by a
+#: delay -- claiming otherwise would be borrowing credibility from a result
+#: that says something else.
+PROBATION_S = 900.0
+
+#: Marker the summariser uses to separate disagreement from the lesson.
+_DISSENT_MARKER = "DISSENT:"
 
 
 @dataclass
@@ -62,6 +85,16 @@ class MemoryNote:
     scope: str = LOCAL_SCOPE
     #: `private` until a human decides otherwise.
     tier: str = TIER_PRIVATE
+    #: What in the source episodes CONTRADICTED the lesson, if anything.
+    #: Recorded rather than smoothed away: a lesson two people found true and
+    #: one found false is more useful, and more honest, with the disagreement
+    #: attached than without it.
+    dissent: str = ""
+
+    @property
+    def people(self) -> list[str]:
+        """Distinct humans behind this note -- not rows, and not rooms."""
+        return people_in(self.source_requesters)
     confidence: float = 0.0
     note_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     ts: float = field(default_factory=time.time)
@@ -133,8 +166,27 @@ def _summary_prompt(members: list[dict]) -> str:
     return (
         "Summarise the RECURRING lesson across these past episodes into "
         "ONE durable memory note (1-2 sentences, specific + reusable). "
-        "Return only the note text, no preamble.\n\n" + "\n".join(lines)
+        "Return only the note text, no preamble.\n"
+        f"If -- and only if -- one of the episodes CONTRADICTS that lesson, add "
+        f"a final line starting '{_DISSENT_MARKER}' saying what disagreed. "
+        "Omit that line entirely when nothing does.\n\n" + "\n".join(lines)
     )
+
+
+def _split_dissent(text: str) -> tuple[str, str]:
+    """Separate the lesson from any disagreement the summariser named.
+
+    Advisory, not a gate: a model can invent disagreement, so this is surfaced
+    to whoever reads the note rather than used to decide anything. Recording an
+    invented caveat is a smaller error than silently averaging away a real one.
+    """
+    lowered = text.lower()
+    idx = lowered.rfind(_DISSENT_MARKER.lower())
+    if idx < 0:
+        return text.strip(), ""
+    summary = text[:idx].strip()
+    dissent = text[idx + len(_DISSENT_MARKER):].strip()
+    return (summary or text.strip()), dissent
 
 
 async def consolidate(
@@ -193,10 +245,11 @@ async def consolidate(
         except Exception as exc:
             logger.warning("memory_reflection: summary LLM call failed: %s", exc)
             continue
-        summary = str(
+        raw_summary = str(
             (resp.get("content") or resp.get("text") or "") if isinstance(resp, dict)
             else resp
         ).strip()
+        summary, dissent = _split_dissent(raw_summary)
         if not summary:
             continue
         try:
@@ -211,6 +264,7 @@ async def consolidate(
             source_requesters=distinct_requesters(members),
             source_count=len(members),
             scope=scope,
+            dissent=dissent,
             confidence=min(1.0, len(members) / (min_cluster * 2)),
             embedding=list(embedding or []),
         ))
@@ -232,6 +286,7 @@ def persist_notes(notes: list[MemoryNote], vector: Any) -> int:
         "source_requesters": json.dumps(list(n.source_requesters)),
         "scope": n.scope,
         "tier": n.tier,
+        "dissent": n.dissent,
         "source_count": int(n.source_count),
         "confidence": float(n.confidence),
         "embedding": n.embedding or [0.0] * 384,
@@ -281,7 +336,7 @@ def write_hot_cache(
 
 def read_hot_cache(
     redis_client: Any, collective_id: str, role_label: str,
-    scope: str = LOCAL_SCOPE,
+    scope: str = LOCAL_SCOPE, bandwidth: int = 3,
 ) -> list[str]:
     """Read the role's memory-note summaries for *scope*, plus shared ones.
 
@@ -306,11 +361,34 @@ def read_hot_cache(
     """
     if redis_client is None:
         return []
+    now = time.time()
     out: list[str] = []
     for key in (redis_memory_notes_key(collective_id, role_label, scope),
                 redis_shared_notes_key(collective_id, role_label, scope)):
-        out.extend(_read_note_key(redis_client, key))
-    return out
+        for entry in _raw_note_entries(redis_client, key):
+            summary = str(entry.get("summary") or "").strip()
+            if not summary:
+                continue
+            # Probation: a published note waits before it starts shaping
+            # replies, so a human has a window to see it in the journal and
+            # undo it.  Entries with no timestamp are notes the agent distilled
+            # itself -- never published, so there is nothing to revoke.
+            at = float(entry.get("at") or 0.0)
+            if at and (now - at) < PROBATION_S:
+                continue
+            dissent = str(entry.get("dissent") or "").strip()
+            out.append(f"{summary} (disputed: {dissent})" if dissent else summary)
+    return out[:max(1, int(bandwidth or 1))]
+
+
+def quorum_met(note: MemoryNote, k: int = QUORUM_DEFAULT) -> bool:
+    """Whether *note* rests on at least *k* distinct people.
+
+    Counts PEOPLE, not episodes and not rooms. Ten episodes from one person are
+    one person's account, and `source_count` could never tell those apart --
+    which is why it was replaced rather than kept as the authority.
+    """
+    return len(note.people) >= max(1, k)
 
 
 def publish_note(
@@ -320,6 +398,7 @@ def publish_note(
     summary: str,
     destination: str,
     *,
+    dissent: str = "",
     ttl_s: int = 21600,
 ) -> bool:
     """Make one note readable in *destination*.
@@ -331,11 +410,14 @@ def publish_note(
     if redis_client is None or not summary or not destination:
         return False
     key = redis_shared_notes_key(collective_id, role_label, destination)
-    existing = _read_note_key(redis_client, key)
-    if summary in existing:
+    existing = _raw_note_entries(redis_client, key)
+    if any(e.get("summary") == summary for e in existing):
         return True
+    entry = {"summary": summary, "at": time.time()}
+    if dissent:
+        entry["dissent"] = dissent
     try:
-        redis_client.set(key, json.dumps([*existing, summary]))
+        redis_client.set(key, json.dumps([*existing, entry]))
         redis_client.expire(key, ttl_s)
         return True
     except Exception as exc:
@@ -343,7 +425,21 @@ def publish_note(
         return False
 
 
-def _read_note_key(redis_client: Any, key: str) -> list[str]:
+def _raw_note_entries(redis_client: Any, key: str) -> list[dict[str, Any]]:
+    """Cache entries as dicts, whatever shape they were written in.
+
+    A note an agent distilled itself is stored as a bare summary; a published
+    one carries a timestamp and any recorded disagreement.  Normalised here so
+    no caller has to know which it got.
+    """
+    return [
+        {"summary": item} if isinstance(item, str) else dict(item)
+        for item in _read_note_key(redis_client, key)
+        if isinstance(item, (str, dict))
+    ]
+
+
+def _read_note_key(redis_client: Any, key: str) -> list[Any]:
     try:
         raw = redis_client.get(key)
     except Exception:
@@ -356,4 +452,4 @@ def _read_note_key(redis_client: Any, key: str) -> list[str]:
         notes = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return []
-    return [str(n) for n in notes] if isinstance(notes, list) else []
+    return list(notes) if isinstance(notes, list) else []

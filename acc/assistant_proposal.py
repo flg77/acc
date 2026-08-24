@@ -514,12 +514,18 @@ async def dispatch_approved_proposal(
     return False
 
 
+class QuorumNotMet(Exception):
+    """A note rests on too few people to be proposed for publication."""
+
+
 def build_publish_proposal(
     note: Any,
     destination_scope: str,
     *,
     collective_id: str = "",
     agent_id: str = "",
+    k: int | None = None,
+    override_by: str = "",
 ) -> "AssistantProposal":
     """A proposal to let one note cross from its context into another.
 
@@ -534,10 +540,27 @@ def build_publish_proposal(
     one person's account.  The marking is the point; the permission is not the
     interesting half.
     """
+    from acc.attribution import people_in  # noqa: PLC0415
+    from acc.memory_reflection import QUORUM_DEFAULT  # noqa: PLC0415
+
     requesters = [str(r) for r in (getattr(note, "source_requesters", None) or [])]
+    # PEOPLE, not requester strings: the same human in two rooms renders as two
+    # requesters, and counting those separately is how a quorum of two gets
+    # satisfied by one person talking to themselves.
+    people = people_in(requesters)
+    floor = QUORUM_DEFAULT if k is None else max(1, int(k))
+    if len(people) < floor and not override_by:
+        raise QuorumNotMet(
+            f"{len(people)} distinct person(s) behind this note; {floor} required. "
+            "An operator may override, and the note is then marked single-source.",
+        )
+
     source_scope = str(getattr(note, "scope", "") or "")
     summary_text = str(getattr(note, "summary", "") or "")
-    marker = " [single source]" if len(requesters) < 2 else ""
+    dissent = str(getattr(note, "dissent", "") or "")
+    marker = " [single source]" if len(people) < 2 else ""
+    if override_by:
+        marker += f" [quorum overridden by {override_by}]"
     return AssistantProposal(
         kind=PROPOSAL_PUBLISH,
         params={
@@ -547,13 +570,16 @@ def build_publish_proposal(
             "source_scope": source_scope,
             "source_ids": [str(i) for i in (getattr(note, "source_ids", None) or [])],
             "source_requesters": requesters,
+            "source_people": people,
             "destination_scope": destination_scope,
-            "single_source": len(requesters) < 2,
+            "single_source": len(people) < 2,
+            "quorum_override_by": override_by,
+            "dissent": dissent,
         },
         summary=(
             f"Publish a lesson from {source_scope or 'an unnamed context'} "
             f"into {destination_scope} "
-            f"({len(requesters)} distinct requester(s)){marker}"
+            f"({len(people)} distinct person(s)){marker}"
         ),
         rationale=summary_text,
         collective_id=collective_id,
@@ -602,7 +628,10 @@ async def _dispatch_publish(
         return False
 
     from acc.memory_reflection import publish_note  # noqa: PLC0415
-    ok = publish_note(redis_client, cid, role_label, summary, destination)
+    ok = publish_note(
+        redis_client, cid, role_label, summary, destination,
+        dissent=str(params.get("dissent") or ""),
+    )
 
     from acc.signals import subject_assistant_proposal  # noqa: PLC0415
     try:
@@ -939,5 +968,6 @@ __all__ = [
     "dispatch_approved_proposal",
     "PROPOSAL_PUBLISH",
     "build_publish_proposal",
+    "QuorumNotMet",
     "publish_proposal_pending",
 ]

@@ -122,6 +122,18 @@ class RoleDefinitionConfig(BaseModel):
     # ``reflection_interval_s`` window per active role.
     memory_reflection: bool = True
 
+    # 20260823-attributed-memory Phase 5 — how many durable memory notes reach
+    # the prompt.  A ROLE field, so changing it goes through ROLE_UPDATE and is
+    # countersigned like any other role change: bandwidth into the prompt is a
+    # governed setting, not a context-budget constant.
+    #
+    # The reason it is governed at all: agents learning from each other's
+    # sampled outputs enter a regime where one arbitrary choice becomes the
+    # next one's evidence, and the scaling laws for that make communication
+    # bandwidth one of the variables that decides whether consensus reflects
+    # anything (arXiv 2603.24676).  Raising this widens that channel.
+    memory_note_bandwidth: int = 3
+
     # Proposal `20260531-role-perception-profiles` Phase 1
     # (v0.3.45) — opt this role into a typed perception profile.
     # The cognitive_core's Observe step queries the slice of live

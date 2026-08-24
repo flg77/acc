@@ -70,6 +70,18 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   before dispatch, is now recorded on the proposal and the journal entry; a
   publication with no nameable approver is **refused**.
 
+  **Phase 5** makes promotion answer to a quorum. It counts distinct **people**
+  — `Principal.attribution()` renders as `source:subject@scope`, so counting
+  requester strings would let a quorum of two be met by one person talking to
+  themselves in a second room. The floor is 2; an operator may override for a
+  single-source note, which is then marked as such *and* with who overrode it.
+  Contradictions the summariser names are recorded as **dissent** on the note
+  and rendered with it, rather than averaged away. A published note serves a
+  probation window before it is read on the prompt path — a chance to revoke it,
+  not a fix for drift. And `memory_note_bandwidth` is now a **role field**, so
+  how much distilled memory reaches a prompt goes through `ROLE_UPDATE` and is
+  countersigned; the default matches the constant it replaced.
+
   Known limit: both retrieval filters run *after* the vector search, so
   retrieval over-fetches to protect recall — that bounds the problem rather than
   removing it, and a backend-side prefilter is the real fix, recorded as
