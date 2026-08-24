@@ -225,14 +225,51 @@
       Default 3, matching the constant it replaced, so nothing changes on
       upgrade. A zero is floored to one rather than silently muting memory
 
-## Phase 6 — Erasure
+## Phase 6 — Erasure (done 2026-08-24)
 
-- [ ] `[25]` `acc-cli memory forget --requester <id>` — delete that requester's
-      episodes and invalidate or rebuild every note carrying them in `source_ids`
-- [ ] `[26]` A note falling below quorum after removal is **demoted to private,
-      not deleted**, and the demotion is journalled
-- [ ] `[27]` Erasure touches the memory tier only; the audit record keeps the
-      *fact* of a request without its content
+- [x] `[25]` `acc-cli memory forget --person <id>` — erases that person's
+      episodes and reconciles every note drawn from them. **Defaults to a dry
+      run**: this is the one operation here that cannot be undone, and a person
+      may be behind more notes than anyone expected
+- [x] `[25b]` Matches **both** requester shapes. `Principal.attribution()` emits
+      `source:subject` in a direct exchange and `source:subject@scope` in a room,
+      so matching only the bare form would leave every channel episode behind
+      *while reporting success*
+- [x] `[25c]` Three outcomes for a note that loses sources: **nothing left** →
+      deleted; **below quorum** → demoted; **still above** → rebuilt, keeping its
+      tier. The summary text is deliberately left alone — it was written from
+      episodes that are now gone, and re-deriving it would need the material
+      erasure just removed. Recorded as a limit rather than papered over
+- [x] `[26]` A note falling below quorum is **demoted, not deleted**, and the
+      demotion is journalled — demoting keeps the change visible
+- [x] `[26b]` A demoted note is also **pulled out of every context it was
+      published into**. Demoting the stored row is not enough: the published copy
+      lives in a destination cache the prompt path reads, so leaving it there
+      means a note that no longer meets the bar keeps shaping replies until its
+      TTL happens to expire
+- [x] `[27]` Erasure touches the memory tier only. Verified rather than assumed:
+      nothing outside the memory modules reads `episodes` except the trace
+      viewer, so the audit trail does not derive integrity from episode content
+      and the constraint from settled question 5 holds
+- [x] `[27b]` **Erasure is a probed capability, not a protocol change.** Finding
+      rows by field is not in `VectorBackend`, and widening the protocol for one
+      implementation would make every other backend silently non-compliant. A
+      backend that cannot erase is reported as **unsupported**, never as done —
+      an erasure that quietly does not erase is the worst outcome available
+- [x] `[27c]` **A Phase 5 defect the end-to-end test caught.** Phase 5 gave
+      `MemoryNote` a `dissent` field and taught `persist_notes` to write it, and
+      never added the column. `persist_notes` swallows its exceptions by design,
+      so durable note persistence was failing **silently** while every test
+      passed — because every test until now handed it a mock. Column added, plus
+      two guards asserting that every field the episode and note writers emit
+      exists in the schema
+
+> **Limit worth stating.** A rebuilt note keeps its original summary text. It was
+> distilled from episodes that no longer exist, so it may still reflect what the
+> erased person contributed even though their episodes are gone. Re-deriving it
+> would require the material erasure removed. The honest position is that
+> erasure removes the *sources* and the *attribution*, and cannot unwrite a
+> sentence already written from them.
 
 ## Phase 7 — Verification
 
@@ -251,5 +288,5 @@
       one that publishes helpfully
 - [x] `[35]` Test: ten episodes from one requester do not satisfy `k = 3`
 - [x] `[36]` Test: a note with recorded dissent renders its disagreement
-- [ ] `[37]` Test: after `forget --requester A`, no note retains an A-sourced id,
+- [x] `[37]` Test: after `forget --requester A`, no note retains an A-sourced id,
       and a note dropping below `k` is demoted and journalled
