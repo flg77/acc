@@ -48,6 +48,17 @@ def _note(**kw):
     return MemoryNote(**base)
 
 
+@pytest.fixture(autouse=True)
+def _no_probation(monkeypatch):
+    """These assert *directedness*, not the probation window Phase 5 added.
+
+    A published note waits before it is read on the prompt path; that gate has
+    its own tests. Leaving it on here would make every assertion below read as
+    "nothing was published", which is the wrong failure to be looking at.
+    """
+    monkeypatch.setattr("acc.memory_reflection.PROBATION_S", 0.0)
+
+
 def _proposal(**params):
     p = build_publish_proposal(_note(), "slack#C2", collective_id="c", agent_id="a1")
     p.params.update(params)
@@ -99,12 +110,25 @@ def test_the_quorum_evidence_travels_with_the_proposal():
     assert p.params["single_source"] is False
 
 
-def test_a_single_source_note_is_marked_not_blocked():
-    """The most valuable lessons are often one person's. The marking is the
-    point; the permission is not the interesting half."""
-    p = build_publish_proposal(_note(source_requesters=["slack:U1"]), "slack#C2")
+def test_a_single_source_note_needs_an_operator_and_is_then_marked():
+    """The settled answer in full: single-source promotion stays available,
+    because the most valuable lessons are often exactly one person's — but it
+    requires an operator, and the note carries the marking afterwards.
+
+    Phase 4 asserted only the marking, because no quorum existed yet to require
+    the override.
+    """
+    from acc.assistant_proposal import QuorumNotMet
+
+    note = _note(source_requesters=["slack:U1"])
+    with pytest.raises(QuorumNotMet):
+        build_publish_proposal(note, "slack#C2")
+
+    p = build_publish_proposal(note, "slack#C2", override_by="k8s:user/alice")
     assert p.params["single_source"] is True
+    assert p.params["quorum_override_by"] == "k8s:user/alice"
     assert "single source" in p.summary
+    assert "overridden by k8s:user/alice" in p.summary
 
 
 # ---------------------------------------------------------------------------

@@ -1021,7 +1021,10 @@ class CognitiveCore:
         # injected silently; now the operator sees "Checking prior learnings").
         memory_notes: list[str] = []
         if getattr(role, "memory_retrieval", True):
-            memory_notes = self._read_memory_notes(scope_key(task_payload))
+            memory_notes = self._read_memory_notes(
+                scope_key(task_payload),
+                int(getattr(role, "memory_note_bandwidth", 3) or 3),
+            )
         emit_stage("acc.pipeline.memory_retrieve", {
             "episodes_count": len(retrieved_episodes),
             "notes_count": len(memory_notes),
@@ -1996,7 +1999,9 @@ class CognitiveCore:
         )
         return "\n".join(lines)
 
-    def _read_memory_notes(self, scope: str = LOCAL_SCOPE) -> list[str]:
+    def _read_memory_notes(
+        self, scope: str = LOCAL_SCOPE, bandwidth: int = 3,
+    ) -> list[str]:
         """PR-MEM3 — O(1) read of this role's consolidated memory notes
         from the Redis hot-cache.  Best-effort: returns ``[]`` on miss or
         any error (no LanceDB hit on the hot path).
@@ -2011,6 +2016,7 @@ class CognitiveCore:
             from acc.memory_reflection import read_hot_cache  # noqa: PLC0415
             return read_hot_cache(
                 self._redis, self._collective_id, self._role_label, scope,
+                bandwidth,
             )
         except Exception:
             return []

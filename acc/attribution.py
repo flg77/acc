@@ -62,6 +62,45 @@ def row_requester(row: dict[str, Any] | None) -> str:
     return str(value).strip() if is_attributed(value) else UNATTRIBUTED
 
 
+def person_of(requester: Any) -> str:
+    """The *person* behind a requester string.
+
+    :meth:`acc.identity.Principal.attribution` renders as
+    ``source:subject@scope``, so the same human asking in two channels produces
+    two different requester strings. Counting those as two people would let a
+    quorum of two be satisfied by one person talking to themselves in a second
+    room -- which is exactly the thing a quorum exists to prevent.
+
+    Clustering is confined to one scope (Phase 3), so within a single note the
+    scope suffix is constant and the distinction does not currently bite. It is
+    stripped anyway, because relying on that argument means the count is correct
+    by coincidence rather than by construction, and the coincidence ends the
+    first time anything aggregates across scopes.
+    """
+    text = str(requester or "").strip()
+    return text.split("@", 1)[0] if "@" in text else text
+
+
+def distinct_people(rows: Iterable[dict[str, Any]]) -> list[str]:
+    """The distinct humans behind *rows*, ignoring which room they spoke in."""
+    seen: list[str] = []
+    for row in rows or ():
+        who = person_of(row_requester(row))
+        if who != UNATTRIBUTED and who not in seen:
+            seen.append(who)
+    return seen
+
+
+def people_in(requesters: Iterable[Any]) -> list[str]:
+    """Distinct people from a list of requester strings (e.g. a note's)."""
+    seen: list[str] = []
+    for requester in requesters or ():
+        who = person_of(requester)
+        if is_attributed(who) and who not in seen:
+            seen.append(who)
+    return seen
+
+
 def distinct_requesters(rows: Iterable[dict[str, Any]]) -> list[str]:
     """The distinct *people* behind *rows*, in first-seen order.
 

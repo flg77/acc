@@ -191,17 +191,39 @@
 > human could not approve a publication the policy forbids. That is a
 > strengthening, no longer a prerequisite.
 
-## Phase 5 — Quorum, dissent, probation
+## Phase 5 — Quorum, dissent, probation (done 2026-08-24)
 
-- [ ] `[21]` Promotion requires *k* **distinct human sources** (default 3). Ten
-      episodes from one person is one person's opinion
-- [ ] `[22]` Contradicting episodes recorded as **dissent** on the note rather
-      than smoothed away. A lesson two people found true and one found false is
-      more useful with the disagreement attached
-- [ ] `[23]` Probation before a new shared note enters the Redis hot cache — an
-      early note is disproportionately influential (2603.24676)
-- [ ] `[24]` Top-N notes injected per prompt becomes a **governed setting**.
-      Bandwidth is a regime variable, not a context-budget constant
+- [x] `[21]` Promotion requires *k* distinct **people**, default **2** per the
+      settled answer (the task said 3). `build_publish_proposal` raises
+      `QuorumNotMet` below the floor; an operator may override, and the note is
+      then marked both single-source and overridden-by-whom
+- [x] `[21b]` **Counts PEOPLE, not requester strings.** `Principal.attribution()`
+      renders as `source:subject@scope`, so the same human in two rooms produces
+      two requesters — and a quorum of two would be satisfied by one person
+      talking to themselves next door. `person_of()` strips the room.
+      Clustering is confined to one scope (Phase 3), so the scope suffix is
+      constant within a note and this does not currently bite; it is stripped
+      anyway, because otherwise the count is correct by coincidence and the
+      coincidence ends the first time anything aggregates across scopes
+- [x] `[21c]` This is also what holds back the operator's own `local` notes
+      without switching reflection off: they have **zero** attributed people, so
+      they can never be promoted, which is exactly the outcome task `[16]`
+      wanted by a route that regresses nothing
+- [x] `[22]` The summariser is asked, in the same call, for a `DISSENT:` line
+      when an episode contradicts the lesson; it is recorded on the note and
+      rendered as *"lesson (disputed: …)"*. Advisory, not a gate — a model can
+      invent disagreement, and recording an invented caveat is a smaller error
+      than silently averaging away a real one
+- [x] `[23]` Probation before a published note is read on the prompt path
+- [x] `[23b]` **Honest about what probation is: a revocation window, not a drift
+      mitigation.** It gives a human time to see the publication in the journal
+      and undo it. The drift 2603.24676 describes is addressed by `[21]` and
+      `[24]` — a delay does not touch it, and saying otherwise would borrow
+      credibility from a result that says something else
+- [x] `[24]` `memory_note_bandwidth` is a **role field**, so widening it goes
+      through `ROLE_UPDATE` and is countersigned like any other role change.
+      Default 3, matching the constant it replaced, so nothing changes on
+      upgrade. A zero is floored to one rather than silently muting memory
 
 ## Phase 6 — Erasure
 
@@ -227,7 +249,7 @@
 - [x] `[34]` Test: `publish` **never** auto-executes, in any operating mode —
       asserted on the absence, since the dangerous version of this feature is the
       one that publishes helpfully
-- [ ] `[35]` Test: ten episodes from one requester do not satisfy `k = 3`
-- [ ] `[36]` Test: a note with recorded dissent renders its disagreement
+- [x] `[35]` Test: ten episodes from one requester do not satisfy `k = 3`
+- [x] `[36]` Test: a note with recorded dissent renders its disagreement
 - [ ] `[37]` Test: after `forget --requester A`, no note retains an A-sourced id,
       and a note dropping below `k` is demoted and journalled
