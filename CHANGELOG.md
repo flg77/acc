@@ -9,6 +9,25 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
+## [0.10.1] — 2026-08-31
+
+### Fixed
+
+- **Removed references to a document the public mirror does not carry.** The
+  threat model is withheld from `flg77/acc`; fourteen pointers to it survived
+  elsewhere — a generated doc, its generator, a test, a module docstring and
+  four CHANGELOG lines — so the promoted build carried dead links and named a
+  private document repeatedly.
+
+  Fixed here rather than patched in the curated mirror tree on purpose:
+  `docs/tool-catalog.md` is generated and has a drift test asserting it matches
+  its generator, so a mirror-only edit would have shipped a failing test on
+  every promote. Earlier CHANGELOG entries were **de-linked, not rewritten** — a
+  release note is a historical record.
+
+  The threat model keeps its own identifiers; only the pointers into it from
+  publicly-shipped files are gone.
+
 ## [0.10.0] — 2026-08-31
 
 ### Added
