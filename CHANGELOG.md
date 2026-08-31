@@ -88,7 +88,7 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   **Digest-only by default** — full prompt text is retained only under
   `ACC_PROMPT_RECORD_FULL`, since a byte-faithful record of everything a
   model saw is also a record of everything it was given. See ACC Roadmap:
-  *DS-01*, and `docs/THREAT-MODEL.md` ACC-TM-23.
+  *DS-01*.
 
 - **Generated, CI-verified model-facing capability catalog (DS-04).**
   [`tools/gen_tool_catalog.py`](tools/gen_tool_catalog.py) **boots** the
@@ -101,7 +101,7 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   skills, 12 MCP servers — **5 of which carry `allowed_tools: []`**, i.e.
   their tool surface is owned by an upstream and can grow between runs with
   no ACC change; that set is now pinned by a test. See ACC Roadmap: *DS-04*,
-  and `docs/THREAT-MODEL.md` ACC-TM-11 / ACC-TM-24.
+  and the ACC threat model.
 
 - **Adversarial threat model (OC-02).**
   [`regulatory_layer/frameworks/atlas_threat_model.yaml`](regulatory_layer/frameworks/atlas_threat_model.yaml)
@@ -110,8 +110,7 @@ Tracked since proposal 003 (ACC TUI usability hardening,
   poisoning, the oversight queue as a target, adaptive Cat-C governance,
   evidence integrity). Shipped as a *framework catalog*, so `acc.frameworks`,
   `acc.gap_analysis` and the Compliance pane carry it with no new code.
-  Narrative in [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md); contribution
-  process in [`docs/CONTRIBUTING-THREAT-MODEL.md`](docs/CONTRIBUTING-THREAT-MODEL.md).
+  Narrative and contribution process ship with the private spearhead corpus.
   Note when reading the pane: gap analysis only sees Rego rule summaries, so
   controls implemented in Python (DoS shield, oversight queue) read as
   uncovered — the per-threat verdict in the catalog is authoritative.

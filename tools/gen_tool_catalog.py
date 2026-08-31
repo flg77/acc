@@ -6,7 +6,7 @@ what is *installable* (the built-in catalog).  Neither answers the question an
 auditor actually asks: **what was this agent's model offered?**  A capability the
 model can invoke that appears in no inventory is an ungoverned capability — it
 gets no category assigned, never appears in a gap scan, and is absent from the
-BOM the deployment attests to (threat ACC-TM-24).
+BOM the deployment attests to.
 
 Three properties make this more than documentation, and all three are the point:
 
@@ -24,7 +24,7 @@ Three properties make this more than documentation, and all three are the point:
    did not make it into the registry.
 
 3. **It records the deployment truth.**  Whether an MCP's ``allowed_tools`` is
-   bounded or delegates the whole tool surface to an upstream (ACC-TM-11), and
+   bounded or delegates the whole tool surface to an upstream, and
    the fact that ACC advertises ``id: purpose`` to the model while enforcing a
    schema it never shows.
 
@@ -149,7 +149,7 @@ def build(repo: Path = _REPO) -> dict[str, Any]:
             "transport": m.transport,
             "allowed_tools": allowed,
             "denied_tools": list(m.denied_tools),
-            # The ACC-TM-11 finding, computed rather than asserted.
+            # The unbounded-surface finding, computed rather than asserted.
             "tool_surface_bounded": bool(allowed),
         })
 
@@ -209,10 +209,13 @@ def render(cat: dict[str, Any]) -> str:
         "Pydantic manifests — not by parsing source, because what a registry "
         "loads and what a YAML file appears to say are different things.")
     add("")
+    # Deliberately no link to the threat catalog: it is withheld from the
+    # public mirror, so a reference here renders as a dead link for most
+    # readers. The sentence carries the point on its own — the id was a label,
+    # not an argument.
     add("A capability the model can invoke that appears in no inventory is an "
         "ungoverned capability: no category assigned, absent from gap scans, "
-        "missing from the signed AgentBOM. See "
-        "[`THREAT-MODEL.md`](THREAT-MODEL.md) — **ACC-TM-24**.")
+        "missing from the signed AgentBOM.")
     add("")
     add(f"| Skills | MCP servers | MCP servers with an unbounded tool surface |")
     add(f"|---|---|---|")
@@ -242,7 +245,8 @@ def render(cat: dict[str, Any]) -> str:
             "surface grows silently between two runs. Raw upstream JSON Schema "
             "also enters the model-visible corpus unreviewed.")
         add("")
-        add("This is threat **ACC-TM-11**, and these are the servers it applies to:")
+        add("An unbounded tool surface is a governance gap, and these are the "
+            "servers it applies to:")
         add("")
         for m in unbounded:
             add(f"- **`{m['id']}`** — {_cell(m['purpose'])} "

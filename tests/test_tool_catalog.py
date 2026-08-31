@@ -10,8 +10,8 @@ incomplete.  Three guards:
   whose adapter will not import (correct at runtime, dangerous at
   inventory time), so this turns a silent drop into a red build.
 * **Boundedness** — the ``allowed_tools: []`` count is pinned.  An MCP
-  whose tool surface is delegated wholesale to an upstream is threat
-  ACC-TM-11; adding another one should be a deliberate, visible act.
+  whose tool surface is delegated wholesale to an upstream is a governance
+  gap; adding another one should be a deliberate, visible act.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ _REPO = Path(__file__).resolve().parent.parent
 _CATALOG = _REPO / "docs" / "tool-catalog.md"
 
 # Servers that today delegate their whole tool surface to an upstream.
-# Pinned so a NEW one has to be added here consciously — see ACC-TM-11.
+# Pinned so a NEW one has to be added here consciously.
 _KNOWN_UNBOUNDED = {
     "arxiv",
     "rss_fetch",
@@ -126,7 +126,7 @@ def test_render_produces_intact_table_rows(catalog: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Boundedness (ACC-TM-11)
+# Boundedness
 # ---------------------------------------------------------------------------
 
 
@@ -141,7 +141,7 @@ def test_unbounded_tool_surfaces_are_the_known_set(catalog: dict) -> None:
     assert not new, (
         f"new MCP server(s) with an unbounded tool surface: {sorted(new)}. "
         "Set allowed_tools explicitly, or add to _KNOWN_UNBOUNDED with a "
-        "reason. See docs/THREAT-MODEL.md ACC-TM-11."
+        "reason."
     )
 
 

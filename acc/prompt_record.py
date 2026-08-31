@@ -12,7 +12,7 @@ model-visible corpus.  Under EU AI Act Art. 12 (record-keeping) and Art. 13
 Without this module, two runs of the same collective against the same prompt
 could legitimately diverge — different retrieval hits, a changed overlay, a
 role file edited between runs — and nothing in the audit trail could say
-which.  See ``docs/THREAT-MODEL.md`` ACC-TM-23.
+which.
 
 The invariant
 -------------
