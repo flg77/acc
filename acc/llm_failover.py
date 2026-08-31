@@ -440,7 +440,7 @@ def build_failover_backend(
 # ---------------------------------------------------------------------------
 
 
-def _llm_overlay(entry: ModelEntry) -> dict[str, str]:
+def _llm_overlay(entry: ModelEntry) -> dict[str, object]:
     """The ``LLMConfig`` fields that pin a call to *entry*.
 
     Deliberately the same mapping as :func:`acc.models.model_env`, which does
@@ -464,6 +464,8 @@ def _llm_overlay(entry: ModelEntry) -> dict[str, str]:
             out["base_url"] = entry.base_url
         if entry.api_key_env:
             out["api_key_env"] = entry.api_key_env
+    if entry.context_window:
+        out["context_window"] = entry.context_window
     return out
 
 

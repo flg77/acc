@@ -41,6 +41,35 @@ class PromptRequest(BaseModel):
     content: str
     target_agent_id: str | None = None
     timeout_s: float = 180.0
+    session_id: str | None = None
+    """The conversation this prompt continues (RP-02).
+
+    The channel has always accepted this -- ``WebPromptChannel`` inherits
+    ``TUIPromptChannel.send()`` -- but the route never passed one, so every web
+    prompt was a first turn while the TUI and Slack could hold a thread.
+
+    Only the id travels.  Prior turns are replayed server-side from the durable
+    tracelog, so a client cannot fabricate history it never had.  Omitting it
+    degrades to a ``task_id``-scoped session (one turn), never to a thread
+    belonging to someone else."""
+    operating_mode: str = "AUTO"
+    """Per-request operating mode (PR-L D-003).
+
+    Same defect class as ``session_id`` was: the channel has accepted it all
+    along and the route never passed one, so the web surface was pinned to
+    AUTO while the TUI could choose.
+
+    Not validated here on purpose. ``acc.operating_modes.normalise`` coerces an
+    unknown value to AUTO agent-side, which fails toward the *stricter* gate;
+    rejecting here would move the same decision somewhere with less context."""
+    workspace: str | None = None
+    """The trusted workspace project the agent resolves fs_read/fs_write under
+    (PR-U2b), relative to the ``/workspace`` mount.
+
+    Client-supplied and remote, unlike the TUI's, but not trusted: ``agent.py``
+    rejects absolute paths, ``..`` and ``/..``, and
+    ``workspace.resolve_in_workspace`` enforces symlink-collapsed containment.
+    This route already requires an operator principal."""
 
 
 class OversightRequest(BaseModel):
@@ -120,6 +149,9 @@ async def send_prompt(
         prompt=req.content,
         target_role=req.target_role,
         target_agent_id=req.target_agent_id,
+        session_id=req.session_id,
+        operating_mode=req.operating_mode,
+        workspace=req.workspace,
     )
     try:
         reply = await channel.receive(task_id, timeout=req.timeout_s)
@@ -130,6 +162,9 @@ async def send_prompt(
         await channel.close()
     return {
         "task_id": task_id,
+        # Echoed so a client that did not name a thread can adopt the one it
+        # was given, and keep the conversation going without inventing an id.
+        "session_id": req.session_id or task_id,
         "agent_id": reply.agent_id,
         "output": reply.output,
         "blocked": reply.blocked,

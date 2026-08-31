@@ -1,0 +1,140 @@
+---
+# ============================================================================
+# Loan-Origination flagship — DATA CENTER cell (the delegation HUB).
+# Apply this FIRST: the edge leaf (02-edge.yaml) connects into this cell's NATS.
+# See README.md for the topology, the leaf-listener gap, and dependencies.
+# ============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: loan-origination-dc
+  labels:
+    acc.redhat.io/demo: loan-origination
+---
+# Category-A constitutional WASM policy. PLACEHOLDER — replace .data with the
+# real compiled policy.wasm (base64 under binaryData) before Cat-A enforces.
+# The compiled artifact is the same one the acc-e2e wasm-seed pins
+# (quay .../acc_images:acc-cat-a-wasm-edge) — currently a known fleet blocker.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acc-cat-a-wasm
+  namespace: loan-origination-dc
+binaryData: {}   # TODO: category_a.wasm (base64). Until then Cat-A is inert.
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCorpus
+metadata:
+  name: loan-dc
+  namespace: loan-origination-dc
+spec:
+  deployMode: rhoai
+  version: "0.7.2"
+
+  rhoai:
+    registerNamespaceAsProject: true
+    projectDisplayName: "Loan Origination DC"
+
+  # A fresh namespace bootstraps the canonical signed catalog (acc-canonical),
+  # from which the @acc/loan-origination-roles AccPackageInstall resolves.
+  bootstrapDefaultCatalog: true
+
+  collectives:
+    - name: loan-dc
+
+  infrastructure:
+    nats:
+      version: "2.10"
+      replicas: 3
+      storageSize: 10Gi
+    redis:
+      version: "6"
+      replicas: 3
+      storageSize: 5Gi
+    # rhoai mode requires an external vector DB (Milvus).
+    milvus:
+      uri: "http://milvus.milvus-system.svc.cluster.local:19530"
+      collectionPrefix: "acc_"
+
+  governance:
+    categoryA:
+      wasmConfigMapRef: acc-cat-a-wasm
+    categoryB:
+      pollIntervalSeconds: 30
+      bundlePVCSize: 1Gi
+    categoryC:
+      confidenceThreshold: "0.80"
+      maxRulesPerCollective: 200
+    gatekeeperIntegration: true
+
+  observability:
+    backend: otel
+    otelCollector:
+      endpoint: "https://otel-collector.observability.svc.cluster.local:4317"
+      protocol: grpc
+      # Optional: also fan TRACES to MLflow's /v1/traces (needs protocol http/protobuf).
+      # mlflowEndpoint: "http://acc-demo-mlflow.acc-demo.svc.cluster.local:8080"
+    # MLflow run/experiment logging (#154, v0.7.2) — injected as
+    # ACC_MLFLOW_TRACKING_URI / ACC_MLFLOW_EXPERIMENT into the TUI + WebGUI pods.
+    mlflowTrackingUri: "http://acc-demo-mlflow.acc-demo.svc.cluster.local:8080"
+    mlflowExperiment: "loan-origination"
+
+  # OpenShell — the underwriter's DTI/LTV / risk tools run kernel-caged,
+  # fail-closed. The Cat-A policy it carries is governance.categoryA above.
+  sandbox:
+    enabled: true
+    mode: 2                       # decoupled execution (default)
+    failClosed: true
+    landlockCompatibility: hard_requirement
+    gatewayURL: "https://openshell-gateway.openshell.svc.cluster.local:8443"
+    # credentialsSecret: openshell-gw-auth
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCollective
+metadata:
+  name: loan-dc
+  namespace: loan-origination-dc
+spec:
+  # MUST equal edge.hubCollectiveId in 02-edge.yaml — this string wires the bridge.
+  collectiveId: loan-dc
+  corpusRef:
+    name: loan-dc
+  heartbeatIntervalSeconds: 15
+  llm:
+    backend: vllm
+    vllm:
+      inferenceServiceRef: "loan-dc-llm"   # an existing KServe InferenceService
+      model: "meta-llama/Llama-3.3-70B-Instruct"
+      deploy: false
+    embeddingModel: "all-MiniLM-L6-v2"
+    # --- Simplest lab path (no RHOAI/GPU): swap the block above for Anthropic ---
+    # backend: anthropic
+    # anthropic:
+    #   model: "claude-sonnet-4-6"
+    #   apiKeySecretRef: { name: acc-anthropic, key: api-key }
+  agents:
+    # loan_* / underwriter / compliance_reviewer are package-provided roles:
+    # the AgentCollective webhook accepts them with an admission WARNING (expected).
+    - role: underwriter
+      replicas: 1
+    - role: compliance_reviewer
+      replicas: 1
+    - role: orchestrator
+      replicas: 1
+    - role: reviewer
+      replicas: 1
+    # assistant is auto-injected by the webhook (the gatekeeper that infuses the
+    # pack in beat 0 and learns from the ensemble's output in beat 6).
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AccPackageInstall
+metadata:
+  name: loan-origination-roles
+  namespace: loan-origination-dc
+spec:
+  name: "@acc/loan-origination-roles"
+  constraint: "^0.1"
+  targetCorpus: loan-dc
+  # catalogRef omitted -> resolves from the bootstrapped acc-canonical catalog.
+  # The pack is cosign-signed (keypair + keyless) on the Pages catalog, so
+  # allowUnsigned stays false.

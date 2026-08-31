@@ -34,9 +34,23 @@ def _build_llm_only(config: Any) -> Any:
     CLI image only carries the deps it actually needs — most importantly
     keeping LanceDB and pymilvus out of the CLI container.
 
+    This is ACC's SECOND LLM construction site, and that is why it applies
+    its own prompt-record wrapper: it deliberately does NOT route through
+    ``acc.config.build_llm_backend``, so it does not inherit that factory's
+    enforcement of the model-visible-means-logged invariant (DS-01).  Both
+    sites are pinned by ``tests/test_prompt_record.py`` so a third cannot
+    appear unrecorded.
+
     Raises:
         ValueError: When the configured backend name is unknown.
     """
+    from acc.prompt_record import recording_backend  # noqa: PLC0415
+
+    return recording_backend(_build_llm_only_unrecorded(config), source="cli")
+
+
+def _build_llm_only_unrecorded(config: Any) -> Any:
+    """The concrete backend, before the prompt-record wrapper."""
     backend_name = config.llm.backend
 
     if backend_name == "ollama":
@@ -44,6 +58,7 @@ def _build_llm_only(config: Any) -> Any:
         return OllamaBackend(
             base_url=config.llm.ollama_base_url,
             model=config.llm.ollama_model,
+            num_ctx=getattr(config.llm, "context_window", 0),
         )
     if backend_name == "anthropic":
         from acc.backends.llm_anthropic import AnthropicBackend  # noqa: PLC0415

@@ -105,6 +105,24 @@ llm:
   # request_timeout_s: 120   # HTTP timeout per inference call (ACC_LLM_TIMEOUT_S)
   # max_retries: 3           # retries on 429/5xx with exponential back-off (ACC_LLM_MAX_RETRIES)
 
+# Context budgeter posture (RP-04).  The posture is chosen by deploy_mode --
+# edge is tightest, rhoai loosest -- and these two numbers are the parts of it
+# that belong to a site rather than to a deployment class.  Leave both unset
+# (or 0) to use the posture; that is the supported default.
+#
+#   reserve_output    tokens held back so the model has room to ANSWER.
+#                     Posture defaults: edge 512 / standalone 1024 / rhoai 2048.
+#   safety_margin_pct fraction held back to absorb estimator error.  A
+#                     FRACTION, not a percentage: 0.15 means 15%.  Values >= 1
+#                     are refused -- they would leave nothing to send.
+#
+# The window itself is NOT set here: it comes from the model
+# (models.yaml context_window / ACC_LLM_CONTEXT_WINDOW), because it is a
+# property of the served endpoint rather than of this deployment.
+# context_budget:
+#   reserve_output: 0        # ACC_CONTEXT_RESERVE_OUTPUT
+#   safety_margin_pct: 0.0   # ACC_CONTEXT_SAFETY_MARGIN
+
 observability:
   backend: log             # log | otel
   otel_service_name: acc-agent

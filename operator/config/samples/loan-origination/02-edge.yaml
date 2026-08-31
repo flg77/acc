@@ -1,0 +1,107 @@
+---
+# ============================================================================
+# Loan-Origination flagship — EDGE cell (branch office).
+# Apply this SECOND (after 01-dc.yaml): this cell's NATS leafs into the DC hub.
+# See README.md for the topology, the leaf-listener gap, and dependencies.
+# ============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: loan-origination-edge
+  labels:
+    acc.redhat.io/demo: loan-origination
+---
+# Category-A constitutional WASM policy — same placeholder as the DC cell.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acc-cat-a-wasm
+  namespace: loan-origination-edge
+binaryData: {}   # TODO: category_a.wasm (base64). Until then Cat-A is inert.
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCorpus
+metadata:
+  name: loan-edge
+  namespace: loan-origination-edge
+spec:
+  deployMode: edge
+  version: "0.7.2"
+
+  edge:
+    # DC hub NATS leaf endpoint.
+    #  - same-cluster lab:      the DC NATS Service on :7422 (as below)
+    #  - real edge<->DC split:  an external route, e.g. nats-leaf://loan-dc.hub.example.com:7422
+    # NOTE: the operator renders the leaf-node REMOTE here, but does NOT open a
+    # leaf LISTENER on the DC hub — see README.md "Known gap". The hub side needs
+    # a leafnodes{ listen: ":7422" } that the operator does not yet emit.
+    hubNatsUrl: "nats-leaf://loan-dc-nats.loan-origination-dc.svc.cluster.local:7422"
+    hubCollectiveId: "loan-dc"        # MUST equal the DC AgentCollective.collectiveId
+    redisMaxMemoryMb: 512
+    redisMaxMemoryPolicy: allkeys-lru
+
+  collectives:
+    - name: loan-edge
+
+  infrastructure:
+    nats:
+      version: "2.10"
+      replicas: 1
+      storageSize: 2Gi
+    redis:
+      version: "6"
+      replicas: 1
+      storageSize: 2Gi
+    vectorBackend: lancedb
+
+  governance:
+    categoryA:
+      wasmConfigMapRef: acc-cat-a-wasm
+    categoryB:
+      pollIntervalSeconds: 60
+    categoryC:
+      confidenceThreshold: "0.85"
+
+  observability:
+    backend: log            # otel is not available in edge mode
+
+  networkPolicy:
+    enabled: true
+    maxTier: 1              # L3/L4 floor; raise to 2 for FQDN egress if the CNI enforces it
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCollective
+metadata:
+  name: loan-edge
+  namespace: loan-origination-edge
+spec:
+  collectiveId: loan-edge          # NATS subjects: acc.loan-edge.*
+  corpusRef:
+    name: loan-edge
+  heartbeatIntervalSeconds: 30
+  # The operator injects ACC_BRIDGE_ENABLED=true + ACC_HUB_COLLECTIVE_ID=loan-dc
+  # from the corpus's edge.hubCollectiveId above.
+  #
+  # disableAssistant: true         # uncomment to omit the auto-injected edge gatekeeper
+  llm:
+    backend: ollama
+    ollama:
+      baseUrl: "http://ollama:11434"
+      model: "llama3.2:3b"         # small local edge model -> delegates hard cases to the DC
+    embeddingModel: "all-MiniLM-L6-v2"
+  agents:
+    # package-provided roles -> accepted with an admission WARNING (expected)
+    - role: loan_intake
+      replicas: 1
+    - role: loan_officer
+      replicas: 1
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AccPackageInstall
+metadata:
+  name: loan-origination-roles
+  namespace: loan-origination-edge
+spec:
+  name: "@acc/loan-origination-roles"
+  constraint: "^0.1"
+  targetCorpus: loan-edge

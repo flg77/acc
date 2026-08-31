@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=71", "wheel"]
+requires = ["setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-cell-corpus"
-version = "0.9.0"
+version = "0.10.0"
 description = "Biologically-inspired distributed AI agent governance framework"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -46,10 +46,14 @@ dependencies = [
     "pydantic>=2.8,<3.0",
     "pyyaml>=6.0,<7.0",
     # Cryptography (Ed25519 arbiter signature verification — Phase 0a).
-    # Floor bumped to 48.0.1 for the GHSA fix (Dependabot #14/#23, two HIGH);
-    # the Ed25519 sign/verify API is stable across 46→48 (verified by the
-    # signature suite).  Operator "pin and bump": widen one major at a time.
-    "cryptography>=48.0.1,<49",
+    # Floor bumped to 50.0.1 for GHSA-g6cj-pr64-35w5 (HIGH).  That advisory
+    # covers >=44.0.0,<50.0.0 and is first patched in 50.0.0, so the previous
+    # `>=48.0.1,<49` was BOTH vulnerable and unable to reach the fix — the
+    # ceiling blocked it.  This deliberately departs from the operator "pin and
+    # bump one major at a time" rule: 49 is not a resting place, it is inside
+    # the advisory too.  The Ed25519 sign/verify API is stable across 46→48→50,
+    # verified by running the signature suite on each (118 passed on all three).
+    "cryptography>=50.0.1,<51",
     # JWT-SVID verification for signing_mode=spiffe (proposal 011 PR-4).
     # Small pure-Python lib; reuses the cryptography dep above.
     "pyjwt>=2.8,<3.0",

@@ -164,13 +164,30 @@ class ChatRequest:
     system: str = ""
     stream: bool = False
     raw_model: str = ""
+    session_id: str = ""
 
 
-def parse_request(body: dict[str, Any]) -> ChatRequest:
+def parse_request(body: dict[str, Any], *, session_id: str = "") -> ChatRequest:
     """Turn a standard request into ACC's terms.
 
     ``model`` names a **role**, not a model. The caller chooses who does the
     work; which model that role runs on is the deployment's decision.
+
+    *session_id* decides **which turns travel**, and there is exactly one
+    history either way:
+
+    * **Named** — only the latest user message is sent. Prior turns are replayed
+      server-side from the durable tracelog, which :mod:`acc.thread_continuity`
+      makes load-bearing: a channel can *name* a thread, it cannot supply the
+      thread's content, because a client-supplied transcript is model-visible
+      text with no durable origin. The tracelog is the single source of truth.
+    * **Unnamed** — the whole array is joined, as before. A client that cannot
+      name a thread must not silently lose the context it did supply; it gets a
+      one-turn session, which is what every compat caller had until now.
+
+    Never both. Sending the client's history *and* replaying the tracelog would
+    put the same turns in front of the model twice, and charge them twice
+    against the context budget.
 
     Raises:
         CompatError: malformed, or asking for streaming.
@@ -210,12 +227,17 @@ def parse_request(body: dict[str, Any]) -> ChatRequest:
     if not user_parts:
         raise CompatError("no user message in 'messages'")
 
+    # See the docstring: a named thread sends its latest turn only, because the
+    # tracelog supplies the rest. An unnamed one keeps the client's whole array.
+    prompt = user_parts[-1] if session_id else "\n\n".join(user_parts)
+
     return ChatRequest(
         role=model,
-        prompt="\n\n".join(user_parts),
+        prompt=prompt,
         system="\n\n".join(system_parts),
         stream=bool(body.get("stream")),
         raw_model=model,
+        session_id=session_id,
     )
 
 
@@ -294,6 +316,7 @@ def handle(
     environ: dict[str, str] | None = None,
     dispatch: Any = None,
     gate: Any = None,
+    session_id: str = "",
 ) -> Handled:
     """Authenticate, parse, gate, dispatch.
 
@@ -304,7 +327,7 @@ def handle(
     """
     try:
         caller = authenticate(presented_key, environ=environ)
-        request = parse_request(body)
+        request = parse_request(body, session_id=session_id)
     except CompatError as exc:
         return Handled(status=exc.status, body=exc.as_response())
 
@@ -331,6 +354,63 @@ def handle(
         )
 
     reply, usage = dispatch(request, caller, attribution)
+    return Handled(
+        status=200,
+        body=completion_response(request, reply, usage=usage),
+        attribution=attribution,
+        dispatched=True,
+    )
+
+
+async def handle_async(
+    body: dict[str, Any],
+    presented_key: str,
+    *,
+    environ: dict[str, str] | None = None,
+    dispatch: Any = None,
+    gate: Any = None,
+    session_id: str = "",
+) -> Handled:
+    """:func:`handle`, for callers whose *gate* and *dispatch* are coroutines.
+
+    Needed because ACC's real gate submits to the oversight queue and its real
+    dispatch talks to the bus -- both awaitable -- while :func:`handle` stays
+    synchronous for callers that inject plain functions.
+
+    The ordering is duplicated from :func:`handle` and that duplication is the
+    risk: if these two drift, one of them becomes a governance bypass rather
+    than a bug.  ``test_gated_request_never_dispatches`` asserts the invariant
+    against BOTH paths for exactly that reason -- change one, change the other.
+    """
+    try:
+        caller = authenticate(presented_key, environ=environ)
+        request = parse_request(body, session_id=session_id)
+    except CompatError as exc:
+        return Handled(status=exc.status, body=exc.as_response())
+
+    attribution = caller.attribution()
+
+    oversight_id = ""
+    if gate is not None:
+        oversight_id = await gate(request, caller) or ""
+    if oversight_id:
+        task_id = uuid.uuid4().hex
+        logger.info(
+            "compat: %s -> role %s requires approval (%s)",
+            caller.subject, request.role, oversight_id,
+        )
+        return Handled(
+            status=202,
+            body=pending_response(request, oversight_id, task_id),
+            attribution=attribution,
+        )
+
+    if dispatch is None:
+        raise CompatError(
+            "no dispatcher configured", status=503, error_type="server_error"
+        )
+
+    reply, usage = await dispatch(request, caller, attribution)
     return Handled(
         status=200,
         body=completion_response(request, reply, usage=usage),

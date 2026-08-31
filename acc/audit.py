@@ -72,6 +72,22 @@ class AuditRecord:
     oversight_id: str = ""
     """Human oversight queue item ID (non-empty when task was queued for oversight)."""
 
+    prompt_records: list[dict] = field(default_factory=list)
+    """The model-visible corpus for every LLM call this task made (DS-01).
+
+    One entry per request that reached a model — normally one; two when a
+    retry ran or a failover reached a second model, because a second model
+    also saw the corpus.  Each carries digests (always) and the full text
+    (only under ``ACC_PROMPT_RECORD_FULL``); see :mod:`acc.prompt_record`.
+
+    ``_compute_evidence_hash`` hashes the whole record, so these digests are
+    covered by ``evidence_hash`` and by the HMAC chain: what the model saw
+    is tamper-evident on exactly the same terms as what the runtime decided.
+
+    Empty for a task blocked before the LLM call (a Cat-A denial or a
+    pre-guardrail block), which is correct — no model saw anything.
+    """
+
     # Integrity fields (computed by AuditBroker, not caller)
     evidence_hash: str = ""
     chain_hash: str = ""

@@ -18,6 +18,11 @@ Updated: 2026-04-26 | ACC version: 0.2.0
   minimum required version.
 - **Version mismatch** means an RPM exists but ships a version incompatible with
   ACC's `pyproject.toml` constraint — pip is used in that case.
+- **Unverified** means the RPM question has not been checked against an entitled
+  RHEL host. It is recorded as unknown rather than guessed: a wrong ❌ here costs
+  Red Hat provenance and CVE tracking on a package that could have had both,
+  which is the exact loss this document exists to prevent. The ACC Decision
+  column is still accurate — it records what the build does today.
 
 ---
 
@@ -38,6 +43,8 @@ Updated: 2026-04-26 | ACC version: 0.2.0
 | `cryptography` | `>=42,<45` | ✅ Yes | `python3-cryptography` | UBI/RHEL | **RPM** | RHEL 9/UBI9 ships cryptography 42.x; compatible |
 | `redis` (client) | `>=5.0,<6.0` | ✅ Yes | `python3-redis` | EPEL9 | **RPM (EPEL)** | EPEL9 ships redis-py 5.x |
 | `msgpack` | `>=1.1,<2.0` | ✅ Yes | `python3-msgpack` | EPEL9 | **RPM (EPEL)** | EPEL9 ships msgpack 1.0.x — check version at build time |
+| `pyjwt` | `>=2.8,<3.0` | ❓ Unverified | `python3-jwt` (candidate) | — | pip only | Used for webgui/oauth2-proxy token handling. Installed via pip today like every other dep. RPM candidate not checked against an entitled host — see Decision Criteria. |
+| `jsonschema` | `>=4.19,<5.0` | ❓ Unverified | `python3-jsonschema` (candidate) | — | pip only | Used for manifest / role-package schema validation. Installed via pip today. RPM candidate exists in the Fedora/RHEL ecosystem but neither channel nor version confirmed here; ACC's floor is 4.19. |
 
 ### Optional dependencies (`[tui]`)
 

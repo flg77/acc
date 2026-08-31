@@ -106,17 +106,35 @@ export const searchEpisodes = (cid: string, q: string) =>
 export const infuseRole = (cid: string, roleDefinition: unknown) =>
   postJSON("/api/infuse", { collective_id: cid, role_definition: roleDefinition });
 
+// `sessionId` names the conversation this prompt continues (RP-02). Only the
+// id travels — prior turns are replayed server-side from the durable tracelog,
+// so the browser cannot fabricate history. Omitting it yields a one-turn
+// session, which is what this surface did for everyone until now.
 export const sendPrompt = (
   cid: string,
   targetRole: string,
   content: string,
   targetAgentId?: string,
+  sessionId?: string,
+  // Per-request operating mode (AUTO | PLAN | ACCEPT_EDITS | ACCEPT_ALL) and
+  // the workspace project the agent resolves file paths under. Both were
+  // accepted by the channel long before this surface could send them.
+  operatingMode?: string,
+  workspace?: string,
 ) =>
-  postJSON<{ task_id: string; output: string; blocked: boolean }>("/api/prompt", {
+  postJSON<{
+    task_id: string;
+    session_id: string;
+    output: string;
+    blocked: boolean;
+  }>("/api/prompt", {
     collective_id: cid,
     target_role: targetRole,
     content,
     target_agent_id: targetAgentId ?? null,
+    session_id: sessionId ?? null,
+    operating_mode: operatingMode ?? "AUTO",
+    workspace: workspace ?? null,
   });
 
 export const oversightDecision = (

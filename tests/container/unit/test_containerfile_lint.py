@@ -35,6 +35,23 @@ CONTAINERFILE_NAMES = [
 
 UBI_REGISTRY = "registry.access.redhat.com"
 
+#: Bases that are deliberately NOT UBI, keyed by (containerfile, exact base).
+#:
+#: Narrow on purpose. The key is the *resolved* base, so this cannot quietly
+#: widen: change the image and the exemption stops matching, and the rule bites
+#: again. An entry here is a recorded decision, not a suppressed failure.
+NON_UBI_EXEMPTIONS: dict[tuple[str, str], str] = {
+    ("Containerfile.redis", "docker.io/library/redis:7.2"): (
+        "upstream support tier. Redis has no subscription-free RPM on RHEL 9 "
+        "— it lives in the entitled AppStream, and is carried by neither EPEL "
+        "nor the UBI mirror — so an unentitled `microdnf install redis` fails. "
+        "The tier that must build with NO entitlement (CI, upstream "
+        "contributors) therefore uses the community image. The `rhel` tier "
+        "builds the same contract from UBI9 minimal + the entitled RPM by "
+        "passing REDIS_BASE. See the Containerfile.redis header."
+    ),
+}
+
 
 def _read_lines(name: str) -> list[str]:
     path = PRODUCTION_DIR / name
@@ -80,9 +97,38 @@ def _instructions(lines: list[str]) -> list[tuple[str, str]]:
 
 # ── LINT-001: FROM uses UBI ────────────────────────────────────────────────────
 
+def _resolve_build_args(value: str, instructions: list[tuple[str, str]]) -> str:
+    """Substitute ``${NAME}`` in *value* from the file's own ``ARG NAME=default``.
+
+    A ``FROM ${BASE}`` says nothing on its own; the base is the ARG's default,
+    which is what a plain ``podman build`` with no ``--build-arg`` actually
+    pulls. Reading the literal string instead lets a non-UBI default pass the
+    rule unread, which is the failure mode this resolution exists to close.
+
+    Only ARGs declared *before* the FROM are considered -- the same scope
+    Dockerfile itself gives them.
+    """
+    defaults: dict[str, str] = {}
+    for keyword, rest in instructions:
+        if keyword == "FROM" and rest == value:
+            break
+        if keyword == "ARG" and "=" in rest:
+            arg_name, _, arg_default = rest.partition("=")
+            defaults[arg_name.strip()] = arg_default.strip()
+
+    def _sub(match: re.Match[str]) -> str:
+        return defaults.get(match.group(1), match.group(0))
+
+    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", _sub, value).strip()
+
+
 @pytest.mark.parametrize("name", CONTAINERFILE_NAMES)
 def test_lint_001_from_uses_ubi_registry(name: str) -> None:
-    """LINT-001: FROM must reference registry.access.redhat.com."""
+    """LINT-001: FROM must reference registry.access.redhat.com.
+
+    Exemptions in :data:`NON_UBI_EXEMPTIONS` are recorded decisions with a
+    stated reason, matched on the exact resolved base so they cannot widen.
+    """
     lines = _read_lines(name)
     instructions = _instructions(lines)
     from_instructions = [(i, v) for i, v in instructions if i == "FROM"]
@@ -91,9 +137,39 @@ def test_lint_001_from_uses_ubi_registry(name: str) -> None:
         # Allow multi-stage build scratch stages for operator; skip scratch
         if value.strip().lower() == "scratch":
             continue
-        assert UBI_REGISTRY in value, (
-            f"{name}: FROM '{value}' does not use {UBI_REGISTRY}. "
-            "All production ACC containers must use Red Hat UBI base images."
+        # Strip a trailing `AS <stage>` before resolving — the stage name is
+        # not part of the image reference.
+        base = re.sub(r"\s+AS\s+\S+$", "", value.strip(), flags=re.IGNORECASE)
+        base = _resolve_build_args(base, instructions)
+        if (name, base) in NON_UBI_EXEMPTIONS:
+            continue
+        assert UBI_REGISTRY in base, (
+            f"{name}: FROM '{value}' resolves to '{base}', which does not use "
+            f"{UBI_REGISTRY}. All production ACC containers must use Red Hat "
+            "UBI base images. If a non-UBI base is deliberate, record it in "
+            "NON_UBI_EXEMPTIONS with the reason."
+        )
+
+
+def test_lint_001_exemptions_are_live() -> None:
+    """Every exemption must still match a real FROM, or it is stale.
+
+    An exemption that no longer applies is worse than none: it reads as a
+    standing decision while silently protecting nothing.
+    """
+    for (name, base), reason in NON_UBI_EXEMPTIONS.items():
+        assert reason.strip(), f"{name}: exemption for {base} has no reason"
+        instructions = _instructions(_read_lines(name))
+        resolved = {
+            _resolve_build_args(
+                re.sub(r"\s+AS\s+\S+$", "", v.strip(), flags=re.IGNORECASE),
+                instructions,
+            )
+            for i, v in instructions if i == "FROM"
+        }
+        assert base in resolved, (
+            f"{name}: exemption for '{base}' matches no FROM in the file "
+            f"(found {sorted(resolved)}). Remove the stale exemption."
         )
 
 

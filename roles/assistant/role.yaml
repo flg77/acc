@@ -54,6 +54,14 @@ role_definition:
     - GUIDE
   reasoning_trace: true
   memory_retrieval: true
+  # OpenSpec `20260825-conversational-turn-continuity` (RP-02 Phase 1) —
+  # this role's user message carries a replay of the thread's earlier turns,
+  # read from the durable tracelog and scoped exactly like episodes.  The
+  # assistant is the one role that holds a multi-turn conversation with the
+  # operator, and it is where a clarifying question is worth asking — asking
+  # one is pointless when the answer arrives with no memory of the question.
+  # Every other role stays default-False and byte-identical to pre-change.
+  thread_continuity: true
   # OpenSpec `20260531-role-perception-profiles` Phase 1 — explicit
   # opt-in (the v0.3.43 hardcoded gate is gone; behaviour preserved).
   perception_profile: control

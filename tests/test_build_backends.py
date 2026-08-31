@@ -116,10 +116,28 @@ class TestBuildBackendsLLM:
         mock_backend = MagicMock()
         with patch("acc.backends.llm_ollama.OllamaBackend", return_value=mock_backend) as MockOllama:
             bundle = build_backends(config)
+        # num_ctx carries ModelEntry.context_window through to the wire
+        # (20260826-context-budget 1.6).  0 means UNDECLARED, and the backend
+        # then sends no `options` block at all, so an undeclared deployment
+        # keeps Ollama's own default and its existing memory profile.
         MockOllama.assert_called_once_with(
             base_url="http://localhost:11434",
             model="llama3.2:3b",
+            num_ctx=0,
         )
+
+    def test_a_declared_window_reaches_the_ollama_constructor(self):
+        """The other half: a declared window must actually arrive.
+
+        Without this the field is decoration and the silent truncation it was
+        added to fix continues.
+        """
+        config = _make_config(**{"llm": {"context_window": 32768}})
+        with patch(
+            "acc.backends.llm_ollama.OllamaBackend", return_value=MagicMock()
+        ) as MockOllama:
+            build_backends(config)
+        assert MockOllama.call_args.kwargs["num_ctx"] == 32768
 
     def test_selects_anthropic(self):
         config = _make_config(**{"llm": {"backend": "anthropic"}})

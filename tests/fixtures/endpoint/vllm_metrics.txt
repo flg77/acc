@@ -1,0 +1,12 @@
+vllm:num_requests_running{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 0.0
+vllm:num_requests_waiting{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 0.0
+vllm:kv_cache_usage_perc{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 0.0
+vllm:prefix_cache_queries_total{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 31185.0
+vllm:prefix_cache_queries_created{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 1.7874866331048844e+09
+vllm:prefix_cache_hits_total{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 29040.0
+vllm:prefix_cache_hits_created{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 1.7874866331049492e+09
+vllm:external_prefix_cache_queries_total{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 0.0
+vllm:external_prefix_cache_queries_created{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 1.7874866331050017e+09
+vllm:external_prefix_cache_hits_total{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 0.0
+vllm:external_prefix_cache_hits_created{engine="0",model_name="RedHatAI/Llama-3.2-3B-Instruct-FP8"} 1.787486633105058e+09
+vllm:cache_config_info{block_size="16",cache_dtype="fp8",calculate_kv_scales="False",cpu_kvcache_space_bytes="None",cpu_offload_gb="0.0",enable_prefix_caching="True",engine="0",gpu_memory_utilization="0.85",is_attention_free="False",kv_cache_memory_bytes="None",kv_offloading_backend="None",kv_offloading_size="None",kv_sharing_fast_prefill="False",mamba_block_size="None",mamba_cache_dtype="auto",mamba_page_size_padded="None",mamba_ssm_cache_dtype="auto",num_cpu_blocks="None",num_gpu_blocks="6032",num_gpu_blocks_override="None",prefix_caching_hash_algo="sha256",sliding_window="None",swap_space="4.0"} 1.0

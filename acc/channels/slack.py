@@ -168,6 +168,7 @@ class SlackPromptChannel:
         target_role: str,
         target_agent_id: str | None = None,
         attribution: dict | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Publish TASK_ASSIGN derived from *prompt*; return the task_id.
 
@@ -196,6 +197,11 @@ class SlackPromptChannel:
         }
         if target_agent_id:
             payload["target_agent_id"] = target_agent_id
+        # RP-02 Phase 1 — name the thread; never carry its content.  Slack
+        # has real multi-requester traffic, so the replay is scope-filtered
+        # server-side on the same key episodes use.
+        if session_id:
+            payload["session_id"] = str(session_id)
 
         try:
             await self._publish(subject_task_assign(self._collective_id), payload)

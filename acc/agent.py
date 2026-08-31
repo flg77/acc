@@ -1355,9 +1355,20 @@ class Agent:
                 seen.add(session_id)
                 tracelog.log_session_start(session_id, agent_id=agent_id,
                                            collective_id=collective_id)
+            # RP-02 Phase 1 — stamp the memory scope onto the turn so a later
+            # replay can be filtered without re-deriving a requester who is no
+            # longer in scope by then.  `emit()` writes arbitrary fields, so
+            # this adds a key rather than changing a schema.  A record written
+            # before this shipped carries no scope and is never replayed — it
+            # must not acquire an owner by being read.
+            try:
+                from acc import memory_scope  # noqa: PLC0415
+                scope = memory_scope.scope_key(data)
+            except Exception:  # noqa: BLE001
+                scope = ""
             tracelog.log_prompt_in(session_id, task_id=task_id, role=role,
                                    prompt=prompt, agent_id=agent_id,
-                                   collective_id=collective_id)
+                                   collective_id=collective_id, scope=scope)
         except Exception:  # noqa: BLE001
             logger.debug("tracelog: prompt_in emit failed", exc_info=True)
 
@@ -3486,15 +3497,21 @@ class Agent:
             from acc.memory_reflection import (  # noqa: PLC0415
                 consolidate, persist_notes, write_hot_cache,
             )
+            from acc.prompt_record import source as _prompt_source  # noqa: PLC0415
+
             episodes = core.recent_episodes()
             if not episodes:
                 return
-            notes = await consolidate(
-                self.agent_id,
-                self.config.agent.role,
-                episodes,
-                self.backends.llm,
-            )
+            # DS-01 — this loop runs out-of-band on the SAME backend object
+            # the task loop uses.  Tagging the call path keeps its prompts out
+            # of whichever task happens to write an audit record next.
+            with _prompt_source("memory_reflection"):
+                notes = await consolidate(
+                    self.agent_id,
+                    self.config.agent.role,
+                    episodes,
+                    self.backends.llm,
+                )
             if not notes:
                 return
             persist_notes(notes, self.backends.vector)

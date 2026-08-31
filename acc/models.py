@@ -51,6 +51,26 @@ class ModelEntry(BaseModel):
     api_key_env: str = ""
     label: str = ""
     notes: str = ""
+    context_window: int = 0
+    """Usable input window in tokens, as this endpoint actually serves it.
+
+    ``0`` means **undeclared**, not zero capacity, and every consumer must
+    treat the two differently: undeclared leaves behaviour exactly as it was,
+    while a declared value is authoritative.
+
+    Declared rather than probed on purpose.  An operator may deliberately
+    budget below what the server offers — to leave KV headroom for co-tenant
+    agents, or because quality degrades past some length — so a probe
+    reconciles and reports (``acc.endpoint_profile``) and never overrides this.
+
+    The number is what the endpoint *serves*, which is frequently far below the
+    model's trained length: lighthouse serves 8192 of a 131072-token Llama-3.2,
+    to fit the KV cache in VRAM.  Whether a site reaches its figure with rope
+    rescaling is a serving decision that arrives here as this integer and
+    nothing else.
+
+    Change: ``openspec/changes/20260826-context-budget``.
+    """
     zone: str = ""
     """Trust / data-residency zone, for the failover policy gate.
 
@@ -163,6 +183,10 @@ def model_env(entry: ModelEntry) -> dict[str, str]:
             env["ACC_LLM_BASE_URL"] = entry.base_url
         if entry.api_key_env:
             env["ACC_LLM_API_KEY_ENV"] = entry.api_key_env
+    # Capacity is a property of the endpoint, not of one backend's wire format,
+    # so it rides the universal var for every backend.
+    if entry.context_window:
+        env["ACC_LLM_CONTEXT_WINDOW"] = str(entry.context_window)
     return env
 
 
@@ -373,12 +397,26 @@ def _registry_header(path: Path) -> str:
 
 
 def _entry_to_dict(entry: ModelEntry) -> dict:
-    """Emit only meaningful fields (drop empty optionals) for a tidy file."""
-    out: dict[str, str] = {"model_id": entry.model_id, "backend": entry.backend}
-    for field in ("model", "base_url", "api_key_env", "label", "notes"):
+    """Emit only meaningful fields (drop empty optionals) for a tidy file.
+
+    Every optional field MUST be listed here.  A field that is missing is not
+    merely un-persisted, it is **silently destroyed** on the next save: the TUI
+    and ``upsert_model``/``delete_model`` round-trip the whole registry, so an
+    omitted key is dropped from every entry at once.
+
+    ``zone`` was omitted until 2026-08-26 and that is exactly what happened to
+    it — any registry edit stripped every declared residency zone, and with no
+    zones left :class:`acc.llm_failover.ZonePolicyGate` returns
+    ``Decision(True, "no zones declared")`` and permits any cross-boundary
+    failover hop.  A governance control disabled by an unrelated save.
+    """
+    out: dict = {"model_id": entry.model_id, "backend": entry.backend}
+    for field in ("model", "base_url", "api_key_env", "label", "notes", "zone"):
         val = getattr(entry, field, "")
         if val:
             out[field] = val
+    if entry.context_window:
+        out["context_window"] = entry.context_window
     return out
 
 

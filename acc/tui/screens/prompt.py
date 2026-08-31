@@ -2046,6 +2046,12 @@ class PromptScreen(NavScreen):
                 on_progress=_on_progress,
                 operating_mode=operating_mode,
                 workspace=workspace,
+                # RP-02 Phase 1 — the screen has held a real session id since
+                # `:368` and never sent it, so every prompt was a session of
+                # exactly one turn.  Only the id travels: the replay is
+                # assembled server-side from the tracelog, so this cannot
+                # smuggle a transcript the client invented.
+                session_id=self._session_id,
             )
         except Exception as exc:
             logger.exception("prompt: send failed")

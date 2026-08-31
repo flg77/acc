@@ -206,8 +206,28 @@ def most_recent(*, root: Path | None = None) -> SessionInfo | None:
 # ---------------------------------------------------------------------------
 
 
-def context_for(session_id: str, *, limit: int = 20, root: Path | None = None) -> str:
-    """A readable transcript of a session, for re-establishing context."""
+def context_for(
+    session_id: str,
+    *,
+    limit: int = 20,
+    max_chars: int | None = None,
+    root: Path | None = None,
+) -> str:
+    """A readable transcript of a session, for re-establishing context.
+
+    Args:
+        limit: keep at most this many exchanges (an operator line plus the
+            reply to it counts as one).
+        max_chars: additionally bound the rendered length.  Truncation drops
+            from the FRONT so the newest turns survive — those are the ones
+            a caller re-establishing context actually needs.  Added for
+            RP-02, whose replay must fit a small model's context window.
+
+    This is the operator-facing renderer (``acc-cli sessions``).  The
+    agent's prompt replay deliberately does NOT use it: that path filters on
+    memory scope and must never render a turn belonging to another
+    requester.  See :mod:`acc.thread_continuity`.
+    """
     from acc import tracelog  # noqa: PLC0415
 
     records = tracelog.load_session(session_id, root=root)
@@ -222,7 +242,13 @@ def context_for(session_id: str, *, limit: int = 20, root: Path | None = None) -
         elif kind == "reply_out":
             role = record.get("role") or "agent"
             lines.append(f"{role}: {str(record.get('reply', ''))[:2000]}")
-    return "\n".join(lines[-limit * 2 :])
+    lines = lines[-limit * 2 :]
+    if max_chars is not None:
+        if max_chars <= 0:
+            return ""
+        while lines and sum(len(line) + 1 for line in lines) > max_chars:
+            lines.pop(0)
+    return "\n".join(lines)
 
 
 def resume(

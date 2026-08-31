@@ -546,6 +546,158 @@ _PERSONA_INSTRUCTIONS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+#: Kill switch and hard override for the context budget.  ``0`` disables the
+#: packer entirely and restores byte-identical pre-change assembly, which is
+#: the escape hatch a change that touches every prompt has to ship with.
+_BUDGET_ENV = "ACC_CONTEXT_BUDGET"
+#: Used when no model declared a window.  Deliberately low: guessing small
+#: costs recall, guessing large costs integrity (the server truncates and the
+#: tracelog records a prompt the model never saw), and those are not symmetric.
+_WINDOW_DEFAULT_ENV = "ACC_CONTEXT_WINDOW_DEFAULT"
+_RESERVE_ENV = "ACC_CONTEXT_RESERVE_OUTPUT"
+_MARGIN_ENV = "ACC_CONTEXT_SAFETY_MARGIN"
+_DEFAULT_WINDOW = 8192
+
+
+def _posture_overrides() -> "tuple[int | None, float | None]":
+    """Site overrides for the posture, or ``(None, None)`` when unset.
+
+    Mirrors :class:`acc.config.ContextBudgetConfig`, which is where an operator
+    declares these; the core reads the environment because it is not given a
+    config object (see :func:`_resolve_context_budget`).
+
+    A malformed or out-of-range value is warned about and **ignored**, never
+    treated as zero.  Budgeting must not be weakened by a typo: the failure
+    mode of a silently-accepted empty margin is a prompt that overflows in
+    production, which is exactly what this whole change exists to prevent.
+    """
+    import os  # noqa: PLC0415
+
+    reserve: int | None = None
+    raw_reserve = os.environ.get(_RESERVE_ENV, "").strip()
+    if raw_reserve:
+        try:
+            parsed = int(raw_reserve)
+        except ValueError:
+            logger.warning(
+                "context_budget: %s=%r is not an integer — using the posture",
+                _RESERVE_ENV, raw_reserve,
+            )
+        else:
+            if parsed < 0:
+                logger.warning(
+                    "context_budget: %s=%d is negative — using the posture",
+                    _RESERVE_ENV, parsed,
+                )
+            else:
+                reserve = parsed
+
+    margin: float | None = None
+    raw_margin = os.environ.get(_MARGIN_ENV, "").strip()
+    if raw_margin:
+        try:
+            parsed_f = float(raw_margin)
+        except ValueError:
+            logger.warning(
+                "context_budget: %s=%r is not a number — using the posture",
+                _MARGIN_ENV, raw_margin,
+            )
+        else:
+            # A fraction, not a percentage.  ``>= 1`` would reserve the whole
+            # window; refuse it rather than clamp, so the operator sees that
+            # the number they wrote was not the number in force.
+            if not (0.0 <= parsed_f < 1.0):
+                logger.warning(
+                    "context_budget: %s=%s is outside [0, 1) — using the "
+                    "posture (it is a fraction, not a percentage)",
+                    _MARGIN_ENV, parsed_f,
+                )
+            else:
+                margin = parsed_f
+
+    return reserve, margin
+
+
+def _resolve_context_budget(system_tokens: int) -> "Any | None":
+    """The budget for this process, or ``None`` when budgeting is off.
+
+    Read from the environment rather than from ``ACCConfig`` because
+    :class:`CognitiveCore` is not given a config object -- the same reason
+    ``ACC_ROLE_TOKEN_BUDGET`` is read here.  ``ACC_LLM_CONTEXT_WINDOW`` is what
+    ``acc.models.model_env`` sets from ``ModelEntry.context_window``, so a
+    synthesized agent inherits its model's declared window.
+
+    **Known gap:** an in-process failover hop overlays ``LLMConfig`` rather
+    than the environment (``llm_failover._llm_overlay``), so a hop to a model
+    with a different window keeps the original budget until the wiring is made
+    config-aware.  Recorded rather than papered over; it costs accuracy in the
+    conservative direction on the common case, because the primary is usually
+    the larger model.
+    """
+    import os  # noqa: PLC0415
+
+    from acc.context_budget import (  # noqa: PLC0415
+        ContextBudget,
+        posture_for,
+        resolve_ceiling,
+    )
+
+    raw_override = os.environ.get(_BUDGET_ENV, "").strip()
+    if raw_override:
+        try:
+            override = int(raw_override)
+        except ValueError:
+            logger.warning(
+                "context_budget: %s=%r is not an integer — ignoring",
+                _BUDGET_ENV, raw_override,
+            )
+        else:
+            if override <= 0:
+                return None  # explicit kill switch
+            reserve, margin = _posture_overrides()
+            posture = posture_for(
+                os.environ.get("ACC_DEPLOY_MODE", ""),
+                reserve_output=reserve,
+                margin_pct=margin,
+            )
+            return ContextBudget(
+                window=override,
+                ceiling=resolve_ceiling(
+                    override, posture=posture, system_tokens=system_tokens,
+                ),
+                posture=posture,
+                source="override",
+            )
+
+    raw_window = os.environ.get("ACC_LLM_CONTEXT_WINDOW", "").strip()
+    source = "declared"
+    try:
+        window = int(raw_window) if raw_window else 0
+    except ValueError:
+        window = 0
+    if window <= 0:
+        try:
+            window = int(os.environ.get(_WINDOW_DEFAULT_ENV, "") or _DEFAULT_WINDOW)
+        except ValueError:
+            window = _DEFAULT_WINDOW
+        source = "default"
+
+    reserve, margin = _posture_overrides()
+    posture = posture_for(
+        os.environ.get("ACC_DEPLOY_MODE", ""),
+        reserve_output=reserve,
+        margin_pct=margin,
+    )
+    return ContextBudget(
+        window=window,
+        ceiling=resolve_ceiling(
+            window, posture=posture, system_tokens=system_tokens,
+        ),
+        posture=posture,
+        source=source,
+    )
+
+
 class CognitiveCore:
     """LLM reasoning pipeline for one ACC agent.
 
@@ -589,6 +741,10 @@ class CognitiveCore:
         # single-collective deployments (and on every non-Assistant
         # role) so build_system_prompt's block is skipped.
         self._sub_collectives = None
+        #: role key -> measured system-prompt tokens.  Safe to memoise only
+        #: because the system prompt is stable per role (PR-CA1); the key
+        #: carries the rendered length so a role edit invalidates it.
+        self._system_token_cache: dict[str, int] = {}
         # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 —
         # populated by the agent constructor with a reference to the
         # NATS signaling backend.  Required for the Assistant's
@@ -1072,8 +1228,28 @@ class CognitiveCore:
         # RAG), so every backend's prefix cache hits.  The variable RAG
         # block rides the LLM user message instead.
         system_prompt = self.build_system_prompt(role)
+        # RP-02 Phase 1 — replay this thread's earlier turns.  Read from the
+        # durable tracelog, never from anything the client sent: the replay
+        # is model-visible text, so DS-01's invariant requires that the log
+        # produced it.  Opt-in per role, scope-filtered, and capped.
+        thread_block = ""
+        if getattr(role, "thread_continuity", False):
+            from acc.thread_continuity import replay_block  # noqa: PLC0415
+
+            thread_block = replay_block(
+                str(task_payload.get("session_id", "") or ""), task_payload,
+            )
+        # 20260826-context-budget Phase 1.5 — bound the assembled prompt
+        # BEFORE it is sent, instead of letting the server decide by
+        # rejecting it (vLLM) or trimming it in silence (Ollama).  The
+        # ceiling subtracts the measured system prompt, so what is budgeted
+        # here is what is actually left for the user message.
         llm_user_content = self._compose_user_content(
             user_content, retrieved_episodes, memory_notes,
+            thread_block=thread_block,
+            budget=_resolve_context_budget(
+                self._system_prompt_tokens(role, system_prompt)
+            ),
         )
 
         # ACC-12 — PRE-GUARDRAIL (OWASP LLM01/04/06/08)
@@ -1690,7 +1866,28 @@ class CognitiveCore:
         outcome: str,
     ) -> None:
         """Write a compliance audit record (best-effort; never blocks task)."""
+        # DS-01 — take this task's model-visible corpus BEFORE any early
+        # return, so records can never leak into the next task's record.
+        # Best-effort like the rest of this method: REQ-COMP-018 says audit
+        # work must not block task processing.
+        prompt_records: list[dict] = []
+        try:
+            from acc.prompt_record import drain as _drain_prompt_records
+
+            # Scoped to this call path — the reflection loop's prompts are
+            # its own evidence, not this task's.
+            prompt_records = [
+                r.as_dict() for r in _drain_prompt_records("cognitive_core")
+            ]
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("cognitive_core: prompt-record drain failed: %s", exc)
+
         if self._audit_broker is None:
+            if prompt_records:
+                logger.debug(
+                    "cognitive_core: %d prompt record(s) dropped — no audit "
+                    "broker configured", len(prompt_records),
+                )
             return
         try:
             from acc.audit import AuditRecord
@@ -1721,6 +1918,7 @@ class CognitiveCore:
                 control_ids=list(set(control_ids)),
                 outcome=outcome,
                 risk_level=risk_level,
+                prompt_records=prompt_records,
             )
             await self._audit_broker.record(rec)
         except Exception as exc:
@@ -1982,22 +2180,43 @@ class CognitiveCore:
         no episodes, so the legacy single-message shape is preserved for
         roles with ``memory_retrieval: false``.
         """
-        if not retrieved_episodes:
+        heading, items, footer = CognitiveCore._episode_parts(retrieved_episodes)
+        if not items:
             return ""
-        lines = ["RECENT_RELEVANT_EPISODES (your past work, most-similar first):"]
+        return "\n".join([heading, *items, footer])
+
+    @staticmethod
+    def _episode_parts(
+        retrieved_episodes: list[dict] | None,
+    ) -> tuple[str, list[str], str]:
+        """The RAG block decomposed into heading / items / footer.
+
+        Split out so :mod:`acc.context_budget` can evict episodes one at a
+        time instead of taking the block whole.  ``_render_episode_block``
+        is rewritten in terms of this, so there remains exactly one place
+        that knows the formatting and the two cannot drift.
+
+        The footer matters as much as the heading: "use these to ground your
+        answer" pointing at nothing is worse than a bare dangling label, so it
+        travels with the block rather than being appended at render time.
+        """
+        if not retrieved_episodes:
+            return "", [], ""
+        items: list[str] = []
         for ep in retrieved_episodes:
             ts_str = ep.get("ts_str", "")
             signal_type = ep.get("signal_type", "TASK_ASSIGN")
             excerpt = ep.get("excerpt", "").strip().replace("\n", " ")
             if len(excerpt) > 160:
                 excerpt = excerpt[:157] + "…"
-            lines.append(f"- [{ts_str}] [{signal_type}] {excerpt}")
-        lines.append(
+            items.append(f"- [{ts_str}] [{signal_type}] {excerpt}")
+        return (
+            "RECENT_RELEVANT_EPISODES (your past work, most-similar first):",
+            items,
             "(Use these to ground your answer.  If the operator asks "
             "'do you remember…?' you DO — these are your prior tasks.  "
-            "Cite the timestamp when you reference one.)"
+            "Cite the timestamp when you reference one.)",
         )
-        return "\n".join(lines)
 
     def _read_memory_notes(
         self, scope: str = LOCAL_SCOPE, bandwidth: int = 3,
@@ -2024,17 +2243,24 @@ class CognitiveCore:
     @staticmethod
     def _render_memory_notes_block(notes: list[str]) -> str:
         """Render the durable MEMORY_NOTES block for the user message."""
-        if not notes:
-            return ""
-        lines = ["MEMORY_NOTES (durable lessons from your past work):"]
-        lines += [f"- {str(n).strip()}" for n in notes if str(n).strip()]
-        return "\n".join(lines) if len(lines) > 1 else ""
+        heading, items, _ = CognitiveCore._notes_parts(notes)
+        return "\n".join([heading, *items]) if items else ""
+
+    @staticmethod
+    def _notes_parts(notes: list[str] | None) -> tuple[str, list[str], str]:
+        """MEMORY_NOTES decomposed.  See :meth:`_episode_parts`."""
+        items = [f"- {str(n).strip()}" for n in (notes or []) if str(n).strip()]
+        if not items:
+            return "", [], ""
+        return "MEMORY_NOTES (durable lessons from your past work):", items, ""
 
     def _compose_user_content(
         self,
         user_content: str,
         retrieved_episodes: list[dict] | None,
         memory_notes: list[str] | None = None,
+        thread_block: str = "",
+        budget: "ContextBudget | None" = None,
     ) -> str:
         """Prepend durable memory notes + the RAG episode block (if any)
         to the task content for the LLM user message.  The bare task
@@ -2042,8 +2268,21 @@ class CognitiveCore:
         see — only the LLM call gets the memory-augmented message.
 
         Order: MEMORY_NOTES (high-level lessons) → RECENT_RELEVANT_EPISODES
-        (recent specifics) → task.  Both blocks live in the user message
-        so the role system prompt stays a cacheable prefix (PR-CA1)."""
+        (recent specifics) → EARLIER_TURNS (this conversation) → task.  All
+        blocks live in the user message so the role system prompt stays a
+        cacheable prefix (PR-CA1).
+
+        The thread replay sits LAST before the task on purpose: it is the
+        most immediate context, and the turn the operator is answering
+        should be adjacent to the answer.  ``thread_block`` is empty for
+        every role without ``thread_continuity``, which keeps their
+        assembled prompt byte-identical to the pre-RP-02 build."""
+        if budget is not None:
+            return self._packed_user_content(
+                user_content, retrieved_episodes, memory_notes,
+                thread_block=thread_block, budget=budget,
+            )
+
         parts: list[str] = []
         notes_block = self._render_memory_notes_block(memory_notes or [])
         if notes_block:
@@ -2051,8 +2290,114 @@ class CognitiveCore:
         rag_block = self._render_episode_block(retrieved_episodes)
         if rag_block:
             parts.append(rag_block)
+        if thread_block:
+            parts.append(thread_block)
         parts.append(user_content)
         return "\n\n".join(parts)
+
+    def _system_prompt_tokens(self, role: Any, system_prompt: str) -> int:
+        """Cost of the system prompt, counted once per role and remembered.
+
+        This is a **measured constant**, not an estimate, and it is only
+        constant because PR-CA1 made the system prompt stable per role
+        (``build_system_prompt``, and the byte-identity tests that pin it).
+        The prefix-cache discipline therefore pays twice: once in cache hits,
+        once in making the largest term of the ceiling subtraction exact.
+        """
+        from acc.context_budget import estimate_tokens  # noqa: PLC0415
+
+        key = f"{getattr(role, 'name', '') or self._role_label}:{len(system_prompt)}"
+        cached = self._system_token_cache.get(key)
+        if cached is None:
+            cached = estimate_tokens(system_prompt)
+            self._system_token_cache[key] = cached
+        return cached
+
+    @staticmethod
+    def _split_thread_block(thread_block: str) -> tuple[str, list[str]]:
+        """Recover ``(heading, turns)`` from an already-rendered replay block.
+
+        ``thread_continuity.replay_block`` hands back one string, but the
+        thread is the **highest-priority evictable block** -- dropping it whole
+        because it is one turn too long would throw away the context the
+        current request is answering. So it is split back apart on the known
+        heading, and only if that heading is actually present: an unrecognised
+        shape degrades to a single indivisible item rather than guessing where
+        the turns begin.
+        """
+        from acc.thread_continuity import REPLAY_HEADING  # noqa: PLC0415
+
+        lines = thread_block.split("\n")
+        if lines and lines[0] == REPLAY_HEADING:
+            return REPLAY_HEADING, [ln for ln in lines[1:] if ln]
+        return "", [thread_block]
+
+    def _packed_user_content(
+        self,
+        user_content: str,
+        retrieved_episodes: list[dict] | None,
+        memory_notes: list[str] | None,
+        *,
+        thread_block: str,
+        budget: "ContextBudget",
+    ) -> str:
+        """Assemble under a ceiling, and record whatever did not fit.
+
+        The result is byte-identical to the branch above whenever nothing is
+        dropped, which is what makes this safe to switch on for a deployment
+        that was never overflowing.
+        """
+        from acc.context_budget import (  # noqa: PLC0415
+            ContextOverflow,
+            block_caps,
+            pack,
+            standard_blocks,
+        )
+
+        notes_heading, notes_items, _ = self._notes_parts(memory_notes)
+        eps_heading, eps_items, eps_footer = self._episode_parts(retrieved_episodes)
+        thread_heading, thread_items = (
+            self._split_thread_block(thread_block) if thread_block else ("", [])
+        )
+
+        blocks = standard_blocks(
+            task=user_content,
+            notes_heading=notes_heading, notes_items=notes_items,
+            episodes_heading=eps_heading, episodes_items=eps_items,
+            episodes_footer=eps_footer,
+            thread_heading=thread_heading, thread_items=thread_items,
+        )
+        try:
+            result = pack(
+                blocks,
+                budget.ceiling,
+                caps=block_caps(budget.ceiling, budget.posture),
+            )
+        except ContextOverflow:
+            # Deliberately not caught here. Trimming the operator's request is
+            # the failure this whole change exists to prevent, so it surfaces
+            # as a task failure naming both numbers rather than as a quietly
+            # shorter prompt.
+            emit_stage("acc.pipeline.context_budget", {
+                "window": budget.window,
+                "window_source": budget.source,
+                "ceiling": budget.ceiling,
+                "overflow": True,
+            })
+            raise
+
+        emit_stage(
+            "acc.pipeline.context_budget",
+            result.as_event(window=budget.window, window_source=budget.source),
+        )
+        if result.degraded:
+            logger.warning(
+                "context_budget: dropped %d item(s) to fit %d tokens "
+                "(window=%d source=%s): %s",
+                len(result.drops), budget.ceiling, budget.window, budget.source,
+                result.dropped,
+            )
+        return result.text
 
     # ------------------------------------------------------------------
     # Pipeline stages
@@ -2164,17 +2509,25 @@ class CognitiveCore:
             ``(response_dict, latency_ms, token_count)``
         """
         import os  # noqa: PLC0415
+
+        from acc.prompt_record import source as _prompt_source  # noqa: PLC0415
+
         cache_prefix = os.environ.get(
             "ACC_LLM_ENABLE_PROMPT_CACHE", "",
         ).strip().lower() in ("1", "true", "yes", "on")
         t0 = time.monotonic()
-        try:
-            response = await self._llm.complete(
-                system, user, cache_prefix=cache_prefix,
-            )
-        except TypeError:
-            # Legacy backend / test double without the PR-CA2 kwarg.
-            response = await self._llm.complete(system, user)
+        # DS-01 — tag the corpus with THIS call path.  The agent shares one
+        # backend object between the task loop and the out-of-band reflection
+        # loop, so without the tag a reflection pass's prompts would drain
+        # into whichever task writes an audit record next.
+        with _prompt_source("cognitive_core"):
+            try:
+                response = await self._llm.complete(
+                    system, user, cache_prefix=cache_prefix,
+                )
+            except TypeError:
+                # Legacy backend / test double without the PR-CA2 kwarg.
+                response = await self._llm.complete(system, user)
         latency_ms = (time.monotonic() - t0) * 1000.0
         token_count: int = response.get("usage", {}).get("total_tokens", 0)
         return response, latency_ms, token_count

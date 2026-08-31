@@ -23,11 +23,15 @@ from pathlib import Path
 
 import pytest
 
+from tests.container.conftest import _has_podman
+
 TUI_IMAGE = "localhost/acc-tui:0.2.0"
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
 
 
 def _image_exists(image: str) -> bool:
+    if not _has_podman():
+        return False
     result = subprocess.run(
         ["podman", "image", "exists", image],
         capture_output=True,

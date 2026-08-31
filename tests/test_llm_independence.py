@@ -28,6 +28,7 @@ import pytest
 
 from acc.backends import BackendConnectionError, LLMCallError
 from acc.backends.llm_openai_compat import OpenAICompatBackend
+from acc.prompt_record import unwrap
 from acc.config import ACCConfig, LLMConfig, _apply_env, build_backends
 
 
@@ -407,7 +408,10 @@ class TestBuildBackendsOpenAICompat:
             timeout_s=120,
             max_retries=3,
         )
-        assert bundle.llm is mock_backend
+        # build_llm_backend now wraps its result to enforce the
+        # model-visible-means-logged invariant (DS-01), so assert on the
+        # concrete backend it selected rather than on object identity.
+        assert unwrap(bundle.llm) is mock_backend
 
     def test_openai_compat_fallback_to_vllm_inference_url(self):
         """When base_url is empty, vllm_inference_url is used as fallback."""

@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.container.conftest import _has_podman_compose
+
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
 COMPOSE_FILE = REPO_ROOT / "container" / "production" / "podman-compose.yml"
 COMPOSE_PROJECT = "acc-integration-test"
@@ -27,10 +29,7 @@ INFRA_SERVICES = ["nats", "acc-redis"]
 AGENT_SERVICES = ["acc-agent-ingester", "acc-agent-analyst", "acc-agent-arbiter"]
 
 pytestmark = pytest.mark.skipif(
-    subprocess.run(
-        ["podman-compose", "--version"],
-        capture_output=True,
-    ).returncode != 0,
+    not _has_podman_compose(),
     reason="podman-compose not available — skipping integration tests",
 )
 

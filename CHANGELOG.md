@@ -9,6 +9,176 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
+## [0.10.0] — 2026-08-31
+
+### Added
+
+- **Conversational turn continuity — the wire**
+  (`20260825-conversational-turn-continuity`, RP-02 Phase 1). ACC had no
+  continuity anywhere: `PromptChannel` was `send()` → `receive()` over one
+  TASK_ASSIGN/TASK_COMPLETE pair, and while the agent *read* `session_id`
+  off the payload with a `task_id` fallback, **no channel ever set it** — so
+  every prompt was a session of exactly one turn. The TUI screen had held a
+  real session id all along and never sent it.
+
+  That is a model-tier problem before it is an ergonomic one. With no
+  continuity each turn must be self-contained — re-derive the intent,
+  reconstruct where in the task you are, hold the remaining plan, emit a
+  correct marker, all in one pass with no memory of the question you just
+  asked — and ACC handed that identical shape to a frontier model and to a
+  3B-class model on an edge box. `session_id` now travels on the contract
+  (`PromptChannel.send`, TUI, Slack, WebGUI by inheritance) and
+  [`acc.thread_continuity`](acc/thread_continuity.py) replays earlier turns
+  into the user message.
+
+  Three properties are load-bearing. **A channel names a thread; it never
+  supplies one** — the replay is read from the durable tracelog, so DS-01's
+  *model-visible means logged* holds by construction rather than by review;
+  a client-supplied transcript would be model-visible text with no durable
+  origin. **Scope is enforced at assembly**, on the same
+  [`acc.memory_scope`](acc/memory_scope.py) key episodes use, so continuity
+  cannot reopen the cross-requester path v0.9.0's attributed memory just
+  closed; a thread whose scope does not match replays *empty* — never
+  partially, and never as an error that would confirm it exists. Records
+  written before this shipped carry no scope and are never replayed: a
+  record that never had an owner must not acquire one by being read.
+
+  **A guardrail-blocked turn is dropped whole, prompt included.** Replaying
+  the prompt a guardrail or Cat-A refused would put it back in front of the
+  model on the next turn, which is a block that lasts exactly one turn.
+
+  Opt-in per role via `RoleDefinitionConfig.thread_continuity` (default
+  `False`, set only on `roles/assistant/role.yaml`); a role without it
+  assembles a byte-identical prompt to before. `ACC_THREAD_TURNS` (6) and
+  `ACC_THREAD_CHARS` (4000) bound the replay and are **a stopgap, labelled
+  as one in the code**: ACC still has no context compaction, so an uncapped
+  thread is a context-overflow bug aimed at the smallest deployments.
+  `ACC_THREAD_CONTINUITY=0` is a kill switch, not a feature gate.
+  `sessions.context_for()` gains `max_chars`, trimming from the front so the
+  newest turns survive.
+
+  **Not shipped: the measurement.** RP-02's G4 — a 3B model completing a
+  conversation end-to-end, *measured* — is not demonstrated. `GoldenPrompt`
+  is single-turn by construction (`extra="forbid"`, one `prompt` field) and
+  four runners would have to honour a multi-turn form, so the two-turn
+  golden prompt is its own change. Phase 1 makes the small-model claim
+  possible; it does not make it measured, and should not be cited as
+  evidence for it.
+
+- **Model-visible means logged — the prompt corpus as evidence (DS-01).**
+  The audit chain recorded what the runtime *decided* (Cat-A verdict,
+  guardrail violations, outcome) but never what the model was *shown* — so
+  an incident could not be reconstructed and EU AI Act Art. 12 was answered
+  for decisions, not inputs. [`acc.prompt_record`](acc/prompt_record.py)
+  digests every ``(system, user)`` corpus under a length-prefixed framing
+  and [`AuditRecord.prompt_records`](acc/audit.py) carries them, so they are
+  covered by the record's `evidence_hash` and the HMAC chain — tamper-evident
+  on the same terms as everything else. **Enforced at construction**, not at
+  each call site: ACC instantiates a concrete LLM backend in exactly two
+  places — `acc.config.build_llm_backend` (which `llm_failover.backend_for_entry`
+  deliberately routes through) and `acc.cli.llm_cmd._build_llm_only` (a
+  duplicate that keeps LanceDB/pymilvus out of the CLI image) — and both now
+  wrap their result, with a test pinning the set so a third cannot appear
+  unrecorded. This closes the three paths that previously reached a model with
+  *no* audit record at all: the failover chain, memory reflection, and
+  `acc-cli llm`. Prompts are tagged with their
+  call path via a ContextVar, because the agent shares one backend between
+  its task loop and its out-of-band reflection loop; the audit drain is
+  scoped so a reflection pass cannot be attributed to the next task.
+  **Digest-only by default** — full prompt text is retained only under
+  `ACC_PROMPT_RECORD_FULL`, since a byte-faithful record of everything a
+  model saw is also a record of everything it was given. See ACC Roadmap:
+  *DS-01*, and `docs/THREAT-MODEL.md` ACC-TM-23.
+
+- **Generated, CI-verified model-facing capability catalog (DS-04).**
+  [`tools/gen_tool_catalog.py`](tools/gen_tool_catalog.py) **boots** the
+  skill and MCP registries — importing adapters, deep-merging `_base`
+  defaults, validating the Pydantic manifests — and writes
+  [`docs/tool-catalog.md`](docs/tool-catalog.md). A completeness guard globs
+  `skills/*/` and `mcps/*/` and fails if anything on disk did not reach the
+  registry, turning `load_from()`'s deliberate log-and-drop into a red build
+  (correct at runtime, dangerous at inventory time). Current surface: 55
+  skills, 12 MCP servers — **5 of which carry `allowed_tools: []`**, i.e.
+  their tool surface is owned by an upstream and can grow between runs with
+  no ACC change; that set is now pinned by a test. See ACC Roadmap: *DS-04*,
+  and `docs/THREAT-MODEL.md` ACC-TM-11 / ACC-TM-24.
+
+- **Adversarial threat model (OC-02).**
+  [`regulatory_layer/frameworks/atlas_threat_model.yaml`](regulatory_layer/frameworks/atlas_threat_model.yaml)
+  — 24 threats mapped to MITRE ATLAS and scoped to ACC's real surface (NATS
+  spine, A2A federation, `.accpkg` supply chain, MCP servers, docstore
+  poisoning, the oversight queue as a target, adaptive Cat-C governance,
+  evidence integrity). Shipped as a *framework catalog*, so `acc.frameworks`,
+  `acc.gap_analysis` and the Compliance pane carry it with no new code.
+  Narrative in [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md); contribution
+  process in [`docs/CONTRIBUTING-THREAT-MODEL.md`](docs/CONTRIBUTING-THREAT-MODEL.md).
+  Note when reading the pane: gap analysis only sees Rego rule summaries, so
+  controls implemented in Python (DoS shield, oversight queue) read as
+  uncovered — the per-threat verdict in the catalog is authoritative.
+  See ACC Roadmap: *OC-02*.
+
+- **An OpenAI-compatible endpoint, served** (`20260829-openai-compat-server`,
+  HG-24). `acc/compat_endpoint.py` had decided what a completion means when the
+  responder is a governed collective — 202 with a pollable handle — and had no
+  socket: nothing imported it but its own tests. It is now mounted on
+  `acc-webgui` as `POST /v1/chat/completions`, `GET /v1/models`, and
+  `GET /v1/tasks/{task_id}` — the poll route the 202 body had been promising to
+  clients that had nowhere to poll.
+
+  **Off unless `ACC_COMPAT_API_KEYS` is configured**, and then not mounted at
+  all rather than mounted-and-401: a 401 still tells a prober ACC is listening,
+  and this is the surface most likely to be pointed at by something the operator
+  did not write. `model` names a **role**, not a model.
+
+  **It serves non-gated work only.** ACC gates *actions* — `capability_dispatch`
+  queues before invoking a capability — while `cognitive_core` classifies an
+  ordinary prompt's EU AI Act risk *after* the work, for the audit record.
+  Nothing holds execution, so a HIGH-or-above role is refused with 403 rather
+  than handed a 202 pointing at an oversight item nobody created.
+
+- **A thread over the compat endpoint** — `X-ACC-Session` names the conversation
+  a completion continues. Named: only the latest user message is sent, and the
+  tracelog supplies the rest. Unnamed: the client's array is joined, as before.
+  Never both — an OpenAI client resends everything each turn, so honouring both
+  would put the same turns in front of the model twice and charge them twice
+  against the context budget.
+
+- **A default catalog** (`20260603-acc-pkg-pilot`). A stock host reported
+  `catalogs: (none configured)`: all three catalog layers default to paths that
+  do not exist, so a fresh install resolved against nothing.
+  `acc.pkg.catalog.builtin_catalogs()` is now a fourth, broadest layer carrying
+  `acc-canonical`, overridable by id from any file layer.
+
+### Changed
+
+- **The web surface can hold a thread** (`20260830-webgui-tui-alignment`
+  Phase 1). RP-02 gave the TUI and Slack conversational continuity and the web
+  never got it — every web prompt started over, forever. The channel had
+  accepted `session_id` all along (`WebPromptChannel` inherits
+  `TUIPromptChannel.send`); the *route* never passed one. `POST /prompt` now
+  carries it, along with `operating_mode` and `workspace` — the same defect,
+  found alongside it.
+
+### Fixed
+
+- **`cryptography` was pinned inside its own advisory.** GHSA-g6cj-pr64-35w5
+  (HIGH) covers `>=44.0.0,<50.0.0` and is first patched in 50.0.0; the declared
+  `>=48.0.1,<49` was both vulnerable and unable to reach the fix, so Dependabot
+  could not resolve it. Now `>=50.0.1,<51`, with the Ed25519 signature suite run
+  on 46, 48 and 50 in turn.
+
+- **Container test guards skipped nothing — they exploded.** Five modules
+  guarded on `subprocess.run(["podman", ...]).returncode`, which *raises* when
+  podman is absent rather than returning a status, aborting collection and with
+  it the whole session. The cost was the 74 container tests that need no
+  container runtime at all.
+
+- **The UBI lint read a build ARG literally**, firing on
+  `Containerfile.redis`'s `FROM ${REDIS_BASE}`. The resolved base is a
+  documented decision — Redis has no subscription-free RPM on RHEL 9, so the
+  unentitled tier must use the community image. The rule now resolves ARG
+  defaults and honours a recorded exemption keyed on the exact base.
+
 ## [0.9.0] — 2026-08-24
 
 ### Added

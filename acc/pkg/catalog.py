@@ -230,18 +230,68 @@ def _load_one(path: Path) -> list[Catalog]:
     return parsed.catalogs
 
 
+#: The catalog every ACC install starts connected to (openspec 20260603).
+#:
+#: Before this, a fresh host had NO catalogs at all: the three file layers all
+#: default to paths that do not exist, so ``/catalog list`` reported "(none
+#: configured)" and nothing could be resolved until an operator hand-wrote a
+#: file.  That contradicted the product assumption that ACC always reaches its
+#: own catalog and lists the rest from there.
+#:
+#: ``tier: community`` is deliberate and is NOT a statement that this catalog is
+#: untrusted -- it selects the DEEPEST install-time policy (proposal 045 Q1), so
+#: the shipped default is checked at least as hard as anything an operator adds
+#: by hand.  The signer below is a real trust anchor: it is the GitHub Actions
+#: OIDC identity that ``publish-family-packs.yml`` signs with, so a package is
+#: only installable if it was built by that workflow in that repo.
+_BUILTIN_CATALOG_SPEC: dict = {
+    "id": "acc-canonical",
+    "tier": "community",
+    "mode": "https",
+    "url": "https://flg77.github.io/acc-ecosystem",
+    "priority": 100,
+    "required_signer": {
+        "issuer": "https://token.actions.githubusercontent.com",
+        "subject_pattern": r"^https://github\.com/flg77/acc-ecosystem/",
+    },
+}
+
+
+def builtin_catalogs() -> list[Catalog]:
+    """The built-in default catalog layer, freshly constructed.
+
+    Built per call rather than shared at module scope: :class:`Catalog` is a
+    mutable Pydantic model, and a caller that edited a shared instance would
+    silently change what every later caller resolves against.
+    """
+    return [Catalog.model_validate(_BUILTIN_CATALOG_SPEC)]
+
+
 def load_catalogs(workspace: Path | None = None) -> list[list[Catalog]]:
-    """Return ``[system_catalogs, user_catalogs, workspace_catalogs]``.
+    """Return ``[builtin, system, user, workspace]`` catalog layers.
 
     The outer list preserves layer order from broad to narrow; the
     resolver walks it in reverse so workspace wins.  Empty layers
     produce empty inner lists.
+
+    The built-in layer is the broadest, so every configured layer outranks it.
+    A built-in entry is **dropped entirely** when any file layer declares the
+    same id -- that is what makes it overridable: an operator who writes their
+    own ``acc-canonical`` (an internal mirror, a ``mode: file`` path for an
+    air-gapped site) replaces the default rather than racing it, and
+    ``/catalog list`` shows one entry instead of two confusing ones.
+
+    Note the consequence of always shipping a default: a host with no network
+    will attempt this catalog on resolve and log a fetch warning.  Overriding
+    the id with a ``mode: file`` catalog is the supported way to point an
+    isolated site somewhere reachable.
     """
-    return [
-        _load_one(system_catalog_path()),
-        _load_one(user_catalog_path()),
-        _load_one(workspace_catalog_path(workspace)),
-    ]
+    system = _load_one(system_catalog_path())
+    user = _load_one(user_catalog_path())
+    ws = _load_one(workspace_catalog_path(workspace))
+    configured = {c.id for c in (*system, *user, *ws)}
+    builtin = [c for c in builtin_catalogs() if c.id not in configured]
+    return [builtin, system, user, ws]
 
 
 # ---------------------------------------------------------------------------
@@ -564,10 +614,14 @@ def list_catalogs(workspace: Path | None = None) -> list[Catalog]:
     """Every configured catalog, de-duplicated by id, in a stable order.
 
     The discovery list behind ``/catalog list`` + the assistant's
-    catalog-query: one row per distinct catalog across the system / user /
-    workspace layers, the narrower layer winning on an id clash (workspace >
-    user > system), then ordered priority-desc, id-asc — a stable numbering the
-    ``/catalog <num> --list-roles`` drill-in can index into.
+    catalog-query: one row per distinct catalog across the built-in / system /
+    user / workspace layers, the narrower layer winning on an id clash
+    (workspace > user > system > built-in), then ordered priority-desc, id-asc
+    — a stable numbering the ``/catalog <num> --list-roles`` drill-in can index
+    into.
+
+    Never empty on a stock install: the built-in default (:func:`builtin_catalogs`)
+    is always present unless an operator has overridden its id.
 
     Pure config read (no index fetch, no network) — cheap + always available.
     """

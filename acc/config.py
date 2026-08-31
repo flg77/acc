@@ -166,6 +166,18 @@ class RoleDefinitionConfig(BaseModel):
     # so bench scores match live-agent output.
     reasoning_trace: bool = False
 
+    # RP-02 Phase 1 (``20260825-conversational-turn-continuity``) —
+    # conversational continuity.  When True the role's user message carries
+    # a replay of this thread's earlier turns, read from the durable
+    # tracelog and filtered on the same memory scope episodes use.
+    #
+    # Default False, and set on the assistant alone to start: continuity
+    # adds model-visible text, so the blast radius of getting it wrong is
+    # every prompt for that role.  A role without the flag assembles a
+    # byte-identical prompt to the pre-change build, which is what makes
+    # this shippable while enabled for one role.
+    thread_continuity: bool = False
+
     # D-007 (PR-U2) — trusted-workspace filesystem access.
     # When True the role may read/write files in the operator's
     # trusted working directory (via the sandboxed ``fs_read`` /
@@ -705,6 +717,17 @@ class LLMConfig(BaseModel):
     """HTTP request timeout in seconds for inference calls (openai_compat)."""
     max_retries: int = 3
     """Maximum retry attempts on retryable errors — 429, 5xx (openai_compat)."""
+    context_window: int = 0
+    """Usable input window in tokens (env ``ACC_LLM_CONTEXT_WINDOW``).
+
+    ``0`` means undeclared, which must leave every code path exactly as it was.
+    Mirrors :attr:`acc.models.ModelEntry.context_window`; ``model_env`` and
+    ``llm_failover._llm_overlay`` are what carry it here.
+
+    Today its only consumer is the Ollama backend's ``num_ctx``.  The context
+    budgeter (``openspec/changes/20260826-context-budget``) is the one that
+    makes it load-bearing.
+    """
     enable_prompt_cache: bool = False
     """PR-CA2 — opt-in per-backend prompt-cache HINT (env
     ``ACC_LLM_ENABLE_PROMPT_CACHE``).  When true, the agent hints the
@@ -713,6 +736,44 @@ class LLMConfig(BaseModel):
     Backends whose server auto-caches prefixes (vLLM, Ollama) ignore the
     hint — they already benefit from the stable prefix (PR-CA1), so this
     is optional in all modes and off by default."""
+
+
+class ContextBudgetConfig(BaseModel):
+    """Site overrides for the context budgeter's posture (RP-04 1.4).
+
+    The posture itself is chosen by ``deploy_mode`` and lives in
+    ``acc.context_budget._POSTURES``; what belongs to a *site* rather than to a
+    deployment class is these two numbers.  ``reserve_output`` is how much of
+    the window is held back so the model has room to answer;
+    ``safety_margin_pct`` is the fraction held back to absorb estimator error.
+
+    Both default to ``0``, meaning **use the deploy-mode posture** -- the same
+    "undeclared leaves every path exactly as it was" rule
+    :attr:`LLMConfig.context_window` follows.  A site that genuinely wants zero
+    margin cannot say so here, and that is deliberate: an accidentally empty
+    value must not silently remove the only cushion the estimator has.
+
+    Reaching the agent: :class:`acc.cognitive_core.CognitiveCore` is not given
+    a config object, so it reads the two environment variables below.  Setting
+    these in ``acc-config.yaml`` makes them expressible and profile-carryable;
+    the env vars are what a running core observes.
+    """
+
+    reserve_output: int = Field(default=0, ge=0)
+    """Tokens held back for the answer (env ``ACC_CONTEXT_RESERVE_OUTPUT``).
+
+    ``0`` = use the posture's value (edge 512 / standalone 1024 / rhoai 2048).
+    """
+
+    safety_margin_pct: float = Field(default=0.0, ge=0.0, lt=1.0)
+    """Fraction of the window held back for estimator error (env
+    ``ACC_CONTEXT_SAFETY_MARGIN``).
+
+    A **fraction, not a percentage**: ``0.15`` means 15%, matching
+    ``Posture.margin_pct``.  ``0.0`` = use the posture's value.  ``>= 1`` is
+    refused rather than clamped -- it would reserve the entire window and leave
+    nothing to send, which is a configuration error, not a tight budget.
+    """
 
 
 class ObservabilityConfig(BaseModel):
@@ -1186,6 +1247,7 @@ class ACCConfig(BaseModel):
     signaling: SignalingConfig = Field(default_factory=SignalingConfig)
     vector_db: VectorConfig = Field(default_factory=VectorConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    context_budget: ContextBudgetConfig = Field(default_factory=ContextBudgetConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     role_definition: RoleDefinitionConfig = Field(default_factory=RoleDefinitionConfig)
     role_sync: RoleSyncConfig = Field(default_factory=RoleSyncConfig)
@@ -1362,6 +1424,11 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_LLM_TIMEOUT_S":            ("llm", "request_timeout_s"),
     "ACC_LLM_MAX_RETRIES":          ("llm", "max_retries"),
     "ACC_LLM_ENABLE_PROMPT_CACHE":  ("llm", "enable_prompt_cache"),
+    "ACC_LLM_CONTEXT_WINDOW":       ("llm", "context_window"),
+    # Context budgeter posture overrides (RP-04 1.4).  The budgeter itself
+    # reads these from the environment -- see ContextBudgetConfig on why.
+    "ACC_CONTEXT_RESERVE_OUTPUT":   ("context_budget", "reserve_output"),
+    "ACC_CONTEXT_SAFETY_MARGIN":    ("context_budget", "safety_margin_pct"),
     "ACC_METRICS_BACKEND":          ("observability", "backend"),
     "ACC_OTEL_SERVICE_NAME":        ("observability", "otel_service_name"),
     # Role definition overrides (ACC-6a)
@@ -1496,12 +1563,33 @@ def build_llm_backend(config: ACCConfig) -> LLMBackend:
     ``config.reload`` handler can swap the LLM client in-process
     without rebuilding signaling / vector / metrics (those hold
     long-lived connections that must not be churned).
+
+    The result is wrapped by :func:`acc.prompt_record.recording_backend`,
+    making this an enforcement point for the "model-visible means logged"
+    invariant: every consumer of this factory records the corpus it sends,
+    including consumers that do not exist yet.
+    ``llm_failover.backend_for_entry`` routes through here on purpose, so
+    failover clients are covered too.
+
+    ACC's other LLM construction site is
+    ``acc.cli.llm_cmd._build_llm_only``, which mirrors these branches to
+    keep heavy deps out of the CLI image and so applies the wrapper itself.
+    ``tests/test_prompt_record.py`` pins that set to two.
+    See :mod:`acc.prompt_record` (ACC Roadmap DS-01).
     """
+    from acc.prompt_record import recording_backend  # noqa: PLC0415
+
+    return recording_backend(_build_llm_backend_unrecorded(config))
+
+
+def _build_llm_backend_unrecorded(config: ACCConfig) -> LLMBackend:
+    """The concrete backend, before the prompt-record wrapper."""
     if config.llm.backend == "ollama":
         from acc.backends.llm_ollama import OllamaBackend
         return OllamaBackend(
             base_url=config.llm.ollama_base_url,
             model=config.llm.ollama_model,
+            num_ctx=config.llm.context_window,
         )
     if config.llm.backend == "anthropic":
         from acc.backends.llm_anthropic import AnthropicBackend

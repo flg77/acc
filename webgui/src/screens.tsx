@@ -124,17 +124,36 @@ export function Prompt() {
   const [role, setRole] = useState("analyst");
   const [text, setText] = useState("");
   const [log, setLog] = useState<string[]>([]);
+  // The thread this screen is holding. Adopted from the first reply, so the
+  // second turn continues the first instead of starting over — which is what
+  // this surface did for everyone before RP-02 reached it.
+  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
+  // AUTO is the safe default: an unknown value normalises to AUTO agent-side,
+  // so the stricter gate wins on a typo.
+  const [mode, setMode] = useState("AUTO");
+  const [workspace, setWorkspace] = useState("");
 
   const send = async () => {
     setLog((l) => [...l, `▶ ${text}`]);
     const prompt = text;
     setText("");
     try {
-      const r = await sendPrompt(collectiveId, role, prompt);
+      const r = await sendPrompt(
+        collectiveId, role, prompt, undefined, sessionId,
+        mode, workspace || undefined,
+      );
+      if (!sessionId && r.session_id) setSessionId(r.session_id);
       setLog((l) => [...l, `◀ [${r.task_id.slice(0, 8)}] ${r.output}`]);
     } catch (e) {
       setLog((l) => [...l, `✗ ${e}`]);
     }
+  };
+
+  // Starting a new thread must be explicit — silently continuing forever is as
+  // wrong as never continuing at all.
+  const newThread = () => {
+    setSessionId(undefined);
+    setLog([]);
   };
   return (
     <Card title="Prompt">
@@ -162,6 +181,36 @@ export function Prompt() {
         }}
         placeholder="Ask the collective…  (Enter to send, Shift+Enter for a newline)"
       />
+      <div className="row">
+        <label>
+          Mode
+          <select value={mode} onChange={(e) => setMode(e.target.value)}>
+            {["AUTO", "PLAN", "ACCEPT_EDITS", "ACCEPT_ALL"].map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Workspace
+          <input
+            value={workspace}
+            onChange={(e) => setWorkspace(e.target.value)}
+            placeholder="(none — relative to /workspace)"
+          />
+        </label>
+      </div>
+      <div className="row">
+        <span className="muted">
+          {sessionId
+            ? `continuing thread ${sessionId.slice(0, 8)}`
+            : "new thread — the next reply starts one"}
+        </span>
+        <button onClick={newThread} disabled={!sessionId}>
+          New thread
+        </button>
+      </div>
     </Card>
   );
 }

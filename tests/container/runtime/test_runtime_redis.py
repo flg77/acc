@@ -15,13 +15,12 @@ import time
 
 import pytest
 
+from tests.container.conftest import _image_exists
+
 IMAGE_TAG = "localhost/acc-redis:7.2"
 
 pytestmark = pytest.mark.skipif(
-    subprocess.run(
-        ["podman", "image", "inspect", IMAGE_TAG],
-        capture_output=True,
-    ).returncode != 0,
+    not _image_exists(IMAGE_TAG),
     reason=f"Image {IMAGE_TAG} not built — run build tests first",
 )
 

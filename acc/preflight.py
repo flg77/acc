@@ -27,8 +27,17 @@ is deliberate: a second implementation is exactly how three surfaces start
 disagreeing about whether a deployment is healthy, and then the operator has to
 work out which one is lying.
 
-Nothing here mutates anything, and no check ever reads a secret **value** —
-only whether a name is present.
+Nothing here mutates anything, and no check ever **reports** a secret value.
+
+That rule was originally written as *no check ever reads a secret value — only
+whether a name is present*, which the capability probe could not honour: a keyed
+gateway answers 401 to an unauthenticated request, so *what does this endpoint
+support* is unanswerable without the credential the operator already configured.
+The rule is therefore narrowed to its intent. A check MAY use a configured
+credential to make a request the operator explicitly asked for with ``--probe``;
+it may never let that value reach a summary, a detail, an error or a log line.
+The enforcing half lives in ``acc.endpoint_profile._redact`` plus a sentinel
+test, because a rule nothing checks is a preference.
 """
 
 from __future__ import annotations
@@ -494,6 +503,164 @@ def check_endpoints(ctx: Context) -> Iterable[Result]:
         yield Result(
             "endpoints", Severity.OK, f"{base} answered ({code})", subject=base
         )
+
+
+@register("endpoint-capability")
+def check_endpoint_capabilities(ctx: Context) -> Iterable[Result]:
+    """What does each configured endpoint actually support?
+
+    ``check_endpoints`` above answers *is it up*. This answers *what is it*,
+    which is the question three shipped optimisations silently depend on: the
+    PR-CA1 stable prefix assumes the server prefix-caches, PR-CA2 skips the
+    client hint on vLLM/Ollama for the same reason, and the local embedder in
+    ``acc/backends/llm_vllm.py`` exists because the served model *may* not
+    embed.  None of the three was ever verified against a running server.
+
+    One dense row per endpoint rather than a block per capability: a health
+    report is scanned, and nine rows per model is not.  The reason for an
+    ``unknown`` goes in the **summary**, not the detail — the renderer
+    suppresses detail on OK rows, and an unknown is an OK row (it is not a
+    fault), so a reason in the detail would never be seen.
+
+    Nothing here can be BROKEN.  An endpoint without ``/tokenize`` is normal,
+    and a transient network fault must not decide an exit code.
+    """
+    if not ctx.probe_endpoints:
+        yield Result(
+            "endpoint-capability", Severity.OK, "capability probing not requested",
+            detail="Pass --probe to ask each endpoint what it supports.",
+        )
+        return
+
+    from acc.endpoint_profile import probe_endpoint  # noqa: PLC0415
+    from acc.models import load_models  # noqa: PLC0415
+
+    entries = sorted(load_models(), key=lambda e: e.model_id)
+    if not entries:
+        yield Result("endpoint-capability", Severity.OK, "no models configured")
+        return
+
+    # Probe once per distinct endpoint+model, but report once per *entry*.
+    #
+    # The two are not the same, and conflating them hid a real case: two
+    # registry entries can name the same served model and declare DIFFERENT
+    # windows. Deduplicating the rows as well as the probes would validate only
+    # the first entry's declaration and silently skip the second — which is
+    # exactly the drift this check exists to surface.
+    #
+    # The key carries the model, unlike ``check_endpoints`` which dedups by
+    # root: two models on one vLLM have different capabilities.
+    cache: dict[tuple[str, str, str], Any] = {}
+    for entry in entries:
+        key = (entry.backend, (entry.base_url or "").rstrip("/"), entry.model)
+        if key not in cache:
+            cache[key] = probe_endpoint(
+                entry, timeout_s=ctx.timeout_s, environ=ctx.environ,
+            )
+        yield from _capability_results(entry, cache[key])
+
+
+def _capability_results(entry: Any, profile: Any) -> Iterable[Result]:
+    """Render one profile as a single Result.  Never raises, never BROKEN."""
+    parts: list[str] = []
+    details: list[str] = []
+    severity = Severity.OK
+
+    # --- window -----------------------------------------------------------
+    if profile.served_window.known:
+        window = f"window {profile.served_window.value}"
+        scaling = profile.window_scaling
+        if scaling.known and scaling.value.get("direction") == "reduced":
+            window += f" ({scaling.value['ratio']:.0%} of native)"
+        elif scaling.known and scaling.value.get("direction") == "extended":
+            # Never "YaRN".  Served-exceeds-native proves rescaling is
+            # configured; nothing visible here says which kind.
+            window += f" ({scaling.value['ratio']:.1f}x native, rescaled)"
+        parts.append(window)
+
+        # ``ModelEntry.context_window`` arrives with
+        # ``20260826-context-budget``.  Until it exists there is nothing to
+        # reconcile against, so this stays quiet rather than inventing a
+        # comparison.
+        declared = int(getattr(entry, "context_window", 0) or 0)
+        if declared and declared != profile.served_window.value:
+            severity = _worse(severity, Severity.DRIFTED)
+            details.append(
+                f"models.yaml declares {declared}; the server serves "
+                f"{profile.served_window.value}. Declaring less than is served is a "
+                "legitimate choice (KV headroom for co-tenants); declaring more "
+                "overflows."
+            )
+    else:
+        parts.append(f"window unknown ({profile.served_window.note})")
+
+    # --- prefix cache -----------------------------------------------------
+    # Two separate facts, kept apart: *configured on* is a label and certain,
+    # *hitting* needs traffic before it means anything.
+    if profile.prefix_cache_enabled.known and not profile.prefix_cache_enabled.value:
+        severity = _worse(severity, Severity.DEGRADED)
+        parts.append("prefix cache OFF")
+        details.append(
+            "ACC restructured its prompts (PR-CA1) so the per-role prefix stays "
+            "cacheable; with caching disabled that design cost buys nothing here."
+        )
+    elif profile.prefix_cache_hits.known:
+        hits = profile.prefix_cache_hits.value
+        if hits.get("rate") is None:
+            parts.append("prefix cache on, cold")
+        elif hits["rate"] < 0.2:
+            severity = _worse(severity, Severity.DEGRADED)
+            parts.append(f"prefix cache {hits['rate']:.0%} hit")
+            details.append(
+                f"{hits['hits']} of {hits['queries']} queried tokens hit. Either the "
+                "server is still warming, or ACC's per-role prefix is not "
+                "byte-stable; tests/test_prompt_prefix_stability_real_roles.py "
+                "settles the second."
+            )
+        else:
+            parts.append(f"prefix cache {hits['rate']:.0%} hit")
+    else:
+        parts.append("prefix cache unknown")
+
+    # --- the rest ---------------------------------------------------------
+    if profile.tokenize.known:
+        parts.append("tokenize " + ("yes" if profile.tokenize.value else "no"))
+    if profile.embeddings.known:
+        parts.append("embeddings " + ("yes" if profile.embeddings.value else "no"))
+    if profile.kv_cache.known and profile.kv_cache.value.get("pool_tokens"):
+        pool = profile.kv_cache.value["pool_tokens"]
+        parts.append(f"KV pool {pool}t")
+        if profile.served_window.known and profile.served_window.value:
+            details.append(
+                f"KV pool holds ~{pool / profile.served_window.value:.1f} concurrent "
+                "full-window sequences; past that vLLM preempts and recomputes."
+            )
+
+    if profile.errors:
+        severity = _worse(severity, Severity.DEGRADED)
+        details.extend(profile.errors)
+
+    yield Result(
+        name="endpoint-capability",
+        severity=severity,
+        # The model id goes in the SUMMARY, not just ``subject``: the renderer
+        # prints ``[subject]`` only for rows that are not OK, so on a healthy
+        # deployment with two models on one backend the rows would otherwise be
+        # indistinguishable.
+        summary=f"{entry.model_id} ({profile.backend}): "
+        + (" | ".join(parts) or "nothing determined"),
+        detail=" ".join(details),
+        subject=entry.model_id,
+    )
+
+
+#: Escalation order for this check alone.  ``worst()`` above ranks a whole run
+#: and includes BROKEN, which is unreachable here by design (REQ-CHK-003).
+_ESCALATION = (Severity.OK, Severity.DRIFTED, Severity.DEGRADED)
+
+
+def _worse(a: Severity, b: Severity) -> Severity:
+    return max(a, b, key=_ESCALATION.index)
 
 
 # ---------------------------------------------------------------------------

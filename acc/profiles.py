@@ -58,6 +58,8 @@ SETTABLE = (
     "llm.request_timeout_s",
     "llm.max_retries",
     "llm.enable_prompt_cache",
+    "context_budget.reserve_output",
+    "context_budget.safety_margin_pct",
     "vector_db.backend",
     "vector_db.lancedb_path",
     "vector_db.milvus_uri",

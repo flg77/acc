@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import acc.pkg.catalog as catalog_mod
 from acc.pkg.catalog import (
     KNOWN_CATALOG_ALIASES,
     Catalog,
@@ -55,11 +56,19 @@ def _https_entry(cid: str, *, priority: int = 100, url: str = "https://example.t
     }
 
 
-def _isolate_layers(tmp_path, monkeypatch):
-    """Point all three catalog layers at absent tmp files by default."""
+def _isolate_layers(tmp_path, monkeypatch, *, keep_builtin: bool = False):
+    """Point all three file catalog layers at absent tmp files by default.
+
+    Also drops the built-in default catalog unless ``keep_builtin``: it points
+    at a live GitHub Pages host, so leaving it in would put a real network
+    dependency (and a package list nobody here wrote) into assertions that are
+    about layering and ordering.
+    """
     monkeypatch.setenv("ACC_SYSTEM_CATALOG", str(tmp_path / "absent-system.yaml"))
     monkeypatch.setenv("ACC_USER_CATALOG", str(tmp_path / "absent-user.yaml"))
     monkeypatch.chdir(tmp_path)  # workspace = cwd/.acc/catalogs.yaml (absent)
+    if not keep_builtin:
+        monkeypatch.setattr(catalog_mod, "builtin_catalogs", lambda: [])
 
 
 def test_list_catalogs_dedups_and_orders(tmp_path, monkeypatch):
@@ -84,9 +93,34 @@ def test_list_catalogs_dedups_and_orders(tmp_path, monkeypatch):
     assert next(c for c in cats if c.id == "shared").url == "https://user.test/cat"
 
 
-def test_list_catalogs_empty_when_none_configured(tmp_path, monkeypatch):
-    _isolate_layers(tmp_path, monkeypatch)
-    assert list_catalogs() == []
+def test_list_catalogs_falls_back_to_the_builtin_when_none_configured(
+    tmp_path, monkeypatch,
+):
+    """With no catalog files anywhere, the shipped default is what you get.
+
+    This used to assert ``== []``. That was the bug an operator saw as
+    "catalogs: (none configured)" on a stock host -- nothing to install from
+    until someone hand-wrote a file.
+    """
+    _isolate_layers(tmp_path, monkeypatch, keep_builtin=True)
+    cats = list_catalogs()
+    assert [c.id for c in cats] == ["acc-canonical"]
+    assert cats[0].url == "https://flg77.github.io/acc-ecosystem"
+
+
+def test_list_catalogs_empty_only_when_the_builtin_is_overridden(
+    tmp_path, monkeypatch,
+):
+    """The one way to end up with no https default: claim its id yourself."""
+    _isolate_layers(tmp_path, monkeypatch, keep_builtin=True)
+    user_yaml = tmp_path / "user.yaml"
+    _write_catalog_yaml(user_yaml, [
+        {**_https_entry("acc-canonical"), "url": "https://mirror.internal/cat"},
+    ])
+    monkeypatch.setenv("ACC_USER_CATALOG", str(user_yaml))
+    cats = list_catalogs()
+    assert [c.id for c in cats] == ["acc-canonical"]
+    assert cats[0].url == "https://mirror.internal/cat", "operator entry wins"
 
 
 def test_add_user_catalog_writes_and_lists(tmp_path, monkeypatch):

@@ -98,6 +98,16 @@ def create_app():
     app.include_router(routes_attachments.router)  # each endpoint gates its own auth
     app.include_router(routes_config.router)  # each endpoint gates its own auth
     app.include_router(routes_roles.router)  # Stage 2.4 — each endpoint gates its own auth
+    # HG-24 — the OpenAI-compatible surface. Mounted ONLY when keys are
+    # configured: an endpoint that exists and 401s still advertises that ACC is
+    # listening, and this is the surface most likely to be probed by something
+    # the operator did not write.
+    from acc.webgui import routes_compat  # noqa: PLC0415
+
+    if routes_compat.is_enabled():
+        app.include_router(routes_compat.router)  # gates its own auth
+        logger.info("webgui: OpenAI-compatible endpoint mounted at /v1")
+
     app.include_router(ws.router)
 
     static = _static_dir()

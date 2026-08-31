@@ -109,6 +109,7 @@ class PromptChannel(Protocol):
         target_role: str,
         target_agent_id: str | None = None,
         on_progress: Callable[[dict], None] | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Publish a TASK_ASSIGN derived from *prompt*.
 
@@ -121,6 +122,17 @@ class PromptChannel(Protocol):
             target_agent_id: When set, restrict execution to the named
                 agent within ``target_role``.  ``None`` (the default)
                 preserves the legacy broadcast-by-role behaviour.
+            session_id: The conversation this prompt continues.  A
+                channel **names** a thread; it never supplies the
+                thread's content — prior turns are replayed server-side
+                from the durable tracelog (:mod:`acc.thread_continuity`),
+                so a client cannot fabricate history it never had.
+                Omitting it preserves today's behaviour exactly: the
+                agent falls back to ``task_id`` and the session is one
+                turn long.  A surface that does not pass one must
+                degrade to that, never to a thread shared with someone
+                else.  See
+                ``openspec/changes/20260825-conversational-turn-continuity``.
             on_progress: Optional callback invoked once per
                 ``TASK_PROGRESS`` event matching the returned
                 ``task_id``.  Receives the raw payload dict — fields

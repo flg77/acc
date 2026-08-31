@@ -8,6 +8,25 @@
 #
 # Add your own entries; api_key_env names the env var holding the key
 # (the key itself never lives in this file).
+#
+# context_window (optional, tokens) is the window this endpoint ACTUALLY
+# SERVES -- often far below the model's trained length, because the KV cache
+# has to fit in memory.  Omit it and nothing changes; it is undeclared, not
+# zero.  Declare it and:
+#
+#   * the Ollama backend sends it as `num_ctx`.  This matters more than it
+#     looks: Ollama serves at num_ctx, NOT at the model's context length, and
+#     it defaults to ~4096.  Until ACC sent it, every Ollama deployment ran a
+#     ~4k window whatever this file advertised, and longer prompts were
+#     trimmed by the server with nothing recording it.
+#   * `acc-cli doctor --probe` reconciles it against what the server reports
+#     and flags a mismatch as DRIFT.  It never overrides you: declaring LESS
+#     than is served is a legitimate choice (KV headroom for co-tenant
+#     agents); declaring more overflows.
+#
+# Raise it deliberately.  A larger window allocates a larger KV cache per
+# request, so a host sized for the old default is where an OOM lands.  Get the
+# served figure from `acc-cli doctor --probe` rather than from the model card.
 models:
   # ── Anthropic ────────────────────────────────────────────────────────
   - model_id: claude-opus
@@ -31,11 +50,13 @@ models:
   - model_id: ollama-llama32-3b
     backend: ollama
     model: "llama3.2:3b"
+    context_window: 8192   # Ollama serves num_ctx, not the model's 131072
     base_url: "http://localhost:11434"
     label: "Ollama Llama 3.2 3B (local, cheap — worker)"
   - model_id: ollama-qwen25-14b
     backend: ollama
     model: "qwen2.5:14b"
+    context_window: 8192   # raise once you have measured the box
     base_url: "http://localhost:11434"
     label: "Ollama Qwen2.5 14B (local, stronger — reviewer)"
 
@@ -51,6 +72,7 @@ models:
   - model_id: lighthouse-llama32-3b
     backend: vllm
     model: "RedHatAI/Llama-3.2-3B-Instruct-FP8"
+    context_window: 8192   # measured on lighthouse: 6% of the model's native 131072
     base_url: "http://lighthouse:8022/v1"
     label: "Lighthouse vLLM Llama 3.2 3B FP8"
 

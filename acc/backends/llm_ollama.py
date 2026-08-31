@@ -16,11 +16,36 @@ class OllamaBackend:
     """Ollama REST API backend (OpenAI-compatible).
 
     Sends requests to ``{base_url}/api/chat`` and ``{base_url}/api/embeddings``.
+
+    **num_ctx is the one endpoint knob ACC owns.** Ollama does not serve a
+    model at the model's own context length; it serves at ``num_ctx``, a
+    per-request option defaulting to roughly 4096. Until this parameter
+    existed ACC never sent it, so every Ollama deployment ran a ~4k effective
+    window no matter what ``models.yaml`` advertised -- and a prompt past it
+    was trimmed **by the server, silently**, with no event on either side.
+
+    That is an evidence-integrity defect before it is an efficiency one.
+    ``20260825-conversational-turn-continuity`` established *model-visible
+    means logged*; server-side truncation breaks the converse, because
+    ``acc/prompt_record.py`` hashes an assembled prompt the model only
+    partially received. Worse, the bytes at risk are the operator's request:
+    ``_compose_user_content`` puts the task last, which is right for attention
+    and for the PR-CA1 prefix cache and exactly wrong under a head/tail trim.
+
+    ``num_ctx=0`` means **undeclared** and sends no ``options`` block at all,
+    leaving the request byte-identical to the pre-change one. That default is
+    deliberate and conservative: raising the served window raises the KV cache
+    allocated per request, and a box sized for the accidental 4k is where an
+    OOM would land. The figure should be rolled out per deployment as a
+    measured one, never as a maximal one.
+
+    Change: ``openspec/changes/20260826-context-budget`` Phase 1.6.
     """
 
-    def __init__(self, base_url: str, model: str) -> None:
+    def __init__(self, base_url: str, model: str, num_ctx: int = 0) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._num_ctx = int(num_ctx or 0)
 
     def _raise_for_status(self, response: httpx.Response) -> None:
         if response.status_code < 200 or response.status_code >= 300:
@@ -53,6 +78,8 @@ class OllamaBackend:
         }
         if response_schema is not None:
             body["format"] = "json"
+        if self._num_ctx > 0:
+            body["options"] = {"num_ctx": self._num_ctx}
 
         async with httpx.AsyncClient() as client:
             response = await client.post(

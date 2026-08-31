@@ -48,9 +48,21 @@
   - Returns alternates list for Compliance pane display
   - Supports `mode: https` (fetch index.json) and `mode: file`
     (glob `<path>/<scope>/<name>-*.accpkg`)
-- [ ] Default `/etc/acc/catalogs.yaml.example` shipped with ACC
-  containing the `acc-canonical` (trusted) + `community-public`
-  entries; operator-installed sample.
+- [x] A default catalog ships with ACC — **implemented differently from this
+  line, deliberately**. The recorded plan was an operator-installed
+  `/etc/acc/catalogs.yaml.example` sample; that still leaves a stock host with
+  `catalogs: (none configured)` until someone acts, which is what an operator
+  actually hit. Instead `acc.pkg.catalog.builtin_catalogs()` is a fourth,
+  broadest layer under system/user/workspace, so a fresh install is connected
+  with no file at all. Any file layer overrides it by declaring the same id.
+  - `acc-canonical` only. `community-public` (`hub.acc-roles.dev`) is NOT
+    shipped: that host is a Stage 2.3 DNS decision and does not resolve yet, so
+    baking it in would put a guaranteed fetch failure in every resolve.
+  - `tier: community`, not `trusted` as written here — community selects the
+    DEEPEST install-time policy (045 Q1). A shipped default must not be
+    checked less hard than a hand-added one.
+  - `examples/catalogs.yaml` keeps the fuller two-entry sample for operators
+    who want to write the file themselves.
 - [ ] `acc/pkg/registry.py` — flock-protected JSON registry index;
   `add() / remove() / list() / find_by_dep()`.
 - [ ] Tests: roundtrip (build → install → list), sha256 mismatch

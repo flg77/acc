@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,7 +11,9 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+import acc.pkg.catalog as catalog_mod
 from acc.pkg.catalog import (
+    builtin_catalogs,
     Catalog,
     CatalogFile,
     CatalogIndexEntry,
@@ -22,8 +25,12 @@ from acc.pkg.catalog import (
 )
 
 
+#: Captured before any test patches the module attribute.
+_real_builtin_catalogs = catalog_mod.builtin_catalogs
+
+
 # ---------------------------------------------------------------------------
-# Fixture: pointing the three layer paths at tmp_path
+# Fixture: pointing the layer paths at tmp_path
 # ---------------------------------------------------------------------------
 
 
@@ -31,7 +38,15 @@ from acc.pkg.catalog import (
 def layered_env(monkeypatch, tmp_path):
     """Redirect system + user catalog paths to tmp; return helpers
     for writing each layer.
+
+    The built-in default catalog is neutralised here. It points at a live
+    GitHub Pages host, so leaving it in would make every resolver test in this
+    file reach the network -- slow, flaky, and dependent on someone else's
+    uptime for assertions that are about layering, not connectivity. Tests
+    that ARE about the built-in take the ``builtin_enabled`` fixture.
     """
+    monkeypatch.setattr(catalog_mod, "builtin_catalogs", lambda: [])
+
     sys_path = tmp_path / "system.yaml"
     user_path = tmp_path / "user.yaml"
     workspace = tmp_path / "workspace"
@@ -48,6 +63,19 @@ def layered_env(monkeypatch, tmp_path):
         path.write_text(yaml.safe_dump({"catalogs": catalogs}), encoding="utf-8")
 
     return write_layer, workspace
+
+
+@pytest.fixture
+def builtin_enabled(layered_env, monkeypatch):
+    """Restore the real built-in layer for tests that assert on it.
+
+    Depends on ``layered_env`` so it runs after that fixture's neutralising
+    setattr and wins. Yields the same helpers, so a test can take this one
+    instead of ``layered_env`` and nothing else changes.
+    """
+    monkeypatch.setattr(catalog_mod, "builtin_catalogs", _real_builtin_catalogs)
+    return layered_env
+
 
 
 # ---------------------------------------------------------------------------
@@ -142,24 +170,102 @@ def test_index_entry_tolerates_genuinely_unknown_field():
 # ---------------------------------------------------------------------------
 
 
-def test_load_catalogs_empty_layers_safe(layered_env):
-    write, ws = layered_env
-    layers = load_catalogs(ws)
-    assert layers == [[], [], []]
+def test_load_catalogs_empty_layers_ship_the_builtin(builtin_enabled):
+    """A host with no catalog files is still connected to the default.
+
+    This is the whole point of the built-in layer: before it, a fresh install
+    resolved against nothing at all.
+    """
+    write, ws = builtin_enabled
+    builtin, system, user, workspace = load_catalogs(ws)
+    assert [c.id for c in builtin] == ["acc-canonical"]
+    assert (system, user, workspace) == ([], [], [])
 
 
-def test_load_catalogs_three_layers_independent(layered_env):
-    write, ws = layered_env
+def test_load_catalogs_four_layers_independent(builtin_enabled):
+    write, ws = builtin_enabled
     write("system", [{"id": "sys", "tier": "trusted", "mode": "file",
                        "path": "/s", "required_signer": _required_signer()}])
     write("user", [{"id": "usr", "tier": "community", "mode": "file",
                      "path": "/u", "required_signer": _required_signer()}])
     write("workspace", [{"id": "ws", "tier": "self", "mode": "file",
                           "path": "/w", "required_signer": _required_signer()}])
-    sys_c, usr_c, ws_c = load_catalogs(ws)
+    builtin, sys_c, usr_c, ws_c = load_catalogs(ws)
+    assert [c.id for c in builtin] == ["acc-canonical"]
     assert [c.id for c in sys_c] == ["sys"]
     assert [c.id for c in usr_c] == ["usr"]
     assert [c.id for c in ws_c] == ["ws"]
+
+
+# ---------------------------------------------------------------------------
+# The built-in default catalog
+# ---------------------------------------------------------------------------
+
+
+def test_builtin_points_at_the_published_pages_catalog():
+    """The URL is the contract with the ecosystem publisher. Pin it."""
+    (cat,) = builtin_catalogs()
+    assert cat.id == "acc-canonical"
+    assert cat.url == "https://flg77.github.io/acc-ecosystem"
+    assert cat.mode == "https"
+
+
+def test_builtin_tier_is_community_the_deepest_policy():
+    """`community` selects the strictest install-time checks (proposal 045 Q1).
+
+    A shipped default must not be checked less hard than a hand-added one.
+    """
+    (cat,) = builtin_catalogs()
+    assert cat.tier == "community"
+
+
+def test_builtin_requires_the_publishing_workflows_identity():
+    """The signer is a real trust anchor, not a placeholder.
+
+    It must match the GitHub Actions OIDC identity that
+    publish-family-packs.yml signs with, or nothing it publishes installs.
+    """
+    (cat,) = builtin_catalogs()
+    signer = cat.required_signer
+    assert signer.issuer == "https://token.actions.githubusercontent.com"
+    assert signer.mode == "keyless"
+    assert re.match(signer.subject_pattern,
+                    "https://github.com/flg77/acc-ecosystem/.github/workflows/"
+                    "publish-family-packs.yml@refs/tags/v1.0.0")
+    assert not re.match(signer.subject_pattern,
+                        "https://github.com/someone-else/evil/.github/workflows/x.yml@main")
+
+
+def test_builtin_is_freshly_built_each_call():
+    """Mutating one caller's copy must not change what the next caller sees."""
+    first = builtin_catalogs()[0]
+    first.url = "https://tampered.example"
+    assert builtin_catalogs()[0].url == "https://flg77.github.io/acc-ecosystem"
+
+
+@pytest.mark.parametrize("layer", ["system", "user", "workspace"])
+def test_operator_override_replaces_the_builtin(builtin_enabled, layer):
+    """Same id in ANY file layer drops the built-in -- overridden, not raced.
+
+    Two live entries for one id is the confusing outcome this prevents, and
+    it is how an air-gapped site redirects the default to a reachable mirror.
+    """
+    write, ws = builtin_enabled
+    write(layer, [{"id": "acc-canonical", "tier": "self", "mode": "file",
+                   "path": "/srv/mirror", "required_signer": _required_signer()}])
+    layers = load_catalogs(ws)
+    flat = [c for lyr in layers for c in lyr]
+    assert [c.id for c in flat].count("acc-canonical") == 1
+    assert flat[0].mode == "file", "the operator's entry must be the survivor"
+    assert layers[0] == [], "built-in layer is emptied by the override"
+
+
+def test_unrelated_ids_do_not_displace_the_builtin(builtin_enabled):
+    write, ws = builtin_enabled
+    write("user", [{"id": "something-else", "tier": "self", "mode": "file",
+                    "path": "/x", "required_signer": _required_signer()}])
+    layers = load_catalogs(ws)
+    assert [c.id for c in layers[0]] == ["acc-canonical"]
 
 
 def test_malformed_yaml_raises(layered_env, tmp_path, monkeypatch):

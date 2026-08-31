@@ -88,6 +88,7 @@ class TUIPromptChannel:
         on_progress=None,
         operating_mode: str = "AUTO",
         workspace: str | None = None,
+        session_id: str | None = None,
     ) -> str:
         """Build + publish a TASK_ASSIGN derived from *prompt*.
 
@@ -158,6 +159,13 @@ class TUIPromptChannel:
         # paths under.  Omitted when no directory was selected.
         if workspace:
             payload["workspace"] = str(workspace)
+        # RP-02 Phase 1 — the conversation this prompt continues.  Only the
+        # id travels: prior turns are replayed server-side from the durable
+        # tracelog, so naming a thread is all a client can do.  Omitted when
+        # absent, which leaves the agent's existing task_id fallback (and
+        # therefore today's one-turn behaviour) exactly as it was.
+        if session_id:
+            payload["session_id"] = str(session_id)
 
         try:
             await self._observer.publish(
