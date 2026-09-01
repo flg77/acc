@@ -9,6 +9,21 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
+## [0.10.2] — 2026-09-01
+
+### Fixed
+
+- **`acc-pkg install` / `verify` now pass the sigstore bundle in keyless mode.**
+  `verify_pkg()` already used `cosign verify-blob --bundle` when handed a bundle,
+  but the CLI never discovered or forwarded it: `install` only defaulted
+  `--signature` to `<pkg>.sig` and `verify` required it, so both handed cosign a
+  detached signature in keyless mode — which cosign refuses (*"provide a key …
+  or a bundle with --bundle"*). Keyless verification of a signed catalog package
+  could therefore never succeed via the CLI, even though the bundle sat next to
+  the `.sig` and verified fine. The CLI now auto-discovers `<pkg>.bundle` (and
+  accepts an explicit `--bundle`), and the signing-floor check is satisfied by
+  either a detached signature or a bundle. Keypair mode is unchanged.
+
 ## [0.10.1] — 2026-08-31
 
 ### Fixed
