@@ -189,11 +189,18 @@ def _cmd_install(args: argparse.Namespace, out: _Output) -> int:
     # operator explicitly waives it.  The CLI is the only seam that
     # exposes the override; programmatic ``install()`` doesn't have one.
     sig_path = Path(args.signature) if args.signature else _infer_sig(pkg)
+    bundle_path = Path(args.bundle) if args.bundle else _infer_bundle(pkg)
     if not args.allow_unsigned:
-        if sig_path is None or not sig_path.is_file():
+        have_sig = sig_path is not None and sig_path.is_file()
+        have_bundle = bundle_path is not None and bundle_path.is_file()
+        # The floor is satisfied by EITHER a detached .sig OR a sigstore
+        # bundle — keyless verification uses the bundle, and a publisher may
+        # ship the bundle alone.  verify_pkg picks --bundle over --signature.
+        if not have_sig and not have_bundle:
             print(
-                f"error: signature not found (looked at {sig_path}); "
-                "supply --signature or pass --allow-unsigned (audit-logged)",
+                f"error: no signature found (looked at {sig_path} and "
+                f"{bundle_path}); supply --signature/--bundle or pass "
+                "--allow-unsigned (audit-logged)",
                 file=sys.stderr,
             )
             return EXIT_SIGNATURE
@@ -217,6 +224,7 @@ def _cmd_install(args: argparse.Namespace, out: _Output) -> int:
         try:
             verify_pkg(
                 pkg, sig_path, signer,
+                bundle_path=bundle_path if have_bundle else None,
                 attestations_path=attestations_path,
                 ec_policy_path=ec_policy_path,
             )
@@ -280,6 +288,17 @@ def _infer_sig(pkg: Path) -> Path | None:
     return sig
 
 
+def _infer_bundle(pkg: Path) -> Path:
+    """Default sigstore-bundle lookup: ``<pkg>.bundle`` next to the package.
+
+    Keyless verification needs the bundle (signature + cert + Rekor entry);
+    a detached ``.sig`` alone makes cosign refuse.  Catalogs publish the
+    bundle next to the ``.sig``, so the CLI discovers it here the same way
+    ``_infer_sig`` discovers the detached signature.
+    """
+    return pkg.parent / (pkg.name + ".bundle")
+
+
 # ---------------------------------------------------------------------------
 # verify (standalone)
 # ---------------------------------------------------------------------------
@@ -287,7 +306,9 @@ def _infer_sig(pkg: Path) -> Path | None:
 
 def _cmd_verify(args: argparse.Namespace, out: _Output) -> int:
     pkg = Path(args.package).resolve()
-    sig = Path(args.signature).resolve()
+    sig = Path(args.signature).resolve() if args.signature else _infer_sig(pkg)
+    bundle = Path(args.bundle).resolve() if args.bundle else _infer_bundle(pkg)
+    have_bundle = bundle is not None and bundle.is_file()
     if not (args.key or (args.issuer and args.subject)):
         print(
             "error: --key OR (--issuer + --subject) required",
@@ -304,6 +325,7 @@ def _cmd_verify(args: argparse.Namespace, out: _Output) -> int:
     try:
         result = verify_pkg(
             pkg, sig, signer,
+            bundle_path=bundle if have_bundle else None,
             attestations_path=attestations_path,
             ec_policy_path=ec_policy_path,
         )
@@ -597,6 +619,9 @@ def _build_parser() -> argparse.ArgumentParser:
     i = sub.add_parser("install", help="install a .accpkg")
     i.add_argument("package", help="path to the .accpkg file")
     i.add_argument("--signature", help="path to detached signature (default: <pkg>.sig)")
+    i.add_argument("--bundle",
+                   help="path to sigstore bundle for keyless verify "
+                        "(default: <pkg>.bundle)")
     i.add_argument("--key", help="cosign public-key PEM path (keypair mode)")
     i.add_argument("--issuer", help="OIDC issuer (keyless mode)")
     i.add_argument("--subject", help="OIDC subject regex (keyless mode)")
@@ -611,7 +636,12 @@ def _build_parser() -> argparse.ArgumentParser:
     # verify
     v = sub.add_parser("verify", help="verify a .accpkg signature without installing")
     v.add_argument("package", help="path to the .accpkg file")
-    v.add_argument("--signature", required=True, help="path to detached signature")
+    v.add_argument("--signature",
+                   help="path to detached signature (default: <pkg>.sig; "
+                        "keypair mode)")
+    v.add_argument("--bundle",
+                   help="path to sigstore bundle for keyless verify "
+                        "(default: <pkg>.bundle)")
     v.add_argument("--key", help="cosign public-key PEM path (keypair mode)")
     v.add_argument("--issuer", help="OIDC issuer (keyless mode)")
     v.add_argument("--subject", help="OIDC subject regex (keyless mode)")

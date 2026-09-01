@@ -134,6 +134,66 @@ def test_cli_install_happy(pkg_paths, autoroot, capsys):
     assert payload["was_already_installed"] is False
 
 
+def _recording_cosign():
+    """Cosign mock that records the argv cosign was invoked with.
+
+    Returns ``(patch_which, patch_run, calls)`` where ``calls`` collects each
+    cosign argv list — so a test can assert the CLI passed ``--bundle`` in
+    keyless mode instead of the detached ``--signature`` cosign rejects.
+    """
+    calls: list[list[str]] = []
+
+    def _run(cmd, *a, **kw):
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="OK\n", stderr="")
+
+    return (
+        patch("acc.pkg.verify.shutil.which", return_value="/fake/cosign"),
+        patch("acc.pkg.verify.subprocess.run", side_effect=_run),
+        calls,
+    )
+
+
+def test_cli_install_keyless_discovers_and_passes_bundle(pkg_paths, autoroot, capsys):
+    """Regression (keyless CLI): install must auto-discover ``<pkg>.bundle`` and
+    hand cosign ``--bundle`` — a detached ``.sig`` alone makes keyless cosign
+    refuse ('provide a key ... or a bundle with --bundle'). See acc-spearhead#92
+    for the verify_pkg fix; this pins the CLI wiring that feeds it the bundle."""
+    _, pkg, _sig, _pub = pkg_paths
+    bundle = pkg.parent / (pkg.name + ".bundle")
+    bundle.write_text('{"base64Signature":"x","cert":"y","rekorBundle":{}}', encoding="utf-8")
+    p_which, p_run, calls = _recording_cosign()
+    with p_which, p_run:
+        rc = main([
+            "--json", "install", str(pkg),
+            "--issuer", "https://token.actions.githubusercontent.com",
+            "--subject", r"^https://github\.com/flg77/acc-ecosystem/",
+        ])
+    assert rc == EXIT_OK
+    assert calls, "cosign was never invoked"
+    argv = calls[0]
+    assert "--bundle" in argv, f"keyless install dropped --bundle: {argv}"
+    assert argv[argv.index("--bundle") + 1] == str(bundle.resolve())
+    assert "--signature" not in argv, "cosign rejects --signature alongside --bundle"
+
+
+def test_cli_verify_keyless_discovers_bundle_without_signature(pkg_paths, capsys):
+    """Regression: standalone ``verify`` in keyless mode needs no --signature —
+    it discovers ``<pkg>.bundle`` and passes it to cosign."""
+    _, pkg, _sig, _pub = pkg_paths
+    bundle = pkg.parent / (pkg.name + ".bundle")
+    bundle.write_text('{"base64Signature":"x","cert":"y","rekorBundle":{}}', encoding="utf-8")
+    p_which, p_run, calls = _recording_cosign()
+    with p_which, p_run:
+        rc = main([
+            "--json", "verify", str(pkg),
+            "--issuer", "https://token.actions.githubusercontent.com",
+            "--subject", r"^https://github\.com/flg77/acc-ecosystem/",
+        ])
+    assert rc == EXIT_OK
+    assert calls and "--bundle" in calls[0]
+
+
 def test_cli_install_idempotent_second_run(pkg_paths, autoroot, capsys):
     _, pkg, sig, pub = pkg_paths
     p_which, p_run = _mock_cosign()
