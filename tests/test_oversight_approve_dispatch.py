@@ -2,9 +2,11 @@
 
 Regression guard for a silent prod-only dead end found live on lighthouse.
 
-In prod (``ACC_OPERATOR_MODE`` unset or ``prod``) an INFUSE proposal is never
-auto-executed — ``decide_dispatch`` routes it to the oversight queue so a human
-approves installing code. The agent caches the proposal in Redis under the
+Under ASK_PERMISSIONS an INFUSE proposal is queued -- ``decide_dispatch``
+routes it to the oversight queue so the operator is asked. (Until
+`20260902-assistant-autonomy-prompt-pane-approvals` 1.1 this was every mode in
+prod; AUTO / ACCEPT_EDITS now execute, so the queue branch is exercised by
+ASK_PERMISSIONS alone.) The agent caches the proposal in Redis under the
 ``oversight_id`` and, on OVERSIGHT_DECISION APPROVE, looks it up and dispatches.
 
 Both the cache write and the lookup read ``self.backends.working_memory`` — an
@@ -105,18 +107,12 @@ class TestSyncClientNotAwaited:
         )
 
 
-class TestInfuseStillRequiresApproval:
-    """The fix must not turn the governance gate into auto-execute."""
+class TestInfuseReachesTheQueueUnderAskPermissions:
+    """The queue branch this file guards is still reachable."""
 
-    def test_infuse_queues_in_prod_even_in_auto(self):
-        assert decide_dispatch("AUTO", PROPOSAL_INFUSE, operator_mode="prod") == DISPATCH_QUEUE
+    def test_infuse_queues_under_ask_permissions(self):
+        assert decide_dispatch("ASK_PERMISSIONS", PROPOSAL_INFUSE) == DISPATCH_QUEUE
 
-    def test_infuse_queues_when_operator_mode_unset(self):
-        # _operator_mode_env() defaults to 'prod' — unset must NOT mean dev.
-        assert decide_dispatch("AUTO", PROPOSAL_INFUSE, operator_mode=None) == DISPATCH_QUEUE
-
-    def test_dev_mode_auto_executes_infuse_in_auto(self):
-        assert decide_dispatch("AUTO", PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_EXECUTE
-
-    def test_dev_mode_still_queues_outside_auto(self):
-        assert decide_dispatch("ASK_PERMISSIONS", PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_QUEUE
+    def test_infuse_executes_in_auto_regardless_of_operator_mode(self):
+        for om in ("prod", "dev", None):
+            assert decide_dispatch("AUTO", PROPOSAL_INFUSE, operator_mode=om) == DISPATCH_EXECUTE

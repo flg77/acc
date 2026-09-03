@@ -9,6 +9,145 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
+## [0.11.0] — 2026-09-03
+
+### Changed
+
+- **The assistant's own prompt says what is actually asked.**
+  `roles/assistant/role.yaml` no longer tells the model that infusion
+  "ALWAYS routes through the Compliance queue" or that "HIGH-risk skills are
+  oversight-gated"; it now states the rule the runtime enforces since D-011:
+  a curated infuse / spawn / route executes under `AUTO` / `ACCEPT_EDITS`
+  (an unsigned pack is refused), system access and acting in the operator's
+  name are asked in the Prompt pane, an ungranted skill is asked as an
+  escalation, and the model should give a one-line reason so the operator
+  can decide. Reasoning-affecting role edit — see the PR for the bench run.
+  Also: `docs/WORKFLOW_infusion_to_prompt.md` §3 (the spawn path and where
+  the decision is made) and `acc/tui/help/prompt.md` (the permission request,
+  keys, outcome lines, `/done`).
+  `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals` 1.6.
+
+### Added
+
+- **Outcomes and continuation replies land in the Prompt thread.** What
+  became of a proposal was a log line in a container. The agents now stamp
+  their outcome notices (`infuse_completed`, `proposal_dispatch_failed`) with
+  `ASSISTANT_PROPOSAL_OUTCOME`, and the arbiter publishes a `reconcile_result`
+  (assigned / unmet) after a reconcile that did or could not do something; the
+  TUI observer keeps them on the snapshot and the Prompt pane renders each
+  once as a `system` line — *"✓ installed @acc/redhat-sre-roles@0.1.0"*,
+  *"✓ spawned product_security_advisor → worker-00"*, *"✗ spawn …: no dormant
+  worker — raise `worker_pool` … or run `./acc-deploy.sh apply
+  worker-pool`"*. After a reply the pane **holds the thread**: a later
+  TASK_COMPLETE on the same task id (the infuse continuation) is delivered
+  through a new follow-up listener registry on the observer and appended under
+  the originating exchange (`↩`), instead of being dropped as "already
+  received". The thread is released on the next send or `/done`.
+  `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals` 1.5.
+
+- **The permission request lives in the Prompt pane.** The 044 B8 gate-card
+  region is now a focusable **PermissionRequest**: when a gate arrives it takes
+  focus (the pop-up, refitted to the pane), shows one request per originating
+  reply — every step with the assistant's own rationale and the operator's
+  goal — and offers numbered options by what it is: a proposal batch
+  (`1 approve all · 2 reject all · a/d this row`), a capability gate
+  (`1 allow once · 2 allow for this task · 3 deny`), an escalation (`1 allow
+  for this task · 2 deny`), a publication (`1 approve · 2 reject`). HIGH /
+  CRITICAL approvals take the key twice (inline confirm). `Esc` leaves
+  everything pending and hands focus back; `Ctrl+G` returns; `r` prefills
+  `/oversight reject <id> ` for a reason. "Allow for this task" is a pane-held
+  grant keyed `(task, kind, target)`; later matching gates resolve themselves
+  with reason `allowed-for-task` — still a row. Every option posts the same
+  `_OversightAction` as Compliance, which keeps the record. `/oversight
+  pending|approve|reject` is wired in the pane. The observer now routes the
+  assistant's `ASSISTANT_PROPOSAL` payload (stamped with a `signal_type`) onto
+  the snapshot so the *why* reaches the pane. `ACC_PROMPT_PERMISSION_REGION=0`
+  degrades to the plain card.
+  `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals` 1.4.
+
+- **An off-role skill or MCP tool is now a question, not a bare refusal.**
+  When the enforcing A-017 / A-018 guard would refuse an invocation on the
+  role's side (not in `allowed_skills` / `allowed_mcps`, a missing
+  `requires_action`, above the role's risk ceiling) and an oversight queue is
+  present, the dispatcher submits an `ESCALATION …` row naming the missing
+  grant and blocks on it; on APPROVE the role is widened for **that one call**
+  (a `model_copy` — the role definition is untouched) and the call runs
+  without a second category question. REJECT, EXPIRED, headless and "no
+  queue" all still refuse. A manifest's own `denied_tools` sandbox is never
+  escalated. Operator decision 2026-09-02 (D-011).
+  `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals` 1.2b.
+
+- **Gate categories: system access and acting-on-behalf are asked under
+  `AUTO`.** Two optional flags on skill and MCP manifests, `system_access`
+  and `acts_on_behalf`, orthogonal to `risk_level`; a manifest that declares
+  neither inherits from a name table (`shell`, `exec`, `fs_write`, `deploy`…
+  / `send`, `post`, `publish`, `mail`…) so a third-party skill cannot escape
+  by omission, and a declared `false` opts out. `should_gate_invocation`
+  gates either category in `AUTO` and `ACCEPT_EDITS` (CRITICAL and
+  `ASK_PERMISSIONS` unchanged). The oversight row leads with the category
+  (`SYSTEM-ACCESS skill shell_exec: …`) and carries the manifest's own risk
+  instead of a blanket CRITICAL. Declared on `shell_exec`, `python_exec`,
+  `fs_write` (system access) and `telegram_send`, `slack_post`,
+  `mattermost_post` (acts on behalf); `google_workspace` tool names such as
+  `gmail_send` fall to the name table. **Behaviour change for the
+  assistant:** `shell_exec` / `python_exec` were admitted silently under
+  `AUTO` at HIGH; they are now asked — in the Prompt pane once 1.4 lands, in
+  Compliance until then.
+  `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals` 1.2.
+
+- **Auto-executed proposals are tracked as `AUTO_APPROVED` oversight rows.**
+  Since the dispatch change below, a curated infuse / spawn / route under
+  `AUTO` or `ACCEPT_EDITS` left only a log line. Now the agent's EXECUTE branch
+  records a row on the oversight queue that is born resolved — status
+  `AUTO_APPROVED`, `approver_id = policy:<mode>`, `outcome` `dispatched` /
+  `dispatch_failed` — and a `KIND_OVERSIGHT` tracelog record that outlives the
+  queue's TTL. The queue keeps a capped, newest-first **decided list** (human
+  and policy alike; decided rows now live 24 h in Redis instead of the gate
+  window), the arbiter HEARTBEAT carries it as `oversight_recent_items`, and
+  the Compliance pane gains a **DECISION HISTORY** table under the pending
+  queue with the approver in a `By` column. No `OVERSIGHT_DECISION` is
+  published for an auto row (that signal would re-dispatch on every agent),
+  and the reward harness ignores `policy:*` approvers so a mode cannot score
+  its own decisions as operator praise.
+  `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals` 1.3.
+
+### Changed
+
+- **`AUTO` / `ACCEPT_EDITS` now execute a curated infuse and a spawn; only
+  `ASK_PERMISSIONS` asks.** `PROPOSAL_INFUSE` leaves `_NEVER_AUTOEXEC`
+  (`acc/assistant_proposal.py`); `SPAWN` and `INFUSE` join `ROUTE` in the
+  `ACCEPT_EDITS` auto-execute set; `ROLE_UPDATE` (changes what a role *may
+  do*) still queues below `AUTO`; `PUBLISH` and `ROLE_GAP` are unchanged. This
+  deliberately reverses the Stage 1.4 decision ("INFUSE always routes through
+  the Compliance pane", `7f49a9e`) and retires its dev-mode escape: the trust
+  anchor is the catalog's `required_signer` verified at install, and a human
+  click cannot make an unsigned pack signed — a signing-floor failure is now
+  **refused** (`proposal_dispatch_failed` notice with the installer's reason),
+  never queued. `decide_dispatch` keeps its `operator_mode` kwarg for
+  call-site compatibility and ignores it; `allow_unsigned` stays dev-only at
+  the installer. Operator direction 2026-09-02; D-011 in `docs/DECISIONS.md`;
+  `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals`
+  Phase 1.1. Tracking of auto-executed proposals as `AUTO_APPROVED` rows is
+  the **Added** entry above (1.3).
+
+### Fixed
+
+- **Approvals reach the Prompt pane, and an approved spawn actually spawns.**
+  Lighthouse 2026-09-02: the assistant proposed `@acc/redhat-sre-roles`, the
+  operator typed "approved" in the Prompt pane, then approved both gates in
+  Compliance — and nothing happened, in `ASK_PERMISSIONS` and in `AUTO`. Two
+  independent breaks. (1) `ACCTUIApp._apply_snapshot` never listed the Prompt
+  screen, so the inline GATE CARD / `/allow` / "approved"-resolves-the-gate
+  path from proposal 044 B8 never received a snapshot: no card, "Clusters: 0",
+  and the operator's "approved" went to the LLM as a prompt. (2) The arbiter's
+  `_on_reconcile` discarded the `collective.reconcile` payload that named the
+  approved role and re-read `collective.yaml` — which the agent containers do
+  not mount — so desired state was always empty ("0 assigning", no error). The
+  arbiter now records trigger-named slots and merges them into the spec on
+  every reconcile; a bare `{}` nudge stays inert. Follow-up design (one review
+  per reply in the pane, outcomes reported into the thread):
+  `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals`.
+
 ## [0.10.2] — 2026-09-01
 
 ### Fixed

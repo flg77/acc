@@ -16,6 +16,10 @@ bot daemon and reuse the same wire shape (TASK_ASSIGN with optional
 ├─────────────────────────────────────────────────┤
 │ Target: <select role>  Agent id: <input>         │  compact
 ├─────────────────────────────────────────────────┤
+│ ⛔ approval needed — 2 steps from assistant      │  only while a
+│   ▸ 1. PROPOSE_INFUSE  Install @acc/…  [HIGH]    │  request is
+│   1 approve all · 2 reject all · Esc later       │  pending
+├─────────────────────────────────────────────────┤
 │                                                  │
 │   TRANSCRIPT (operator + agent + traces)         │  centre, flex
 │                                                  │
@@ -32,8 +36,8 @@ bot daemon and reuse the same wire shape (TASK_ASSIGN with optional
 | **operator** | cyan header | Your prompt as submitted |
 | **progress** | dim blue arrow `→` | Live `step N/M — <step_label>` lines as the agent emits TASK_PROGRESS.  Tail confidence trend marker: `↑` rising / `→` stable / `↓` falling.  See "live thinking" below. |
 | **trace** | one line per dispatched skill/MCP tool — `✓ skill:echo` (green) or `✗ mcp:fs.read  A-018 blocked` (red) | What the agent *did* on its way to the reply |
-| **agent** | green header (or red if blocked) | The agent's final response, latency in the header |
-| **system** | yellow header | Send/receive errors and timeouts |
+| **agent** | green header (or red if blocked) | The agent's final response, latency in the header.  A reply prefixed `↩` is a *continuation* on the same thread (e.g. the assistant carrying on after an infuse it proposed was installed). |
+| **system** | yellow header | Send/receive errors and timeouts — and outcomes: `✓ installed @acc/…`, `✓ spawned <role> → worker-00`, `✗ spawn <role>: no dormant worker — …`, `✓ allowed gate …` |
 
 ## Live "thinking" (TASK_PROGRESS streaming)
 
@@ -166,7 +170,38 @@ and stops listening.
 |--------|-------|----------|
 | Send | "Send" button | `Ctrl+S` |
 | Clear history | "Clear history" button | `Ctrl+L` |
+| Return to a pending permission request | — | `Ctrl+G` |
 | Navigate to other screens | NavBar buttons | `1`–`7` |
+
+## Approvals — the permission request
+
+When something needs your yes, it is asked **here**, not in Compliance
+(Compliance keeps the record and the history).  The request region above
+the transcript takes focus when it appears and offers numbered options by
+what it is:
+
+| Request | Options |
+|---------|---------|
+| The assistant proposed steps (infuse / spawn / route …) — one request per reply, each step with its reason | `1` approve all · `2` reject all · `a`/`d` the highlighted row · `↑`/`↓` |
+| A capability that reaches the host or acts in your name (`SYSTEM-ACCESS skill shell_exec …`, `ACTS-ON-BEHALF …`, `CRITICAL …`) | `1` allow once · `2` allow for this task · `3` deny |
+| A skill the role is not granted (`ESCALATION …`) | `1` allow for this task · `2` deny |
+| A publication / role-gap finding | `1` approve · `2` reject |
+
+* HIGH / CRITICAL approvals ask for the same key **twice**.
+* `r` prefills `/oversight reject <id> ` so you can type a reason.
+* `Esc` leaves everything pending and returns you to the input; `Ctrl+G`
+  brings the request back.  Typing a bare "yes" / "approved" also resolves
+  a single pending gate.  `/allow [id]`, `/disallow [id]`,
+  `/oversight pending | approve <id> | reject <id> <reason>` work too.
+* "Allow for this task" is remembered for the rest of the current task:
+  the next matching call resolves itself (still a Compliance row, reason
+  `allowed-for-task`).
+* What you do **not** get asked under `AUTO` / `ACCEPT_EDITS`: installing a
+  curated pack, spawning or routing to a specialist — those execute and
+  show up as `AUTO_APPROVED` rows in Compliance → DECISION HISTORY.
+* `/done` releases the current thread (no more continuation replies land
+  under it); a new prompt does the same.
+* `ACC_PROMPT_PERMISSION_REGION=0` falls back to the plain gate card.
 
 ## History pane
 

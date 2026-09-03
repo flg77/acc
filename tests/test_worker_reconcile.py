@@ -231,6 +231,110 @@ class TestBuildPayloads:
 
 
 # ---------------------------------------------------------------------------
+# The reconcile trigger carries desired state (approved PROPOSE_SPAWN)
+# ---------------------------------------------------------------------------
+#
+# ``_dispatch_spawn`` publishes ``{"trigger": "assistant_proposal", "role",
+# "cluster_id"}`` and the arbiter used to discard that payload and re-read
+# collective.yaml — which the agent containers do not mount.  Approving a
+# spawn therefore logged "0 assigning" and nothing ever came up.
+
+
+def _arbiter(spec_on_disk, *, roster):
+    """Minimal stand-in carrying the real reconcile methods under test."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from acc.agent import Agent
+
+    priv, _pub = generate_keypair_b64()
+    a = SimpleNamespace(
+        agent_id="arbiter-1",
+        config=SimpleNamespace(
+            agent=SimpleNamespace(collective_id="sol-test"),
+            security=SimpleNamespace(arbiter_signing_key=priv),
+        ),
+        backends=SimpleNamespace(signaling=MagicMock(publish=AsyncMock())),
+        _worker_roster={r.agent_id: r for r in roster},
+        _proposed_agents={},
+        _load_collective_spec=lambda: spec_on_disk,
+        _role_definition_for=lambda n: {"purpose": "p", "version": "0.1.0"},
+    )
+    for name in (
+        "_absorb_reconcile_trigger", "_merge_proposed_agents",
+        "_run_worker_reconcile", "_publish_reconcile_result",
+    ):
+        setattr(a, name, getattr(Agent, name).__get__(a))
+    return a
+
+
+def _published_roles(arb) -> list[tuple[str, str]]:
+    """ROLE_ASSIGN publishes only -- the 1.5 ``reconcile_result`` notice
+    rides the same mock and is not an assignment."""
+    return [
+        (call.args[1]["target_agent_id"], call.args[1]["role_definition"]["name"])
+        for call in arb.backends.signaling.publish.await_args_list
+        if "target_agent_id" in call.args[1]
+    ]
+
+
+class TestReconcileTriggerPayload:
+    def test_spawn_trigger_assigns_without_collective_yaml(self):
+        """The production case: no collective.yaml in the arbiter container."""
+        import asyncio
+
+        arb = _arbiter(None, roster=_dormant(2))
+        arb._absorb_reconcile_trigger({
+            "trigger": "assistant_proposal", "proposal_id": "p-1",
+            "role": "product_security_advisor", "cluster_id": "default",
+        })
+        asyncio.run(arb._run_worker_reconcile())
+
+        assert _published_roles(arb) == [("worker-00", "product_security_advisor")]
+
+    def test_spawn_trigger_appends_to_collective_yaml_slots(self):
+        import asyncio
+
+        spec = _spec([AgentSpec(role="analyst", replicas=1)])
+        arb = _arbiter(spec, roster=_dormant(2))
+        arb._absorb_reconcile_trigger({"role": "reviewer", "cluster_id": ""})
+        asyncio.run(arb._run_worker_reconcile())
+
+        assert _published_roles(arb) == [
+            ("worker-00", "analyst"), ("worker-01", "reviewer"),
+        ]
+        # The on-disk spec object itself is left untouched.
+        assert [a.role for a in spec.agents] == ["analyst"]
+
+    def test_bare_nudge_records_nothing(self):
+        """The runbook's manual `nats pub ... '{}'` must stay a pure nudge."""
+        import asyncio
+
+        arb = _arbiter(None, roster=_dormant(1))
+        arb._absorb_reconcile_trigger({})
+        arb._absorb_reconcile_trigger({"trigger": "assistant_proposal", "role": ""})
+        asyncio.run(arb._run_worker_reconcile())
+
+        assert arb._proposed_agents == {}
+        assert _published_roles(arb) == []
+
+    def test_reconcile_is_idempotent_once_worker_promoted(self):
+        """Re-triggering after promotion must not assign a second worker."""
+        import asyncio
+
+        arb = _arbiter(None, roster=_dormant(2))
+        arb._absorb_reconcile_trigger({"role": "reviewer", "cluster_id": ""})
+        asyncio.run(arb._run_worker_reconcile())
+        # worker-00 promoted itself and now heartbeats ACTIVE as reviewer.
+        arb._worker_roster["worker-00"] = RosterEntry(
+            agent_id="worker-00", role="reviewer", state="ACTIVE",
+        )
+        asyncio.run(arb._run_worker_reconcile())
+
+        assert _published_roles(arb) == [("worker-00", "reviewer")]
+
+
+# ---------------------------------------------------------------------------
 # Signal subject + config field
 # ---------------------------------------------------------------------------
 

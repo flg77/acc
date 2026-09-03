@@ -259,6 +259,21 @@ class CollectiveSnapshot:
     #   submitted_at_ms, status.
     oversight_pending_items: list[dict] = field(default_factory=list)
 
+    # 1.3 -- decided oversight rows (APPROVED / REJECTED / EXPIRED /
+    # AUTO_APPROVED), newest first, from the arbiter's HEARTBEAT.  Adds
+    # resolved_at_ms, approver_id ("policy:<mode>" for auto rows), outcome.
+    oversight_recent_items: list[dict] = field(default_factory=list)
+
+    # 1.4 -- pending Assistant proposals by proposal_id (the full payload:
+    # kind, params, summary, rationale, goal_text, task_id).  A pending
+    # oversight row joins by ``item.task_id == proposal_id``.  FIFO-capped.
+    assistant_proposals: dict[str, dict] = field(default_factory=dict)
+
+    # 1.5 -- what became of proposals (infuse_completed /
+    # proposal_dispatch_failed / reconcile_result), oldest first, FIFO-capped.
+    # The Prompt pane renders each once as a system line in the thread.
+    assistant_outcomes: list[dict] = field(default_factory=list)
+
     # Signal flow log for CommunicationsScreen — FIFO-capped at 30
     signal_flow_log: list[dict] = field(default_factory=list)
 

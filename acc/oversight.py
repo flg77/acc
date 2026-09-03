@@ -55,10 +55,14 @@ class OversightItem:
     agent_id: str
     submitted_at_ms: int
     timeout_ms: int
-    status: str = "PENDING"  # PENDING | APPROVED | REJECTED | EXPIRED
+    status: str = "PENDING"  # PENDING | APPROVED | REJECTED | EXPIRED | AUTO_APPROVED
     approver_id: str = ""
     rejection_reason: str = ""
     resolved_at_ms: int = 0
+    # `20260902-assistant-autonomy-prompt-pane-approvals` 1.3 -- on an
+    # AUTO_APPROVED row, what the policy's execution did ("dispatched" /
+    # "dispatch_failed").  Empty on human-decided rows.
+    outcome: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +82,12 @@ class HumanOversightQueue:
 
     _KEY_ITEM = "acc:{cid}:oversight:{oid}"
     _KEY_PENDING_LIST = "acc:{cid}:oversight:pending"
+    # 1.3 -- decided items (human or policy) in resolution order, newest
+    # first, capped.  This is the history the Compliance pane renders; the
+    # pending set alone forgets a row the moment it is decided.
+    _KEY_DECIDED_LIST = "acc:{cid}:oversight:decided"
+    _DECIDED_KEEP = 50
+    _DECIDED_TTL_S = 24 * 3600
 
     def __init__(
         self,
@@ -142,6 +152,75 @@ class HumanOversightQueue:
         )
         return oversight_id
 
+    async def record_auto_approved(
+        self,
+        task_id: str,
+        risk_level: str,
+        summary: str,
+        role_id: str,
+        *,
+        policy: str,
+        outcome: str = "",
+    ) -> str:
+        """Record a proposal the operating mode executed without asking.
+
+        `20260902-assistant-autonomy-prompt-pane-approvals` 1.3 -- "tracked,
+        not asked".  The row is born resolved: status ``AUTO_APPROVED``,
+        ``approver_id`` = ``policy:<mode>`` so the history names the policy
+        as the approver, never a person.  It is never PENDING, so no gate
+        card / queue row appears and nothing waits on it.
+
+        Returns the ``oversight_id`` of the recorded row.
+        """
+        oversight_id = str(uuid.uuid4())
+        now_ms = int(time.time() * 1000)
+        item = OversightItem(
+            oversight_id=oversight_id,
+            task_id=task_id,
+            risk_level=risk_level,
+            summary=summary,
+            role_id=role_id,
+            agent_id=self._agent_id,
+            submitted_at_ms=now_ms,
+            timeout_ms=now_ms,
+            status="AUTO_APPROVED",
+            approver_id=f"policy:{policy}",
+            resolved_at_ms=now_ms,
+            outcome=outcome,
+        )
+        await self._save(item)
+        await self._push_decided(oversight_id)
+        logger.info(
+            "oversight: auto-approved oversight_id=%s task_id=%s policy=%s outcome=%s",
+            oversight_id, task_id, policy, outcome,
+        )
+        return oversight_id
+
+    async def recent_decisions(self, limit: int = 20) -> list[OversightItem]:
+        """Decided items (APPROVED / REJECTED / EXPIRED / AUTO_APPROVED),
+        newest first, at most *limit*.  The Compliance pane's history."""
+        if self._redis is not None:
+            try:
+                key = self._KEY_DECIDED_LIST.format(cid=self._cid)
+                ids = await _call_redis(self._redis.lrange, key, 0, max(limit - 1, 0))
+                items: list[OversightItem] = []
+                for oid in ids or []:
+                    item = await self._load(
+                        oid.decode() if isinstance(oid, bytes) else oid
+                    )
+                    if item is not None and item.status != "PENDING":
+                        items.append(item)
+                return items
+            except Exception as exc:
+                logger.error("oversight: Redis recent query failed: %s", exc)
+
+        decided = [
+            item for item in self._in_process.values()
+            if item.status != "PENDING"
+        ]
+        decided.sort(key=lambda it: it.resolved_at_ms, reverse=True)
+        return decided[:limit]
+
     async def approve(self, oversight_id: str, approver_id: str) -> None:
         """Mark an oversight item as approved.
 
@@ -158,6 +237,7 @@ class HumanOversightQueue:
         item.resolved_at_ms = int(time.time() * 1000)
         await self._save(item)
         await self._remove_from_pending(oversight_id)
+        await self._push_decided(oversight_id)
         logger.info("oversight: approved oversight_id=%s approver=%s", oversight_id, approver_id)
 
     async def reject(
@@ -180,6 +260,7 @@ class HumanOversightQueue:
         item.resolved_at_ms = int(time.time() * 1000)
         await self._save(item)
         await self._remove_from_pending(oversight_id)
+        await self._push_decided(oversight_id)
         logger.info("oversight: rejected oversight_id=%s reason=%s", oversight_id, reason)
 
     async def pending(self) -> list[OversightItem]:
@@ -210,6 +291,7 @@ class HumanOversightQueue:
                 item.resolved_at_ms = now_ms
                 await self._save(item)
                 await self._remove_from_pending(item.oversight_id)
+                await self._push_decided(item.oversight_id)
                 expired.append(item.oversight_id)
                 logger.warning(
                     "oversight: timeout expired oversight_id=%s task_id=%s",
@@ -286,9 +368,15 @@ class HumanOversightQueue:
         key = self._KEY_ITEM.format(cid=self._cid, oid=item.oversight_id)
         value = json.dumps(asdict(item))
 
+        # A decided row is history and must outlive the gate window; a
+        # pending row only needs to outlive its own timeout.
+        ttl = (
+            self._timeout_s * 2 if item.status == "PENDING"
+            else max(self._timeout_s * 2, self._DECIDED_TTL_S)
+        )
         if self._redis is not None:
             try:
-                await _call_redis(self._redis.set, key, value, ex=self._timeout_s * 2)
+                await _call_redis(self._redis.set, key, value, ex=ttl)
                 # Add to pending list if still pending
                 if item.status == "PENDING":
                     pkey = self._KEY_PENDING_LIST.format(cid=self._cid)
@@ -314,6 +402,17 @@ class HumanOversightQueue:
                 logger.error("oversight: Redis load failed: %s", exc)
 
         return self._in_process.get(oversight_id)
+
+    async def _push_decided(self, oversight_id: str) -> None:
+        if self._redis is None:
+            return  # in-process: recent_decisions() sorts the dict
+        try:
+            key = self._KEY_DECIDED_LIST.format(cid=self._cid)
+            await _call_redis(self._redis.lpush, key, oversight_id)
+            await _call_redis(self._redis.ltrim, key, 0, self._DECIDED_KEEP - 1)
+            await _call_redis(self._redis.expire, key, self._DECIDED_TTL_S)
+        except Exception as exc:
+            logger.error("oversight: Redis decided-list push failed: %s", exc)
 
     async def _remove_from_pending(self, oversight_id: str) -> None:
         if self._redis is not None:

@@ -94,6 +94,16 @@ def _compute_owasp_grades(
     return result
 
 
+# 1.3 -- DECISION HISTORY status rendering; AUTO_APPROVED is the row a policy
+# decided ("tracked, not asked"), so it gets its own colour.
+_HISTORY_STATUS_CELL = {
+    "AUTO_APPROVED": "[cyan]AUTO_APPROVED[/cyan]",
+    "APPROVED": "[green]APPROVED[/green]",
+    "REJECTED": "[dim]REJECTED[/dim]",
+    "EXPIRED": "[yellow]EXPIRED[/yellow]",
+}
+
+
 class ComplianceScreen(NavScreen):
     """Compliance and governance monitoring screen (REQ-TUI-023 – REQ-TUI-027)."""
 
@@ -112,6 +122,7 @@ class ComplianceScreen(NavScreen):
        being squeezed toward zero (the parent scrolls past that point). */
     ComplianceScreen #governance-layers { height: 1fr; min-height: 8; margin-top: 1; }
     ComplianceScreen .gov-table { height: auto; max-height: 10; }
+    ComplianceScreen #oversight-history-table { height: auto; max-height: 8; }
     """
 
     BINDINGS = [
@@ -252,6 +263,13 @@ class ComplianceScreen(NavScreen):
                         id="oversight-detail",
                     )
 
+                # 1.3 -- the history: decided rows, human and policy alike.
+                # AUTO_APPROVED rows are what "tracked, not asked" looks like.
+                yield Label(
+                    "DECISION HISTORY (recent)", classes="panel-label",
+                )
+                yield DataTable(id="oversight-history-table")
+
                 yield Label("OWASP VIOLATION LOG (last 50)", classes="panel-label")
                 with ScrollableContainer(id="violation-log-container"):
                     yield Static(id="violation-log")
@@ -280,6 +298,10 @@ class ComplianceScreen(NavScreen):
         # detail panel.
         oversight.add_columns(
             "ID", "Agent", "Risk", "Submitted", "Gate reason", "Status",
+        )
+        history = self.query_one("#oversight-history-table", DataTable)
+        history.add_columns(
+            "ID", "Agent", "Risk", "Resolved", "Gate reason", "Status", "By",
         )
         # PR-Z1c — whole-row cursor so the operator clearly sees which
         # item `a`/`r` will act on (matches the Ecosystem table feel).
@@ -741,6 +763,7 @@ class ComplianceScreen(NavScreen):
         self._render_owasp_table(snap)
         self._render_health_score(snap)
         self._render_oversight_queue(snap)
+        self._render_oversight_history(snap)
         self._render_pkg_proposals(snap)
         self._render_violation_log(snap)
         self._render_overlay_profiles(snap)
@@ -884,6 +907,48 @@ class ComplianceScreen(NavScreen):
         # placeholder so a stale prior selection doesn't mislead.
         if not self._pending_items_by_id:
             self._render_oversight_detail(None)
+
+    def _render_oversight_history(self, snap: "CollectiveSnapshot") -> None:
+        """Populate the DECISION HISTORY table from
+        ``snap.oversight_recent_items`` (1.3).  Newest first as the arbiter
+        serialised it; a row the policy decided shows ``policy:<mode>`` in
+        the By column, a human one the approver the surface sent."""
+        try:
+            table = self.query_one("#oversight-history-table", DataTable)
+        except Exception:  # not mounted yet
+            return
+        table.clear()
+        for item in snap.oversight_recent_items or []:
+            if not isinstance(item, dict):
+                continue
+            oid = str(item.get("oversight_id", ""))
+            if not oid:
+                continue
+            resolved_ms = int(item.get("resolved_at_ms") or 0)
+            ts_str = (
+                time.strftime("%H:%M:%S", time.localtime(resolved_ms / 1000.0))
+                if resolved_ms else "—"
+            )
+            summary_full = str(item.get("summary") or "")
+            summary_cell = (
+                summary_full[:40] + "…" if len(summary_full) > 40
+                else summary_full or "—"
+            )
+            status = str(item.get("status") or "")
+            outcome = str(item.get("outcome") or "")
+            status_cell = _HISTORY_STATUS_CELL.get(status, status)
+            if outcome == "dispatch_failed":
+                status_cell += " [red]✗[/red]"
+            table.add_row(
+                oid[:14],
+                str(item.get("agent_id", ""))[:16],
+                str(item.get("risk_level", "")),
+                ts_str,
+                summary_cell,
+                status_cell,
+                str(item.get("approver_id") or "—")[:18],
+                key=f"hist-{oid}",
+            )
 
     # ------------------------------------------------------------------
     # PR-H — master/detail context renderer

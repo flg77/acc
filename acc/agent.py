@@ -578,6 +578,11 @@ class Agent:
         # against live (dormant + active) workers.  Empty on every
         # non-arbiter agent (their reconcile subscription no-ops).
         self._worker_roster: dict[str, Any] = {}
+        # Desired slots that arrived on the `collective.reconcile` trigger
+        # itself (an approved / auto-executed PROPOSE_SPAWN) rather than
+        # from collective.yaml.  Keyed (role, cluster_id) -> replicas;
+        # merged into the spec on every reconcile.  Arbiter-only.
+        self._proposed_agents: dict[tuple[str, str], int] = {}
 
         # ACC-11: cached domain centroid from the most recent CENTROID_UPDATE
         # that carried a domain_centroid_vector.  Passed to CognitiveCore on
@@ -955,8 +960,9 @@ class Agent:
             )
             return
 
-        # ---- EXECUTE branch (AUTO + ACCEPT_EDITS-for-ROUTE) ----
+        # ---- EXECUTE branch (AUTO / ACCEPT_EDITS auto-execute set) ----
         for p in executed:
+            ok = False
             try:
                 ok = await dispatch_approved_proposal(
                     self.backends.signaling, p, self._redis,
@@ -970,6 +976,9 @@ class Agent:
                     "assistant_proposal: execute dispatch failed for %s",
                     getattr(p, "proposal_id", "?"),
                 )
+            # 1.3 -- tracked, not asked: the row the operator reads in
+            # Compliance history + the durable tracelog record.
+            await self._record_auto_approved(p, task_payload, ok)
 
         # ---- QUEUE branch (ASK_PERMISSIONS + ACCEPT_EDITS-for-structural) ----
         if queued:
@@ -1208,6 +1217,58 @@ class Agent:
         # Re-adding a delete would be harmless but misleading — the
         # payload is consumed at claim time, not at dispatch time.
 
+    async def _record_auto_approved(self, p, task_payload: dict, ok: bool) -> None:
+        """Record a proposal the operating mode executed without asking.
+
+        `20260902-assistant-autonomy-prompt-pane-approvals` 1.3.  Two
+        records, both best-effort: an ``AUTO_APPROVED`` row on the oversight
+        queue (``approver_id = policy:<mode>``) so the Compliance history and
+        the arbiter's heartbeat projection show it, and a ``KIND_OVERSIGHT``
+        tracelog record so it survives the queue's TTL.  No OVERSIGHT_DECISION
+        is published: that signal drives ``_handle_decision`` on every agent
+        and would dispatch the proposal a second time.
+        """
+        from acc.operating_modes import normalise  # noqa: PLC0415
+
+        mode = normalise(str(task_payload.get("operating_mode") or "AUTO"))
+        outcome = "dispatched" if ok else "dispatch_failed"
+        oversight_id = ""
+        queue = getattr(self, "_oversight_queue", None)
+        if queue is not None:
+            try:
+                oversight_id = await queue.record_auto_approved(
+                    task_id=p.proposal_id,
+                    risk_level=p.risk_level or "MEDIUM",
+                    summary=p.summary,
+                    role_id="assistant",
+                    policy=mode,
+                    outcome=outcome,
+                )
+            except Exception:
+                logger.exception(
+                    "assistant_proposal: AUTO_APPROVED record failed for %s",
+                    getattr(p, "proposal_id", "?"),
+                )
+        task_id = str(task_payload.get("task_id", "") or "")
+        if not task_id:
+            # No exchange to correlate with (a stub / a synthetic payload):
+            # the queue row above is the record; don't write an "unknown"
+            # session file.
+            return
+        try:
+            from acc import tracelog  # noqa: PLC0415
+
+            session_id = str(task_payload.get("session_id", "") or "") or task_id
+            tracelog.log_oversight(
+                session_id, task_id=task_id, oversight_id=oversight_id,
+                status="AUTO_APPROVED", approver_id=f"policy:{mode}",
+                kind=p.kind, summary=p.summary, outcome=outcome,
+                proposal_id=p.proposal_id,
+            )
+        except Exception:  # noqa: BLE001 -- tracing never perturbs the loop
+            logger.debug("assistant_proposal: tracelog oversight record failed",
+                         exc_info=True)
+
     async def _notify_proposal_dispatch_failed(
         self,
         collective_id: str,
@@ -1229,6 +1290,7 @@ class Agent:
             await self.backends.signaling.publish(
                 subject_assistant_proposal(collective_id),
                 {
+                    "signal_type": "ASSISTANT_PROPOSAL_OUTCOME",
                     "trigger": "proposal_dispatch_failed",
                     "oversight_id": oversight_id,
                     "kind": kind,
@@ -1505,7 +1567,26 @@ class Agent:
             # list, so an item gated on coding_agent-1 still shows up in
             # the operator's table even though the arbiter never saw it.
             oversight_pending_items: list[dict] = []
+            # 1.3 -- decided rows (human + policy) so the Compliance pane can
+            # show a history; the pending list forgets a row once decided.
+            oversight_recent_items: list[dict] = []
             if self._oversight_queue is not None:
+                try:
+                    for it in await self._oversight_queue.recent_decisions(limit=20):
+                        oversight_recent_items.append({
+                            "oversight_id": it.oversight_id,
+                            "task_id": it.task_id,
+                            "agent_id": it.agent_id,
+                            "risk_level": it.risk_level,
+                            "summary": it.summary[:200],
+                            "submitted_at_ms": it.submitted_at_ms,
+                            "resolved_at_ms": it.resolved_at_ms,
+                            "status": it.status,
+                            "approver_id": it.approver_id,
+                            "outcome": it.outcome,
+                        })
+                except Exception:
+                    logger.exception("oversight: recent serialisation failed")
                 try:
                     stress.oversight_pending_count = await self._oversight_queue.pending_count()
                     items = await self._oversight_queue.pending()
@@ -1569,6 +1650,7 @@ class Agent:
                 # Arbiter-only: full pending-item list for TUI rendering.
                 # Other roles publish [] (cheap, omitted on the wire).
                 "oversight_pending_items": oversight_pending_items,
+                "oversight_recent_items": oversight_recent_items,
                 # Personalization overlay summary (compact; {} when no overlay)
                 # → TUI Compliance "Role Overlay Profiles" panel.
                 "overlay_summary": self._overlay_summary(),
@@ -2750,10 +2832,20 @@ class Agent:
             )
 
         async def _on_reconcile(msg: object) -> None:
-            # The trigger payload is advisory — re-read collective.yaml
-            # ourselves so the desired state is always authoritative.
+            # collective.yaml stays authoritative for what it declares, but
+            # a trigger that NAMES a role (an approved PROPOSE_SPAWN) is a
+            # desired slot in its own right — the agent containers don't
+            # mount collective.yaml, so nothing else could carry it here.
             try:
-                await self._run_worker_reconcile()
+                data = json.loads(_payload_bytes(msg))
+            except (json.JSONDecodeError, TypeError):
+                data = {}
+            if isinstance(data, dict):
+                self._absorb_reconcile_trigger(data)
+            try:
+                await self._run_worker_reconcile(
+                    trigger=data if isinstance(data, dict) else None,
+                )
             except Exception:
                 logger.exception("worker_reconcile: run failed")
 
@@ -2801,12 +2893,17 @@ class Agent:
         except Exception as exc:
             logger.error("worker_reconcile: subscription error: %s", exc)
 
-    async def _run_worker_reconcile(self) -> None:
+    async def _run_worker_reconcile(self, trigger: dict | None = None) -> None:
         """Diff ``collective.yaml`` against the roster; publish signed
         ROLE_ASSIGN for each dormant worker that should be promoted.
 
         Best-effort and idempotent — running twice is a no-op once
         the promoted workers report ACTIVE on their next heartbeat.
+
+        1.5: when the run assigns or leaves something unmet, or when
+        *trigger* names a role (an assistant proposal), publish a
+        ``reconcile_result`` outcome so the Prompt pane can say what
+        happened — ``unmet`` was a log line in the arbiter container.
         """
         from acc.worker_reconcile import (  # noqa: PLC0415
             build_role_assign_payloads,
@@ -2823,7 +2920,7 @@ class Agent:
             )
             return
 
-        spec = self._load_collective_spec()
+        spec = self._merge_proposed_agents(self._load_collective_spec())
         if spec is None:
             logger.info("worker_reconcile: no collective.yaml — nothing to do")
             return
@@ -2838,6 +2935,7 @@ class Agent:
             len(result.assignments),
             len(result.unmet),
         )
+        await self._publish_reconcile_result(result, trigger)
         if not result.assignments:
             return
 
@@ -2858,6 +2956,71 @@ class Agent:
                     "worker_reconcile: publish ROLE_ASSIGN failed for %s",
                     payload.get("target_agent_id"),
                 )
+
+    async def _publish_reconcile_result(self, result, trigger: dict | None) -> None:
+        """Best-effort ``reconcile_result`` outcome (1.5).  Silent for a bare
+        manual nudge that had nothing to do."""
+        named_role = bool(trigger and str(trigger.get("role") or "").strip())
+        if not (result.assignments or result.unmet or named_role):
+            return
+        try:
+            from acc.signals import subject_assistant_proposal  # noqa: PLC0415
+            await self.backends.signaling.publish(
+                subject_assistant_proposal(self.config.agent.collective_id),
+                {
+                    "signal_type": "ASSISTANT_PROPOSAL_OUTCOME",
+                    "trigger": "reconcile_result",
+                    "proposal_id": str((trigger or {}).get("proposal_id") or ""),
+                    "role": str((trigger or {}).get("role") or ""),
+                    "assigned": [
+                        {"role": a.role, "target_agent_id": a.target_agent_id,
+                         "cluster_id": a.cluster_id}
+                        for a in result.assignments
+                    ],
+                    "unmet": list(result.unmet),
+                    "already_active": int(result.already_satisfied),
+                    "ts": time.time(),
+                },
+            )
+        except Exception:
+            logger.debug("worker_reconcile: result notice publish failed", exc_info=True)
+
+    def _absorb_reconcile_trigger(self, data: dict) -> None:
+        """Record the desired slot a ``collective.reconcile`` trigger names.
+
+        ``_dispatch_spawn`` publishes ``{"trigger": "assistant_proposal",
+        "role": ..., "cluster_id": ...}`` once per approved (or AUTO)
+        PROPOSE_SPAWN — the exactly-once claim upstream means one
+        approval bumps the slot once.  A bare ``{}`` nudge (the runbook's
+        manual re-trigger) records nothing.
+        """
+        role = str(data.get("role") or "").strip()
+        if not role:
+            return
+        cluster_id = str(data.get("cluster_id") or "").strip()
+        key = (role, cluster_id)
+        self._proposed_agents[key] = self._proposed_agents.get(key, 0) + 1
+        logger.info(
+            "worker_reconcile: trigger names role=%r cluster=%r — "
+            "desired replicas now %d", role, cluster_id,
+            self._proposed_agents[key],
+        )
+
+    def _merge_proposed_agents(self, spec):
+        """Return *spec* with the trigger-named slots appended (a fresh
+        spec when there is no collective.yaml but slots were proposed)."""
+        if not self._proposed_agents:
+            return spec
+        from acc.collective import AgentSpec, CollectiveSpec  # noqa: PLC0415
+        extra = [
+            AgentSpec(role=role, cluster_id=cluster_id or None, replicas=n)
+            for (role, cluster_id), n in self._proposed_agents.items()
+        ]
+        if spec is None:
+            return CollectiveSpec(
+                collective_id=self.config.agent.collective_id, agents=extra,
+            )
+        return spec.model_copy(update={"agents": list(spec.agents) + extra})
 
     def _load_collective_spec(self):
         """Load ``collective.yaml`` from the resolved path; None on any

@@ -285,7 +285,7 @@ def test_assistant_propose_infuse_dispatches_via_same_seam(hermetic_chain):
     # by its trigger rather than assuming it's the last publish).
     notif = next(
         p for _, p in _FakeSig.published
-        if p.get("trigger") == "assistant_proposal"
+        if p.get("trigger") == "infuse_completed"
     )
     assert notif["name"] == "@acc/movable-a"
 

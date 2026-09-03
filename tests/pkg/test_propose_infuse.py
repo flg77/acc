@@ -146,15 +146,17 @@ def test_parse_empty_text_returns_empty_list():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "mode",
-    ["AUTO", "auto", "ACCEPT_EDITS", "ASK_PERMISSIONS", "accept_edits"],
-)
-def test_infuse_always_queues_outside_plan(mode):
-    """No mode (except PLAN) ever auto-executes an infuse — filesystem
-    state is reversible only by uninstall.  Stage 1 proposal Q2 decision.
+@pytest.mark.parametrize("mode", ["AUTO", "auto", "ACCEPT_EDITS", "accept_edits"])
+def test_infuse_executes_in_autonomous_modes(mode):
+    """`20260902-assistant-autonomy-prompt-pane-approvals` 1.1 reversed the
+    Stage 1 Q2 decision: infusing a curated pack is the feature.  The gate is
+    the signing floor at install (a floor failure is refused, never queued).
     """
-    assert decide_dispatch(mode, PROPOSAL_INFUSE) == DISPATCH_QUEUE
+    assert decide_dispatch(mode, PROPOSAL_INFUSE) == DISPATCH_EXECUTE
+
+
+def test_infuse_is_asked_under_ask_permissions():
+    assert decide_dispatch("ASK_PERMISSIONS", PROPOSAL_INFUSE) == DISPATCH_QUEUE
 
 
 def test_infuse_plan_mode_renders_as_plan():
@@ -227,7 +229,7 @@ def test_dispatch_calls_fetch_and_install():
     assert captured["constraint"] == "^1.0"
     # Bus notification published (the infuse-completed notice)…
     notif = next(
-        p for _, p in sig.published if p.get("trigger") == "assistant_proposal"
+        p for _, p in sig.published if p.get("trigger") == "infuse_completed"
     )
     assert notif["name"] == "@acc/coding-roles"
     assert notif["version"] == "1.2.0"
@@ -255,8 +257,13 @@ def test_dispatch_fetch_error_returns_false():
         ok = _run(dispatch_approved_proposal(sig, proposal))
 
     assert ok is False
-    # No bus notification on failure
-    assert sig.published == []
+    # The refusal is announced (Prompt pane / Compliance render it); no
+    # infuse-completed and no continuation TASK_ASSIGN.
+    assert len(sig.published) == 1, sig.published
+    item = sig.published[0]
+    payload = item[1] if isinstance(item, tuple) else item
+    assert payload["trigger"] == "proposal_dispatch_failed"
+    assert "no catalog has it" in payload["reason"]
 
 
 def test_dispatch_missing_name_returns_false():
@@ -285,7 +292,7 @@ def test_dispatch_idempotent_install_logged():
         ok = _run(dispatch_approved_proposal(sig, proposal))
     assert ok is True
     notif = next(
-        p for _, p in sig.published if p.get("trigger") == "assistant_proposal"
+        p for _, p in sig.published if p.get("trigger") == "infuse_completed"
     )
     assert notif["was_already_installed"] is True
     # B4 (044 O1) loop-guard: an idempotent re-install must NOT re-trigger a

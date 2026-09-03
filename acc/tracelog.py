@@ -45,6 +45,7 @@ KIND_REPLY_OUT = "reply_out"
 KIND_TOOL_CALL = "tool_call"
 KIND_GOVERNANCE = "governance"
 KIND_REDTEAM = "redteam"
+KIND_OVERSIGHT = "oversight"
 
 # Governance categories carried on KIND_GOVERNANCE records.
 CAT_A = "A"  # constitutional (immutable floor)
@@ -142,6 +143,19 @@ def log_governance(session_id: str, *, task_id: str, category: str, verdict: str
     ``present`` / ``pass`` / ``fail``."""
     emit(session_id, KIND_GOVERNANCE, task_id=task_id, category=category,
          verdict=verdict, rule_id=rule_id, detail=detail, **fields)
+
+
+def log_oversight(session_id: str, *, task_id: str, oversight_id: str, status: str,
+                  approver_id: str, kind: str = "", summary: str = "",
+                  outcome: str = "", **fields: Any) -> None:
+    """Record an oversight decision -- human or policy -- for post-session review.
+
+    `20260902-assistant-autonomy-prompt-pane-approvals` 1.3: a proposal the
+    operating mode executed without asking is ``status="AUTO_APPROVED"`` with
+    ``approver_id="policy:<mode>"``, so the durable trace names the policy."""
+    emit(session_id, KIND_OVERSIGHT, task_id=task_id, oversight_id=oversight_id,
+         status=status, approver_id=approver_id, proposal_kind=kind, summary=summary,
+         outcome=outcome, **fields)
 
 
 def log_redteam(session_id: str, *, task_id: str, challenge: str, outcome: str,

@@ -388,6 +388,11 @@ class ACCTUIApp(App):
             ("performance", PerformanceScreen),
             ("ecosystem", EcosystemScreen),
             ("configuration", ConfigurationScreen),  # proposal 003 PR-4
+            # 044 B8 wired the Prompt pane's GATE CARDs + liveness pre-flight
+            # to watch_snapshot but never listed the screen here, so no
+            # snapshot ever reached it: no gate card, "approved" went to the
+            # LLM as a prompt, and the header read "Clusters: 0".
+            ("prompt", PromptScreen),
         ]
         for screen_name, screen_cls in _SNAPSHOT_SCREENS:
             try:

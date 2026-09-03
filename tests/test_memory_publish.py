@@ -78,13 +78,14 @@ def test_publish_never_auto_executes(mode):
     assert decide_dispatch(mode, PROPOSAL_PUBLISH) == DISPATCH_QUEUE
 
 
-def test_not_even_in_auto_with_the_dev_escape():
-    """INFUSE has a dev-mode escape. Widening it here would let a dev-mode
+def test_not_even_in_auto_where_infuse_executes():
+    """INFUSE executes in AUTO (its trust anchor is the signing floor at
+    install). PUBLISH has no such anchor -- widening AUTO to it would let a
     collective move information between contexts with nobody reading it."""
-    assert decide_dispatch("auto", PROPOSAL_PUBLISH, operator_mode="dev") == DISPATCH_QUEUE
-    # The escape still exists for the kind it was written for.
     from acc.assistant_proposal import PROPOSAL_INFUSE
-    assert decide_dispatch("auto", PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_EXECUTE
+    assert decide_dispatch("auto", PROPOSAL_INFUSE) == DISPATCH_EXECUTE
+    assert decide_dispatch("auto", PROPOSAL_PUBLISH) == DISPATCH_QUEUE
+    assert decide_dispatch("auto", PROPOSAL_PUBLISH, operator_mode="dev") == DISPATCH_QUEUE
 
 
 def test_publish_is_a_known_high_risk_kind():

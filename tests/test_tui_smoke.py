@@ -201,3 +201,37 @@ async def test_snapshot_update_reaches_dashboard():
 
         assert dash.snapshot is not None
         assert dash.snapshot.icl_episode_count == 42
+
+
+@pytest.mark.asyncio
+async def test_snapshot_update_reaches_prompt_gate_cards():
+    """A pending oversight item must surface as a GATE CARD in the Prompt
+    pane through the app's own fan-out (044 B8 wired watch_snapshot but the
+    screen was missing from _SNAPSHOT_SCREENS, so "approved" typed in the
+    Prompt pane went to the LLM instead of resolving the gate)."""
+    obs = _mock_observer()
+    app = _TestApp(mock_observer=obs)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.push_screen("prompt")
+        await pilot.pause()
+
+        from acc.tui.screens.prompt import PromptScreen
+        prompt = app.screen
+        assert isinstance(prompt, PromptScreen)
+
+        sample = _sample_snapshot()
+        sample.oversight_pending_items = [{
+            "oversight_id": "ov-43c55fe4",
+            "task_id": "p-1",
+            "agent_id": "assistant-1",
+            "risk_level": "HIGH",
+            "summary": "Install @acc/redhat-sre-roles@0.1.0",
+            "status": "PENDING",
+        }]
+        app._apply_snapshot(sample)
+        await pilot.pause()
+
+        assert prompt.snapshot is sample
+        assert [g.oversight_id for g in prompt._pending_gates] == ["ov-43c55fe4"]

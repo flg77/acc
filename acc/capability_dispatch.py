@@ -360,15 +360,44 @@ async def _dispatch_one(
     # for the oversight gate.  The registry round-trip is microseconds
     # and mirrors what invoke_skill / invoke_mcp_tool would do anyway.
     manifest = _resolve_manifest(inv, core)
-    from acc.operating_modes import should_gate_invocation  # noqa: PLC0415
+    from acc.operating_modes import (  # noqa: PLC0415
+        gate_categories,
+        should_gate_invocation,
+    )
     risk_level = (
         getattr(manifest, "risk_level", "LOW") if manifest is not None else "LOW"
     )
+
+    # 1.2b -- escalation.  An invocation the role-side A-017 / A-018 guard
+    # would refuse (not in allowed_skills / allowed_mcps, a missing
+    # requires_action, or above the role's risk ceiling) becomes a question
+    # instead of a bare refusal: "allow for this task?".  On APPROVE the role
+    # is widened for THIS ONE CALL (D-011, operator 2026-09-02); refusal stays
+    # the default -- no queue, REJECT, EXPIRED and headless all still refuse.
+    # A manifest's own sandbox (denied_tools) is never escalated.
+    escalated = False
+    if oversight_queue is not None:
+        denial = _guard_denial(inv, manifest, role, core)
+        if denial:
+            gate_outcome = await _gate_on_oversight(
+                inv, manifest, role, oversight_queue, task_id,
+                escalation=denial,
+            )
+            if gate_outcome is not None:
+                return gate_outcome
+            role = _role_with_grant(role, inv, manifest)
+            escalated = True
+
+    # 1.2 -- system access / acting on the operator's behalf are asked in
+    # AUTO and ACCEPT_EDITS regardless of risk_level.  An approved escalation
+    # already covered this exact call; don't ask twice.
+    categories = gate_categories(inv.kind, inv.target, manifest)
     needs_gate = (
-        oversight_queue is not None
+        not escalated
+        and oversight_queue is not None
         and should_gate_invocation(
             operating_mode, kind=inv.kind, target=inv.target,
-            risk_level=str(risk_level),
+            risk_level=str(risk_level), categories=categories,
         )
     )
     if needs_gate:
@@ -382,6 +411,7 @@ async def _dispatch_one(
         )
         gate_outcome = await _gate_on_oversight(
             inv, gate_manifest, role, oversight_queue, task_id,
+            categories=categories,
         )
         if gate_outcome is not None:
             # Either rejected or timed out — surface and skip dispatch.
@@ -469,12 +499,83 @@ def _resolve_manifest(
     return None
 
 
+# Reasons the role-side guard produces.  Anything else (the manifest's own
+# allowed_tools / denied_tools sandbox) is the capability's sandbox, not the
+# role's grant, and a human cannot widen it per task.
+_ROLE_SIDE_DENIALS: tuple[str, ...] = (
+    "not in role.",
+    "missing from role.allowed_actions",
+    "exceeds role ceiling",
+)
+
+
+def _guard_denial(
+    inv: ParsedInvocation,
+    manifest: "Any",
+    role: "RoleDefinitionConfig",
+    core: "CognitiveCore",
+) -> str:
+    """The reason A-017 / A-018 would refuse *inv* on the role's side, or
+    ``""`` when it passes, there is no enforcing guard / manifest, or the
+    refusal is the manifest's own sandbox (never escalated)."""
+    guard = getattr(core, "_capability_guard", None)
+    if guard is None or manifest is None:
+        return ""
+    try:
+        if inv.kind == "skill":
+            decision = guard.check_skill_invocation(role, manifest)
+        elif inv.kind == "mcp":
+            _server, _, tool = inv.target.partition(".")
+            decision = guard.check_mcp_invocation(role, manifest, tool)
+        else:
+            return ""
+    except Exception:  # noqa: BLE001 -- the real call will surface it
+        return ""
+    if getattr(decision, "allowed", True):
+        return ""
+    reason = str(getattr(decision, "reason", "") or "")
+    return reason if any(m in reason for m in _ROLE_SIDE_DENIALS) else ""
+
+
+def _role_with_grant(
+    role: "RoleDefinitionConfig",
+    inv: ParsedInvocation,
+    manifest: "Any",
+) -> "RoleDefinitionConfig":
+    """Widen *role* for one approved call: the target, the actions the
+    manifest requires, and the risk ceiling if the manifest is above it.
+    A copy -- the role definition itself is untouched."""
+    from acc.governance_capabilities import _risk_exceeds  # noqa: PLC0415
+
+    risk = str(getattr(manifest, "risk_level", "LOW") or "LOW").upper()
+    required = [
+        a for a in (getattr(manifest, "requires_actions", None) or [])
+        if a not in role.allowed_actions
+    ]
+    update: dict[str, Any] = {"allowed_actions": [*role.allowed_actions, *required]}
+    if inv.kind == "skill":
+        if inv.target not in role.allowed_skills:
+            update["allowed_skills"] = [*role.allowed_skills, inv.target]
+        if _risk_exceeds(risk, getattr(role, "max_skill_risk_level", "MEDIUM")):
+            update["max_skill_risk_level"] = risk
+    else:
+        server_id = inv.target.partition(".")[0]
+        if server_id not in role.allowed_mcps:
+            update["allowed_mcps"] = [*role.allowed_mcps, server_id]
+        if _risk_exceeds(risk, getattr(role, "max_mcp_risk_level", "MEDIUM")):
+            update["max_mcp_risk_level"] = risk
+    return role.model_copy(update=update)
+
+
 async def _gate_on_oversight(
     inv: ParsedInvocation,
     manifest: "Any",
     role: "RoleDefinitionConfig",
     queue: "Any",
     task_id: str,
+    *,
+    categories: frozenset[str] = frozenset(),
+    escalation: str = "",
 ) -> "InvocationOutcome | None":
     """Submit an oversight item and block on its resolution.
 
@@ -486,13 +587,22 @@ async def _gate_on_oversight(
         ``error`` field for REJECT / EXPIRED / queue failure — caller
         surfaces this directly without dispatching the adapter.
     """
-    summary = _build_oversight_summary(inv, manifest)
+    summary = _build_oversight_summary(
+        inv, manifest, categories, escalation=escalation,
+    )
     role_label = getattr(role, "domain_id", "") or "agent"
+    # A category gate or an escalation carries the manifest's own risk (HIGH
+    # for shell_exec, MEDIUM for telegram_send); every other gate keeps the
+    # historical CRITICAL label.
+    manifest_risk = str(getattr(manifest, "risk_level", "") or "").upper()
+    risk_level = (
+        manifest_risk if (categories or escalation) and manifest_risk else "CRITICAL"
+    )
 
     try:
         oversight_id = await queue.submit(
             task_id=task_id,
-            risk_level="CRITICAL",
+            risk_level=risk_level,
             summary=summary,
             role_id=role_label,
         )
@@ -580,6 +690,9 @@ async def _gate_on_oversight(
 def _build_oversight_summary(
     inv: ParsedInvocation,
     manifest: "Any",
+    categories: frozenset[str] = frozenset(),
+    *,
+    escalation: str = "",
 ) -> str:
     """One-line description shown to the human approver in the TUI.
 
@@ -587,15 +700,32 @@ def _build_oversight_summary(
 
         CRITICAL <kind> <target>: <manifest.purpose>
             args=<json args, truncated to 200 chars>
+
+    A category gate (1.2) leads with the category instead, so the operator
+    reads WHY they are asked::
+
+        SYSTEM-ACCESS skill shell_exec: Run a process ...
+
+    An escalation (1.2b) leads with ESCALATION and names the missing grant::
+
+        ESCALATION skill shell_exec: Run a process ...
+            not granted: skill 'shell_exec' not in role.allowed_skills (...)
     """
     purpose = getattr(manifest, "purpose", "")
     args_repr = json.dumps(inv.args, separators=(",", ":"), default=str)
     if len(args_repr) > 200:
         args_repr = args_repr[:197] + "..."
-    return (
-        f"CRITICAL {inv.kind} {inv.target}: {purpose}\n"
-        f"    args={args_repr}"
-    )
+    if escalation:
+        tag = "ESCALATION"
+    elif categories:
+        tag = "+".join(c.upper().replace("_", "-") for c in sorted(categories))
+    else:
+        tag = "CRITICAL"
+    lines = [f"{tag} {inv.kind} {inv.target}: {purpose}"]
+    if escalation:
+        lines.append(f"    not granted: {escalation}")
+    lines.append(f"    args={args_repr}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

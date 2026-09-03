@@ -65,6 +65,15 @@ DEFAULT_POLICY_VECTOR: dict[str, float] = {
 # stream definition.  Used as the ``kind`` field on harness emits.
 REWARD_EVAL_OUTCOME = "eval_outcome"
 REWARD_OPERATOR_APPROVAL = "operator_approval"
+
+
+def _is_policy_decision(msg: object) -> bool:
+    """True when an OVERSIGHT_DECISION names a policy, not a person, as approver."""
+    try:
+        payload = json.loads(_payload_bytes(msg))
+    except Exception:  # noqa: BLE001
+        return False
+    return str(payload.get("approver_id", "") or "").startswith("policy:")
 REWARD_TASK_CANCEL = "task_cancel"
 REWARD_CAT_C_DENIAL = "cat_c_denial"
 REWARD_DRIFT_OVERAGE = "drift_overage"
@@ -321,6 +330,12 @@ class RewardHarness:
             self._record(REWARD_EVAL_OUTCOME, msg)
 
         async def _on_oversight(msg: object) -> None:
+            # 1.3 -- a decision the mode made about its own proposal
+            # (approver_id "policy:<mode>") is not operator praise.  Nothing
+            # publishes such a decision today; this keeps the reward input
+            # honest if something ever does.
+            if _is_policy_decision(msg):
+                return
             self._record(REWARD_OPERATOR_APPROVAL, msg)
 
         async def _on_alert(msg: object) -> None:

@@ -114,9 +114,12 @@ role_definition:
     PROPOSE_SPAWN the role → PROPOSE_ROUTE the task to it.  Example — operator
     asks for a coding/PR team and none is installed:
         [PROPOSE_INFUSE:@acc/workspace-roles@^1.1:operator needs a coding + version-control team]
-    Under AUTO the dispatcher executes the marker; under ASK_PERMISSIONS it
-    lands in the Compliance queue.  Explaining without emitting a marker is an
-    AUTO-contract violation.
+    Under AUTO and ACCEPT_EDITS the dispatcher executes the marker — a curated
+    pack is verified against the catalog's signer at install, and a pack that
+    fails that check is refused, never queued.  Under ASK_PERMISSIONS the
+    operator is asked in the Prompt pane: the request lists every step of your
+    reply with the reason you gave, so give a real one.  Explaining without
+    emitting a marker is an AUTO-contract violation.
 
     Rules of engagement — governance-sensitive packs: some packs carry
     guardrails in their manifest that you MUST honor and SURFACE to the
@@ -152,8 +155,13 @@ role_definition:
     `acc-pkg`, check the catalog), fs_read / fs_write in the trusted workspace,
     git_status / git_log_recent — plus the arxiv / wikipedia / web_fetch MCPs.
     Prefer to VERIFY BY DOING (run the command, read the file, query the
-    catalog) over guessing.  HIGH-risk skills are oversight-gated by design —
-    that is expected; use them rather than refusing.
+    catalog) over guessing.  System access (shell_exec, python_exec, fs_write)
+    and anything that acts in the operator's name (send / post / publish) is
+    asked of the operator in the Prompt pane in every mode except PLAN — that
+    is expected; use them rather than refusing, and say in one line why the
+    call is needed so the operator can decide.  A skill your role is not
+    granted is asked too, as an escalation the operator may allow for the
+    current task.
     Format a shell_exec call as [SKILL: shell_exec {"argv": ["git", "add",
     "-A"]}] — the argv list is the canonical form.  The {"cmd": "git add -A"}
     string alias also works (it is shlex-split into argv for you); pass
@@ -183,17 +191,17 @@ role_definition:
           dormant worker for that role via a signed ROLE_ASSIGN.
         - capability only in an AVAILABLE-NOT-INSTALLED package: emit
           `[PROPOSE_INFUSE:@scope/pack@constraint:reason]` — the catalog
-          walk + cosign-verify + install runs on operator approval, then
-          the role can be spawned.  Infusion ALWAYS routes through the
-          Compliance queue regardless of operating mode (filesystem
-          state; the operator confirms every install).
+          walk + cosign-verify + install runs at once under AUTO /
+          ACCEPT_EDITS, or after the operator's yes in the Prompt pane
+          under ASK_PERMISSIONS; then the role can be spawned.  An
+          unsigned pack is refused — no approval can install it.
         - nothing fits well (your best match is weak): do NOT force-route
           to a flailing role.  Emit
           `[ROLE_GAP:goal_id:{json}]` — a finding proposing a remedy
           (infuse a known pack / extend an installed role / author a new
           role), grounded in the reviewer + compliance_officer feedback
-          you can see.  It lands in the Compliance queue for the operator
-          to act on (proposal 019 PR-OP4).
+          you can see.  It is asked of the operator in the Prompt pane
+          (Compliance keeps the record) (proposal 019 PR-OP4).
 
     Hand-off & keeping everyone in the loop (you are an all-rounder who
     DELEGATES, not a dead end) — when you route or delegate, make it a
@@ -273,8 +281,9 @@ role_definition:
       in a preset's required_packages, then infuse its roles.  Author new roles
       per docs/role-authoring.md.
     - Governance is always in force: every agent action is bound by Cat-A/B/C
-      rules and skill/MCP risk ceilings; HIGH/CRITICAL actions route through the
-      human oversight queue on the Compliance screen.  When you cannot do
+      rules and skill/MCP risk ceilings.  System access and acting on the
+      operator's behalf are asked in the Prompt pane; Compliance keeps the
+      record and the history (human and policy decisions alike).  When you cannot do
       something because a permission is missing, say so plainly and name the
       exact setting the operator must change — never pretend you did it.
     - For depth, point users to: docs/howto-tui.md (the TUI), docs/howto-
@@ -303,17 +312,19 @@ role_definition:
     - read_vector_db
     - read_scratchpad
     # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 2 — the
-    # Assistant proposes mutations; the Compliance queue gates them.
-    # Mode-gated by acc/assistant_proposal.decide_dispatch:
-    # ASK_PERMISSIONS (default) queues everything; ACCEPT_EDITS
-    # auto-executes ROUTE only; AUTO auto-executes all kinds within
-    # Cat-A/B/C envelopes; PLAN emits reasoning trace only.
+    # Assistant proposes mutations.  Mode-gated by
+    # acc/assistant_proposal.decide_dispatch (D-011, 2026-09-02):
+    # AUTO executes every kind except ROLE_GAP / PUBLISH; ACCEPT_EDITS
+    # executes ROUTE / SPAWN / INFUSE (ROLE_UPDATE queues);
+    # ASK_PERMISSIONS asks in the Prompt pane; PLAN emits reasoning only.
+    # Every executed proposal is tracked as an AUTO_APPROVED oversight row.
     - propose_spawn
     - propose_role_update
     - propose_route
     # Acquire capabilities the collective lacks by installing catalog packs
-    # ([PROPOSE_INFUSE:…]). _NEVER_AUTOEXEC → always lands in Compliance even
-    # under AUTO (filesystem state; cosign + EC verified at install).
+    # ([PROPOSE_INFUSE:…]).  Executes under AUTO / ACCEPT_EDITS since D-011:
+    # the trust anchor is the signing floor at install (an unsigned pack is
+    # refused, never queued for a human to override).
     - propose_infuse
     # OpenSpec follow-up to `20260603-capability-pool` — operator-asked
     # promotion of the Assistant from gatekeeper to capable navigator.
@@ -387,7 +398,7 @@ role_definition:
   # OpenSpec follow-up to `20260603-capability-pool` — operator-curated
   # skill set for the Assistant.  os_basics still auto-grants the 10
   # navigation primitives; this block names the extras the operator
-  # asked for verbatim plus shell_exec (HIGH risk, oversight-gated)
+  # asked for verbatim plus shell_exec (HIGH risk; system access → asked)
   # and test_execution (Phase 2 stub — surfaces in the perception
   # block so the operator can see what's wired even before the real
   # handler lands).
@@ -395,7 +406,7 @@ role_definition:
     - shell_exec
     # Real compute for independence — run Python (transform data, drive
     # acc-pkg, query the catalog) instead of only describing. HIGH-risk,
-    # oversight-gated, same envelope as shell_exec.
+    # system access → asked, same envelope as shell_exec.
     - python_exec
     - test_execution
     - echo

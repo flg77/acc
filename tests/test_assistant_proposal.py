@@ -29,6 +29,8 @@ from acc.assistant_proposal import (
     DISPATCH_PLAN,
     DISPATCH_QUEUE,
     PROPOSAL_INFUSE,
+    PROPOSAL_PUBLISH,
+    PROPOSAL_ROLE_GAP,
     PROPOSAL_ROLE_UPDATE,
     PROPOSAL_ROUTE,
     PROPOSAL_SPAWN,
@@ -147,9 +149,12 @@ def test_ask_permissions_always_queues():
         assert decide_dispatch(MODE_ASK_PERMISSIONS, kind) == DISPATCH_QUEUE
 
 
-def test_accept_edits_executes_route_only():
+def test_accept_edits_executes_specialist_handoffs_not_role_updates():
+    """ROUTE / SPAWN / INFUSE put a specialist onto the task -- they execute.
+    ROLE_UPDATE changes what a role MAY DO and stays queued."""
     assert decide_dispatch(MODE_ACCEPT_EDITS, PROPOSAL_ROUTE) == DISPATCH_EXECUTE
-    assert decide_dispatch(MODE_ACCEPT_EDITS, PROPOSAL_SPAWN) == DISPATCH_QUEUE
+    assert decide_dispatch(MODE_ACCEPT_EDITS, PROPOSAL_SPAWN) == DISPATCH_EXECUTE
+    assert decide_dispatch(MODE_ACCEPT_EDITS, PROPOSAL_INFUSE) == DISPATCH_EXECUTE
     assert decide_dispatch(MODE_ACCEPT_EDITS, PROPOSAL_ROLE_UPDATE) == DISPATCH_QUEUE
 
 
@@ -165,22 +170,39 @@ def test_empty_or_unknown_mode_normalises_to_auto():
     assert decide_dispatch("PANIC", PROPOSAL_ROUTE) == DISPATCH_EXECUTE
 
 
-def test_infuse_queues_by_default_even_in_auto():
-    """PROPOSE_INFUSE routes through Compliance in every mode by default
-    (operator_mode defaults to prod) — the Stage 1.4 floor stays intact."""
-    assert decide_dispatch(MODE_AUTO, PROPOSAL_INFUSE, operator_mode="prod") == DISPATCH_QUEUE
-    assert decide_dispatch(MODE_ASK_PERMISSIONS, PROPOSAL_INFUSE, operator_mode="prod") == DISPATCH_QUEUE
+@pytest.mark.parametrize("operator_mode", ["prod", "dev", None])
+def test_infuse_dispatch_does_not_depend_on_operator_mode(operator_mode):
+    """`20260902-assistant-autonomy-prompt-pane-approvals` 1.1 -- the Stage 1.4
+    rule (INFUSE always queues; dev-mode escape) is reversed.  Infusing a
+    curated pack is the feature; the dev/prod distinction lives at the
+    signing floor inside the install, not in the dispatch decision."""
+    assert decide_dispatch(MODE_AUTO, PROPOSAL_INFUSE, operator_mode=operator_mode) == DISPATCH_EXECUTE
+    assert decide_dispatch(MODE_ACCEPT_EDITS, PROPOSAL_INFUSE, operator_mode=operator_mode) == DISPATCH_EXECUTE
+    assert decide_dispatch(MODE_ASK_PERMISSIONS, PROPOSAL_INFUSE, operator_mode=operator_mode) == DISPATCH_QUEUE
+    assert decide_dispatch(MODE_PLAN, PROPOSAL_INFUSE, operator_mode=operator_mode) == DISPATCH_PLAN
 
 
-def test_infuse_auto_executes_only_in_dev_plus_auto():
-    """Dev-mode autonomy escape (proposal 034 / autonomous-assistant goal):
-    operator_mode=dev AND AUTO lets the Assistant self-infuse role packs without
-    a human approval click; any non-AUTO mode, or prod, still queues."""
-    assert decide_dispatch(MODE_AUTO, PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_EXECUTE
-    # non-AUTO modes still queue even in dev
-    assert decide_dispatch(MODE_ASK_PERMISSIONS, PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_QUEUE
-    assert decide_dispatch(MODE_ACCEPT_EDITS, PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_QUEUE
-    assert decide_dispatch(MODE_PLAN, PROPOSAL_INFUSE, operator_mode="dev") == DISPATCH_PLAN
+_TABLE = {
+    # kind:            (AUTO,             ACCEPT_EDITS,     ASK_PERMISSIONS)
+    PROPOSAL_ROUTE:       (DISPATCH_EXECUTE, DISPATCH_EXECUTE, DISPATCH_QUEUE),
+    PROPOSAL_SPAWN:       (DISPATCH_EXECUTE, DISPATCH_EXECUTE, DISPATCH_QUEUE),
+    PROPOSAL_INFUSE:      (DISPATCH_EXECUTE, DISPATCH_EXECUTE, DISPATCH_QUEUE),
+    PROPOSAL_ROLE_UPDATE: (DISPATCH_EXECUTE, DISPATCH_QUEUE,   DISPATCH_QUEUE),
+    PROPOSAL_ROLE_GAP:    (DISPATCH_QUEUE,   DISPATCH_QUEUE,   DISPATCH_QUEUE),
+    PROPOSAL_PUBLISH:     (DISPATCH_QUEUE,   DISPATCH_QUEUE,   DISPATCH_QUEUE),
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_TABLE))
+def test_full_dispatch_table(kind):
+    """The whole (mode x kind) contract in one place.  PLAN is reasoning-only
+    for every kind; a change to any cell is a governance change and must be
+    made here on purpose."""
+    auto, edits, ask = _TABLE[kind]
+    assert decide_dispatch(MODE_AUTO, kind) == auto
+    assert decide_dispatch(MODE_ACCEPT_EDITS, kind) == edits
+    assert decide_dispatch(MODE_ASK_PERMISSIONS, kind) == ask
+    assert decide_dispatch(MODE_PLAN, kind) == DISPATCH_PLAN
 
 
 # ---------------------------------------------------------------------------

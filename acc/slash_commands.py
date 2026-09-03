@@ -76,6 +76,8 @@ KIND_ASSISTANT_CONTROL = "assistant_control"
 KIND_STATUS = "status"
 KIND_MODE = "mode"
 KIND_CLEAR = "clear"
+# 1.5 -- release the current thread (continuation replies stop landing).
+KIND_DONE = "done"
 # Proposal 039 (PR-4) — catalog/model read-only verbs.
 KIND_CATALOG = "catalog"
 KIND_MODEL = "model"
@@ -146,6 +148,7 @@ COMMANDS: list[CommandSpec] = [
         ),
     ),
     CommandSpec("disallow", "Reject a pending gate (the inline GATE CARD)", "[<oversight_id>]", "oversight"),
+    CommandSpec("done", "Release the current thread (no more follow-up replies)", category="control"),
     CommandSpec("goal", "Set a pinned objective (prepended to prompts)", "[<text> | clear]", "control"),
     CommandSpec("help", "List the available commands", category="general"),
     CommandSpec("loop", "Re-run a prompt on an interval", "<30s|5m|2h> <prompt> | stop", "control", prod_locked=True),
@@ -336,6 +339,9 @@ def parse(text: str) -> SlashIntent:
     # Proposal 039 (PR-3) — inspection/config verbs.
     if verb == "clear":
         return SlashIntent(kind=KIND_CLEAR)
+
+    if verb == "done":
+        return SlashIntent(kind=KIND_DONE)
 
     if verb == "status":
         return SlashIntent(kind=KIND_STATUS)

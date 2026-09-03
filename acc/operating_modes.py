@@ -3,8 +3,10 @@
 Four modes, all of which respect Cat-A constitutional rules
 unconditionally:
 
-* ``AUTO``               — today's behaviour.  Cat-A blocks, Cat-B
-  observes, every other invocation runs.  Default.
+* ``AUTO``               — Cat-A blocks, Cat-B observes, every other
+  invocation runs — except CRITICAL ones and the two *gate categories*
+  (system access, acting on the user's behalf), which are asked.
+  Default.
 * ``ASK_PERMISSIONS``    — every capability invocation
   (``[SKILL:…]`` / ``[MCP:…]``) is funneled through the human
   oversight queue.  Slowest; maximum operator control.
@@ -106,6 +108,60 @@ def is_write_action(kind: str, target: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Gate categories (`20260902-assistant-autonomy-prompt-pane-approvals` 1.2)
+# ---------------------------------------------------------------------------
+#
+# Orthogonal to ``risk_level``.  A curated infuse or a specialist hand-off
+# executes under AUTO (1.1); what the operator IS asked about is anything
+# that reaches the host or acts in the operator's name.  A manifest declares
+# ``system_access`` / ``acts_on_behalf`` explicitly; one that declares
+# neither inherits from the name table below, so a third-party skill cannot
+# escape the gate by omission.  A declared ``false`` opts out (a read-only
+# skill whose name happens to contain "send").
+
+CATEGORY_SYSTEM_ACCESS: Final[str] = "system_access"
+CATEGORY_ACTS_ON_BEHALF: Final[str] = "acts_on_behalf"
+
+_SYSTEM_ACCESS_MARKERS: Final[tuple[str, ...]] = (
+    "shell", "exec", "fs_write", "system", "deploy", "rollout", "sudo", "kill",
+)
+_ACTS_ON_BEHALF_MARKERS: Final[tuple[str, ...]] = (
+    "send", "post", "publish", "mail", "message", "reply", "tweet", "notify",
+)
+
+
+def _declared(manifest: object, attr: str) -> bool | None:
+    """A manifest's explicit flag, or None when undeclared.  Anything that is
+    not a real bool (a MagicMock, a string) counts as undeclared."""
+    val = getattr(manifest, attr, None) if manifest is not None else None
+    return val if isinstance(val, bool) else None
+
+
+def gate_categories(kind: str, target: str, manifest: object = None) -> frozenset[str]:
+    """Return the gate categories that apply to one invocation.
+
+    Declared flags on *manifest* win; an undeclared flag falls back to the
+    name table on *target* (``"shell_exec"``, ``"google_workspace.gmail_send"``).
+    ``kind`` is accepted for symmetry with :func:`should_gate_invocation`
+    and not consulted -- see :func:`is_write_action` for why.
+    """
+    del kind
+    haystack = str(target or "").lower()
+    system = _declared(manifest, CATEGORY_SYSTEM_ACCESS)
+    if system is None:
+        system = any(m in haystack for m in _SYSTEM_ACCESS_MARKERS)
+    behalf = _declared(manifest, CATEGORY_ACTS_ON_BEHALF)
+    if behalf is None:
+        behalf = any(m in haystack for m in _ACTS_ON_BEHALF_MARKERS)
+    cats = set()
+    if system:
+        cats.add(CATEGORY_SYSTEM_ACCESS)
+    if behalf:
+        cats.add(CATEGORY_ACTS_ON_BEHALF)
+    return frozenset(cats)
+
+
+# ---------------------------------------------------------------------------
 # Per-mode gate decision
 # ---------------------------------------------------------------------------
 
@@ -116,6 +172,7 @@ def should_gate_invocation(
     kind: str,
     target: str,
     risk_level: str = "MEDIUM",
+    categories: frozenset[str] | None = None,
 ) -> bool:
     """Return True iff this invocation must be funneled through the
     human oversight queue under *mode*.
@@ -124,8 +181,12 @@ def should_gate_invocation(
         mode: Operating mode string.  Unknown modes fall back to AUTO.
         kind: Invocation kind (``"skill"`` / ``"mcp"``).
         target: Invocation target (skill_id / mcp tool name).
-        risk_level: Manifest-declared risk level.  In AUTO mode only
-            CRITICAL is gated (today's behaviour); other modes adjust.
+        risk_level: Manifest-declared risk level.  CRITICAL is gated in
+            every mode.
+        categories: The invocation's gate categories from
+            :func:`gate_categories`.  ``None`` computes the name-table
+            default from *target* (no manifest).  Non-empty → gated in
+            AUTO and ACCEPT_EDITS.
 
     Returns:
         ``True`` → submit to the oversight queue and block until
@@ -135,8 +196,11 @@ def should_gate_invocation(
     mode = normalise(mode)
     if mode == MODE_ASK_PERMISSIONS:
         return True
+    if categories is None:
+        categories = gate_categories(kind, target)
+    critical = str(risk_level).upper() == "CRITICAL"
     if mode == MODE_ACCEPT_EDITS:
-        return is_write_action(kind, target) or str(risk_level).upper() == "CRITICAL"
+        return is_write_action(kind, target) or critical or bool(categories)
     # PLAN never reaches this — dispatch is skipped before the call.
-    # AUTO: only CRITICAL gated (matches Phase 4.5 behaviour).
-    return str(risk_level).upper() == "CRITICAL"
+    # AUTO: CRITICAL, plus the two gate categories (1.2).
+    return critical or bool(categories)

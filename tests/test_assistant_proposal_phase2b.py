@@ -125,16 +125,16 @@ def test_classify_under_plan_produces_plan_lines_only():
     assert all("[PROPOSAL/" in line for line in out["plan"])
 
 
-def test_classify_accept_edits_routes_execute_spawns_queue():
+def test_classify_accept_edits_executes_route_and_spawn():
+    """Both put a specialist onto the task; neither is asked under ACCEPT_EDITS
+    (`20260902-assistant-autonomy-prompt-pane-approvals` 1.1)."""
     out = _classify(
         "[PROPOSE_ROUTE:analyst:answer this]\n"
         "[PROPOSE_SPAWN:coding_agent::need a coder]",
         "ACCEPT_EDITS",
     )
-    assert len(out["executed"]) == 1
-    assert out["executed"][0].kind == PROPOSAL_ROUTE
-    assert len(out["queued"]) == 1
-    assert out["queued"][0].kind == PROPOSAL_SPAWN
+    assert {p.kind for p in out["executed"]} == {PROPOSAL_ROUTE, PROPOSAL_SPAWN}
+    assert out["queued"] == []
     assert out["plan"] == []
 
 
@@ -169,6 +169,11 @@ class _FakeRuntime:
         self._oversight_queue.submit = AsyncMock(
             side_effect=lambda **k: f"ov-{k.get('task_id', 'x')[:6]}"
         )
+        # 1.3 -- the EXECUTE branch records an AUTO_APPROVED row through the
+        # real sibling method; bind it so the stub mirrors the real object.
+        self._oversight_queue.record_auto_approved = AsyncMock(return_value="ov-auto")
+        from acc.agent import Agent  # noqa: PLC0415
+        self._record_auto_approved = Agent._record_auto_approved.__get__(self)
 
 
 def test_handle_assistant_proposals_executes_each_executed():

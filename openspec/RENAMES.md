@@ -57,3 +57,9 @@ Prefer functional when:
 * It would compose with multiple role.yaml files.
 * Removing the proposal would break a shared mechanism, not one
   role's behaviour.
+
+## Rename (2026-09-02)
+
+| Old | New | Why |
+|---|---|---|
+| `20260902-prompt-pane-proposal-review` | `20260902-assistant-autonomy-prompt-pane-approvals` | Scope grew from a review modal to the assistant trust model (curated infusion + specialist routing execute under AUTO; system access and acting-on-behalf are what get asked) before the first PR — same day, renamed in place. |

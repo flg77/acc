@@ -120,6 +120,13 @@ class MCPManifest(BaseModel):
     requires_actions: list[str] = Field(default_factory=list)
     domain_id: str = ""
     risk_level: MCPRiskLevel = "LOW"
+    # Gate categories (`20260902-assistant-autonomy-prompt-pane-approvals` 1.2),
+    # server-wide.  None = undeclared -> the name table in
+    # acc.operating_modes.gate_categories decides per tool
+    # ("google_workspace.gmail_send" -> acts_on_behalf), which is why a
+    # read-first server such as google_workspace declares nothing here.
+    system_access: bool | None = None
+    acts_on_behalf: bool | None = None
 
     # Operator-facing metadata
     description: str = ""

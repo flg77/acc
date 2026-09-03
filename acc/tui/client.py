@@ -96,6 +96,8 @@ class NATSObserver:
         self._snapshot = CollectiveSnapshot(collective_id=collective_id)
         self._nc: Any = None  # nats.aio.client.Client
         self._subscription: Any = None
+        # 1.5 -- per-task_id follow-up callbacks (continuation replies).
+        self._task_followup_listeners: dict[str, list] = {}
         # PR-B — per-task_id Future registry.  Channels (TUIPromptChannel
         # and friends) call ``register_task_listener`` with a fresh
         # Future before publishing TASK_ASSIGN, then await the Future to
@@ -232,6 +234,26 @@ class NATSObserver:
     def unregister_task_progress_listener(self, task_id: str) -> None:
         """Drop ALL registered callbacks for *task_id*.  Idempotent."""
         self._task_progress_listeners.pop(task_id, None)
+
+    # ------------------------------------------------------------------
+    # 1.5 -- per-task_id follow-up listeners (continuation replies)
+    # ------------------------------------------------------------------
+
+    def register_task_followup_listener(self, task_id: str, callback) -> None:
+        """Bind *callback* to every LATER TASK_COMPLETE carrying *task_id*.
+
+        The one-shot Future a channel registers is consumed by the first
+        reply; an infuse continuation re-uses the original task_id, so
+        its reply had nowhere to land.  The Prompt pane registers this
+        after the first reply and releases it on the next send or
+        ``/done``.  Same sync / quick-callback contract as the progress
+        listeners.
+        """
+        self._task_followup_listeners.setdefault(task_id, []).append(callback)
+
+    def unregister_task_followup_listener(self, task_id: str) -> None:
+        """Release the thread for *task_id*.  Idempotent."""
+        self._task_followup_listeners.pop(task_id, None)
 
     # ------------------------------------------------------------------
     # PR-1 cluster — per-cluster_id event fan-out
@@ -493,6 +515,26 @@ class NATSObserver:
     # Signal handlers — ACC-6a
     # ------------------------------------------------------------------
 
+    @handles("ASSISTANT_PROPOSAL")
+    def _route_assistant_proposal(self, agent_id: str, data: dict) -> None:
+        """1.4 -- keep the proposal payload so the Prompt pane can show WHY
+        (rationale / goal) next to the pending row the heartbeat carries."""
+        pid = str(data.get("proposal_id") or "")
+        if not pid:
+            return
+        props = self._snapshot.assistant_proposals
+        props[pid] = dict(data)
+        while len(props) > 50:
+            props.pop(next(iter(props)))
+
+    @handles("ASSISTANT_PROPOSAL_OUTCOME")
+    def _route_assistant_outcome(self, agent_id: str, data: dict) -> None:
+        """1.5 -- keep proposal outcomes so the Prompt pane can say what
+        happened (installed / refused / spawned / unmet)."""
+        outcomes = self._snapshot.assistant_outcomes
+        outcomes.append(dict(data))
+        del outcomes[:-50]
+
     @handles("HEARTBEAT")
     def _route_heartbeat(self, agent_id: str, data: dict) -> None:
         """Update AgentSnapshot from a HEARTBEAT payload (REQ-TUI-012).
@@ -605,6 +647,9 @@ class NATSObserver:
             items = data.get("oversight_pending_items", [])
             if isinstance(items, list):
                 self._snapshot.oversight_pending_items = items
+            recent = data.get("oversight_recent_items", [])
+            if isinstance(recent, list):
+                self._snapshot.oversight_recent_items = recent
 
     @handles("TASK_COMPLETE")
     def _route_task_complete(self, agent_id: str, data: dict) -> None:
@@ -663,6 +708,16 @@ class NATSObserver:
                     "done (cancelled/timeout) — TASK_COMPLETE ignored",
                     task_id[:12],
                 )
+            elif task_id in self._task_followup_listeners:
+                # 1.5 -- a continuation reply on a thread the pane still holds.
+                for callback in list(self._task_followup_listeners[task_id]):
+                    try:
+                        callback(data)
+                    except Exception:  # noqa: BLE001 -- one bad listener must not stop routing
+                        logger.exception(
+                            "task_complete: follow-up listener failed for %s",
+                            task_id[:12],
+                        )
             else:
                 logger.warning(
                     "task_complete: NO listener for task_id=%r "

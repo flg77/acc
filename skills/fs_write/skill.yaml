@@ -12,6 +12,8 @@ purpose:        "Write a UTF-8 text file into the trusted workspace."
 version:        "0.1.0"
 adapter_class:  "FsWriteSkill"
 risk_level:     "HIGH"
+# Gate category (1.2): reaches the host -> asked under AUTO / ACCEPT_EDITS.
+system_access:  true
 domain_id:      "workspace"
 tags:           ["filesystem", "workspace", "write"]
 

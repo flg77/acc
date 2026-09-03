@@ -9,7 +9,10 @@ tests pin the authorization + confirm the existing safety rails hold:
 
 * the assistant role.yaml lists ``propose_infuse`` in allowed_actions
 * an assistant-emitted PROPOSE_INFUSE marker parses correctly
-* infusion ALWAYS routes to the Compliance queue (never AUTO-executes)
+* infusion executes under AUTO / ACCEPT_EDITS and is asked under
+  ASK_PERMISSIONS (`20260902-assistant-autonomy-prompt-pane-approvals`
+  Phase 1.1 reversed the Stage 1.4 "always Compliance" rule; the signing
+  floor at install is the gate)
 * the perception validate_marker gate passes infusion markers (they
   carry a package name in params, not a hallucinatable target_role)
 """
@@ -21,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from acc.assistant_proposal import (
+    DISPATCH_EXECUTE,
     DISPATCH_PLAN,
     DISPATCH_QUEUE,
     PROPOSAL_INFUSE,
@@ -51,7 +55,11 @@ def test_assistant_seed_context_documents_infuse_marker():
     role = RoleLoader(roles_root=_ROLES_ROOT, role_name="assistant").load()
     seed = role.seed_context or ""
     assert "PROPOSE_INFUSE" in seed
-    assert "Compliance queue" in seed  # operator-gated framing present
+    # D-011 framing (1.6): the question is asked in the Prompt pane, a curated
+    # pack executes under AUTO / ACCEPT_EDITS, an unsigned pack is refused.
+    assert "asked in the Prompt pane" in seed
+    assert "unsigned pack is refused" in seed
+    assert "ALWAYS routes through the" not in seed
 
 
 # ---------------------------------------------------------------------------
@@ -73,15 +81,18 @@ def test_assistant_infuse_marker_parses():
 
 
 # ---------------------------------------------------------------------------
-# Safety rail — infusion NEVER auto-executes; always operator-gated
+# Dispatch rule — infusion is the feature: executes unless the operator asked
+# to be asked.  The safety rail is the signing floor at install, not a click.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("mode", ["AUTO", "ASK_PERMISSIONS", "ACCEPT_EDITS"])
-def test_infuse_always_queues_never_executes(mode):
-    """Even in AUTO mode an infusion proposal must QUEUE (not EXECUTE) —
-    the _NEVER_AUTOEXEC contract from Stage 1.4 stands."""
-    assert decide_dispatch(mode, PROPOSAL_INFUSE) == DISPATCH_QUEUE
+@pytest.mark.parametrize("mode", ["AUTO", "ACCEPT_EDITS"])
+def test_infuse_executes_in_autonomous_modes(mode):
+    assert decide_dispatch(mode, PROPOSAL_INFUSE) == DISPATCH_EXECUTE
+
+
+def test_infuse_is_asked_under_ask_permissions():
+    assert decide_dispatch("ASK_PERMISSIONS", PROPOSAL_INFUSE) == DISPATCH_QUEUE
 
 
 def test_infuse_in_plan_mode_is_reasoning_only():

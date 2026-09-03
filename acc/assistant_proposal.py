@@ -180,23 +180,34 @@ class AssistantProposal:
 # ---------------------------------------------------------------------------
 
 
-# Phase 2a's "small mutation" set under ACCEPT_EDITS.  ROUTE is the
-# only one classified as small today (reversible by the next prompt).
-# SPAWN + ROLE_UPDATE are structural and stay queued.
-_ACCEPT_EDITS_AUTOEXEC: frozenset[str] = frozenset({PROPOSAL_ROUTE})
+# ACCEPT_EDITS auto-executes the kinds that put a specialist onto the
+# operator's task: ROUTE (reversible by the next prompt), SPAWN (a worker
+# promoted from the dormant pool) and INFUSE (a signed pack from the
+# catalog).  ROLE_UPDATE stays queued -- it changes what a role MAY DO,
+# which is the one structural mutation a specialist hand-off never needs.
+# `20260902-assistant-autonomy-prompt-pane-approvals` Phase 1.1.
+_ACCEPT_EDITS_AUTOEXEC: frozenset[str] = frozenset({
+    PROPOSAL_ROUTE, PROPOSAL_SPAWN, PROPOSAL_INFUSE,
+})
 
 
-# Stage 1.4 — operator decision: PROPOSE_INFUSE always routes through
-# the Compliance pane regardless of operating mode.  Filesystem state
-# is reversible only by uninstall; per the Stage 1 proposal's open
-# decision Q2 the operator chose "always Compliance pane" over "AUTO
-# may infuse autonomously".
 #: Kinds that always reach a human, whatever the operating mode.
 #:
-#: PROPOSAL_PUBLISH has NO escape hatch, unlike INFUSE's dev-mode one.  The
-#: point of a publication is that someone read the note and decided it may
-#: cross -- an auto-executing publication is not a faster version of that, it
-#: is the absence of it.  There is a test asserting the absence, because the
+#: PROPOSAL_INFUSE used to be here (Stage 1.4, `7f49a9e`: "always Compliance
+#: pane over AUTO may infuse autonomously", with a dev-mode escape).  That
+#: decision predates the signing floor being enforced at install
+#: (``acc.pkg.install_infuse``: ``allow_unsigned`` only in dev, prod strict).
+#: `20260902-assistant-autonomy-prompt-pane-approvals` reverses it on
+#: purpose: infusing a curated role is the Assistant's central function, the
+#: trust anchor is the catalog's ``required_signer`` verified at install, and
+#: a human click cannot make an unsigned pack signed.  A floor failure is
+#: therefore REFUSED (``_dispatch_infuse`` returns False and publishes
+#: ``proposal_dispatch_failed``), never queued for a human to override.
+#:
+#: PROPOSAL_PUBLISH has no escape hatch in any mode.  The point of a
+#: publication is that someone read the note and decided it may cross -- an
+#: auto-executing publication is not a faster version of that, it is the
+#: absence of it.  There is a test asserting the absence, because the
 #: dangerous version of this feature is the one that promotes helpfully.
 #: Approver values that name nobody.  `"default"` is the AssistantProposal
 #: field default; `"tui:anonymous"` is what the decision subscriber falls back
@@ -205,7 +216,7 @@ _ANONYMOUS_APPROVERS: frozenset[str] = frozenset({"default", "tui:anonymous", "u
 
 
 _NEVER_AUTOEXEC: frozenset[str] = frozenset({
-    PROPOSAL_INFUSE, PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH,
+    PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH,
 })
 
 
@@ -223,29 +234,23 @@ def decide_dispatch(operating_mode: str, kind: str, *, operator_mode: str | None
     decision tree.  Unknown ``kind`` defaults to QUEUE (safest: human
     in the loop before any mutation we don't recognise).
 
-    Stage 1.4: kinds in :data:`_NEVER_AUTOEXEC` (currently
-    ``PROPOSAL_INFUSE``) always queue — even in AUTO mode.
+    Kinds in :data:`_NEVER_AUTOEXEC` (``PROPOSAL_ROLE_GAP``,
+    ``PROPOSAL_PUBLISH``) always queue -- even in AUTO.  Everything else
+    executes in AUTO; ACCEPT_EDITS executes :data:`_ACCEPT_EDITS_AUTOEXEC`;
+    ASK_PERMISSIONS queues everything (asked in the Prompt pane).
+
+    ``operator_mode`` is accepted for call-site compatibility and ignored:
+    the dev/prod distinction now lives where it belongs, at the signing
+    floor inside the install (``_infuse_allow_unsigned``), not in the
+    dispatch decision.
     """
+    del operator_mode  # see docstring
     mode = normalise(operating_mode or "")
     if kind not in PROPOSAL_KINDS:
         return DISPATCH_QUEUE
     if mode == MODE_PLAN:
         return DISPATCH_PLAN
     if kind in _NEVER_AUTOEXEC:
-        # Filesystem-state mutations route through the Compliance pane — EXCEPT a
-        # dev-mode autonomy escape: in operator_mode=dev AND AUTO, an INFUSE
-        # auto-executes so the Assistant can self-infuse role packs without a
-        # human approval click (autonomous-assistant goal; proposal 034 relaxes
-        # the dev floor). prod (default) + every non-AUTO mode still queue.
-        if (
-            kind == PROPOSAL_INFUSE
-            and mode == MODE_AUTO
-            and (operator_mode or _operator_mode_env()) == "dev"
-        ):
-            # Deliberately INFUSE-only.  Widening this to PROPOSAL_PUBLISH
-            # would let a dev-mode collective move information between
-            # contexts with nobody reading it.
-            return DISPATCH_EXECUTE
         return DISPATCH_QUEUE
     if mode == MODE_AUTO:
         return DISPATCH_EXECUTE
@@ -781,14 +786,36 @@ async def _dispatch_infuse(signaling, cid: str, p: AssistantProposal) -> bool:
         spec, allow_unsigned=_infuse_allow_unsigned(),
     )
     if not result.ok:
+        # Signing-floor / resolve / dep failure.  REFUSED, not queued: an
+        # auto-executed infuse has no oversight row, and a human approval
+        # could not make an unsigned pack signed anyway.  The notice is what
+        # the Prompt pane / Compliance render so the refusal is visible.
         logger.warning(
             "assistant_proposal: infuse %s failed: %s", spec, result.error,
         )
+        try:
+            await signaling.publish(subject_assistant_proposal(cid), {
+                "signal_type": "ASSISTANT_PROPOSAL_OUTCOME",
+                "trigger": "proposal_dispatch_failed",
+                "proposal_id": p.proposal_id,
+                "task_id": p.task_id,
+                "kind": PROPOSAL_INFUSE,
+                "spec": spec,
+                "reason": result.error,
+                "ts": time.time(),
+            })
+        except Exception:  # noqa: BLE001 -- notice is best-effort
+            logger.exception(
+                "assistant_proposal: infuse-failed notice publish failed for %s",
+                p.proposal_id,
+            )
         return False
 
     payload = {
-        "trigger": "assistant_proposal",
+        "signal_type": "ASSISTANT_PROPOSAL_OUTCOME",
+        "trigger": "infuse_completed",
         "proposal_id": p.proposal_id,
+        "task_id": p.task_id,
         "name": result.name,
         "version": result.version,
         "install_path": result.install_path,
@@ -939,11 +966,17 @@ async def publish_proposal_pending(signaling, proposal: AssistantProposal) -> No
     the queue row; the policy-layer reward harness (SIP-P1) reads the
     matching `OVERSIGHT_DECISION` once the operator acts.
     """
-    from acc.signals import subject_assistant_proposal  # noqa: PLC0415
+    from acc.signals import (  # noqa: PLC0415
+        SIG_ASSISTANT_PROPOSAL,
+        subject_assistant_proposal,
+    )
     try:
+        # signal_type is what the TUI observer routes on (1.4: the Prompt
+        # pane joins this payload -- rationale, goal_text, task_id -- to the
+        # heartbeat's pending row).  from_payload() drops unknown keys.
         await signaling.publish(
             subject_assistant_proposal(proposal.collective_id),
-            proposal.to_payload(),
+            {**proposal.to_payload(), "signal_type": SIG_ASSISTANT_PROPOSAL},
         )
     except Exception:
         logger.exception(

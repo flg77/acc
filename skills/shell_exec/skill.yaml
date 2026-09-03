@@ -14,6 +14,8 @@ purpose:        "Run a process (argv list, no shell expansion) and return stdout
 version:        "0.1.0"
 adapter_class:  "ShellExecSkill"
 risk_level:     "HIGH"
+# Gate category (1.2): reaches the host -> asked under AUTO / ACCEPT_EDITS.
+system_access:  true
 domain_id:      "os_basics"
 tags:           ["shell", "subprocess", "engineering"]
 

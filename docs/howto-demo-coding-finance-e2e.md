@@ -246,8 +246,8 @@ On a containerized stack the packages root `/var/lib/acc/packages` is the
 |---|---|---|
 | Initiator | assistant, on detecting a capability gap | operator |
 | Catalog grounding | `catalog_query` skill, automatic | you run `pkg list --available` |
-| Install trigger | `[PROPOSE_INFUSE]` → **Compliance approval** | `pkg add` / `infuse --from-pkg` / TUI `g` |
-| Auto-executes under AUTO? | **No** — infusion is always Compliance-gated | n/a (you run it) |
+| Install trigger | `[PROPOSE_INFUSE]` → executes (AUTO / ACCEPT_EDITS) or asked in the Prompt pane (ASK_PERMISSIONS) | `pkg add` / `infuse --from-pkg` / TUI `g` |
+| Auto-executes under AUTO? | **Yes** — the gate is the signing floor at install (unsigned → refused, never queued) | n/a (you run it) |
 | Then | `[PROPOSE_SPAWN]` + `[PROPOSE_ROUTE]` | declare in `required_packages` / spawn |
 | Best for | interactive, "figure out what I need" | scripted/repeatable provisioning, CI |
 

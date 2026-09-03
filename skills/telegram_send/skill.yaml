@@ -9,6 +9,8 @@ purpose:        "Send a text message to a Telegram chat via the official Bot API
 version:        "0.1.0"
 adapter_class:  "TelegramSendSkill"
 risk_level:     "MEDIUM"
+# Gate category (1.2): speaks in the operator's name -> asked under AUTO / ACCEPT_EDITS.
+acts_on_behalf: true
 requires_actions:
   - "send_message"
 domain_id:      "messaging"

@@ -642,6 +642,46 @@ live bring-up on blackbox3.
 
 ---
 
+## D-011 — Infusion and specialist hand-off execute under AUTO; the human is asked for system access and acting-on-behalf
+
+**Status:** Phase 1.1 LANDED (dispatch table, #322); Phase 1.3 LANDED
+(`AUTO_APPROVED` rows + decision history, #323); Phase 1.2 gate categories
+LANDED (#324); 1.2b escalation LANDED — operator decided 2026-09-02 that a
+human grant for one call is the declared capability A-006 speaks of;
+Phase 1.4 (the permission request in the Prompt pane, #326), 1.5 (outcomes +
+continuation replies in the thread) and 1.6 (the role prompt says the real
+rule) LANDED / in PR;
+`openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals`.
+**Date:** 2026-09-02
+**Context:** Stage 1.4 (`7f49a9e`, 2026-06-04) recorded the operator's choice
+"PROPOSE_INFUSE always routes through the Compliance pane, whatever the
+operating mode" (with a dev-mode escape). On 2026-09-02 a lighthouse trace
+showed the consequence: the assistant proposed `@acc/redhat-sre-roles`, the
+operator approved in Compliance, and the conversation in the Prompt pane
+went nowhere (two plain bugs, fixed in #321, plus this trust model).
+
+**Decision (operator, 2026-09-02):** infusing curated roles and putting
+specialists onto a user task are the assistant's *central* function.
+`AUTO` means execute-and-track, bound only by Cat-A/B/C. Only curated
+roles land in the catalog; a pack that passes the signing floor at install
+is trusted by construction, so a human click adds nothing a signature does
+not — and cannot rescue an unsigned pack. What warrants a human is anything
+beyond the role's allowed tools and skills: system access and actions on
+the user's behalf. In `ASK_PERMISSIONS` the question is asked inside the
+Prompt pane; Compliance keeps the record.
+
+**Reversed:** the Stage 1.4 Q2 choice and its dev-mode escape.
+`_NEVER_AUTOEXEC` is now `{ROLE_GAP, PUBLISH}`; `ACCEPT_EDITS` executes
+`ROUTE`, `SPAWN`, `INFUSE`; `ROLE_UPDATE` stays queued below `AUTO`. A
+signing-floor failure is refused with a `proposal_dispatch_failed` notice,
+never queued.
+
+**Still open (this change):** the full sweep and the three lighthouse smokes
+in `tasks.md`; the sibling `20260902-tui-profiles`; Phases 2–3 (the proposal
+waits on the verdict in-turn; signed intent on the reconcile trigger).
+
+---
+
 ## Future considerations (not yet decided)
 
 * **Multi-collective infusion** — today PR-D writes to a single

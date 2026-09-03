@@ -152,6 +152,13 @@ filter by their own ``pod_uid``."""
 
 # Compliance / EU AI Act human oversight signals (ACC-12)
 SIG_OVERSIGHT_DECISION = "OVERSIGHT_DECISION"
+# 1.4 -- a pending Assistant proposal announced on subject_assistant_proposal;
+# stamped so the TUI observer's signal_type router can pick it up.
+SIG_ASSISTANT_PROPOSAL = "ASSISTANT_PROPOSAL"
+# 1.5 -- what became of a proposal: infuse installed / dispatch failed /
+# reconcile result (assigned + unmet).  Same subject; the TUI renders these
+# as system lines in the Prompt thread.
+SIG_ASSISTANT_PROPOSAL_OUTCOME = "ASSISTANT_PROPOSAL_OUTCOME"
 """Endocrine signal carrying a human operator's approve / reject decision
 for a paused HIGH-risk task in the oversight queue.
 
@@ -218,6 +225,11 @@ SIGNAL_MODES: dict[str, str] = {
     SIG_BRIDGE_RESULT:          SIGNAL_MODE_ENDOCRINE,
     SIG_DOMAIN_DIFFERENTIATION: SIGNAL_MODE_ENDOCRINE,
     SIG_OVERSIGHT_DECISION:     SIGNAL_MODE_ENDOCRINE,
+    # 1.4 / 1.5 -- a pending proposal and what became of it: every agent
+    # and the TUI observer read them, no receptor filtering (like the
+    # decision they lead to).
+    SIG_ASSISTANT_PROPOSAL:         SIGNAL_MODE_ENDOCRINE,
+    SIG_ASSISTANT_PROPOSAL_OUTCOME: SIGNAL_MODE_ENDOCRINE,
     SIG_KERNEL_EVENT:           SIGNAL_MODE_ENDOCRINE,
 }
 """Authoritative mapping from signal type constant to its communication mode.

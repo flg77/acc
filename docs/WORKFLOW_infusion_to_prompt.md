@@ -90,22 +90,33 @@ Awaiting reconcile… (role applied; agent spawn requested)
    * Sets `_apply_started_ts = time.time()` and
      `_pending_apply = (role, cluster_id)`.
 
-**Container spawn — current gap.** The `.acc-apply.request` marker is
-intended for a host-side watcher (systemd path-unit or
-`inotifywait` loop) that runs `./acc-deploy.sh apply <spec>` on
-change. The default standalone install does NOT install the watcher
-yet — Apply succeeds, the marker file appears, but no new container
-materialises. PR-G (worker pool, deferred) replaces this entirely by
-pre-spawning dormant workers that accept a `ROLE_ASSIGN` signal at
-runtime, eliminating both the marker-file dance and the per-Apply
-container churn.
+**Container spawn.** The `.acc-apply.request` marker is the *manual*
+path: a host-side watcher (or the operator running
+`./acc-deploy.sh apply <spec>`) reconciles podman state; the default
+standalone install does not ship the watcher. The designed path is
+the worker pool (D-001): `./acc-deploy.sh apply worker-pool` pre-spawns
+dormant workers, and the arbiter's reconcile loop promotes one with a
+signed `ROLE_ASSIGN`. Since #321 the reconcile trigger itself may name
+the role — the agent containers do not mount `collective.yaml`, so an
+approved or auto-executed `PROPOSE_SPAWN` is a desired slot in its own
+right — and since 1.5 the arbiter publishes a `reconcile_result` that
+the Prompt pane renders: `✓ spawned <role> → worker-00`, or
+`✗ spawn <role>: no dormant worker — raise worker_pool … or run
+./acc-deploy.sh apply worker-pool`.
 
 `InfuseScreen.apply_snapshot` watches incoming HEARTBEATs for a NEW
 agent matching `(role, cluster_id)` whose `registered_ts >
 _apply_started_ts`. When found, status flips to
-`✓ Agent <id> registered`. Today this never fires for `coding_agent`
-because no spawn actually happens — the arbiter ends up handling the
-operator's prompt.
+`✓ Agent <id> registered`. Without a dormant worker it never fires —
+the pane's `✗ spawn …` line is the honest signal to look for.
+
+**Where the decision is made.** Under `AUTO` / `ACCEPT_EDITS` a
+curated infuse, a spawn and a route execute without a question and are
+tracked as `AUTO_APPROVED` rows in Compliance → DECISION HISTORY. Under
+`ASK_PERMISSIONS`, and for system access / acting on the operator's
+behalf in every mode, the question is asked in the Prompt pane's
+permission request (see the pane's `?` help); Compliance keeps the
+record. `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals`.
 
 ---
 

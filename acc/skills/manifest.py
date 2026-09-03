@@ -65,6 +65,13 @@ class SkillManifest(BaseModel):
         domain_id: Optional biological tag — usually matches the most
             common caller's role ``domain_id``.
         risk_level: EU AI Act–aligned risk class (LOW default).
+        system_access: Gate category -- the skill reaches the host
+            (shell, subprocess, filesystem writes).  Asked under AUTO
+            and ACCEPT_EDITS.  ``None`` (undeclared) falls back to the
+            name table in :func:`acc.operating_modes.gate_categories`.
+        acts_on_behalf: Gate category -- the skill acts in the
+            operator's name towards the outside (sends, posts,
+            publishes).  Same gating and fallback as ``system_access``.
         description: Long-form documentation (Markdown).  Surfaced in
             TUI's Ecosystem screen detail panel (Phase 4.4).
         tags: Free-form labels for filtering (e.g. ``["code", "shell"]``).
@@ -90,6 +97,10 @@ class SkillManifest(BaseModel):
     requires_actions: list[str] = Field(default_factory=list)
     domain_id: str = ""
     risk_level: SkillRiskLevel = "LOW"
+    # Gate categories (`20260902-assistant-autonomy-prompt-pane-approvals` 1.2).
+    # Optional on purpose: None means "undeclared -> name-table default".
+    system_access: bool | None = None
+    acts_on_behalf: bool | None = None
 
     # Operator-facing metadata
     description: str = ""

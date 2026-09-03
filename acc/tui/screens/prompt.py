@@ -227,6 +227,8 @@ class PromptScreen(NavScreen):
         # PR-V4 — reasoning stream: Ctrl+O expand/collapse the one-liners;
         # Ctrl+R hide/show the reasoning stream entirely (default shown).
         Binding("ctrl+o", "toggle_reasoning", "Reasoning ±", priority=True),
+        # 1.4 -- return to a pending permission request after Esc.
+        Binding("ctrl+g", "focus_permission_request", "Gates", priority=True),
         Binding("ctrl+r", "toggle_reasoning_visible", "Reasoning on/off"),
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
         # Ctrl+Z toggles the Assistant's dormant-watcher mode.  The
@@ -342,6 +344,20 @@ class PromptScreen(NavScreen):
         # replaced by a shift+tab cycle + a tiny hint).  AUTO default;
         # role selection prefills it (on_select_changed).
         self._operating_mode: str = "AUTO"
+        # 1.4 -- in-pane permission requests: grants the operator gave for
+        # the rest of a task, gates already shown (don't re-steal focus),
+        # gates the operator set aside with Esc, gates the pane resolved
+        # itself from a grant.
+        self._task_grants: set[tuple[str, str, str]] = set()
+        self._seen_gate_ids: set[str] = set()
+        self._dismissed_gate_ids: set[str] = set()
+        self._auto_resolved_gate_ids: set[str] = set()
+        # 1.5 -- the thread the pane holds open so continuation replies
+        # (same task_id, e.g. after an infuse) land under it; released on
+        # the next send or /done.  Outcomes are rendered once.
+        self._thread_task_id: str = ""
+        self._thread_observer: Any = None
+        self._seen_outcome_keys: set[tuple] = set()
         # Proposal 039 (PR-5) — pinned objective; "" = none. /goal sets it and
         # it's prepended to every outgoing prompt until /goal clear.
         self._goal: str = ""
@@ -425,10 +441,14 @@ class PromptScreen(NavScreen):
             # loudly because it relaxes the signing/auth/secret floors.
             yield Static(id="prompt-mode-badge")
 
-        # Proposal 044 (B8) — inline GATE CARD region. Hidden until a gate is
-        # pending; fed by watch_snapshot from snap.oversight_pending_items.
-        # Resolve right here: /allow [id], /disallow [id], or reply "yes".
-        yield Static("", id="prompt-gate-cards")
+        # Proposal 044 (B8) — inline GATE CARD region, now (1.4) the
+        # PermissionRequest: takes focus when a request arrives, numbered
+        # options, Esc leaves it pending, Ctrl+G returns.  Hidden until a
+        # gate is pending; fed by watch_snapshot from
+        # snap.oversight_pending_items joined to snap.assistant_proposals.
+        # /allow [id], /disallow [id], /oversight …, or reply "yes" still work.
+        from acc.tui.widgets.permission_request import PermissionRequest  # noqa: PLC0415
+        yield PermissionRequest(id="prompt-gate-cards")
 
         # PR-4 — collapsible cluster topology panel.  Rendered above
         # the transcript so the operator can see active sub-agent
@@ -629,6 +649,84 @@ class PromptScreen(NavScreen):
         # Proposal 044 (B8) — refresh the inline GATE CARD region from the same
         # oversight_pending_items the Compliance pane reads.
         self._refresh_gate_cards(snap)
+        # 1.5 — what became of the proposals, spoken in the thread.
+        self._render_outcomes(snap)
+
+    def _render_outcomes(self, snap: "CollectiveSnapshot | None") -> None:
+        """Append each new proposal outcome once as a ``system`` line."""
+        from acc.tui.outcomes import outcome_key, outcome_lines  # noqa: PLC0415
+        for outcome in list(getattr(snap, "assistant_outcomes", []) or []):
+            if not isinstance(outcome, dict):
+                continue
+            key = outcome_key(outcome)
+            if key in self._seen_outcome_keys:
+                continue
+            self._seen_outcome_keys.add(key)
+            for line in outcome_lines(outcome):
+                self._append_history({
+                    "role": "system",
+                    "task_id": str(outcome.get("task_id") or ""),
+                    "text": line,
+                    "ts": float(outcome.get("ts") or time.time()),
+                    "blocked": line.startswith("✗"),
+                })
+
+    # -- 1.5: the thread ------------------------------------------------------
+
+    def _hold_thread(self, observer: Any, task_id: str) -> None:
+        """Keep *task_id* open so a later TASK_COMPLETE on it (an infuse
+        continuation re-uses the original id) lands under this exchange."""
+        self._release_thread()
+        register = getattr(observer, "register_task_followup_listener", None)
+        if register is None or not task_id:
+            return
+
+        def _on_followup(payload: dict) -> None:
+            try:
+                self._append_followup_reply(task_id, payload)
+            except Exception:  # noqa: BLE001
+                logger.exception("prompt: follow-up render failed")
+
+        register(task_id, _on_followup)
+        self._thread_task_id = task_id
+        self._thread_observer = observer
+
+    def _release_thread(self) -> str:
+        """Release the held thread; returns the released task id ("" if none)."""
+        task_id = self._thread_task_id
+        if not task_id:
+            return ""
+        unregister = getattr(
+            self._thread_observer, "unregister_task_followup_listener", None,
+        )
+        if unregister is not None:
+            unregister(task_id)
+        self._thread_task_id = ""
+        self._thread_observer = None
+        return task_id
+
+    def _append_followup_reply(self, task_id: str, payload: dict) -> None:
+        """A continuation reply on the held thread, rendered like a reply."""
+        from acc.channels.tui import _payload_to_response  # noqa: PLC0415
+        reply = _payload_to_response(task_id, payload)
+        summary = self._failed_invocation_summary(reply.invocations or [])
+        if summary:
+            self._append_history({
+                "role": "system", "task_id": task_id, "text": summary,
+                "ts": time.time(),
+            })
+        text = reply.output or "(empty response)"
+        if reply.blocked:
+            text = f"[BLOCKED] {reply.block_reason}\n{text}"
+        self._append_history({
+            "role": "agent",
+            "task_id": task_id,
+            "agent_id": reply.agent_id,
+            "text": f"↩ {text}",
+            "ts": time.time(),
+            "blocked": reply.blocked,
+            "latency_ms": reply.latency_ms,
+        })
 
     def _refresh_gate_cards(self, snap: "CollectiveSnapshot | None") -> None:
         """Update the inline GATE CARD region (proposal 044 B8).
@@ -638,27 +736,113 @@ class PromptScreen(NavScreen):
         stashes them on ``self._pending_gates`` so ``/allow`` / ``/disallow``
         and the B14 affirmation path can resolve them.  Best-effort: any failure
         leaves the region as-is (it never blocks a snapshot tick)."""
-        from acc.tui.gate_cards import (  # noqa: PLC0415
-            pending_gates,
-            render_gate_cards,
+        from acc.tui.gate_cards import pending_gates  # noqa: PLC0415
+        from acc.tui.widgets.permission_request import (  # noqa: PLC0415
+            PermissionRequest,
+            region_enabled,
         )
         try:
-            widget = self.query_one("#prompt-gate-cards", Static)
+            widget = self.query_one("#prompt-gate-cards", PermissionRequest)
         except Exception:  # not mounted yet
             return
         items = (
             list(getattr(snap, "oversight_pending_items", []) or [])
             if snap else []
         )
+        proposals = (
+            dict(getattr(snap, "assistant_proposals", {}) or {}) if snap else {}
+        )
         try:
             target = str(self.query_one("#select-target-role", Select).value)
         except Exception:  # noqa: BLE001
             target = ""
-        cards = pending_gates(items, target_role=target)
+        cards = pending_gates(items, target_role=target, proposals=proposals)
+        # 1.4 -- "allow for this task": a gate matching a grant the operator
+        # gave earlier in the same task resolves itself (still a row, with
+        # the reason on it).
+        cards = self._apply_task_grants(cards)
         self._pending_gates = cards
-        markup = render_gate_cards(cards)
-        widget.update(markup)
-        widget.display = bool(markup)
+        if not region_enabled():
+            widget.show_legacy(cards)
+            return
+        widget.legacy = False
+        widget.show(cards)
+        ids = {c.oversight_id for c in cards}
+        new_ids = ids - self._seen_gate_ids - self._dismissed_gate_ids
+        self._seen_gate_ids |= ids
+        if new_ids:
+            widget.focus()
+
+    def _apply_task_grants(self, cards: list) -> list:
+        kept = []
+        for c in cards:
+            key = (c.task_id, c.kind, c.target)
+            if (
+                c.task_id and c.target and key in self._task_grants
+                and c.oversight_id not in self._auto_resolved_gate_ids
+            ):
+                self._auto_resolved_gate_ids.add(c.oversight_id)
+                self._resolve_gate(c.oversight_id, approve=True, reason="allowed-for-task")
+            elif c.oversight_id not in self._auto_resolved_gate_ids:
+                kept.append(c)
+        return kept
+
+    # -- 1.4: PermissionRequest messages ---------------------------------
+
+    def on_permission_request_decided(self, message) -> None:
+        for oid in message.oversight_ids:
+            self._resolve_gate(oid, approve=message.approve, reason=message.reason)
+        if message.grant:
+            self._task_grants.add(message.grant)
+            _task, kind, target = message.grant
+            self._append_history({
+                "role": "system", "task_id": _task,
+                "text": f"allowed for this task: {kind.lower()} {target}",
+                "ts": time.time(), "blocked": False,
+            })
+        try:
+            widget = self.query_one("#prompt-gate-cards")
+            if not getattr(widget, "current", None):
+                self.query_one("#prompt-textarea", TextArea).focus()
+        except Exception:  # noqa: BLE001
+            logger.debug("prompt: refocus after decision failed", exc_info=True)
+
+    def on_permission_request_dismissed(self, message) -> None:
+        self._dismissed_gate_ids |= {
+            c.oversight_id for c in getattr(self, "_pending_gates", []) or []
+        }
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": "left pending — Ctrl+G returns to the request",
+            "ts": time.time(), "blocked": False,
+        })
+        try:
+            self.query_one("#prompt-textarea", TextArea).focus()
+        except Exception:  # noqa: BLE001
+            logger.debug("prompt: refocus after dismiss failed", exc_info=True)
+
+    def on_permission_request_reason_requested(self, message) -> None:
+        try:
+            ta = self.query_one("#prompt-textarea", TextArea)
+            ta.text = f"/oversight reject {message.oversight_id} "
+            ta.move_cursor(ta.document.end)
+            ta.focus()
+        except Exception:  # noqa: BLE001
+            logger.debug("prompt: reason prefill failed", exc_info=True)
+
+    def action_focus_permission_request(self) -> None:
+        try:
+            widget = self.query_one("#prompt-gate-cards")
+        except Exception:  # noqa: BLE001
+            return
+        if getattr(widget, "current", None) and not getattr(widget, "legacy", False):
+            widget.focus()
+        else:
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": "no pending permission requests",
+                "ts": time.time(), "blocked": False,
+            })
 
     # ------------------------------------------------------------------
     # Actions
@@ -1242,7 +1426,9 @@ class PromptScreen(NavScreen):
             "blocked": False,
         })
 
-    def _resolve_gate(self, oversight_id: str, *, approve: bool) -> None:
+    def _resolve_gate(
+        self, oversight_id: str, *, approve: bool, reason: str = "",
+    ) -> None:
         """Resolve a pending gate inline (proposal 044 B8).
 
         Posts the SAME ``_OversightAction`` message the Compliance pane uses, so
@@ -1253,7 +1439,7 @@ class PromptScreen(NavScreen):
         verb = "approve" if approve else "reject"
         try:
             self.app.post_message(
-                _OversightAction(action=verb, oversight_id=oversight_id)
+                _OversightAction(action=verb, oversight_id=oversight_id, reason=reason)
             )
         except Exception as exc:  # noqa: BLE001
             self._append_history({
@@ -1267,6 +1453,7 @@ class PromptScreen(NavScreen):
             "text": (
                 f"{'✅ allowed' if approve else '🚫 disallowed'} gate "
                 f"{oversight_id[:12]} — published OVERSIGHT_DECISION ({verb})"
+                + (f" — {reason}" if reason else "")
             ),
             "ts": time.time(), "blocked": False,
         })
@@ -1625,18 +1812,40 @@ class PromptScreen(NavScreen):
             self._render_skills_summary()
             return
 
-        if intent.kind in (
-            _sc.KIND_OVERSIGHT_PENDING,
-            _sc.KIND_OVERSIGHT_APPROVE,
-            _sc.KIND_OVERSIGHT_REJECT,
-        ):
-            _system(
-                "oversight slash commands are wired in a follow-up — "
-                "use Compliance screen for now",
+        # 1.4 -- /oversight pending | approve <id> | reject <id> <reason>,
+        # on the same gate list the request region shows.
+        if intent.kind == _sc.KIND_OVERSIGHT_PENDING:
+            pending = list(getattr(self, "_pending_gates", []) or [])
+            if not pending:
+                _system("no pending gates.")
+            else:
+                _system("\n".join(
+                    f"{g.oversight_id[:12]}  {g.kind}  {g.summary}  [{g.risk}]"
+                    for g in pending
+                ))
+            return
+        if intent.kind in (_sc.KIND_OVERSIGHT_APPROVE, _sc.KIND_OVERSIGHT_REJECT):
+            oid = str(intent.args.get("oversight_id") or "").strip()
+            pending = list(getattr(self, "_pending_gates", []) or [])
+            match = [g for g in pending if g.oversight_id.startswith(oid)]
+            if len(match) == 1:
+                oid = match[0].oversight_id
+            self._resolve_gate(
+                oid,
+                approve=(intent.kind == _sc.KIND_OVERSIGHT_APPROVE),
+                reason=str(intent.args.get("reason") or ""),
             )
             return
 
         # Proposal 039 (PR-3) — inspection/config verbs.
+        if intent.kind == _sc.KIND_DONE:
+            released = self._release_thread()
+            _system(
+                f"thread released (task {released[:12]})" if released
+                else "no open thread"
+            )
+            return
+
         if intent.kind == _sc.KIND_CLEAR:
             self.action_clear_transcript()
             _system("transcript cleared")
@@ -2024,6 +2233,8 @@ class PromptScreen(NavScreen):
         workspace: str | None = None,
     ) -> None:
         """Background worker.  One per Send click."""
+        # 1.5 -- a new prompt is a new thread.
+        self._release_thread()
         channel = TUIPromptChannel(observer, collective_id=collective_id)
 
         # Progress callback fires from the observer's NATS routing
@@ -2182,6 +2393,8 @@ class PromptScreen(NavScreen):
             f"[dim]Reply received {status} — "
             f"agent={reply.agent_id[:14]} latency={reply.latency_ms:.0f}ms[/dim]"
         )
+        # 1.5 -- keep the thread open for continuation replies.
+        self._hold_thread(observer, task_id)
 
         # PR-Y-2c — capture the executed prompt as a golden candidate so
         # it shows up in the Diagnostics pane for review + persistence.
