@@ -171,8 +171,12 @@ class PlanSnapshot:
     collective_id: str
     steps: list[dict] = field(default_factory=list)
     step_progress: dict[str, str] = field(default_factory=dict)
-    # step_progress maps step_id → status ("PENDING"|"RUNNING"|"DONE"|"FAILED")
+    # step_progress maps step_id → status ("PENDING"|"RUNNING"|"COMPLETE"|"FAILED"|"CANCELLED")
     received_ts: float = field(default_factory=time.time)
+    # `20260903-work-board-tui` — from the executor's re-broadcast: the task
+    # id per step (joins a Blocked gate) and the reviewer loop per step.
+    step_tasks: dict[str, str] = field(default_factory=dict)
+    step_meta: dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass

@@ -506,6 +506,10 @@ class NATSObserver:
             "signal_type": signal_type,
             "agent_id": agent_id,
             "key_field": _signal_key_field(signal_type, data),
+            # `20260903-work-board-tui` -- lets the Board derive single prompt
+            # tasks (TASK_ASSIGN / TASK_COMPLETE pairs) from the log.
+            "task_id": str(data.get("task_id", "") or ""),
+            "target_role": str(data.get("target_role", "") or ""),
         })
 
         self._snapshot.last_updated_ts = time.time()
@@ -857,11 +861,19 @@ class NATSObserver:
 
         steps: list[dict] = data.get("steps", [])
         existing = self._snapshot.active_plans.get(plan_id)
+        # The executor re-broadcasts the PLAN with ``step_progress`` on every
+        # transition (acc/plan.py:_broadcast).  Until `20260903-work-board-tui`
+        # this handler initialised every step to PENDING and, on a
+        # re-broadcast, "preserved progress" -- i.e. never read the field, so
+        # the Comms DAG stayed PENDING forever.  Same bug class as #321.
+        incoming = data.get("step_progress")
+        progress = dict(incoming) if isinstance(incoming, dict) else {}
+        step_tasks = data.get("step_tasks")
+        step_meta = data.get("step_meta")
 
         if existing is None:
-            # New plan — initialise all steps as PENDING
             step_progress = {
-                s.get("step_id", str(i)): "PENDING"
+                s.get("step_id", str(i)): progress.get(s.get("step_id", str(i)), "PENDING")
                 for i, s in enumerate(steps)
             }
             self._snapshot.active_plans[plan_id] = PlanSnapshot(
@@ -869,10 +881,17 @@ class NATSObserver:
                 collective_id=data.get("collective_id", self._collective_id),
                 steps=steps,
                 step_progress=step_progress,
+                step_tasks=dict(step_tasks) if isinstance(step_tasks, dict) else {},
+                step_meta=dict(step_meta) if isinstance(step_meta, dict) else {},
             )
         else:
-            # Re-broadcast — update steps but preserve progress
             existing.steps = steps
+            existing.step_progress.update(progress)
+            if isinstance(step_tasks, dict):
+                existing.step_tasks.update(step_tasks)
+            if isinstance(step_meta, dict):
+                existing.step_meta.update(step_meta)
+            existing.received_ts = time.time()
 
         # Keep only the 5 most recently received plans to avoid unbounded growth
         if len(self._snapshot.active_plans) > 5:

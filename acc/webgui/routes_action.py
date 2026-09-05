@@ -83,6 +83,19 @@ class TestLLMRequest(BaseModel):
     base_url: str
 
 
+class BoardControlRequest(BaseModel):
+    """`20260903-work-board-webgui` — one intervention on one card."""
+
+    collective_id: str
+    kind: str = Field(..., pattern="^(plan_step|task)$")
+    action: str = Field(..., pattern="^(cancel|retry|reassign)$")
+    plan_id: str = ""
+    step_id: str = ""
+    task_id: str = ""
+    role: str = ""
+    reason: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -198,6 +211,61 @@ async def oversight_decision(
         subject_oversight_decision(req.collective_id, req.oversight_id), payload,
     )
     return {"status": "published", "decision": req.decision}
+
+
+@router.post("/board/control")
+async def board_control(
+    req: BoardControlRequest,
+    hub: ObserverHub = Depends(get_hub),
+    principal: Principal = Depends(require_operator),
+) -> dict:
+    """Cancel / retry / reassign a plan step (``PLAN_STEP_CONTROL``, applied by
+    the arbiter) or cancel a single task (``TASK_CANCEL``).  The board holds
+    no state: the response says *published*, and the card moves when the
+    arbiter re-broadcasts.  The principal is stamped as ``actor`` — the
+    WebGUI is the surface where an intervention can be attributed."""
+    from acc.signals import (  # noqa: PLC0415
+        SIG_PLAN_STEP_CONTROL,
+        SIG_TASK_CANCEL,
+        subject_plan_control,
+        subject_task_cancel,
+    )
+
+    obs = _require_observer(hub, req.collective_id)
+    actor = f"webgui:{principal.user}"
+    if req.kind == "plan_step":
+        if not (req.plan_id and req.step_id):
+            raise HTTPException(status_code=400, detail="plan_id and step_id are required")
+        if req.action == "reassign" and not req.role:
+            raise HTTPException(status_code=400, detail="reassign needs a role")
+        payload = {
+            "signal_type": SIG_PLAN_STEP_CONTROL,
+            "collective_id": req.collective_id,
+            "plan_id": req.plan_id,
+            "step_id": req.step_id,
+            "action": req.action,
+            "role": req.role,
+            "reason": req.reason,
+            "actor": actor,
+            "ts": time.time(),
+        }
+        await obs.publish(subject_plan_control(req.collective_id), payload)
+        return {"status": "published", "signal": SIG_PLAN_STEP_CONTROL, "actor": actor}
+    # kind == task: only cancel makes sense for a single prompt task
+    if req.action != "cancel":
+        raise HTTPException(status_code=400, detail="a task can only be cancelled")
+    if not req.task_id:
+        raise HTTPException(status_code=400, detail="task_id is required")
+    payload = {
+        "signal_type": SIG_TASK_CANCEL,
+        "collective_id": req.collective_id,
+        "task_id": req.task_id,
+        "reason": req.reason or f"cancelled by {actor}",
+        "actor": actor,
+        "ts": time.time(),
+    }
+    await obs.publish(subject_task_cancel(req.collective_id), payload)
+    return {"status": "published", "signal": SIG_TASK_CANCEL, "actor": actor}
 
 
 @router.post("/test-llm")

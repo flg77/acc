@@ -128,3 +128,22 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .errmsg { color: var(--err); font-size: 0.85rem; }
 .loading button { margin-top: 0.6rem; }
+
+/* ── Board (20260903-work-board-webgui) ─────────────────────────────────── */
+.board-columns { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.6rem; }
+.board-column { background: rgba(255, 255, 255, 0.03); border-radius: 0.4rem; padding: 0.4rem; min-height: 8rem; }
+.board-column h4 { margin: 0 0 0.4rem; font-size: 0.85rem; }
+.board-card { border: 1px solid rgba(255, 255, 255, 0.12); border-left: 3px solid var(--muted); border-radius: 0.3rem; padding: 0.4rem 0.5rem; margin-bottom: 0.4rem; font-size: 0.8rem; }
+.board-card.status-running { border-left-color: var(--accent); }
+.board-card.status-blocked { border-left-color: var(--warn); }
+.board-card.status-done { border-left-color: var(--ok); }
+.board-card.status-failed { border-left-color: var(--err, #c0392b); }
+.board-card-title { font-weight: 600; margin-bottom: 0.2rem; }
+.board-card-meta { display: flex; flex-wrap: wrap; gap: 0.5rem; color: var(--muted); font-size: 0.72rem; }
+.board-card-detail { margin-top: 0.25rem; color: var(--muted); }
+.board-card-actions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.4rem; align-items: center; }
+.board-card-actions button, .board-card-actions select { font-size: 0.72rem; padding: 0.15rem 0.45rem; }
+.board-card-hint { color: var(--warn); font-size: 0.72rem; }
+.board-msg { margin: 0.3rem 0; font-size: 0.8rem; }
+.board-msg.error { color: var(--err, #c0392b); }
+.muted { color: var(--muted); }

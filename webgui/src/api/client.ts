@@ -150,6 +150,58 @@ export const oversightDecision = (
     reason,
   });
 
+// --- work board (20260903-work-board-webgui) -------------------------------
+
+export interface BoardItem {
+  id: string;
+  kind: "plan_step" | "cluster_member" | "task" | "gate";
+  title: string;
+  status: "QUEUED" | "RUNNING" | "BLOCKED" | "DONE" | "FAILED";
+  role: string;
+  agent_id: string;
+  status_detail: string;
+  plan_id: string;
+  step_id: string;
+  task_id: string;
+  parent: string;
+  depends_on: string[];
+  blocked_on: string;
+  iteration: string;
+  critique: string;
+  outcome: string;
+  updated_ts: number;
+  can_cancel: boolean;
+  can_retry: boolean;
+  can_reassign: boolean;
+}
+
+export interface BoardColumn {
+  status: BoardItem["status"];
+  items: BoardItem[];
+}
+
+export const fetchBoard = (cid: string) =>
+  getJSON<{ collective_id: string; generated_ts: number; columns: BoardColumn[] }>(
+    `/api/board/${encodeURIComponent(cid)}`,
+  );
+
+export const boardControl = (
+  cid: string,
+  req: {
+    kind: "plan_step" | "task";
+    action: "cancel" | "retry" | "reassign";
+    plan_id?: string;
+    step_id?: string;
+    task_id?: string;
+    role?: string;
+    reason?: string;
+  },
+) =>
+  postJSON<{ status: string; signal: string; actor: string }>("/api/board/control", {
+    collective_id: cid,
+    ...req,
+  });
+
 export const testLLM = (baseUrl: string) =>
   postJSON<{ reachable: boolean; status_code?: number; latency_ms?: number }>(
     "/api/test-llm",

@@ -68,6 +68,27 @@ The TUI connects to NATS, subscribes to `acc.{collective_id}.>` for each collect
 
 ---
 
+## Which profile
+
+Two views of the same TUI (`20260902-tui-profiles`):
+
+| Profile | Strip | Starts on | For |
+|---|---|---|---|
+| `operator` (default) | all eleven screens, `1`–`9` + Marketplace / Catalogs | Soma | running the collective |
+| `user` | **Prompt** and **Compliance** | Prompt | using the assistant — the conversation and its decisions are in the Prompt pane; Compliance keeps the record and history |
+
+```bash
+acc-tui --profile user          # or: ACC_TUI_PROFILE=user acc-tui
+```
+
+A profile is a view choice, nothing more: it changes which screens sit on
+the strip and where the TUI opens. Every screen stays reachable — press
+`Ctrl+A` and pick from the "Go to …" digits (in `user` that is the whole
+operator console), or `Ctrl+P` and type the screen's name; the `1`–`9`
+digits still work too. Nothing about what agents may do, what is asked, or
+what Compliance records differs between profiles. In the container stack
+set `ACC_TUI_PROFILE` in `.env`; `acc-deploy.sh` passes it to `acc-tui`.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -489,6 +510,19 @@ The golden-prompt suite runner (PR-N / K-2). It drives the same `acc.golden_prom
 | `q` | Quit |
 
 ---
+
+### Board — work in flight
+
+What the runtime is doing on your behalf, as a list of cards under five
+headers: **QUEUED · RUNNING · BLOCKED · DONE · FAILED** — plan steps, cluster
+fan-out members, single prompt tasks, and the gates that block them
+(`20260903-work-board-tui`, HG-39). The board holds no state: `c` cancel,
+`r` retry, `a` reassign publish `PLAN_STEP_CONTROL` (a plan step) or
+`TASK_CANCEL` (a task) and the arbiter moves the row; `g` goes to the Prompt
+pane to answer the gate a Blocked item waits on; `Enter` shows detail
+(dependencies, reviewer iteration + critique, outcome). Nobody drags a card
+to Done. Reach it with `Ctrl+A` + its digit or `Ctrl+P`; it is on the `user`
+profile's strip too.
 
 ## WebBridge HTTP Server (REQ-TUI-041)
 

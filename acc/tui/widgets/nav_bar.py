@@ -24,19 +24,20 @@ from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Button
 
+from acc.tui.registry import (
+    active_profile,
+    hidden_specs,
+    overflow_specs,
+    strip_specs,
+)
 
-# Ordered screen definitions: (key, screen_name, display_label)
+
+# Ordered screen definitions: (key, screen_name, display_label).
+# `20260902-tui-profiles` 1a: a VIEW over acc.tui.registry.SCREENS — the one
+# place a screen is declared.  The tuple shape is kept for the tests and the
+# palette that read it.
 _SCREENS: list[tuple[str, str, str]] = [
-    ("1", "soma",          "1 Soma"),
-    ("2", "nucleus",       "2 Nucleus"),
-    ("3", "compliance",    "3 Compliance"),
-    ("4", "comms",         "4 Comms"),
-    ("5", "performance",   "5 Performance"),
-    ("6", "ecosystem",     "6 Ecosystem"),
-    ("7", "prompt",        "7 Prompt"),
-    ("8", "configuration", "8 Configuration"),
-    # PR-N (K-2) — golden-prompt diagnostics pane.
-    ("9", "diagnostics",   "9 Diagnostics"),
+    (s.key, s.name, s.strip_label) for s in strip_specs()
 ]
 
 # Overflow panes beyond the 1–9 strip, in Ctrl+A-leader order.  The number row
@@ -54,8 +55,7 @@ _SCREENS: list[tuple[str, str, str]] = [
 # unless you knew the leader; the Ctrl+A leader + Ctrl+P stay as the keyboard
 # paths.  The list index IS the leader digit.
 _SCREENS_EXT: list[tuple[str, str]] = [
-    ("marketplace", "Marketplace"),   # Ctrl+A 0  → screen 10
-    ("catalogs",    "Catalogs"),      # Ctrl+A 1  → screen 11
+    (s.name, s.label) for s in overflow_specs()   # Ctrl+A 0 → Marketplace, 1 → Catalogs
 ]
 
 # The overflow-pane leader chord (GNU-Screen-style prefix), then a digit 0–9.
@@ -111,17 +111,11 @@ class NavigationBar(Widget):
     # show=False: the button strip itself is the visible nav affordance, so
     # these keys are kept out of the Footer to avoid listing navigation twice
     # (proposal 050 Slice 3).  They still fire.
+    # Derived from the registry (1a) — a screen added there gets its digit
+    # here; one added anywhere else does not exist.
     BINDINGS = [
-        Binding("1", "navigate('soma')",          "Soma",          show=False),
-        Binding("2", "navigate('nucleus')",       "Nucleus",       show=False),
-        Binding("3", "navigate('compliance')",    "Compliance",    show=False),
-        Binding("4", "navigate('comms')",         "Comms",         show=False),
-        Binding("5", "navigate('performance')",   "Performance",   show=False),
-        Binding("6", "navigate('ecosystem')",     "Ecosystem",     show=False),
-        Binding("7", "navigate('prompt')",        "Prompt",        show=False),
-        Binding("8", "navigate('configuration')", "Configuration", show=False),
-        # PR-N (K-2) — golden-prompt diagnostics pane.
-        Binding("9", "navigate('diagnostics')",   "Diagnostics",   show=False),
+        Binding(key, f"navigate('{name}')", label.split(" ", 1)[1], show=False)
+        for key, name, label in _SCREENS
     ]
 
     def __init__(self, active_screen: str = "soma", **kwargs) -> None:  # type: ignore[override]
@@ -144,9 +138,15 @@ class NavigationBar(Widget):
 
     @staticmethod
     def _all_panes() -> list[tuple[str, str]]:
-        """(screen_name, display_label) for every nav button — the 1..9 keyed
-        panes plus the keyless overflow panes."""
-        return [(name, label) for _key, name, label in _SCREENS] + list(_SCREENS_EXT)
+        """(screen_name, display_label) for every nav button of the ACTIVE
+        profile (1b): the operator's 1..9 keyed panes plus the keyless
+        overflow panes; the user's Prompt + Compliance.  Screens off the
+        strip stay reachable (Ctrl+A leader, Ctrl+P, their digit)."""
+        profile = active_profile()
+        return (
+            [(s.name, s.strip_label) for s in strip_specs(profile)]
+            + [(s.name, s.label) for s in overflow_specs(profile)]
+        )
 
     def set_active(self, screen_name: str) -> None:
         """Update the highlighted button to *screen_name* (covers the overflow
@@ -233,11 +233,14 @@ class NavScreen(Screen):
         return None
 
     def _leader_entries(self) -> list[tuple[str, str]]:
-        """Full menu = universal help + this pane's entries + overflow nav."""
+        """Full menu = universal help + this pane's entries + nav to every
+        screen that is NOT on the active profile's strip (1b).  For the
+        operator profile that is the two overflow panes, as before; for the
+        user profile it is the whole operator console, one chord away."""
         entries: list[tuple[str, str]] = [("h", "Keyboard shortcuts")]
         entries += list(self.leader_menu_entries())
-        for idx, (_name, label) in enumerate(_SCREENS_EXT):
-            entries.append((str(idx), f"Go to {label}"))
+        for idx, spec in enumerate(hidden_specs()[:10]):
+            entries.append((str(idx), f"Go to {spec.label}"))
         return entries
 
     def action_leader_menu(self) -> None:
@@ -257,8 +260,9 @@ class NavScreen(Screen):
             return
         if key.isdigit():
             idx = int(key)
-            if 0 <= idx < len(_SCREENS_EXT):
-                self.post_message(NavigateTo(_SCREENS_EXT[idx][0]))
+            hidden = hidden_specs()
+            if 0 <= idx < len(hidden):
+                self.post_message(NavigateTo(hidden[idx].name))
             return
         self.on_leader_key(key)
 

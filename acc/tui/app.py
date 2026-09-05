@@ -35,20 +35,22 @@ from textual.widgets import Label
 from acc.tui.client import NATSObserver
 from acc.tui.messages import PromptLoadMessage, RolePreloadMessage
 from acc.tui.models import CollectiveSnapshot
-from acc.tui.screens.compliance import ComplianceScreen, _OversightAction
-from acc.tui.screens.comms import CommunicationsScreen
-from acc.tui.screens.configuration import ConfigurationScreen
-from acc.tui.screens.dashboard import DashboardScreen, _RefreshMessage
-from acc.tui.screens.diagnostics import DiagnosticsScreen
-from acc.tui.screens.ecosystem import EcosystemScreen
-from acc.tui.screens.marketplace import MarketplaceScreen
-from acc.tui.screens.catalogs import CatalogsScreen
+from acc.tui.screens.compliance import _OversightAction
+from acc.tui.screens.dashboard import _RefreshMessage
 from acc.tui.screens.infuse import InfuseScreen, _PublishMessage
-from acc.tui.screens.performance import PerformanceScreen
 from acc.tui.screens.prompt import PromptScreen
 from acc.tui.widgets.nav_bar import NavigateTo
 from acc.tui.widgets.collective_tabs import CollectiveTabStrip, SwitchCollective
 from acc.tui.palette import ScreenCommands, ScreenActionCommands
+from acc.tui.registry import (
+    ALL_PROFILES,
+    PROFILE_ENV,
+    help_map,
+    names_of,
+    screen_map,
+    snapshot_specs,
+    start_screen,
+)
 
 logger = logging.getLogger("acc.tui.app")
 
@@ -101,24 +103,11 @@ class ACCTUIApp(App):
     # Textual's built-in system commands (theme, quit, …).
     COMMANDS = App.COMMANDS | {ScreenCommands, ScreenActionCommands}
 
-    # Eight screens — six biological + PR-B prompt pane +
-    # proposal-003 PR-4 configuration pane (REQ-TUI-003).
-    SCREENS = {
-        "soma":          DashboardScreen,
-        "nucleus":       InfuseScreen,
-        "compliance":    ComplianceScreen,
-        "comms":         CommunicationsScreen,
-        "performance":   PerformanceScreen,
-        "ecosystem":     EcosystemScreen,
-        "marketplace":   MarketplaceScreen,  # Stage 2.4 — pkg discovery
-        "catalogs":      CatalogsScreen,     # Stage 2.4 — catalog admin
-        "prompt":        PromptScreen,    # PR-B
-        "configuration": ConfigurationScreen,  # proposal 003 PR-4
-        "diagnostics":   DiagnosticsScreen,    # PR-N (K-2)
-        # Legacy aliases so existing code using "dashboard"/"infuse" still works
-        "dashboard":     DashboardScreen,
-        "infuse":        InfuseScreen,
-    }
+    # Every screen, by name — derived from acc.tui.registry.SCREENS (1a),
+    # legacy aliases "dashboard" / "infuse" included.  Declare a new screen
+    # THERE; this map, the nav strip, the help map and the snapshot fan-out
+    # all follow.
+    SCREENS = screen_map()
 
     def __init__(
         self,
@@ -238,7 +227,8 @@ class ACCTUIApp(App):
                 bridge.serve(), name="web-bridge"
             )
 
-        self.push_screen("soma")
+        # 1b: the operator opens on Soma, the user on Prompt.
+        self.push_screen(start_screen())
 
         # Mount multi-collective tab strip when more than one collective (REQ-TUI-007)
         if len(self._collective_ids) > 1:
@@ -379,28 +369,22 @@ class ACCTUIApp(App):
             return {"collective_id": self._active_collective_id}
 
     def _apply_snapshot(self, snapshot: CollectiveSnapshot) -> None:
-        """Push snapshot into all open screens."""
-        _SNAPSHOT_SCREENS = [
-            ("soma", DashboardScreen),
-            ("dashboard", DashboardScreen),
-            ("compliance", ComplianceScreen),
-            ("comms", CommunicationsScreen),
-            ("performance", PerformanceScreen),
-            ("ecosystem", EcosystemScreen),
-            ("configuration", ConfigurationScreen),  # proposal 003 PR-4
-            # 044 B8 wired the Prompt pane's GATE CARDs + liveness pre-flight
-            # to watch_snapshot but never listed the screen here, so no
-            # snapshot ever reached it: no gate card, "approved" went to the
-            # LLM as a prompt, and the header read "Clusters: 0".
-            ("prompt", PromptScreen),
-        ]
-        for screen_name, screen_cls in _SNAPSHOT_SCREENS:
-            try:
-                scr = self.get_screen(screen_name)
-                if isinstance(scr, screen_cls) and hasattr(scr, "snapshot"):
-                    scr.snapshot = snapshot  # type: ignore[attr-defined]
-            except Exception:
-                pass
+        """Push snapshot into every screen registered for it.
+
+        1a: the list lives in acc.tui.registry (receives_snapshot).  It used
+        to be hand-maintained here and silently omitted the Prompt pane
+        (#321) and Diagnostics; tests/test_screen_registry.py now fails if a
+        screen declares a ``snapshot`` reactive without being registered.
+        """
+        for spec in snapshot_specs():
+            screen_cls = spec.screen_class()
+            for name in names_of(spec):   # "soma" and its legacy "dashboard" instance
+                try:
+                    scr = self.get_screen(name)
+                    if isinstance(scr, screen_cls) and hasattr(scr, "snapshot"):
+                        scr.snapshot = snapshot  # type: ignore[attr-defined]
+                except Exception:
+                    pass
 
         # InfuseScreen uses apply_snapshot() (role audit history)
         try:
@@ -475,21 +459,11 @@ class ACCTUIApp(App):
         """
         from acc.tui.screens.help import HelpScreen
 
-        # Map screen class → logical id used as the help filename stem.
+        # Map screen class → logical id used as the help filename stem —
+        # derived from the registry (1a; 050 Slice 6 had to add five entries
+        # here by hand because `?` fell back to Soma on unmapped panes).
         screen_id_map = {
-            DashboardScreen: "soma",
-            InfuseScreen: "nucleus",
-            ComplianceScreen: "compliance",
-            CommunicationsScreen: "comms",
-            PerformanceScreen: "performance",
-            EcosystemScreen: "ecosystem",
-            # 050 Slice 6 — the operator tools + pkg panes had no help entry, so
-            # `?` fell back to Soma on them (prompt.md even existed but wasn't mapped).
-            PromptScreen: "prompt",
-            ConfigurationScreen: "configuration",
-            DiagnosticsScreen: "diagnostics",
-            MarketplaceScreen: "marketplace",
-            CatalogsScreen: "catalogs",
+            **help_map(),
         }
 
         active = self.screen
@@ -745,7 +719,20 @@ def main() -> None:
         "--list-sessions", action="store_true",
         help="list saved sessions and exit.",
     )
+    ap.add_argument(
+        "--profile", choices=list(ALL_PROFILES), default=None,
+        help=(
+            "which screens sit on the strip and where the TUI starts: "
+            "'operator' (everything, starts on Soma — default) or 'user' "
+            "(Prompt + Compliance, starts on Prompt; the rest one Ctrl+A "
+            f"chord away).  Env form: {PROFILE_ENV}."
+        ),
+    )
     args = ap.parse_args()
+
+    if args.profile:
+        # Read by acc.tui.registry.active_profile() at compose time.
+        os.environ[PROFILE_ENV] = args.profile
 
     if args.list_sessions:
         import time as _t  # noqa: PLC0415

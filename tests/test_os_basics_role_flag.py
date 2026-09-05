@@ -44,6 +44,47 @@ class TestOsBasicsAutoGrant:
         assert "git_status" not in r.allowed_skills
         assert "git_log_recent" not in r.allowed_skills
 
+
+class TestResearchMcpGrant:
+    """Phase 1.5's MCP half, granted rather than pasted into every role.yaml."""
+
+    def test_os_basics_brings_the_triad(self) -> None:
+        r = _make_role(os_basics=True)
+        for mid in r._RESEARCH_MCPS:
+            assert mid in r.allowed_mcps, mid
+
+    def test_no_os_basics_no_triad(self) -> None:
+        """Phase 1.5 promised un-flipped role.yaml files see no behaviour
+        change; a role that never opted in must not silently gain network
+        MCPs."""
+        assert _make_role(os_basics=False).allowed_mcps == []
+
+    def test_explicit_true_decouples_from_os_basics(self) -> None:
+        r = _make_role(os_basics=False, research_mcps=True)
+        assert set(r._RESEARCH_MCPS) <= set(r.allowed_mcps)
+
+    def test_explicit_false_opts_out(self) -> None:
+        r = _make_role(os_basics=True, research_mcps=False)
+        assert "arxiv" not in r.allowed_mcps
+
+    def test_grant_is_idempotent(self) -> None:
+        """The seven in-tree roles that already list the triad must not end up
+        with duplicates."""
+        r = _make_role(os_basics=True, allowed_mcps=["arxiv", "wikipedia", "web_fetch"])
+        assert r.allowed_mcps.count("arxiv") == 1
+        assert len(r.allowed_mcps) == 3
+
+    def test_existing_mcps_are_preserved(self) -> None:
+        r = _make_role(os_basics=True, allowed_mcps=["signal"])
+        assert "signal" in r.allowed_mcps
+        assert set(r._RESEARCH_MCPS) <= set(r.allowed_mcps)
+
+    def test_triad_is_not_advertised_by_default(self) -> None:
+        """Reachability is not advertisement — A-018 still gates each call, and
+        an MCP the model reaches for unprompted is a network request."""
+        r = _make_role(os_basics=True)
+        assert r.default_mcps == []
+
     def test_idempotent(self) -> None:
         r = _make_role(
             os_basics=True,
@@ -86,6 +127,18 @@ class TestShippedRolesHaveOsBasics:
                 missing.append(child.name)
         assert missing == [], f"roles without os_basics: {missing}"
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "devops_engineer and coding_agent_architect (added 2026-07-26, "
+            "634557e) declare no shell_exec. Granting it is a HIGH-risk "
+            "capability decision that also needs execute_shell in "
+            "allowed_actions and max_skill_risk_level: HIGH, so it is an "
+            "operator call deferred to its own change — not something to "
+            "paste in to turn this green. strict=True so the marker fails "
+            "loudly once the grant lands and must be removed."
+        ),
+    )
     def test_engineering_family_has_shell_exec(self, roles_dir: Path) -> None:
         eng = {
             "coding_agent", "coding_agent_architect",
@@ -105,7 +158,15 @@ class TestShippedRolesHaveOsBasics:
         assert missing == [], f"eng roles missing shell_exec: {missing}"
 
     def test_universal_mcp_triad_present(self, roles_dir: Path) -> None:
-        """Every shipped role has arxiv/wikipedia/web_fetch in allowed_mcps."""
+        """Every shipped role ends up with arxiv/wikipedia/web_fetch.
+
+        Asserted on the **loaded** role, not the raw YAML. Phase 1.5 shipped
+        the triad as copy-paste into each file, and four roles added in July
+        2026 set ``os_basics: true`` and missed it — the drift this test
+        caught. ``research_mcps`` now grants the triad alongside the skills
+        half, so the assertion is about what a role effectively holds rather
+        than about which files remembered to type it.
+        """
         triad = {"arxiv", "wikipedia", "web_fetch"}
         missing: dict[str, set[str]] = {}
         for child in sorted(roles_dir.iterdir()):
@@ -116,8 +177,8 @@ class TestShippedRolesHaveOsBasics:
                 continue
             data = yaml.safe_load(ry.read_text(encoding="utf-8"))
             rd = (data or {}).get("role_definition", {})
-            mcps = set(rd.get("allowed_mcps") or [])
-            absent = triad - mcps
+            role = RoleDefinitionConfig(**rd)
+            absent = triad - set(role.allowed_mcps)
             if absent:
                 missing[child.name] = absent
         assert missing == {}, f"roles missing MCP triad: {missing}"

@@ -828,6 +828,9 @@ services:
       ACC_COLLECTIVE_IDS: sol-01
       # WebBridge HTTP port — 0 = disabled; set to 8765 and enable port below (REQ-TUI-041)
       ACC_TUI_WEB_PORT: "0"
+      # `20260902-tui-profiles` 1b — 'operator' (everything, default) or
+      # 'user' (Prompt + Compliance, starts on Prompt).  A view choice only.
+      ACC_TUI_PROFILE: ${ACC_TUI_PROFILE:-operator}
       ACC_ROLES_ROOT: /app/roles
       # MLFlow run-logging + Diagnostics `trace →` deep links. OFF unless set.
       # Activate by pointing at any MLFlow in ./.env (no compose edit):

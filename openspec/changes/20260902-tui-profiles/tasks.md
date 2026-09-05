@@ -2,33 +2,40 @@
 
 ## Phase 1 (v0.11.x) — one registry, then a filter
 ### 1.1 Registry
-- [ ] `acc/tui/registry.py` — `ScreenSpec(key, name, label, screen_cls, help_id,
-      receives_snapshot, profiles)` + `SCREENS: tuple[ScreenSpec, ...]`; helpers
-      `by_name()`, `for_profile(profile)`, `snapshot_screens()`
-- [ ] `nav_bar._SCREENS` / `_SCREENS_EXT` derived from the registry (names kept);
-      `NavigationBar.BINDINGS` generated, not hand-written
-- [ ] `ACCTUIApp.SCREENS` = registry name → class (aliases `dashboard` / `infuse` kept);
-      `_apply_snapshot` fans out to `snapshot_screens()`; `action_show_help` map from
-      `help_id`
-- [ ] `palette._JUMP_TARGETS` and `NavScreen._leader_entries` from `for_profile()`
-      with a "more" section for the hidden screens
-- [ ] test: every `acc/tui/screens/*` class with a `snapshot` reactive is registered with
-      `receives_snapshot=True`; `ACCTUIApp.SCREENS` equals the registry map; a screen in
-      any consumer but not the registry fails (the #321 guard)
+- [x] `acc/tui/registry.py` — `ScreenSpec(name, label, module, cls_name, key, help_id,
+      receives_snapshot, profiles)` + `SCREENS`; helpers `by_name()`, `names_of()` (legacy
+      alias instances), `strip_specs(profile)`, `overflow_specs(profile)`,
+      `snapshot_specs()`, `screen_map()`, `help_map()`; classes resolved lazily
+      (REQ-TUI-051: no screen imports from the nav bar)
+- [x] `nav_bar._SCREENS` / `_SCREENS_EXT` derived from the registry (names + tuple shapes
+      kept); `NavigationBar.BINDINGS` generated
+- [x] `ACCTUIApp.SCREENS = screen_map()` (aliases kept); `_apply_snapshot` fans out to
+      `snapshot_specs()` incl. alias instances; `action_show_help` map from `help_map()`
+- [x] `palette._JUMP_TARGETS` and `NavScreen._leader_entries` already derive from the
+      nav lists → from the registry transitively; the profile "more" section is 1.2
+- [x] test: `tests/test_screen_registry.py` — every NavScreen class registered; every
+      class with a `snapshot` reactive fanned out (found **Diagnostics** unfed); consumers
+      equal the registry; operator strip byte-identical; a snapshot reaches Diagnostics
+      and Prompt through the app
 ### 1.2 Profiles
-- [ ] `--profile user|operator` on `acc-tui` (`app.py:main`), `ACC_TUI_PROFILE` env form,
-      default `operator`; unknown → `operator` + warning
-- [ ] `operator`: all screens, start Soma; `user`: Prompt (start), Compliance, Help
-- [ ] startup screen from the profile (`push_screen(...)` at `app.py:241`)
-- [ ] tests: strip labels per profile; `operator` strip identical to today (snapshot);
-      `user` starts on Prompt; Soma reachable from `user` via the leader / palette;
-      flag beats env; unknown profile falls back
+- [x] `--profile user|operator` on `acc-tui` (`app.py:main`), `ACC_TUI_PROFILE` env form,
+      default `operator`; unknown → `operator` + warning (`registry.normalise_profile`)
+- [x] `operator`: all screens, start Soma; `user`: Prompt (start), Compliance (`?` help is
+      app-level and works everywhere)
+- [x] startup screen from the profile (`registry.start_screen`)
+- [x] the leader's digit list is "every screen not on this profile's strip"
+      (`registry.hidden_specs`) — unchanged for `operator` (the two overflow panes), the
+      whole console for `user`; the palette lists every screen in both; the `1`–`9` digits
+      keep working (proposal said "no digit key" — kept, since the strip not showing them is
+      the point and a working chord costs nothing)
+- [x] tests: `tests/test_tui_profiles.py` — strip per profile; `operator` byte-identical;
+      `user` starts on Prompt and reaches Soma via the leader; flag sets the env; unknown
+      falls back; profile membership sanity
 ### 1.3 Docs
-- [ ] `docs/howto-tui.md` — "Which profile" (who it is for, how to set it, what stays
-      reachable); `acc/tui/help/prompt.md` — the leader chord for hidden screens
-- [ ] `acc-deploy.sh` — pass `ACC_TUI_PROFILE` through to the `acc-tui` service (env
-      only; no new flag)
-- [ ] CHANGELOG **Added**
+- [x] `docs/howto-tui.md` — "Which profile"; `acc/tui/help/prompt.md` — the leader chord
+- [x] `container/production/podman-compose.yml` — `ACC_TUI_PROFILE: ${ACC_TUI_PROFILE:-operator}`
+      on the `acc-tui` service (env only; `acc-deploy.sh` already passes `.env` through)
+- [x] CHANGELOG **Added**
 ### Verification
 - [ ] targeted tests (≈8 new)
 - [ ] full sweep

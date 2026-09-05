@@ -44,8 +44,10 @@ from typing import Any, Awaitable, Callable, Optional
 from acc.signals import (
     SIG_PLAN,
     SIG_TASK_ASSIGN,
+    SIG_TASK_CANCEL,
     subject_plan,
     subject_task_assign,
+    subject_task_cancel,
 )
 
 logger = logging.getLogger("acc.plan")
@@ -65,9 +67,12 @@ STATUS_COMPLETE = "COMPLETE"
 """TASK_COMPLETE received with blocked=False."""
 
 STATUS_FAILED = "FAILED"
+STATUS_CANCELLED = "CANCELLED"
+"""A human cancelled the step (``PLAN_STEP_CONTROL``); dependents are skipped
+exactly as on failure.  Terminal, retryable."""
 """Either the step's task was blocked, or one of its (transitive) deps failed."""
 
-_TERMINAL_STATUSES = {STATUS_COMPLETE, STATUS_FAILED}
+_TERMINAL_STATUSES = {STATUS_COMPLETE, STATUS_FAILED, STATUS_CANCELLED}
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +393,91 @@ class PlanExecutor:
 
         if self._is_terminal(plan):
             self._on_plan_terminal(plan)
+
+    async def on_step_control(self, payload: dict) -> bool:
+        """Apply a human's ``PLAN_STEP_CONTROL`` to one step.
+
+        `20260903-work-board-tui`.  Actions:
+
+        * ``cancel`` -- the step becomes CANCELLED; if it was RUNNING a
+          ``TASK_CANCEL`` goes to the agent (best-effort on its side) and
+          its task id leaves the reverse index so a late TASK_COMPLETE cannot
+          flip it back; dependents are skipped exactly as on failure.
+        * ``retry`` -- a FAILED / CANCELLED step returns to PENDING together
+          with the dependents that were only skipped (never dispatched), and
+          whatever is ready is dispatched.
+        * ``reassign`` -- ``retry`` with ``role`` replacing the step's role.
+
+        Idempotent and refusing rather than raising: a second cancel of a
+        cancelled step, a retry of a COMPLETE or RUNNING step, or an unknown
+        plan / step / action returns ``False`` and logs why.  Returns ``True``
+        when something changed (the plan is re-broadcast in that case).
+        """
+        plan_id = str(payload.get("plan_id", "") or "")
+        step_id = str(payload.get("step_id", "") or "")
+        action = str(payload.get("action", "") or "").strip().lower()
+        actor = str(payload.get("actor", "") or "unknown")
+        plan = self._plans.get(plan_id)
+        step = plan.steps.get(step_id) if plan is not None else None
+        if step is None:
+            logger.warning("plan: control %s for unknown %s/%s (from %s)",
+                           action, plan_id, step_id, actor)
+            return False
+
+        if action == "cancel":
+            if step.status in _TERMINAL_STATUSES:
+                logger.info("plan: cancel of %s/%s is a no-op (already %s)",
+                            plan_id, step_id, step.status)
+                return False
+            if step.status == STATUS_RUNNING and step.task_id:
+                self._task_index.pop(step.task_id, None)
+                try:
+                    await self._publish(
+                        subject_task_cancel(plan.collective_id),
+                        json.dumps({
+                            "signal_type": SIG_TASK_CANCEL,
+                            "task_id": step.task_id,
+                            "collective_id": plan.collective_id,
+                            "reason": str(payload.get("reason", "") or f"cancelled by {actor}"),
+                            "from_agent": self._arbiter_id,
+                            "ts": time.time(),
+                        }).encode("utf-8"),
+                    )
+                except Exception:  # noqa: BLE001 -- the step is cancelled regardless
+                    logger.exception("plan: TASK_CANCEL publish failed for %s", step.task_id)
+            step.status = STATUS_CANCELLED
+            self._cascade_failure(plan, step_id)
+            logger.info("plan: %s/%s CANCELLED by %s", plan_id, step_id, actor)
+            await self._broadcast(plan)
+            if self._is_terminal(plan):
+                self._on_plan_terminal(plan)
+            return True
+
+        if action in ("retry", "reassign"):
+            if step.status not in (STATUS_FAILED, STATUS_CANCELLED):
+                logger.info("plan: %s of %s/%s refused (status %s)",
+                            action, plan_id, step_id, step.status)
+                return False
+            if action == "reassign":
+                role = str(payload.get("role", "") or "").strip()
+                if not role:
+                    logger.warning("plan: reassign of %s/%s without a role", plan_id, step_id)
+                    return False
+                step.role = role
+                step.raw["role"] = role
+            step.status = STATUS_PENDING
+            step.task_id = ""
+            # Dependents the cascade skipped never ran; they may run now.
+            for other in plan.steps.values():
+                if other.status == STATUS_FAILED and not other.task_id:
+                    other.status = STATUS_PENDING
+            logger.info("plan: %s/%s %s by %s (role=%s)", plan_id, step_id, action, actor, step.role)
+            await self._dispatch_ready_steps(plan)
+            await self._broadcast(plan)
+            return True
+
+        logger.warning("plan: unknown control action %r for %s/%s", action, plan_id, step_id)
+        return False
 
     def status(self, plan_id: str) -> Optional[dict[str, str]]:
         """Return the current step_id → status map for an active plan."""
@@ -958,6 +1048,17 @@ class PlanExecutor:
             "plan_id": plan.plan_id,
             "collective_id": plan.collective_id,
             "step_progress": {sid: s.status for sid, s in plan.steps.items()},
+            # `20260903-work-board-tui` -- what the board needs beyond status:
+            # the task id (to join a Blocked gate) and the reviewer loop.
+            "step_tasks": {sid: s.task_id for sid, s in plan.steps.items()},
+            "step_meta": {
+                sid: {
+                    "iteration_n": s.iteration_n,
+                    "max_iterations": s.max_iterations,
+                    "critique": (s.last_critique or "")[:200],
+                }
+                for sid, s in plan.steps.items()
+            },
             "ts": time.time(),
             "from_agent": self._arbiter_id,
         })

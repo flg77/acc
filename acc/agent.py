@@ -3555,10 +3555,27 @@ class Agent:
             assert executor is not None
             await executor.register_plan(payload)
 
+        # `20260903-work-board-tui` -- a human's cancel / retry / reassign of
+        # one step, from the Board (TUI or WebGUI).
+        async def _handle_control(msg: object) -> None:
+            try:
+                payload = json.loads(_payload_bytes(msg))
+            except json.JSONDecodeError:
+                logger.warning("plan: invalid PLAN_STEP_CONTROL JSON payload")
+                return
+            executor = self._plan_executor
+            assert executor is not None
+            await executor.on_step_control(payload)
+
         try:
+            from acc.signals import subject_plan_control  # noqa: PLC0415
             await self.backends.signaling.subscribe(
                 subject_plan_submit(collective_id),
                 _handle_submit,
+            )
+            await self.backends.signaling.subscribe(
+                subject_plan_control(collective_id),
+                _handle_control,
             )
             await self._stop_event.wait()
         except Exception as exc:

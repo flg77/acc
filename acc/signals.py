@@ -87,6 +87,9 @@ SIG_BACKPRESSURE = "BACKPRESSURE"
 """Capacity signal; ingester pauses submission when analyst queue exceeds threshold."""
 
 SIG_PLAN = "PLAN"
+# `20260903-work-board-tui` -- a human's intervention on one plan step
+# (cancel / retry / reassign), addressed to the arbiter that owns the plan.
+SIG_PLAN_STEP_CONTROL = "PLAN_STEP_CONTROL"
 """Parallel DAG task plan published by arbiter; all steps with empty depends_on
 start immediately in parallel (A-012: only arbiter may publish)."""
 
@@ -221,6 +224,7 @@ SIGNAL_MODES: dict[str, str] = {
     SIG_ALERT_ESCALATE:         SIGNAL_MODE_ENDOCRINE,
     SIG_CENTROID_UPDATE:        SIGNAL_MODE_ENDOCRINE,
     SIG_PLAN:                   SIGNAL_MODE_ENDOCRINE,
+    SIG_PLAN_STEP_CONTROL:      SIGNAL_MODE_SYNAPTIC,
     SIG_BRIDGE_DELEGATE:        SIGNAL_MODE_ENDOCRINE,
     SIG_BRIDGE_RESULT:          SIGNAL_MODE_ENDOCRINE,
     SIG_DOMAIN_DIFFERENTIATION: SIGNAL_MODE_ENDOCRINE,
@@ -734,6 +738,12 @@ def subject_plan_all(collective_id: str) -> str:
         # → "acc.sol-01.plan.*"
     """
     return f"acc.{collective_id}.plan.*"
+
+
+def subject_plan_control(collective_id: str) -> str:
+    """NATS subject for PLAN_STEP_CONTROL -- the Board's cancel / retry /
+    reassign of one step, applied by the arbiter.  ``acc.{cid}.plan.control``."""
+    return f"acc.{collective_id}.plan.control"
 
 
 def subject_plan_submit(collective_id: str) -> str:

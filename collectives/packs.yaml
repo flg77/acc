@@ -66,6 +66,16 @@ packs:
   - devops_engineer
   - ml_engineer
   - security_analyst
+  # Sources live in acc-ecosystem-spearhead, so `--refresh-packs` (which only
+  # sees packs available on this host) never picks this up. Recorded by hand:
+  # this file is a role->pack MAP, not a claim that a pack is published — and
+  # collective.loan-origination.yaml has referenced it since 2026-08-10, which
+  # left the alignment check red for three weeks.
+  '@acc/loan-origination-roles':
+  - compliance_reviewer
+  - loan_intake
+  - loan_officer
+  - underwriter
   '@acc/research-roles':
   - research_competitor
   - research_critic

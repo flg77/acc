@@ -249,6 +249,25 @@ class RoleDefinitionConfig(BaseModel):
     # behaviour-identical until the bulk role.yaml flip lands.
     os_basics: bool = False
 
+    # OpenSpec `20260603-capability-pool` Phase 1.5 — the universal research
+    # MCP triad (arxiv / wikipedia / web_fetch).
+    #
+    # Phase 1.5 shipped this as *copy-paste*: "every shipped role.yaml gains
+    # ``os_basics: true`` + the universal research MCP triad in
+    # ``allowed_mcps``".  The skills half became a flag the model enforces;
+    # the MCP half stayed hand-written in each file, guarded only by a test.
+    # Four roles added in July 2026 (analyst, coding_agent_architect,
+    # devops_engineer, research_synthesizer) set the flag and missed the
+    # paste, and the test that would have caught it is not run by any CI.
+    #
+    # ``None`` (the default) means **follow os_basics** — the two halves of
+    # one Phase-1.5 decision travel together, so a role cannot acquire the
+    # skills and silently miss the MCPs again.  Set ``True``/``False``
+    # explicitly to decouple them.  A role that never opts into os_basics is
+    # unaffected, which preserves Phase 1.5's compatibility promise that
+    # un-flipped role.yaml files see no behaviour change.
+    research_mcps: bool | None = None
+
     # ACC Implementation 053 (agentset orchestration, P0) — when ``True`` the
     # ``## Orchestration shapes`` guidance block is appended to this role's system
     # prompt, teaching the six orchestration shapes + the task->shape heuristic so
@@ -471,6 +490,8 @@ class RoleDefinitionConfig(BaseModel):
         "disk_free",
     )
     _GIT_SKILLS = ("git_status", "git_log_recent")
+    # OpenSpec `20260603-capability-pool` Phase 1.5 — the research triad.
+    _RESEARCH_MCPS = ("arxiv", "wikipedia", "web_fetch")
     _CODE_DOMAINS = frozenset({
         "software_engineering", "platform_engineering",
         "data_engineering", "machine_learning",
@@ -544,6 +565,31 @@ class RoleDefinitionConfig(BaseModel):
                 self.allowed_skills.append(sid)
             if sid not in self.default_skills:
                 self.default_skills.append(sid)
+        return self
+
+    @model_validator(mode="after")
+    def _grant_research_mcps(self) -> "RoleDefinitionConfig":
+        """Phase 1.5's MCP half, granted rather than pasted.
+
+        Appends the research triad to ``allowed_mcps`` when
+        ``research_mcps`` resolves True — which by default means "this role
+        opted into ``os_basics``". Idempotent: the seven in-tree roles that
+        already list the triad explicitly are unchanged, because a name
+        already present is not appended twice.
+
+        Deliberately NOT added to ``default_mcps``. The skills half is
+        advertised in the system prompt because a navigation primitive is
+        useless the model does not know about; an MCP the model reaches for
+        on its own is a network call, and A-018 still gates each invocation
+        against this list. Granting reachability is not the same as
+        advertising it.
+        """
+        want = self.os_basics if self.research_mcps is None else self.research_mcps
+        if not want:
+            return self
+        for mid in self._RESEARCH_MCPS:
+            if mid not in self.allowed_mcps:
+                self.allowed_mcps.append(mid)
         return self
 
     @model_validator(mode="after")

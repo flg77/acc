@@ -28,6 +28,7 @@ import {
   Configuration,
   Diagnostics,
   Help,
+  Board,
 } from "./screens";
 import { TraceWaterfall, PlanDag, AuditTimeline } from "./tracing";
 
@@ -35,6 +36,7 @@ const SCREENS: Record<string, () => JSX.Element> = {
   Dashboard,
   Infuse,
   Prompt,
+  Board,
   Compliance,
   Ecosystem,
   Marketplace,

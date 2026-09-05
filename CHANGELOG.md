@@ -9,9 +9,89 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 2026-05-13) — earlier changes are reconstructable from
 `git log` but not back-filled into this file.
 
-## [0.11.0] — 2026-09-03
+## [Unreleased]
+
+### Added
 
 ### Changed
+
+### Fixed
+
+## [0.11.1] — 2026-09-05
+
+The work board (HG-39: `PLAN_STEP_CONTROL`, the TUI Board, the WebGUI kanban)
+and the TUI profiles (`acc-tui --profile user|operator`, one screen registry),
+both merged after v0.11.0. The three work-board design questions were answered
+by the operator on 2026-09-05 and recorded in `20260903-work-board-tui/proposal.md`.
+
+### Added
+
+- **The Board in the WebGUI.** A real kanban — five columns of cards over the
+  same pure projection the TUI Board renders (`GET /api/board/{cid}`), with
+  Cancel / Retry / Reassign buttons that publish `PLAN_STEP_CONTROL` or
+  `TASK_CANCEL` through `POST /api/board/control` with the logged-in
+  principal as `actor` — the WebGUI is the surface where an intervention can
+  be attributed. Re-fetched on every WebSocket snapshot push. Nobody drags a
+  card to Done. `openspec/changes/20260903-work-board-webgui`.
+
+- **The Board — work in flight, and the interventions a human may make.**
+  A new TUI screen (`Ctrl+A` + digit / `Ctrl+P`, on both profiles) listing
+  what the runtime is doing under QUEUED · RUNNING · BLOCKED · DONE · FAILED:
+  PLAN DAG steps (with reviewer iteration and critique), cluster fan-out
+  members, single prompt tasks, and the oversight gates that block them — the
+  join between a step's task and its pending gate the runtime never made.
+  `c` cancel / `r` retry / `a` reassign publish the new **`PLAN_STEP_CONTROL`**
+  signal that the arbiter's `PlanExecutor.on_step_control` applies (cancel
+  sends `TASK_CANCEL` to a running agent and skips dependents; retry resets a
+  failed / cancelled step and its skipped dependents; reassign retries under a
+  new role; all idempotent); `g` goes to the Prompt pane to answer the gate.
+  The projection is one pure function (`acc/work_board.py`) shared with the
+  WebGUI board (`20260903-work-board-webgui`). Nobody drags a card to Done.
+  `openspec/changes/20260903-work-board-tui` (HG-39).
+
+- **`acc-tui --profile user|operator`** (`ACC_TUI_PROFILE`). `operator` is
+  today's TUI byte for byte and stays the default. `user` puts only
+  **Prompt** and **Compliance** on the strip and opens on Prompt — the
+  conversation and its decisions live in the Prompt pane since 0.11.0, and
+  Compliance keeps the record and history; the other nine screens are one
+  `Ctrl+A` chord (or `Ctrl+P`) away. A profile is a view choice: nothing about
+  what agents may do, what is asked, or what Compliance records differs.
+  Passed through the container stack as `ACC_TUI_PROFILE`. An unknown value
+  falls back to `operator` with a warning.
+  `openspec/changes/20260902-tui-profiles` Phase 1b.
+
+- **One registry for TUI screens.** `acc/tui/registry.py` is now the only place
+  a screen is declared (name, digit, label, class, help id, whether it receives
+  snapshots). The nav strip and its bindings, `ACCTUIApp.SCREENS` (aliases
+  included), the `?` help map and the snapshot fan-out all derive from it;
+  the four hand-maintained copies are gone. `tests/test_screen_registry.py`
+  fails if a screen class declares a `snapshot` reactive without being
+  registered for it — the class of bug that left the Prompt pane without
+  snapshots for months (#321), and that still had **Diagnostics** unfed until
+  this change. The operator-facing strip is unchanged.
+  `openspec/changes/20260902-tui-profiles` Phase 1a.
+
+### Changed
+
+### Fixed
+
+- **`acc-webgui` could not import its own app since v0.8.0.** `routes_attachments`
+  (image input) declares an `UploadFile`, and FastAPI refuses to build that route
+  unless `python-multipart` is installed — the `webgui` extra never declared it and
+  `Containerfile.webgui` installs its deps by an explicit list that omitted it, so
+  `create_app()` raised at start-up in the shipped image (verified against the
+  v0.10.2 image on lighthouse during the v0.11.1 smoke). Both now carry
+  `python-multipart>=0.0.13`.
+
+- **The Comms ACTIVE PLAN DAG never moved.** The arbiter re-broadcasts the
+  PLAN with `step_progress` on every transition, but the TUI observer only
+  initialised every step to PENDING and, on a re-broadcast, "preserved
+  progress" — it never read the field. It does now (and learns `CANCELLED`,
+  `step_tasks`, `step_meta`). Same bug class as #321.
+
+## [0.11.0] — 2026-09-03
+
+### Added
 
 - **The assistant's own prompt says what is actually asked.**
   `roles/assistant/role.yaml` no longer tells the model that infusion

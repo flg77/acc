@@ -35,7 +35,8 @@ import {
   putRoleMd,
   createRole,
 } from "./api/client";
-import type { MarketRow, CatalogRow, RoleRow, GoldenRun } from "./api/client";
+import type { MarketRow, CatalogRow, RoleRow, GoldenRun, BoardColumn, BoardItem } from "./api/client";
+import { fetchBoard, boardControl } from "./api/client";
 
 const obj = (v: unknown): Record<string, any> =>
   v && typeof v === "object" ? (v as Record<string, any>) : {};
@@ -432,6 +433,116 @@ export function Comms() {
           columns={["episode_id", "agent", "score", "status"]}
           rows={arr(snapshot.episode_nominees)}
         />
+      </Card>
+    </>
+  );
+}
+
+// ── Board — work in flight (20260903-work-board-webgui) ─────────────────────
+// A real kanban: five columns of cards over the same pure projection the TUI
+// Board renders.  Nobody drags a card to Done — the runtime moves cards; the
+// buttons publish PLAN_STEP_CONTROL / TASK_CANCEL and the arbiter applies
+// them.  Re-fetched on every WebSocket snapshot push.
+const BOARD_COLUMN_LABEL: Record<string, string> = {
+  QUEUED: "Queued", RUNNING: "Running", BLOCKED: "Blocked", DONE: "Done", FAILED: "Failed",
+};
+
+function BoardCard({
+  item, cid, onDone, roles,
+}: { item: BoardItem; cid: string; onDone: (msg: string) => void; roles: string[] }) {
+  const [role, setRole] = useState(roles[0] ?? "");
+  const act = async (action: "cancel" | "retry" | "reassign") => {
+    try {
+      const r = await boardControl(cid, {
+        kind: item.kind === "plan_step" ? "plan_step" : "task",
+        action,
+        plan_id: item.plan_id,
+        step_id: item.step_id,
+        task_id: item.task_id,
+        role: action === "reassign" ? role : undefined,
+      });
+      onDone(`${action} → ${item.title} (${r.signal} by ${r.actor})`);
+    } catch (e) {
+      onDone(`error: ${e}`);
+    }
+  };
+  const age = item.updated_ts
+    ? `${Math.max(0, Math.round((Date.now() / 1000 - item.updated_ts) / 60))} min`
+    : "";
+  return (
+    <div className={`board-card status-${item.status.toLowerCase()}`}>
+      <div className="board-card-title">{item.title}</div>
+      <div className="board-card-meta">
+        <span>{item.kind.replace("_", " ")}</span>
+        {(item.role || item.agent_id) && <span>{item.agent_id || item.role}</span>}
+        {item.iteration && <span>iter {item.iteration}</span>}
+        {age && <span>{age}</span>}
+      </div>
+      {item.status_detail && item.status !== "BLOCKED" && (
+        <div className="board-card-detail">{item.status_detail}</div>
+      )}
+      {item.blocked_on && (
+        <div className="board-card-detail">
+          waiting on gate <code>{item.blocked_on.slice(0, 12)}</code> — {item.status_detail}
+        </div>
+      )}
+      {item.critique && <div className="board-card-detail">critique: {item.critique}</div>}
+      {item.outcome && <div className="board-card-detail">outcome: {item.outcome}</div>}
+      <div className="board-card-actions">
+        {item.can_cancel && <button onClick={() => act("cancel")}>Cancel</button>}
+        {item.can_retry && <button onClick={() => act("retry")}>Retry</button>}
+        {item.can_reassign && roles.length > 0 && (
+          <>
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              {roles.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <button onClick={() => act("reassign")}>Reassign</button>
+          </>
+        )}
+        {item.blocked_on && <span className="board-card-hint">answer it in Compliance</span>}
+      </div>
+    </div>
+  );
+}
+
+export function Board() {
+  const { collectiveId, snapshot } = useSnapshot();
+  const [cols, setCols] = useState<BoardColumn[]>([]);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+  const load = () => {
+    if (!collectiveId) return;
+    fetchBoard(collectiveId)
+      .then((r) => { setCols(r.columns); setErr(""); })
+      .catch((e) => setErr(`${e}`));
+  };
+  // The snapshot changes on every WebSocket push; the board follows it.
+  useEffect(load, [collectiveId, snapshot?.last_updated_ts]);
+  const roles = Array.from(
+    new Set(Object.values(snapshot?.agents ?? {}).map((a: any) => String(a?.role ?? "")).filter(Boolean)),
+  ).sort();
+  if (!collectiveId) return <Empty what="a collective" />;
+  const total = cols.reduce((n, c) => n + c.items.length, 0);
+  return (
+    <>
+      <Card title={`Board — work in flight (${total})`}>
+        <p className="muted">
+          The runtime moves cards; you may cancel, retry, reassign, or answer the gate a
+          Blocked card waits on. Nobody drags a card to Done.
+        </p>
+        {err && <div className="board-msg error">{err}</div>}
+        {msg && <div className="board-msg">{msg}</div>}
+        <div className="board-columns">
+          {cols.map((c) => (
+            <div key={c.status} className={`board-column status-${c.status.toLowerCase()}`}>
+              <h4>{BOARD_COLUMN_LABEL[c.status] ?? c.status} <span className="muted">{c.items.length}</span></h4>
+              {c.items.length === 0 && <div className="empty">—</div>}
+              {c.items.map((it) => (
+                <BoardCard key={it.id} item={it} cid={collectiveId} onDone={setMsg} roles={roles} />
+              ))}
+            </div>
+          ))}
+        </div>
       </Card>
     </>
   );

@@ -171,6 +171,7 @@ and stops listening.
 | Send | "Send" button | `Ctrl+S` |
 | Clear history | "Clear history" button | `Ctrl+L` |
 | Return to a pending permission request | — | `Ctrl+G` |
+| Reach a screen that is not on the strip (`user` profile) | — | `Ctrl+A` then its digit, or `Ctrl+P` |
 | Navigate to other screens | NavBar buttons | `1`–`7` |
 
 ## Approvals — the permission request

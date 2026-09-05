@@ -27,7 +27,7 @@ def test_app_registers_both_providers_and_keeps_system():
     # Every screen is a jump target — including the two with no number key.
     names = {n for n, _ in _JUMP_TARGETS}
     assert {"soma", "diagnostics", "marketplace", "catalogs"} <= names
-    assert len(_JUMP_TARGETS) == 11
+    assert len(_JUMP_TARGETS) == 12   # + Board (20260903-work-board-tui)
 
 
 class _Harness(App):
@@ -46,7 +46,7 @@ async def test_screen_provider_lists_all_and_searches():
         prov = ScreenCommands(app.screen)
         # discover() (empty query) lists every screen.
         disc = [h async for h in prov.discover()]
-        assert len(disc) == 11
+        assert len(disc) == 12
         # fuzzy search narrows to the match.
         hits = [h async for h in prov.search("compliance")]
         assert any("Compliance" in (h.help or "") for h in hits)

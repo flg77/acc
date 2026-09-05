@@ -103,8 +103,9 @@ def test_navscreen_binds_ctrl_a_which_key_menu():
     assert menu.action == "leader_menu"
     assert menu.priority is True  # beats a focused Input's ctrl+a→home
     assert callable(getattr(NavScreen, "action_leader_menu", None))
-    # Registry order defines the overflow digits: 0=Marketplace, 1=Catalogs.
-    assert [name for name, _label in _SCREENS_EXT][:2] == ["marketplace", "catalogs"]
+    # Registry order defines the overflow digits: 0=Marketplace, 1=Catalogs
+    # (2=Board since 20260903-work-board-tui, appended so these keep meaning).
+    assert [name for name, _label in _SCREENS_EXT][:3] == ["marketplace", "catalogs", "board"]
 
 
 def test_infuse_contributes_leader_menu_entries():

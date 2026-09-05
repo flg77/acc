@@ -36,6 +36,44 @@ def list_collectives(hub: ObserverHub = Depends(get_hub)) -> dict:
     return {"collectives": hub.collective_ids()}
 
 
+@router.get("/api/board/{collective_id}", tags=["read"],
+            dependencies=[Depends(require_viewer)])
+def board(collective_id: str, hub: ObserverHub = Depends(get_hub)) -> dict:
+    """The work board (`20260903-work-board-webgui`): the same pure
+    projection the TUI Board renders, over the hub's latest snapshot.
+
+    Columns are the runtime's states (QUEUED · RUNNING · BLOCKED · DONE ·
+    FAILED); nothing here is editable — interventions go through
+    ``POST /api/board/control`` and the arbiter moves the card."""
+    from dataclasses import asdict  # noqa: PLC0415
+
+    from acc.work_board import columns, project_board  # noqa: PLC0415
+
+    if hub.observer(collective_id) is None:
+        raise HTTPException(status_code=404,
+                            detail=f"collective {collective_id!r} not observed")
+    snap = hub.latest(collective_id) or {}
+    items = project_board(
+        active_plans=snap.get("active_plans"),
+        cluster_topology=snap.get("cluster_topology"),
+        oversight_pending_items=snap.get("oversight_pending_items"),
+        oversight_recent_items=snap.get("oversight_recent_items"),
+        assistant_outcomes=snap.get("assistant_outcomes"),
+        signal_flow_log=snap.get("signal_flow_log"),
+    )
+    return {
+        "collective_id": collective_id,
+        "generated_ts": time.time(),
+        "columns": [
+            {"status": status,
+             "items": [{**asdict(it), "can_cancel": it.can_cancel,
+                        "can_retry": it.can_retry, "can_reassign": it.can_reassign}
+                       for it in bucket]}
+            for status, bucket in columns(items)
+        ],
+    }
+
+
 @router.get("/api/snapshot/{collective_id}", tags=["read"],
             dependencies=[Depends(require_viewer)])
 def get_snapshot(
