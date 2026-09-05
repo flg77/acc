@@ -17,6 +17,23 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.11.2] — 2026-09-05
+
+One fix, found by the v0.11.1 Prompt-pane approve/deny smoke on lighthouse.
+
+### Fixed
+
+- **Proposal rationale, outcome notices and TASK_PROGRESS never reached the
+  TUI observer.** `NATSBackend.publish` takes JSON *bytes* and msgpack-packs
+  them; the assistant-proposal publishers (pending payload, outcomes, the
+  infuse continuation) and the TASK_PROGRESS emitter hand it a **dict**, so
+  a msgpack *map* went on the wire. Agents tolerate that (`_payload_bytes`),
+  the observer's `unpackb → json.loads` does not — on lighthouse the hub
+  counted 81 decode errors and the Prompt pane showed the generic gate card
+  (no rationale, one request per row instead of per reply) and no live
+  progress line. The backend now normalises any non-bytes payload to JSON
+  bytes, and the observer accepts a map from an older agent. Found by the
+  v0.11.1 Prompt-pane approve/deny smoke (2026-09-05).
 ## [0.11.1] — 2026-09-05
 
 The work board (HG-39: `PLAN_STEP_CONTROL`, the TUI Board, the WebGUI kanban)

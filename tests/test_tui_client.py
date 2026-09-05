@@ -805,3 +805,19 @@ class TestSignalFlowLog:
         for _ in range(35):
             await obs._handle_message(_make_msg(_heartbeat("a1")))
         assert len(obs.snapshot.signal_flow_log) == 30
+
+
+class TestObserverToleratesMsgpackMap:
+    """An agent that packed a dict directly (pre-normalisation) sends a msgpack map;
+    the observer must route it rather than count a decode error."""
+
+    @pytest.mark.asyncio
+    async def test_msgpack_map_is_routed(self):
+        obs, _q = _make_observer()
+        payload = {"signal_type": "ASSISTANT_PROPOSAL", "proposal_id": "p-map", "kind": "infuse",
+                   "summary": "Install @acc/x@1.0.0", "rationale": "why", "task_id": "t-1", "agent_id": "assistant-1"}
+        msg = MagicMock()
+        msg.data = msgpack.packb(payload, use_bin_type=True)      # a MAP, not JSON bytes
+        await obs._handle_message(msg)
+        assert obs._snapshot.assistant_proposals["p-map"]["rationale"] == "why"
+        assert obs._signal_counters.get("__decode_err__", 0) == 0

@@ -466,7 +466,9 @@ class NATSObserver:
         # Step 2: json.loads the bytes → dict
         try:
             raw = msgpack.unpackb(msg.data, raw=False)
-            data = json.loads(raw)
+            # Canonical wire is msgpack(JSON bytes); an agent older than the
+            # publish-side normalisation may still send a msgpack map.
+            data = raw if isinstance(raw, dict) else json.loads(raw)
         except Exception:
             self._signal_counters["__decode_err__"] = (
                 self._signal_counters.get("__decode_err__", 0) + 1

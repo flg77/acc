@@ -128,3 +128,33 @@ class TestNATSBackend:
         backend = NATSBackend("nats://localhost:4222")
         with pytest.raises(RuntimeError, match="connect"):
             await backend.subscribe("sub", lambda x: None)
+
+
+class TestPublishNormalisesDicts:
+    """Lighthouse 2026-09-05: a dict payload was packed as a msgpack *map*, which the
+    TUI observer (unpackb -> json.loads) could not decode, so ASSISTANT_PROPOSAL,
+    TASK_PROGRESS and the infuse continuation never reached the Prompt pane."""
+
+    @pytest.mark.asyncio
+    async def test_dict_payload_is_sent_as_msgpack_of_json_bytes(self, mock_nc):
+        import json as _json
+        import msgpack as _msgpack
+        with patch("nats.connect", AsyncMock(return_value=mock_nc)):
+            backend = NATSBackend(url="nats://x:4222")
+            await backend.connect()
+            await backend.publish("acc.sol.assistant.proposal", {"signal_type": "ASSISTANT_PROPOSAL", "proposal_id": "p-1"})
+        wire = mock_nc.publish.call_args[0][1]
+        inner = _msgpack.unpackb(wire, raw=False)
+        assert isinstance(inner, (bytes, str))                # JSON bytes, not a map
+        assert _json.loads(inner) == {"signal_type": "ASSISTANT_PROPOSAL", "proposal_id": "p-1"}
+
+    @pytest.mark.asyncio
+    async def test_bytes_payload_is_unchanged(self, mock_nc):
+        import json as _json
+        import msgpack as _msgpack
+        with patch("nats.connect", AsyncMock(return_value=mock_nc)):
+            backend = NATSBackend(url="nats://x:4222")
+            await backend.connect()
+            await backend.publish("acc.sol.heartbeat", _json.dumps({"signal_type": "HEARTBEAT"}).encode())
+        inner = _msgpack.unpackb(mock_nc.publish.call_args[0][1], raw=False)
+        assert _json.loads(inner) == {"signal_type": "HEARTBEAT"}

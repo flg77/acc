@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable
 
+import json
 import msgpack
 import nats
 from nats.aio.client import Client as NATSClient
@@ -98,6 +99,14 @@ class NATSBackend:
         """
         if self._nc is None:
             raise RuntimeError("NATSBackend.connect() must be called before publish()")
+        if not isinstance(payload, (bytes, bytearray)):
+            # The canonical ACC wire is msgpack(JSON bytes).  Several publishers
+            # (assistant proposals, TASK_PROGRESS, the infuse continuation) hand
+            # this a dict; packing the dict directly puts a msgpack *map* on the
+            # wire, which agents tolerate (`_payload_bytes`) but the TUI observer's
+            # unpackb -> json.loads does not -- every such message was dropped as
+            # a decode error (lighthouse, 2026-09-05).  Normalise here, once.
+            payload = json.dumps(payload, default=str).encode()
         packed = msgpack.packb(payload, use_bin_type=True)
         await self._nc.publish(subject, packed)
 

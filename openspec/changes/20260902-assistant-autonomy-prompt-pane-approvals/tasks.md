@@ -13,7 +13,7 @@
 ### Verification
 - [x] affected suites: 129 passed
 - [ ] full sweep
-- [ ] lighthouse: "approved" in the Prompt pane resolves the gate; arbiter logs the slot
+- [x] lighthouse 2026-09-05: `1` in the Prompt pane (real `ACCTUIApp`, live bus) resolves the gate — `approved … approver=tui:anonymous` on every agent, the analyst claimed and ran the infuse (evidence: vault `ACC-Tests/v0.11.1-work-board-lighthouse/v0.11.1 Prompt-pane approve-deny — lighthouse test`)
 
 ## Phase 1 (v0.11.0) — trust model + the question in the pane
 ### 1.1 decide_dispatch — infusion and specialists are the feature
@@ -102,9 +102,9 @@
 - [ ] lighthouse smoke, `AUTO`: the 2026-09-02 prompt → install + spawn + route with no
       question asked, three `AUTO_APPROVED` rows in Compliance, outcome lines in the pane
       (needs `./acc-deploy.sh apply worker-pool`)
-- [ ] lighthouse smoke, `ASK_PERMISSIONS`: same prompt → one request region with two rows,
+- [ ] (2026-09-05: request appeared and was answered, but as ONE ROW PER PROPOSAL — the ASSISTANT_PROPOSAL payload never reached the observer, wire-format defect, fix #341; re-check after) lighthouse smoke, `ASK_PERMISSIONS`: same prompt → one request region with two rows,
       `1` approves both, outcome lines follow; Compliance shows the same two rows APPROVED
-- [ ] lighthouse smoke, `AUTO`: `[SKILL: shell_exec …]` from the assistant → capability
+- [x] (2026-09-05, real TUI on the live bus: SYSTEM-ACCESS gate in the pane, `1` = allow once, dispatch continued, the next call raised a fresh gate) lighthouse smoke, `AUTO`: `[SKILL: shell_exec …]` from the assistant → capability
       request in the pane (system access), `2` allow-for-task, second call passes with a row
 
 ## Phase 2 (deferred) — the proposal waits
