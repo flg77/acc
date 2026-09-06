@@ -17,6 +17,21 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.11.4] — 2026-09-06
+
+One fix, found by the v0.11.3 Prompt-pane smoke on lighthouse (#345).
+
+### Fixed
+
+- **`acc-cli oversight submit` produced one row per agent.** Every agent
+  subscribes to `oversight.submit` (deliberately — decisions must reach all)
+  and each minted its own id, so one synthetic submit showed up as N pending
+  rows on an N-agent collective (four on lighthouse, 2026-09-06). The CLI now
+  mints the `oversight_id` and sends it; `HumanOversightQueue.submit` accepts
+  an explicit id and leaves an existing row untouched; an agent that receives
+  a submit without an id derives the same UUID5 from the event on every agent.
+  The CLI's stale "the arbiter must subscribe" note is gone.
+
 ## [0.11.3] — 2026-09-06
 
 The three oversight-queue warts found by the v0.11.1 Prompt-pane smokes (#343).

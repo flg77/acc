@@ -16,8 +16,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from acc.oversight import HumanOversightQueue
-from acc.cli.oversight_cmd import match_prefix
+from acc.oversight import HumanOversightQueue, synthetic_oversight_id
+from acc.cli.oversight_cmd import match_prefix, build_submit_payload
 
 
 def _fake_redis():
@@ -28,7 +28,11 @@ def _fake_redis():
     lst: list = []
     redis.set = lambda key, value, ex=None: store.__setitem__(key, value)
     redis.get = lambda key: store.get(key)
-    redis.sadd = redis.expire = redis.srem = lambda *a, **k: None
+    pset: set = set()
+    redis.expire = lambda *a, **k: None
+    redis.sadd = lambda key, oid: pset.add(oid)
+    redis.srem = lambda key, oid: pset.discard(oid)
+    redis.smembers = lambda key: set(pset)
     redis.lpush = lambda key, oid: lst.insert(0, oid)
     redis.lrem = lambda key, count, oid: [lst.remove(oid) for _ in range(lst.count(oid))]
     redis.ltrim = lambda key, start, stop: None
@@ -132,3 +136,40 @@ class TestCliPrefixResolution:
             match_prefix("4c1cab9c", self.IDS)
         with pytest.raises(ValueError, match="no oversight item"):
             match_prefix("ffff", self.IDS)
+
+
+class TestSyntheticSubmitIsOneRow:
+    """`acc-cli oversight submit` reaches every agent (they all subscribe to
+    oversight.submit); one submit used to become one row per agent."""
+
+    def test_n_agents_enqueue_one_row_under_the_publishers_id(self):
+        redis, lst = _fake_redis()
+        queues = [HumanOversightQueue(redis_client=redis, timeout_s=300, collective_id="sol-01") for _ in range(4)]
+        payload = build_submit_payload("sol-01", "t-syn", "cli", "HIGH", "smoke prefix row")
+        oid = synthetic_oversight_id(payload)
+        assert oid == payload["oversight_id"]
+
+        async def run():
+            got = [await q.submit(task_id="t-syn", risk_level="HIGH", summary="smoke prefix row", role_id="external", oversight_id=oid) for q in queues]
+            return got, await queues[0].pending()
+
+        got, pending = asyncio.run(run())
+        assert got == [oid] * 4
+        assert [p.oversight_id for p in pending] == [oid]
+
+    def test_publisher_without_an_id_still_yields_one_shared_id(self):
+        payload = {"task_id": "t", "agent_id": "a", "summary": "s", "ts": 1.5, "collective_id": "sol-01"}
+        a, b = synthetic_oversight_id(payload), synthetic_oversight_id(dict(payload))
+        assert a == b and len(a) == 36
+        assert synthetic_oversight_id({**payload, "ts": 2.5}) != a          # a different event, a different row
+
+    def test_existing_row_is_not_rewritten(self):
+        q = HumanOversightQueue(redis_client=None, timeout_s=300)
+
+        async def run():
+            oid = await q.submit(task_id="t", risk_level="HIGH", summary="first", role_id="x", oversight_id="fixed-id")
+            again = await q.submit(task_id="t", risk_level="HIGH", summary="second", role_id="x", oversight_id="fixed-id")
+            return oid, again, (await q._load("fixed-id")).summary
+
+        oid, again, summary = asyncio.run(run())
+        assert oid == again == "fixed-id" and summary == "first"

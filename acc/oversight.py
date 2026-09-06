@@ -43,6 +43,22 @@ logger = logging.getLogger("acc.oversight")
 # ---------------------------------------------------------------------------
 
 
+_SYNTHETIC_NS = uuid.UUID("6f1c5c0e-4a3b-4c1d-9e2f-0b7a8d9c1e2f")
+
+
+def synthetic_oversight_id(payload: dict) -> str:
+    """The one id every agent derives for the same ``OVERSIGHT_SUBMIT`` event.
+
+    ``acc-cli oversight submit`` mints the id itself; this is the fallback for
+    a publisher that did not, so N subscribers still enqueue one row: a UUID5
+    over the fields that identify the event (task, agent, summary, ts)."""
+    given = str(payload.get("oversight_id") or "").strip()
+    if given:
+        return given
+    key = "|".join(str(payload.get(k, "")) for k in ("task_id", "agent_id", "summary", "ts", "collective_id"))
+    return str(uuid.uuid5(_SYNTHETIC_NS, key))
+
+
 @dataclass
 class OversightItem:
     """One item in the human oversight queue."""
@@ -118,6 +134,7 @@ class HumanOversightQueue:
         risk_level: str,
         summary: str,
         role_id: str,
+        oversight_id: str | None = None,
     ) -> str:
         """Submit a task to the oversight queue.
 
@@ -126,11 +143,19 @@ class HumanOversightQueue:
             risk_level: EU AI Act risk level (HIGH | UNACCEPTABLE).
             summary:    Human-readable description of why oversight is needed.
             role_id:    The submitting agent's role label.
+            oversight_id: Optional id to use instead of minting one.  A row that
+                several agents enqueue from one bus event (``OVERSIGHT_SUBMIT``
+                reaches every agent) must share an id, or the queue shows one
+                row per agent.  An id that already exists is left untouched.
 
         Returns:
             ``oversight_id`` — UUID string identifying this oversight request.
         """
-        oversight_id = str(uuid.uuid4())
+        if oversight_id:
+            existing = await self._load(oversight_id)
+            if existing is not None:
+                return oversight_id
+        oversight_id = oversight_id or str(uuid.uuid4())
         now_ms = int(time.time() * 1000)
         item = OversightItem(
             oversight_id=oversight_id,

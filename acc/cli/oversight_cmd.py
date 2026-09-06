@@ -123,18 +123,26 @@ async def _cmd_pending(args: argparse.Namespace) -> int:
     return 0
 
 
-async def _cmd_submit(args: argparse.Namespace) -> int:
-    cid = args.collective or default_collective()
-    summary = " ".join(args.summary)
-    payload = {
+def build_submit_payload(cid: str, task_id: str, agent_id: str, risk: str, summary: str) -> dict[str, Any]:
+    """The OVERSIGHT_SUBMIT payload, with the oversight_id minted HERE: the event
+    reaches every agent, and one id is what makes them enqueue one row."""
+    import uuid  # noqa: PLC0415
+    return {
         "signal_type": "OVERSIGHT_SUBMIT",
-        "task_id": args.task_id,
-        "agent_id": args.agent_id,
-        "risk_level": args.risk.upper(),
+        "oversight_id": str(uuid.uuid4()),
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "risk_level": risk.upper(),
         "summary": summary,
         "ts": time.time(),
         "collective_id": cid,
     }
+
+
+async def _cmd_submit(args: argparse.Namespace) -> int:
+    cid = args.collective or default_collective()
+    summary = " ".join(args.summary)
+    payload = build_submit_payload(cid, args.task_id, args.agent_id, args.risk, summary)
     subject = f"acc.{cid}.oversight.submit"
 
     nc = await connect_nats()
@@ -144,8 +152,8 @@ async def _cmd_submit(args: argparse.Namespace) -> int:
     finally:
         await nc.drain()
 
-    print(f"submitted to {subject}: task={args.task_id} agent={args.agent_id} risk={args.risk}")
-    print("note: the arbiter must subscribe to acc.{cid}.oversight.submit to enqueue")
+    print(f"submitted to {subject}: task={args.task_id} agent={args.agent_id} risk={args.risk} "
+          f"oversight_id={payload['oversight_id']}")
     return 0
 
 

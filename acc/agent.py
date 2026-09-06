@@ -3506,12 +3506,21 @@ class Agent:
 
             queue = self._oversight_queue
             assert queue is not None
+            # Every agent receives this event; enqueue ONE row under the
+            # publisher's id (or the same derived id on every agent), not one
+            # per agent.  A row that is already there is left as it is.
+            from acc.oversight import synthetic_oversight_id  # noqa: PLC0415
+            shared_id = synthetic_oversight_id(payload)
             try:
+                if await queue._load(shared_id) is not None:
+                    logger.debug("oversight: OVERSIGHT_SUBMIT %s already enqueued", shared_id)
+                    return
                 oid = await queue.submit(
                     task_id=str(payload.get("task_id", "")),
                     risk_level=str(payload.get("risk_level", "HIGH")),
                     summary=str(payload.get("summary", "")),
                     role_id=str(payload.get("role_id", "external")),
+                    oversight_id=shared_id,
                 )
                 logger.info("oversight: enqueued via OVERSIGHT_SUBMIT → %s", oid)
             except Exception:
