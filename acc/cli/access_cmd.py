@@ -43,6 +43,9 @@ def register(sub: argparse._SubParsersAction) -> None:
     ad.add_argument("--scope", default="", help="Limit to one scope (e.g. direct).")
     ad.add_argument("--tier", default=identity.Tier.REQUESTER,
                     choices=[identity.Tier.VIEWER, identity.Tier.REQUESTER])
+    ad.add_argument("--ceiling", default="", choices=list(identity.CEILING_RANK),
+                    help="Narrow the tier's category ceiling (requester: MEDIUM, "
+                         "viewer: LOW). Never widens it.")
     ad.add_argument("--note", default="")
     ad.set_defaults(func=_cmd_admit)
 
@@ -74,6 +77,7 @@ def _cmd_whoami(args: argparse.Namespace) -> int:
     print(f"  subject: {principal.subject}")
     print(f"  source:  {principal.source}  ({'vouched by the substrate' if principal.vouched else 'unvouched'})")
     print(f"  tier:    {principal.tier}")
+    print(f"  ceiling: {principal.effective_ceiling}")
     if principal.groups:
         print(f"  groups:  {', '.join(principal.groups[:6])}")
     return 0
@@ -92,7 +96,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         when = time.strftime("%Y-%m-%d", time.localtime(g.admitted_at)) if g.admitted_at else "?"
         scope = f" scope={g.scope}" if g.scope else ""
         by = f" by {g.admitted_by}" if g.admitted_by else ""
-        print(f"  {g.subject:<24} {g.channel:<10} {g.tier:<10}{scope}  admitted {when}{by}")
+        print(f"  {g.subject:<24} {g.channel:<10} {g.tier:<10}{g.effective_ceiling:<9}{scope}  admitted {when}{by}")
         if g.note:
             print(f"      {g.note}")
     return 0
@@ -103,13 +107,15 @@ def _cmd_admit(args: argparse.Namespace) -> int:
     try:
         grant = identity.admit(
             args.subject, args.channel, tier=args.tier, scope=args.scope,
+            ceiling=args.ceiling,
             admitted_by=me.subject, note=args.note,
         )
     except identity.AccessError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     _safe()
-    print(f"  admitted {grant.subject!r} on {grant.channel} as {grant.tier}")
+    print(f"  admitted {grant.subject!r} on {grant.channel} as {grant.tier}"
+          f" (ceiling {grant.effective_ceiling})")
     print(f"  recorded against {me.attribution()}")
     return 0
 
@@ -131,7 +137,8 @@ def _cmd_check(args: argparse.Namespace) -> int:
     )
     _safe()
     if admission.allowed:
-        print(f"  ADMITTED  {args.subject} on {args.channel} ({admission.principal.tier})")
+        print(f"  ADMITTED  {args.subject} on {args.channel} "
+              f"({admission.principal.tier}, ceiling {admission.principal.effective_ceiling})")
         return 0
     print(f"  DENIED    {args.subject} on {args.channel}")
     print(f"      {admission.reason}")

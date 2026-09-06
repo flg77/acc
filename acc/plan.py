@@ -155,11 +155,19 @@ class _Plan:
     tokens_used: int = 0
     cost_cap_breached: bool = False
     cost_cap_reason: str = ""
+    # `20260903-work-board-tui` Phase 2 -- the statuses the last broadcast
+    # carried, so a transition is recorded exactly once.
+    last_progress: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
 # Public type — async signaling publish callback
 # ---------------------------------------------------------------------------
+
+
+def plan_mirror_key(collective_id: str, plan_id: str) -> str:
+    """Redis key of a plan's mirrored broadcast body (Phase 2 durability)."""
+    return f"acc:plan:{collective_id}:{plan_id}"
 
 
 PublishFn = Callable[[str, bytes], Awaitable[None]]
@@ -199,11 +207,22 @@ class PlanExecutor:
         *,
         role_resolver: Callable[[str], Optional[Any]] | None = None,
         skill_resolver: Callable[[str], list[str]] | None = None,
+        redis_client: Any | None = None,
+        mirror_ttl_s: int = 24 * 3600,
     ) -> None:
         self._cid = collective_id
         self._publish = publish
         self._arbiter_id = arbiter_id
         self._max_active = max(1, int(max_active_plans))
+        # `20260903-work-board-tui` Phase 2 -- durability.  Every broadcast
+        # body is mirrored under ``acc:plan:<cid>:<plan_id>`` for a day
+        # (sync or async client; :mod:`redis_compat` detects the shape) and
+        # every step transition is a tracelog record.  Neither is read back
+        # by the executor: a restarted arbiter does not resume a plan whose
+        # TASK_COMPLETEs it may have missed.  The board cold-starts from the
+        # heartbeat summary (:meth:`summaries`), the records are for people.
+        self._redis = redis_client
+        self._mirror_ttl_s = max(60, int(mirror_ttl_s))
         # Active plans, insertion-ordered.  Python 3.7+ dicts preserve
         # insertion order, so ``next(iter(...))`` returns the oldest
         # plan_id when we need to evict.
@@ -1066,6 +1085,77 @@ class PlanExecutor:
             subject_plan(plan.collective_id, plan.plan_id),
             json.dumps(body).encode("utf-8"),
         )
+        self._record_transitions(plan)
+        self._mirror(plan, body)
+
+    # ------------------------------------------------------------------
+    # `20260903-work-board-tui` Phase 2 -- durability
+    # ------------------------------------------------------------------
+
+    def _record_transitions(self, plan: _Plan) -> None:
+        """One tracelog record per step whose status changed since the last
+        broadcast.  Best-effort; never raises into the executor."""
+        try:
+            from acc import tracelog  # noqa: PLC0415
+            for sid, step in plan.steps.items():
+                previous = plan.last_progress.get(sid, "")
+                if previous == step.status:
+                    continue
+                tracelog.log_plan_step(
+                    f"plan-{plan.plan_id}", plan_id=plan.plan_id, step_id=sid,
+                    status=step.status, previous=previous, task_id=step.task_id,
+                    role=step.role, iteration_n=step.iteration_n,
+                )
+                plan.last_progress[sid] = step.status
+        except Exception:  # noqa: BLE001 -- tracing must never perturb dispatch
+            logger.debug("plan: tracelog record failed for %s", plan.plan_id, exc_info=True)
+
+    def _mirror(self, plan: _Plan, body: dict) -> None:
+        """Fire-and-forget copy of the broadcast body to Redis."""
+        if self._redis is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._mirror_async(plan.plan_id, body))
+
+    async def _mirror_async(self, plan_id: str, body: dict) -> None:
+        from acc.redis_compat import call_redis  # noqa: PLC0415
+        try:
+            await call_redis(
+                self._redis.set, plan_mirror_key(self._cid, plan_id),
+                json.dumps(body, default=str), ex=self._mirror_ttl_s,
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning("plan: Redis mirror failed for %s", plan_id, exc_info=True)
+
+    def summaries(self, limit: int = 5) -> list[dict]:
+        """The newest *limit* active plans as the board needs them, for the
+        arbiter's heartbeat -- a TUI that joins late cold-starts from this
+        instead of waiting for the next PLAN re-broadcast."""
+        out: list[dict] = []
+        for plan in list(self._plans.values())[-max(0, int(limit)):]:
+            out.append({
+                "plan_id": plan.plan_id,
+                "collective_id": plan.collective_id,
+                "steps": [
+                    {
+                        "step_id": sid, "role": s.role, "depends_on": list(s.depends_on),
+                        "task_description": str(s.raw.get("task_description", "") or "")[:120],
+                    }
+                    for sid, s in plan.steps.items()
+                ],
+                "step_progress": {sid: s.status for sid, s in plan.steps.items()},
+                "step_tasks": {sid: s.task_id for sid, s in plan.steps.items()},
+                "step_meta": {
+                    sid: {"iteration_n": s.iteration_n, "max_iterations": s.max_iterations,
+                          "critique": (s.last_critique or "")[:200]}
+                    for sid, s in plan.steps.items()
+                },
+                "ts": plan.submitted_ts,
+            })
+        return out
 
     def _cascade_failure(self, plan: _Plan, failed_step_id: str) -> None:
         """Mark every transitive dependent of *failed_step_id* as FAILED."""

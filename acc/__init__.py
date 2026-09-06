@@ -1,4 +1,4 @@
 """Agentic Cell Corpus — biologically-inspired distributed AI agent governance."""
 
-__version__ = "0.11.4"
+__version__ = "0.12.0"
 __all__ = ["__version__"]

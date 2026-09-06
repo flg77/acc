@@ -46,6 +46,7 @@ KIND_TOOL_CALL = "tool_call"
 KIND_GOVERNANCE = "governance"
 KIND_REDTEAM = "redteam"
 KIND_OVERSIGHT = "oversight"
+KIND_PLAN_STEP = "plan_step"
 
 # Governance categories carried on KIND_GOVERNANCE records.
 CAT_A = "A"  # constitutional (immutable floor)
@@ -156,6 +157,18 @@ def log_oversight(session_id: str, *, task_id: str, oversight_id: str, status: s
     emit(session_id, KIND_OVERSIGHT, task_id=task_id, oversight_id=oversight_id,
          status=status, approver_id=approver_id, proposal_kind=kind, summary=summary,
          outcome=outcome, **fields)
+
+
+def log_plan_step(session_id: str, *, plan_id: str, step_id: str, status: str,
+                  previous: str = "", task_id: str = "", role: str = "",
+                  **fields: Any) -> None:
+    """Record one PLAN step transition (`20260903-work-board-tui` Phase 2).
+
+    The executor's PLAN re-broadcast is how the Board learns a transition; it
+    is not durable.  One record per transition, in the plan's own session
+    (``plan-<plan_id>``), is what survives the arbiter and the TUI."""
+    emit(session_id, KIND_PLAN_STEP, plan_id=plan_id, step_id=step_id,
+         status=status, previous=previous, task_id=task_id, role=role, **fields)
 
 
 def log_redteam(session_id: str, *, task_id: str, challenge: str, outcome: str,

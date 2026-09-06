@@ -568,6 +568,9 @@ class Agent:
                 arbiter_id=self.agent_id,
                 role_resolver=role_resolver,
                 skill_resolver=skill_resolver,
+                # `20260903-work-board-tui` Phase 2 -- plan state mirrored
+                # for a day; None (no Redis) just skips the mirror.
+                redis_client=self._redis,
             )
         else:
             self._plan_executor = None
@@ -1651,6 +1654,12 @@ class Agent:
                 # Other roles publish [] (cheap, omitted on the wire).
                 "oversight_pending_items": oversight_pending_items,
                 "oversight_recent_items": oversight_recent_items,
+                # `20260903-work-board-tui` Phase 2 -- arbiter-only plan
+                # summaries so a late-joining Board cold-starts; [] elsewhere.
+                "active_plans": (
+                    self._plan_executor.summaries()
+                    if self._plan_executor is not None else []
+                ),
                 # Personalization overlay summary (compact; {} when no overlay)
                 # → TUI Compliance "Role Overlay Profiles" panel.
                 "overlay_summary": self._overlay_summary(),
@@ -1906,6 +1915,7 @@ class Agent:
                     dispatch_invocations,
                     parse_invocations,
                 )
+                from acc.identity import ceiling_of as _ceiling_of  # noqa: PLC0415
                 invocations = parse_invocations(result.output)
                 if invocations:
                     # PR-L (D-003) — resolve the operating mode for
@@ -1934,6 +1944,9 @@ class Agent:
                         # stream across the LLM steps + each invocation.
                         progress_callback=progress_callback,
                         operating_mode=operating_mode,
+                        # D-014 -- the ceiling the admitting surface stamped
+                        # on the task ("" for the operator's own work).
+                        requester_ceiling=_ceiling_of(data),
                     )
                     logger.info(
                         "task_loop: dispatched %d capability invocation(s) "

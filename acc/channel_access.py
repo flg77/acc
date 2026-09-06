@@ -73,6 +73,7 @@ class Admission:
             "subject": self.request.subject,
             "scope": self.request.scope,
             "tier": self.principal.tier,
+            "ceiling": self.principal.effective_ceiling,
             "reason": self.reason,
             "at": self.at,
         }
@@ -88,6 +89,8 @@ class Admission:
             "requester_subject": self.principal.subject,
             "requester_source": self.principal.source,
             "requester_tier": self.principal.tier,
+            # D-014 -- the floor under everything this task may go on to do.
+            "requester_ceiling": self.principal.effective_ceiling,
             "requester_channel": self.request.channel,
             "requester_scope": self.request.scope,
         }

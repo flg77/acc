@@ -82,11 +82,18 @@ class Caller:
     tier: str = "requester"
 
     def attribution(self) -> dict[str, Any]:
+        from acc.identity import tier_ceiling  # noqa: PLC0415
+
         return {
             "requested_by": f"compat:{self.subject}",
             "requester_source": "compat_endpoint",
             "requester_subject": self.subject,
             "requester_key_id": self.key_id,
+            # A key is a requester, and a requester's work stops at MEDIUM
+            # (D-014): the client behind the key is code the operator did
+            # not write.
+            "requester_tier": self.tier,
+            "requester_ceiling": tier_ceiling(self.tier),
         }
 
 

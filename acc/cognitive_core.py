@@ -1652,7 +1652,29 @@ class CognitiveCore:
                                     list(perception.roster.keys()),
                                 )
                         parsed = valid
+                    from acc.identity import (  # noqa: PLC0415
+                        ceiling_of as _ceiling_of,
+                        exceeds_ceiling as _exceeds_ceiling,
+                    )
+                    requester_ceiling = _ceiling_of(task_payload)
                     for p in parsed:
+                        # D-014 -- a proposal above the requester's category
+                        # ceiling is dropped here, not queued: a human could
+                        # not approve it, so it must not be offered.  The
+                        # operator sees why in the reasoning trace.
+                        if _exceeds_ceiling(p.risk_level, requester_ceiling):
+                            logger.warning(
+                                "cognitive_core: proposal %s (%s) refused -- "
+                                "%s is above the requester's ceiling %s",
+                                p.kind, p.summary, p.risk_level,
+                                requester_ceiling,
+                            )
+                            proposals_plan.append(
+                                f"[PROPOSAL/{p.kind}] refused -- {p.risk_level} "
+                                f"is above the requester's ceiling "
+                                f"{requester_ceiling}: {p.summary}"
+                            )
+                            continue
                         # Fill context the parser couldn't know about.
                         p.collective_id = self._collective_id
                         p.agent_id = self._agent_id

@@ -60,6 +60,86 @@ def satisfies(have: str, need: str) -> bool:
     return _RANK.get(have, 0) >= _RANK.get(need, 0)
 
 
+# ---------------------------------------------------------------------------
+# Category ceiling (D-014; `20260823-attributed-memory` [1b])
+# ---------------------------------------------------------------------------
+#
+# Tiers say *may you ask, may you approve*. They say nothing about *how far*
+# the work you asked for may go, so a Cat-C-capable role reachable from a chat
+# channel by anyone was not an expressible constraint. The ceiling is the
+# missing axis: the highest risk an invocation or proposal may carry when this
+# principal asked for it, on the same LOW < MEDIUM < HIGH < CRITICAL scale a
+# role's ``max_*_risk_level`` uses, so the floor rule
+#
+#     effective = role grants ∩ principal ceiling
+#
+# is a min() on one scale. It defaults from the tier and an admission may only
+# narrow it. Above the ceiling a call is refused outright -- never escalated,
+# never asked -- because a human approving it would be approving what the
+# admission forbade. The ceiling is a floor under human judgement, not a gate.
+
+CEILING_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+
+TIER_CEILING = {
+    Tier.NONE: "LOW",
+    Tier.VIEWER: "LOW",
+    Tier.REQUESTER: "MEDIUM",
+    Tier.OPERATOR: "CRITICAL",
+}
+
+TASK_CEILING_KEY = "requester_ceiling"
+
+
+def tier_ceiling(tier: str) -> str:
+    """The ceiling a tier carries when the admission did not narrow it."""
+    return TIER_CEILING.get(str(tier or "").lower(), "LOW")
+
+
+def narrower(a: str, b: str) -> str:
+    """The lower of two ceilings; an empty one does not count."""
+    a, b = str(a or "").upper(), str(b or "").upper()
+    if a not in CEILING_RANK:
+        return b if b in CEILING_RANK else ""
+    if b not in CEILING_RANK:
+        return a
+    return a if CEILING_RANK[a] <= CEILING_RANK[b] else b
+
+
+def exceeds_ceiling(risk: str, ceiling: str) -> bool:
+    """True when *risk* is above *ceiling*. No ceiling means nothing exceeds it.
+
+    ``UNACCEPTABLE`` (an assistant proposal's own top level) is above every
+    ceiling; an unknown risk string ranks as LOW, matching the role guard.
+    """
+    c = str(ceiling or "").upper()
+    if c not in CEILING_RANK:
+        return False
+    r = str(risk or "").upper()
+    if r == "UNACCEPTABLE":
+        return True
+    return CEILING_RANK.get(r, 0) > CEILING_RANK[c]
+
+
+def ceiling_of(task_payload: dict[str, Any] | None) -> str:
+    """The ceiling stamped on a task, or ``""`` for an unattributed one.
+
+    Read the explicit ``requester_ceiling`` first, then fall back to the tier
+    (a payload from a publisher older than the ceiling). An explicit value is
+    never wider than its tier allows. An unattributed task -- the operator's
+    own surface, the arbiter's reconciliation -- carries no ceiling; the role's
+    grants are the only limit there, as before.
+    """
+    if not isinstance(task_payload, dict):
+        return ""
+    tier = str(task_payload.get("requester_tier") or "").strip().lower()
+    explicit = str(task_payload.get(TASK_CEILING_KEY) or "").strip().upper()
+    if explicit in CEILING_RANK:
+        return narrower(explicit, tier_ceiling(tier)) if tier else explicit
+    if tier:
+        return tier_ceiling(tier)
+    return ""
+
+
 class AccessError(Exception):
     """A request was refused. The message is operator-facing."""
 
@@ -77,6 +157,8 @@ class Principal:
             A direct message and a shared channel are different contexts and
             may carry different permissions.
         groups: substrate groups, used to map onto a tier.
+        ceiling: an admission's narrowing of the tier's category ceiling, or
+            "" for the tier default (see :func:`tier_ceiling`).
     """
 
     subject: str
@@ -84,6 +166,12 @@ class Principal:
     tier: str = Tier.NONE
     scope: str = ""
     groups: tuple[str, ...] = ()
+    ceiling: str = ""
+
+    @property
+    def effective_ceiling(self) -> str:
+        """The highest risk work asked for by this principal may carry."""
+        return narrower(self.ceiling, tier_ceiling(self.tier)) or tier_ceiling(self.tier)
 
     @property
     def vouched(self) -> bool:
@@ -98,6 +186,7 @@ class Principal:
             "scope": self.scope,
             "groups": list(self.groups),
             "vouched": self.vouched,
+            "ceiling": self.effective_ceiling,
         }
 
     def attribution(self) -> str:
@@ -207,6 +296,11 @@ class Grant:
     admitted_by: str = ""
     admitted_at: float = 0.0
     note: str = ""
+    ceiling: str = ""  # "" = the tier's default; only ever narrower
+
+    @property
+    def effective_ceiling(self) -> str:
+        return narrower(self.ceiling, tier_ceiling(self.tier)) or tier_ceiling(self.tier)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -217,6 +311,7 @@ class Grant:
             "admitted_by": self.admitted_by,
             "admitted_at": self.admitted_at,
             "note": self.note,
+            "ceiling": self.ceiling,
         }
 
 
@@ -249,6 +344,17 @@ def load_grants(repo_root: Path | None = None) -> list[Grant]:
         tier = str(item.get("tier", Tier.REQUESTER))
         if tier not in _RANK:
             tier = Tier.REQUESTER
+        # A hand-edited ceiling wider than the tier allows is narrowed to the
+        # tier's default, loudly: the file cannot widen what admit() refuses.
+        ceiling = str(item.get("ceiling", "") or "").upper()
+        if ceiling and ceiling != narrower(ceiling, tier_ceiling(tier)):
+            logger.warning(
+                "identity: grant %r on %r declares ceiling %s above the %s "
+                "tier's %s — using the tier's",
+                item["subject"], item.get("channel", ""), ceiling, tier,
+                tier_ceiling(tier),
+            )
+            ceiling = ""
         out.append(
             Grant(
                 subject=str(item["subject"]),
@@ -258,6 +364,7 @@ def load_grants(repo_root: Path | None = None) -> list[Grant]:
                 admitted_by=str(item.get("admitted_by", "")),
                 admitted_at=float(item.get("admitted_at", 0) or 0),
                 note=str(item.get("note", "")),
+                ceiling=ceiling if ceiling in CEILING_RANK else "",
             )
         )
     return out
@@ -285,15 +392,30 @@ def admit(
     scope: str = "",
     admitted_by: str = "",
     note: str = "",
+    ceiling: str = "",
     repo_root: Path | None = None,
 ) -> Grant:
     """Admit an external requester. An explicit operator action, recorded.
 
+    ``ceiling`` narrows the tier's category ceiling for this admission; it
+    can never widen it (D-014).
+
     Raises:
-        AccessError: already admitted, or an unknown tier.
+        AccessError: already admitted, an unknown tier, or a ceiling above
+            the tier's own.
     """
     if tier not in _RANK:
         raise AccessError(f"unknown tier {tier!r}; known: {', '.join(sorted(_RANK))}")
+    ceiling = str(ceiling or "").upper()
+    if ceiling and ceiling not in CEILING_RANK:
+        raise AccessError(
+            f"unknown ceiling {ceiling!r}; known: {', '.join(CEILING_RANK)}"
+        )
+    if ceiling and ceiling != narrower(ceiling, tier_ceiling(tier)):
+        raise AccessError(
+            f"ceiling {ceiling} is above the {tier} tier's {tier_ceiling(tier)}; "
+            f"an admission can only narrow a ceiling, never widen it"
+        )
     if tier == Tier.OPERATOR:
         # An external identity nothing vouches for must not become an operator
         # by an allowlist entry. Approval authority stays with the substrate.
@@ -308,6 +430,7 @@ def admit(
     grant = Grant(
         subject=subject, channel=channel, tier=tier, scope=scope,
         admitted_by=admitted_by, admitted_at=time.time(), note=note,
+        ceiling=ceiling,
     )
     grants.append(grant)
     save_grants(grants, repo_root)
@@ -344,7 +467,8 @@ def resolve_external(
         if grant.scope and scope and grant.scope != scope:
             continue
         return Principal(
-            subject=subject, source="external", tier=grant.tier, scope=scope or grant.scope
+            subject=subject, source="external", tier=grant.tier,
+            scope=scope or grant.scope, ceiling=grant.ceiling,
         )
     return Principal(subject=subject, source="external", tier=Tier.NONE, scope=scope)
 

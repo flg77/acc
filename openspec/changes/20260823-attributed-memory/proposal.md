@@ -381,7 +381,10 @@ problem; it does not remove it, and a deployment with many active scopes can
 still starve a quiet one. The fix changes the `VectorBackend.search` contract
 and has to hold across LanceDB, TurboVec and Milvus.
 
-**Per-principal category ceilings.** Settled question 1 chose the floor rule,
+**Per-principal category ceilings** *(built 2026-09-06:
+`20260906-principal-category-ceiling`, D-014 — the ceiling now exists and is
+stamped on every attributed task; the retrieval / publication floor below
+remains this change's work)*. Settled question 1 chose the floor rule,
 which needs `effective = role grants ∩ principal ceiling` — and ACC cannot
 express a principal ceiling. Two consequences: scenario **S2**, a
 mixed-authority collective sharing one surface, is still not expressible; and

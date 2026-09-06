@@ -63,7 +63,9 @@ class WorkItem:
     plan_id: str = ""
     step_id: str = ""
     task_id: str = ""
-    parent: str = ""              # plan_id for a step, cluster_id for a member
+    parent: str = ""              # plan_id for a step; the step's item id (or the
+                                  # cluster_id) for a member
+    members: int = 0              # a fanned-out step: how many members the board sees
     depends_on: tuple[str, ...] = ()
     blocked_on: str = ""          # oversight_id the item waits on
     iteration: str = ""           # "2/3" when the reviewer loop is on
@@ -149,6 +151,16 @@ def project_board(
                 by_task[task_id] = item_id
 
     # 2. cluster members --------------------------------------------------
+    # A step the executor fanned out has members whose task ids carry the
+    # step's prefix (``plan-<plan_id>-<step_id>-…``, acc/plan.py
+    # ``_dispatch_cluster``).  Those fold under their step -- the step is the
+    # unit of work, the members are how it is being done -- instead of
+    # floating as a second, unrelated cluster.  Members of a cluster nobody
+    # planned (a direct fan-out) keep the cluster as their parent.
+    step_prefixes = {
+        f"plan-{it.plan_id}-{it.step_id}-": it.id
+        for it in items.values() if it.kind == KIND_PLAN_STEP and it.plan_id and it.step_id
+    }
     for cluster_id, row in (dict(cluster_topology or {})).items():
         members = dict(_get(row, "members", {}) or {})
         for agent_id, m in members.items():
@@ -156,15 +168,20 @@ def project_board(
             raw = str(_get(m, "status", "running") or "running").lower()
             item_id = f"{cluster_id}:{agent_id}"
             cur, tot = int(_get(m, "current_step", 0) or 0), int(_get(m, "total_steps", 0) or 0)
+            step_item = next((sid for pfx, sid in step_prefixes.items() if task_id.startswith(pfx)), "")
+            step = items[step_item] if step_item else None
             items[item_id] = WorkItem(
                 id=item_id, kind=KIND_CLUSTER_MEMBER,
                 title=_first_line(_get(m, "step_label", "") or _get(row, "target_role", "") or agent_id),
                 status=_MEMBER_STATUS.get(raw, RUNNING),
                 role=str(_get(row, "target_role", "") or ""), agent_id=str(agent_id),
-                task_id=task_id, parent=str(cluster_id),
+                task_id=task_id, parent=step_item or str(cluster_id),
+                plan_id=step.plan_id if step else "", step_id=step.step_id if step else "",
                 iteration=f"{cur}/{tot}" if tot else "",
                 updated_ts=float(_get(m, "last_seen", 0.0) or 0.0),
             )
+            if step is not None:
+                items[step_item] = _replace(step, members=step.members + 1)
             if task_id:
                 by_task[task_id] = item_id
 
@@ -179,15 +196,29 @@ def project_board(
             if task_id in by_task:
                 continue                       # a plan step / member owns it
             item_id = f"task:{task_id}"
-            items[item_id] = WorkItem(
-                id=item_id, kind=KIND_TASK, title=f"task {task_id[:12]}", status=RUNNING,
-                role=str(_get(entry, "target_role", "") or ""), task_id=task_id, updated_ts=ts,
-            )
+            step_item = next((sid for pfx, sid in step_prefixes.items() if task_id.startswith(pfx)), "")
+            if step_item:
+                # A member of a fanned-out step the topology does not (or no
+                # longer) lists: fold it under the step, with the step's role.
+                step = items[step_item]
+                items[item_id] = WorkItem(
+                    id=item_id, kind=KIND_CLUSTER_MEMBER,
+                    title=_first_line(_get(entry, "target_role", "") or step.role or task_id[:12]),
+                    status=RUNNING, role=str(_get(entry, "target_role", "") or step.role),
+                    task_id=task_id, parent=step_item, plan_id=step.plan_id, step_id=step.step_id,
+                    updated_ts=ts,
+                )
+                items[step_item] = _replace(step, members=step.members + 1)
+            else:
+                items[item_id] = WorkItem(
+                    id=item_id, kind=KIND_TASK, title=f"task {task_id[:12]}", status=RUNNING,
+                    role=str(_get(entry, "target_role", "") or ""), task_id=task_id, updated_ts=ts,
+                )
             by_task[task_id] = item_id
         elif sig == "TASK_COMPLETE" and task_id in by_task:
             item = items[by_task[task_id]]
-            if item.kind != KIND_TASK:
-                continue                       # steps/members carry their own status
+            if item.kind != KIND_TASK and not item.id.startswith("task:"):
+                continue                       # steps/topology members carry their own status
             blocked = "blocked=True" in str(_get(entry, "key_field", "") or "")
             items[item.id] = _replace(item, status=FAILED if blocked else DONE,
                                       status_detail="blocked" if blocked else "", updated_ts=ts)

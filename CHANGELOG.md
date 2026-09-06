@@ -17,6 +17,47 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.12.0] — 2026-09-06
+
+The governance floor under multi-user deployments (#348, D-014) and the work
+board's durability (#349). Minor bump: compat-endpoint callers change behaviour.
+
+### Added
+
+- **Per-principal category ceiling (D-014,
+  `20260906-principal-category-ceiling`).** Every principal now carries a
+  ceiling on the `LOW < MEDIUM < HIGH < CRITICAL` scale, defaulting from the
+  tier (`viewer` LOW, `requester` **MEDIUM**, `operator` CRITICAL) and
+  narrowable per admission (`acc-cli access admit --ceiling`,
+  `Grant.ceiling` in `access.yaml`; never widenable). Admitting surfaces
+  stamp `requester_ceiling` on the task; `identity.ceiling_of()` reads it
+  back with a tier fallback and no ceiling for unattributed work. In
+  `capability_dispatch` an invocation above the ceiling is **refused before
+  any escalation or gate** (no oversight row); in the cognitive core an
+  assistant proposal above it is dropped with a line in the reasoning trace.
+  `access list/check/whoami` show the ceiling.
+- **Work board Phase 2 — durability** (`20260903-work-board-tui`). Every PLAN
+  step transition is a `KIND_PLAN_STEP` tracelog record (session
+  `plan-<plan_id>`); the executor mirrors each broadcast body to Redis under
+  `acc:plan:<cid>:<plan_id>` for 24 h; the arbiter heartbeat carries
+  `active_plans` summaries and the TUI / WebGUI observer cold-starts the Board
+  from them when it joins after the PLAN was broadcast.
+
+### Changed
+
+- **Board: members fold into their step.** A cluster member whose task id
+  carries a plan step's prefix is shown under the step (`parent`, `plan_id`,
+  `step_id`; the step card counts `members`) instead of as a second cluster —
+  including a finished member the topology no longer lists, which used to
+  appear as a solo DONE task with an empty role.
+
+- **OpenAI-compatible endpoint callers are requesters at MEDIUM.** A role
+  reached through `ACC_COMPAT_API_KEYS` can no longer run a HIGH skill or
+  queue an INFUSE / ROLE_UPDATE / PUBLISH proposal on the key's word; the
+  caller's attribution now also carries `requester_tier`.
+
+### Fixed
+
 ## [0.11.4] — 2026-09-06
 
 One fix, found by the v0.11.3 Prompt-pane smoke on lighthouse (#345).

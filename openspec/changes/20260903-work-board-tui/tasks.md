@@ -41,9 +41,25 @@
       QUEUED → RUNNING → DONE; cancel step 2 and see 3 skipped; retry; a gated `shell_exec`
       shows BLOCKED and `g` lands on the request
 
-## Phase 2 (deferred) — durability
-- [ ] tracelog `KIND_PLAN_STEP` on every transition; Redis mirror of plan state (24 h);
-      heartbeat plan summary; cold-start the board from it
+## Phase 2 — durability (2026-09-06)
+- [x] tracelog `KIND_PLAN_STEP` on every transition (`tracelog.log_plan_step`, session
+      `plan-<plan_id>`; recorded once per change in `PlanExecutor._broadcast` against
+      `_Plan.last_progress`)
+- [x] Redis mirror of the broadcast body under `acc:plan:<cid>:<plan_id>` for 24 h
+      (`PlanExecutor(redis_client=, mirror_ttl_s=)`; the arbiter wires its client;
+      fire-and-forget, sync or async client). **Not read back by the executor** — a
+      restarted arbiter does not resume a plan whose `TASK_COMPLETE`s it may have missed
+- [x] arbiter heartbeat `active_plans` summaries (`PlanExecutor.summaries()`, newest 5,
+      descriptions trimmed); `NATSObserver._apply_plan` seeds / updates plans from them
+      so a late-joining Board cold-starts; non-arbiter heartbeats ignored
+- [x] fold: a cluster member whose task id carries `plan-<plan_id>-<step_id>-` is parented
+      to its step (`plan_id` / `step_id` set, the step counts `members`); the same for a
+      plan-prefixed `TASK_ASSIGN` in the signal log the topology does not list (the
+      v0.11.1 smoke's solo DONE row with an empty role) — with the step's role
+- [x] tests (`tests/test_work_board_phase2.py`): fold from topology, direct cluster keeps
+      its parent, gate on a member blocks the member, forgotten member folds with role;
+      transition records exactly once; mirror body + TTL; no Redis no error; summaries
+      shape / bound / newest; observer cold start + update; only the arbiter seeds
 - [ ] "cancel requested" sub-state while the agent finishes
 - [ ] request region on the Board itself
 

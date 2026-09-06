@@ -656,6 +656,13 @@ class NATSObserver:
             recent = data.get("oversight_recent_items", [])
             if isinstance(recent, list):
                 self._snapshot.oversight_recent_items = recent
+            # `20260903-work-board-tui` Phase 2 -- plan summaries: a TUI that
+            # joined after the PLAN was broadcast still gets a Board.
+            plans = data.get("active_plans", [])
+            if isinstance(plans, list):
+                for summary in plans:
+                    if isinstance(summary, dict):
+                        self._apply_plan(summary)
 
     @handles("TASK_COMPLETE")
     def _route_task_complete(self, agent_id: str, data: dict) -> None:
@@ -857,6 +864,11 @@ class NATSObserver:
 
         Uses plan_id as the key.  Step progress starts as PENDING for all steps.
         """
+        self._apply_plan(data)
+
+    def _apply_plan(self, data: dict) -> None:
+        """Store or update a PlanSnapshot from a PLAN payload or a heartbeat
+        plan summary (same shape: steps / step_progress / step_tasks / step_meta)."""
         plan_id: str = data.get("plan_id", "")
         if not plan_id:
             return

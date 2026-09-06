@@ -650,7 +650,10 @@ LANDED (#324); 1.2b escalation LANDED — operator decided 2026-09-02 that a
 human grant for one call is the declared capability A-006 speaks of;
 Phase 1.4 (the permission request in the Prompt pane, #326), 1.5 (outcomes +
 continuation replies in the thread) and 1.6 (the role prompt says the real
-rule) LANDED / in PR;
+rule) LANDED, released **v0.11.0** (2026-09-03) and **verified live on
+lighthouse 2026-09-05** through the real TUI on the live bus (approve, reject,
+allow-once, the batch request) — which also found that 1.4/1.5 never reached
+the observer on the wire until D-012 (v0.11.2);
 `openspec/changes/20260902-assistant-autonomy-prompt-pane-approvals`.
 **Date:** 2026-09-02
 **Context:** Stage 1.4 (`7f49a9e`, 2026-06-04) recorded the operator's choice
@@ -681,6 +684,105 @@ in `tasks.md`; the sibling `20260902-tui-profiles`; Phases 2–3 (the proposal
 waits on the verdict in-turn; signed intent on the reconcile trigger).
 
 ---
+
+## D-012 — The wire is msgpack-of-JSON, normalised once at publish; observers tolerate a map
+
+**Status:** LANDED, released **v0.11.2** (2026-09-05, #341); verified on
+lighthouse — the production WebGUI hub went from 81 decode errors to none.
+**Date:** 2026-09-05
+**Context:** `NATSBackend.publish(subject, payload: bytes)` msgpack-packs
+whatever it is handed. Several publishers (assistant proposal pending /
+outcome notices, the infuse-continuation `TASK_ASSIGN`, every
+`TASK_PROGRESS`) handed it a dict, so a msgpack *map* went on the wire.
+Agents tolerate that (`_payload_bytes`), the TUI observer's
+`unpackb → json.loads` did not: D-011's 1.4 rationale never joined its
+pending row, 1.5's outcome notices never rendered, batch requests degraded
+to one per row, and the live progress line never moved. Unit tests stub the
+signaling and inspect dicts, so agent-to-agent flows and the suite never
+saw it; a bus sniff during the lighthouse smoke did.
+
+**Decision:** the canonical wire format is `msgpack(json.dumps(payload).encode())`
+and it is enforced in **one place** — `NATSBackend.publish` JSON-encodes any
+non-bytes payload. Consumers stay strict but tolerant: the observer accepts a
+map from an agent older than the fix. No publisher is asked to remember the
+encoding again.
+
+**Consequences:** every dict-publishing path is covered without touching it;
+mixed-version collectives (old agents, new TUI) still work; a future
+publisher that packs a map by hand is an observer-side warning, not a silent
+drop. Tests pin both halves (`tests/test_backends_signaling.py`,
+`tests/test_tui_client.py`). A bus sniffer that tries the observer's decode
+per subject is the fastest way to find this class of bug on a live host.
+
+## D-013 — An oversight decision is final; one row per decision and per submit
+
+**Status:** LANDED — decision finality and one row per decision released
+**v0.11.3** (#343); one row per `OVERSIGHT_SUBMIT` released **v0.11.4**
+(#345); all verified on lighthouse 2026-09-06.
+**Date:** 2026-09-06
+**Context:** `OVERSIGHT_DECISION` and `OVERSIGHT_SUBMIT` are ENDOCRINE —
+every agent applies them (deliberately: each must learn the outcome of items
+it submitted; the dispatch is claimed exactly once). Three consequences
+surfaced in the v0.11.1 smokes: every agent pushed the decided id onto the
+history list (six copies of one decision on a six-agent collective); a
+decided row accepted a second, conflicting decision (a REJECT after an
+APPROVE flipped it, and a late APPROVE on an EXPIRED gate would have
+dispatched); every agent minted its own id for a synthetic submit (four rows
+for one `acc-cli oversight submit`). Separately, the CLI printed ids
+truncated to 18 characters that `approve`/`reject` could not find.
+
+**Decision:** the **first decision stands**. `approve`/`reject` return a
+bool and refuse a row already decided the other way or expired (logged, no
+dispatch); the same decision arriving again is an idempotent no-op that
+keeps the first approver. The decided list holds **one row per id**
+(`_push_decided` removes an earlier copy; `recent_decisions` de-duplicates).
+A synthetic submit carries **one id minted by the publisher**; an agent that
+receives one without an id derives the same UUID5 from the event so N
+subscribers still enqueue one row. The CLI prints full ids and resolves a
+**unique prefix** against the arbiter heartbeat, refusing an ambiguous one.
+
+**Consequences:** a late human click cannot reopen a gate the task already
+gave up on; the Compliance history is one line per decision; a synthetic
+submit is one row; operators can type a prefix. The trade-off is that an
+operator cannot "override" an approval with a reject any more — that would
+need an explicit override decision kind, deliberately not built.
+
+## D-014 — A principal carries a category ceiling; above it the work is refused, not asked
+
+**Status:** LANDED (`20260906-principal-category-ceiling`); unreleased.
+**Date:** 2026-09-06
+**Context:** `20260823-attributed-memory` settled requester-vs-role authority
+by the floor rule and found ACC could not express one side of it: tiers say
+*may you ask, may you approve*; role grants say *what may be done*; nothing
+said *how far the work someone asked for may go*. `OC-04` had put it as "a
+Cat-C-capable role reachable from Slack by anyone is not a defensible
+configuration, and ACC currently cannot even express the constraint." The
+1.2b escalation made it worse in one respect: an off-role HIGH call from an
+external requester became a question the operator could answer yes to.
+
+**Decision:** every principal carries a **category ceiling** on the scale the
+runtime already enforces (`LOW < MEDIUM < HIGH < CRITICAL` — the role's
+`max_*_risk_level` and every manifest's `risk_level`), so
+`effective = role grants ∩ principal ceiling` is a `min()` on one axis. It
+**defaults from the tier** (`none`/`viewer` LOW, `requester` **MEDIUM**,
+`operator` CRITICAL) and an admission may only **narrow** it
+(`access admit --ceiling`, `Grant.ceiling`); nothing widens it, including a
+hand-edited `access.yaml`. It travels on the task as `requester_ceiling`
+from every admitting surface (channels, the compat endpoint) and is absent
+on the operator's own unattributed work. Above the ceiling a capability
+invocation is **refused before any escalation or gate** and an assistant
+proposal is **dropped rather than queued**: the ceiling is a floor under
+human judgement, not a question for it. The 1.2 gate categories (system
+access, acts on behalf) remain questions for the human and are unchanged.
+
+**Consequences:** the indefensible configuration is now inexpressible: a
+requester from Slack or an API key gets MEDIUM work at most, whatever the
+role was widened to. An OpenAI-compatible caller can no longer run a HIGH
+skill or queue an INFUSE on its key's word (it could before, with a human
+approval as the only check). The operator's TUI / Web GUI / Kubernetes work
+is unchanged. Not done here, and now expressible: the memory retrieval /
+publication floor on the stamped ceiling (memory change `[2]`, Phase 4+),
+and attribution propagation onto plan steps the arbiter dispatches.
 
 ## Future considerations (not yet decided)
 

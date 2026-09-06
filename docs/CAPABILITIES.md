@@ -47,7 +47,7 @@ to ignore the page.
 | Command | What it does |
 |---|---|
 | `acc-cli access whoami` | The identity this process acts as, and which substrate vouched for it. |
-| `acc-cli access list/admit/revoke/check` | External requesters (chat, webhooks). **Default deny**; admitting is an explicit operator action, and an external identity can never be granted the operator tier. |
+| `acc-cli access list/admit/revoke/check` | External requesters (chat, webhooks). **Default deny**; admitting is an explicit operator action, and an external identity can never be granted the operator tier. Every admission carries a **category ceiling** (`requester` MEDIUM by default; `--ceiling` narrows it, nothing widens it): work above it is refused outright, never offered to a human (D-014). |
 | `acc-cli auth list/status/add/remove/reset` | Credential pools. A `429` rests a key; a `401` **faults** it and it stays out until cleared — rotating past a rejection hides a revoked credential. |
 | `acc-cli egress policy/check/journal` | Destination policy and brokered credentials. ACC injects the credential so the agent never holds it; *where* traffic may go is the substrate's job. |
 
@@ -95,7 +95,7 @@ to ignore the page.
 
 | Command | What it does |
 |---|---|
-| `acc-cli oversight pending/approve/reject` | The human decision point. An approval dispatches exactly one action — the claim is atomic, so a six-agent collective performs one install, not six. |
+| `acc-cli oversight pending/approve/reject` | The human decision point. An approval dispatches exactly one action — the claim is atomic, so a six-agent collective performs one install, not six. `pending` prints full ids; `approve`/`reject` take the full id or a **unique prefix** (an ambiguous one is refused). A decision is **final**: a conflicting second decision is refused, the first stands. |
 | `acc-cli oversight submit` | Raise a proposal for a decision. |
 | `acc-cli sessions list/show/verify` | Replay the durable, hash-linked tracelog. **`verify` re-checks each recorded step against the Category A/B/C gates** — a tamper-evident audit of what an agent actually did. |
 | `acc-cli plan submit/watch` | Submit a plan and follow it. |
@@ -124,7 +124,10 @@ bundle (signature + certificate + Rekor entry), keypair verification uses
 
 ## 2. TUI — `acc-tui`
 
-Textual. Twelve screens; the navigation bar moves between them.
+Textual. Thirteen screens; the navigation bar moves between them. `acc-tui
+--profile user|operator` (`ACC_TUI_PROFILE`) chooses the strip: `operator` is
+every screen, `user` is Prompt · Board · Compliance with the rest one `Ctrl+A`
+chord away. A profile is a view choice — nothing about what may be done differs.
 
 | Screen | What it is for | Keys |
 |---|---|---|
@@ -133,7 +136,8 @@ Textual. Twelve screens; the navigation bar moves between them.
 | **Ecosystem** | Roles, skills, MCPs; infuse from here | — |
 | **Marketplace** | Browse and install packages | `/` filter, `enter` install, `r` refresh, `+`/`-` rate |
 | **Catalogs** | Catalog sources and priority | `n` new, `d` delete, `r` refresh, `+`/`-` priority |
-| **Compliance** | Governance, oversight queue, proposals | `a` approve, `r` reject, `g`/`o`/`p` focus |
+| **Compliance** | Governance, oversight queue, proposals, **decision history** (one row per decision, `By` = approver or `policy:<mode>`) | `a` approve, `r` reject, `g`/`o`/`p` focus |
+| **Board** | Work in flight — PLAN steps (with their fanned-out members folded under them), direct cluster members, single tasks, the gate that blocks a step — under QUEUED · RUNNING · BLOCKED · DONE · FAILED; cold-starts from the arbiter heartbeat | `c` cancel, `r` retry, `a` reassign, `g` go to the gate, `Enter` detail |
 | **Diagnostics** | Golden-prompt suite; **`h` runs the same health checks as `acc-cli doctor`** | `r` run, `a` run all, `e` edit, `h` health |
 | **Configuration** | Role→model mapping, live backends | — |
 | **Performance** | Throughput and latency | — |
@@ -200,7 +204,7 @@ Being explicit saves a search for a control that does not exist.
 
 | | CLI | TUI | Web GUI |
 |---|---|---|---|
-| Edit a configuration **file** | ✅ `config set` | partly (Configuration/Nucleus) | ❌ |
+| Edit a configuration **file** | ✅ `config set` | partly (Configuration/Nucleus) | ✅ ordinary keys via `/api/config/set`; **posture keys refused** — `/api/config/propose` raises an oversight proposal instead |
 | Report deployment health | ✅ `doctor` | ✅ (`h` on Diagnostics) | ❌ |
 | Per-agent status | ✅ `status` | ✅ Dashboard | ✅ snapshot |
 | Preview credential scoping | ✅ `secrets scope` | ❌ | ❌ |
@@ -208,9 +212,15 @@ Being explicit saves a search for a control that does not exist.
 | Verify a session tracelog | ✅ `sessions verify` | ❌ | ❌ (audit view only) |
 | Run unattended | ✅ | ❌ needs a TTY | ✅ (API) |
 
-The Web GUI is deliberately read-mostly for configuration. Configuration through
-the web interface is specified (`20260817-web-configuration-surface`) and depends
-on the configuration schema, which now exists.
+The Web GUI edits ordinary configuration through the same schema the CLI
+validates against (`20260817-web-configuration-surface`, v0.8.0); a governance
+control that could be edited from a browser session is not a control, so
+posture keys (security floor, deploy mode, compliance enforcement) go through
+an oversight proposal. The Web GUI also carries the **Board** (five columns
+of cards, `GET /api/board/{cid}`, `POST /api/board/control` attributed to the
+logged-in principal) and, when `ACC_COMPAT_API_KEYS` is set, the
+OpenAI-compatible endpoint (`/v1/chat/completions`, `/v1/models`,
+`/v1/tasks/{id}`).
 
 ---
 

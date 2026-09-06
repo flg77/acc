@@ -54,6 +54,19 @@ _FAMILY_PACKS = (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolated_tracelog(tmp_path, monkeypatch):
+    """Keep every test's tracelog in its own tmp dir.
+
+    The tracelog is default-on and its default dir is a real path
+    (``/logs/sessions``).  Since the PLAN executor records step transitions
+    (`20260903-work-board-tui` Phase 2) any executor test would otherwise
+    write there -- and ``acc-cli logs`` tests read it expecting nothing.
+    A test that sets ``ACC_TRACELOG_DIR`` itself still wins (monkeypatch
+    inside the test runs after this)."""
+    monkeypatch.setenv("ACC_TRACELOG_DIR", str(tmp_path / "tracelog"))
+
+
 @pytest.fixture(scope="session", autouse=True)
 def installed_family_packs(tmp_path_factory):
     """Install the committed @acc/* family-pack fixtures into a

@@ -10,7 +10,8 @@
 - [x] `[1b]` **Consequence to record, not build here:** tiers and categories are
       different axes, so the floor rule needs a **per-principal category ceiling**
       (`effective = role grants ∩ principal ceiling`), which ACC cannot currently
-      express. Separate change; noted so it is not rediscovered later
+      express. Separate change; noted so it is not rediscovered later —
+      **built 2026-09-06** as `20260906-principal-category-ceiling` (D-014)
 - [x] `[2]` **Information rule** → **STANDS.** A fragment carries the effective
       category ceiling of the task that produced it and is not retrieved below it.
       It uses authority as an imperfect proxy for sensitivity — chosen because the

@@ -219,6 +219,7 @@ async def dispatch_invocations(
     task_id: str = "",
     progress_callback: "Any | None" = None,
     operating_mode: str = "AUTO",
+    requester_ceiling: str = "",
 ) -> list[InvocationOutcome]:
     """Execute each parsed marker through the cognitive core.
 
@@ -258,6 +259,12 @@ async def dispatch_invocations(
             progress line per dispatched tool in the prompt-pane
             transcript, in addition to the trace lines emitted from
             the outcomes.  ``None`` (default) disables emission.
+        requester_ceiling: The category ceiling stamped on the task by the
+            surface that admitted its requester (``requester_ceiling``,
+            D-014). An invocation whose manifest ``risk_level`` is above it
+            is refused before any escalation or gate — the ceiling is a
+            floor under human judgement, not a question for it. ``""``
+            (an unattributed task) applies no ceiling.
 
     Returns:
         One :class:`InvocationOutcome` per input marker, in the same
@@ -317,6 +324,7 @@ async def dispatch_invocations(
             oversight_queue=oversight_queue,
             task_id=task_id,
             operating_mode=mode,
+            requester_ceiling=requester_ceiling,
         ))
     return outcomes
 
@@ -329,6 +337,7 @@ async def _dispatch_one(
     oversight_queue: "Any | None" = None,
     task_id: str = "",
     operating_mode: str = "AUTO",
+    requester_ceiling: str = "",
 ) -> InvocationOutcome:
     """Run one marker; convert every exception path to an
     :class:`InvocationOutcome` with a populated ``error``.
@@ -367,6 +376,20 @@ async def _dispatch_one(
     risk_level = (
         getattr(manifest, "risk_level", "LOW") if manifest is not None else "LOW"
     )
+
+    # D-014 -- the requester's category ceiling.  Checked FIRST: above it the
+    # call is refused outright, never escalated (1.2b would ask the operator
+    # to widen the role for a call the admission already forbade) and never
+    # gated (an approval could not make it allowed).  ``effective = role
+    # grants ∩ principal ceiling`` -- the role side is the guard below.
+    from acc.identity import exceeds_ceiling  # noqa: PLC0415
+    if exceeds_ceiling(str(risk_level), requester_ceiling):
+        reason = (
+            f"refused: {inv.kind} {inv.target!r} is {str(risk_level).upper()} "
+            f"-- above the requester's ceiling {requester_ceiling.upper()}"
+        )
+        logger.warning("capability_dispatch: %s (task %s)", reason, task_id)
+        return InvocationOutcome(parsed=inv, ok=False, error=reason)
 
     # 1.2b -- escalation.  An invocation the role-side A-017 / A-018 guard
     # would refuse (not in allowed_skills / allowed_mcps, a missing
