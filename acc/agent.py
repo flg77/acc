@@ -3468,7 +3468,12 @@ class Agent:
             assert queue is not None
             try:
                 if decision == "APPROVE":
-                    await queue.approve(oversight_id, approver)
+                    if not await queue.approve(oversight_id, approver):
+                        # Refused: the row was already decided the other way
+                        # (or expired / not found).  The first decision stands
+                        # and nothing may be dispatched on the strength of a
+                        # late or conflicting approval.
+                        return
                     # Proposal 20260530-role-proposal-assistant-agent-of-agents
                     # Phase 2b — if this oversight item originated as
                     # an Assistant proposal, load the cached payload
@@ -3477,7 +3482,8 @@ class Agent:
                         collective_id, oversight_id, approver,
                     )
                 elif decision == "REJECT":
-                    await queue.reject(oversight_id, approver, reason)
+                    if not await queue.reject(oversight_id, approver, reason):
+                        return
                     # Reject path — drop the cached proposal so it
                     # can't be re-dispatched on a future request with
                     # a stale oversight_id.

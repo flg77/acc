@@ -204,10 +204,13 @@ class HumanOversightQueue:
                 key = self._KEY_DECIDED_LIST.format(cid=self._cid)
                 ids = await _call_redis(self._redis.lrange, key, 0, max(limit - 1, 0))
                 items: list[OversightItem] = []
+                seen: set[str] = set()
                 for oid in ids or []:
-                    item = await self._load(
-                        oid.decode() if isinstance(oid, bytes) else oid
-                    )
+                    oid = oid.decode() if isinstance(oid, bytes) else str(oid)
+                    if oid in seen:      # a list written before _push_decided de-duplicated
+                        continue
+                    seen.add(oid)
+                    item = await self._load(oid)
                     if item is not None and item.status != "PENDING":
                         items.append(item)
                 return items
@@ -221,17 +224,32 @@ class HumanOversightQueue:
         decided.sort(key=lambda it: it.resolved_at_ms, reverse=True)
         return decided[:limit]
 
-    async def approve(self, oversight_id: str, approver_id: str) -> None:
+    async def approve(self, oversight_id: str, approver_id: str) -> bool:
         """Mark an oversight item as approved.
 
-        Args:
-            oversight_id: The oversight request ID returned by :meth:`submit`.
-            approver_id:  Identifier of the human approver.
+        A decision is final: a row that is already APPROVED is left as it is
+        (idempotent -- every agent applies the same OVERSIGHT_DECISION, so the
+        second and later calls are the norm, not an error), and a row that is
+        already REJECTED / EXPIRED / AUTO_APPROVED is **refused** -- the first
+        decision stands, a late or conflicting one is logged and dropped.
+
+        Returns:
+            ``True`` when the item is APPROVED after this call (freshly, or
+            already), ``False`` when it was refused or not found -- callers use
+            that to decide whether the approved mutation may be dispatched.
         """
         item = await self._load(oversight_id)
         if item is None:
             logger.warning("oversight: approve — item %s not found", oversight_id)
-            return
+            return False
+        if item.status != "PENDING":
+            if item.status == "APPROVED":
+                return True
+            logger.warning(
+                "oversight: approve refused — %s is already %s by %s; the first "
+                "decision stands", oversight_id, item.status, item.approver_id,
+            )
+            return False
         item.status = "APPROVED"
         item.approver_id = approver_id
         item.resolved_at_ms = int(time.time() * 1000)
@@ -239,11 +257,15 @@ class HumanOversightQueue:
         await self._remove_from_pending(oversight_id)
         await self._push_decided(oversight_id)
         logger.info("oversight: approved oversight_id=%s approver=%s", oversight_id, approver_id)
+        return True
 
     async def reject(
         self, oversight_id: str, approver_id: str, reason: str = ""
-    ) -> None:
+    ) -> bool:
         """Mark an oversight item as rejected.
+
+        Same finality as :meth:`approve`: an already-REJECTED row is a no-op
+        (``True``), any other decided status is refused (``False``).
 
         Args:
             oversight_id: The oversight request ID.
@@ -253,7 +275,15 @@ class HumanOversightQueue:
         item = await self._load(oversight_id)
         if item is None:
             logger.warning("oversight: reject — item %s not found", oversight_id)
-            return
+            return False
+        if item.status != "PENDING":
+            if item.status == "REJECTED":
+                return True
+            logger.warning(
+                "oversight: reject refused — %s is already %s by %s; the first "
+                "decision stands", oversight_id, item.status, item.approver_id,
+            )
+            return False
         item.status = "REJECTED"
         item.approver_id = approver_id
         item.rejection_reason = reason
@@ -262,6 +292,7 @@ class HumanOversightQueue:
         await self._remove_from_pending(oversight_id)
         await self._push_decided(oversight_id)
         logger.info("oversight: rejected oversight_id=%s reason=%s", oversight_id, reason)
+        return True
 
     async def pending(self) -> list[OversightItem]:
         """Return all currently pending (unresolved) oversight items."""
@@ -408,6 +439,13 @@ class HumanOversightQueue:
             return  # in-process: recent_decisions() sorts the dict
         try:
             key = self._KEY_DECIDED_LIST.format(cid=self._cid)
+            # Every agent applies the same decision, so this runs once per
+            # agent: drop any earlier copy first so the list holds one row per
+            # id (the Compliance DECISION HISTORY showed six copies of one
+            # decision on a six-agent collective, lighthouse 2026-09-05).
+            lrem = getattr(self._redis, "lrem", None)
+            if lrem is not None:
+                await _call_redis(lrem, key, 0, oversight_id)
             await _call_redis(self._redis.lpush, key, oversight_id)
             await _call_redis(self._redis.ltrim, key, 0, self._DECIDED_KEEP - 1)
             await _call_redis(self._redis.expire, key, self._DECIDED_TTL_S)

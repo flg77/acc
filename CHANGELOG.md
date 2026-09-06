@@ -17,6 +17,35 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.11.3] — 2026-09-06
+
+The three oversight-queue warts found by the v0.11.1 Prompt-pane smokes (#343).
+
+### Changed
+
+- **A decision on an oversight row is final.** `HumanOversightQueue.approve` /
+  `reject` now return a bool and refuse a row that is already decided the
+  other way (or EXPIRED): the first decision stands, a late or conflicting
+  one is logged and dropped, and the agent handler skips the dispatch. The
+  same decision arriving again (every agent applies it) is an idempotent
+  no-op that keeps the first approver. Before, a REJECT after an APPROVE
+  flipped the row, and a late APPROVE on an expired gate would have
+  dispatched (lighthouse 2026-09-05).
+
+### Fixed
+
+- **The DECISION HISTORY showed one row per agent.** Every agent applies the
+  same `OVERSIGHT_DECISION`, and each pushed the id onto the decided list, so
+  a six-agent collective showed six copies of one decision. `_push_decided`
+  removes an earlier copy before pushing, and `recent_decisions` de-duplicates
+  a list written before the fix.
+- **`acc-cli oversight pending` truncated ids that `approve` / `reject` then
+  could not find.** The table prints the full id, and `approve` / `reject`
+  accept a unique prefix, resolved against the next arbiter heartbeat; an
+  ambiguous or unknown prefix is an error, never a guess. A cleanup loop that
+  fed the old table's ids back in had every reject answered "item not found"
+  while the CLI printed "published".
+
 ## [0.11.2] — 2026-09-05
 
 One fix, found by the v0.11.1 Prompt-pane approve/deny smoke on lighthouse.

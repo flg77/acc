@@ -79,15 +79,20 @@ async def _cmd_pending(args: argparse.Namespace) -> int:
         if not items:
             print("(no pending items)")
             return
-        print(f"{'ID':<18} {'AGENT':<20} {'RISK':<14} {'SUBMITTED':<10} STATUS")
+        # Full ids: `approve` / `reject` take an id, and a truncated one is
+        # not one -- a cleanup loop that fed this table's ids back in got
+        # "item not found" from every agent while the CLI printed "published"
+        # (lighthouse 2026-09-05).  A unique prefix is accepted too (below).
+        print(f"{'ID':<36} {'AGENT':<20} {'RISK':<14} {'SUBMITTED':<10} STATUS")
         for it in items:
-            oid = str(it.get("oversight_id", ""))[:18]
+            oid = str(it.get("oversight_id", ""))
+            oid = f"{oid:<36}"
             agent = str(it.get("agent_id", ""))[:20]
             risk = str(it.get("risk_level", ""))[:14]
             ms = int(it.get("submitted_at_ms") or 0)
             ts_str = time.strftime("%H:%M:%S", time.localtime(ms / 1000.0)) if ms else "—"
             status = str(it.get("status", "PENDING"))
-            print(f"{oid:<18} {agent:<20} {risk:<14} {ts_str:<10} {status}")
+            print(f"{oid} {agent:<20} {risk:<14} {ts_str:<10} {status}")
 
     async def _on_heartbeat(msg: Any) -> None:
         decoded = decode_payload(msg.data)
@@ -144,12 +149,66 @@ async def _cmd_submit(args: argparse.Namespace) -> int:
     return 0
 
 
+_FULL_ID_LEN = 36   # uuid4 as the queue mints it
+
+
+def match_prefix(prefix: str, ids: list[str]) -> str:
+    """Resolve *prefix* against *ids*: an exact match wins, else the single id
+    that starts with it.  Raises ``ValueError`` when nothing or more than one
+    matches -- an ambiguous decision must never be published."""
+    prefix = prefix.strip()
+    if prefix in ids:
+        return prefix
+    hits = sorted({i for i in ids if i.startswith(prefix)})
+    if len(hits) == 1:
+        return hits[0]
+    if not hits:
+        raise ValueError(f"no oversight item matches {prefix!r}")
+    raise ValueError(f"{prefix!r} is ambiguous: " + ", ".join(hits))
+
+
+async def _resolve_oversight_id(nc: Any, cid: str, given: str, timeout_s: float = 35.0) -> str:
+    """A full id passes through; a shorter one is resolved against the ids the
+    next arbiter heartbeat carries (pending + recent decisions)."""
+    if len(given) >= _FULL_ID_LEN:
+        return given
+    got: asyncio.Future = asyncio.get_running_loop().create_future()
+
+    async def _on_heartbeat(msg: Any) -> None:
+        decoded = decode_payload(msg.data)
+        if not isinstance(decoded, dict) or decoded.get("role") != "arbiter":
+            return
+        ids = [str(i.get("oversight_id", "")) for key in ("oversight_pending_items", "oversight_recent_items")
+               for i in (decoded.get(key) or []) if isinstance(i, dict)]
+        if not got.done():
+            got.set_result(ids)
+
+    sub = await nc.subscribe(f"acc.{cid}.heartbeat", cb=_on_heartbeat)
+    try:
+        ids = await asyncio.wait_for(got, timeout=timeout_s)
+    except asyncio.TimeoutError as exc:
+        raise ValueError(f"no arbiter heartbeat within {timeout_s:.0f}s to resolve {given!r}") from exc
+    finally:
+        try:
+            await sub.unsubscribe()
+        except Exception:  # noqa: BLE001
+            pass
+    return match_prefix(given, ids)
+
+
 async def _cmd_decide(args: argparse.Namespace, decision: str) -> int:
     cid = args.collective or default_collective()
     from acc.signals import subject_oversight_decision  # noqa: PLC0415
+    nc = await connect_nats()
+    try:
+        oversight_id = await _resolve_oversight_id(nc, cid, str(args.oversight_id))
+    except ValueError as exc:
+        print(f"oversight: {exc}", file=sys.stderr)
+        await nc.drain()
+        return 1
     payload: dict[str, Any] = {
         "signal_type": "OVERSIGHT_DECISION",
-        "oversight_id": args.oversight_id,
+        "oversight_id": oversight_id,
         "decision": decision,
         "approver_id": args.approver_id,
         "reason": getattr(args, "reason", ""),
@@ -157,15 +216,14 @@ async def _cmd_decide(args: argparse.Namespace, decision: str) -> int:
         "collective_id": cid,
     }
 
-    nc = await connect_nats()
     try:
         await nc.publish(
-            subject_oversight_decision(cid, args.oversight_id),
+            subject_oversight_decision(cid, oversight_id),
             encode_payload(payload),
         )
         await nc.flush(timeout=2.0)
     finally:
         await nc.drain()
 
-    print(f"published OVERSIGHT_DECISION {decision} for {args.oversight_id}")
+    print(f"published OVERSIGHT_DECISION {decision} for {oversight_id}")
     return 0
