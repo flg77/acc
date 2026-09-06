@@ -17,6 +17,25 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.12.1] — 2026-09-06
+
+Two fixes from the v0.12.0 lighthouse smokes (#351).
+
+### Fixed
+
+- **A lost LLM connection no longer strands a task** (found by the v0.12.0
+  fold smoke on lighthouse). `process_task` raising inside the task loop used
+  to escape the bus callback with no `TASK_COMPLETE`, so a PLAN step whose
+  member lost its gateway connection stayed RUNNING for good; the task now
+  ends as a **blocked completion** carrying `task_error: <type>: <message>`,
+  and the executor cascades. The OpenAI-compatible backend also retries a
+  broken transport (`httpx.HTTPError`, e.g. "Server disconnected without
+  sending a response") like a timeout and raises a typed `LLMCallError`
+  after the attempts are gone.
+- **Board: a member folded under its step shows the step's role** when the
+  cluster topology row carries no `target_role` (the observer never learns
+  it).
+
 ## [0.12.0] — 2026-09-06
 
 The governance floor under multi-user deployments (#348, D-014) and the work

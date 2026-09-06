@@ -174,7 +174,10 @@ def project_board(
                 id=item_id, kind=KIND_CLUSTER_MEMBER,
                 title=_first_line(_get(m, "step_label", "") or _get(row, "target_role", "") or agent_id),
                 status=_MEMBER_STATUS.get(raw, RUNNING),
-                role=str(_get(row, "target_role", "") or ""), agent_id=str(agent_id),
+                # The observer's cluster row never learns target_role; a
+                # member folded under its step takes the step's.
+                role=str(_get(row, "target_role", "") or "") or (step.role if step else ""),
+                agent_id=str(agent_id),
                 task_id=task_id, parent=step_item or str(cluster_id),
                 plan_id=step.plan_id if step else "", step_id=step.step_id if step else "",
                 iteration=f"{cur}/{tot}" if tot else "",

@@ -38,7 +38,7 @@ from acc.config import build_backends, build_llm_backend, load_config
 from acc.llm_failover import wrap_for_role
 from acc.hooks import Dispatcher as _HookDispatcher
 from acc.secret_scope import scrub
-from acc.cognitive_core import CognitiveCore, StressIndicators
+from acc.cognitive_core import CognitiveCore, CognitiveResult, StressIndicators
 from acc.role_assign import RoleAssignRejectedError, verify_role_assign
 from acc.role_store import RoleStore, RoleUpdateRejectedError
 from acc.signals import (
@@ -368,6 +368,17 @@ def _receptor_allows(
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
+
+
+def failed_task_result(exc: BaseException) -> CognitiveResult:
+    """The completion a task ends with when ``process_task`` raised.
+
+    Blocked, with the exception as the reason, so the reply is a failure the
+    executor / Prompt pane can act on rather than a silence nobody can. The
+    reason is truncated: it rides the bus and the tracelog, not a stack trace.
+    """
+    reason = f"task_error: {type(exc).__name__}: {exc}"
+    return CognitiveResult(blocked=True, block_reason=reason[:400])
 
 
 class Agent:
@@ -1884,12 +1895,20 @@ class Agent:
                     role=self._active_role,
                     progress_callback=progress_callback,
                 )
-            except Exception as _task_exc:
+            except Exception as _task_exc:  # noqa: BLE001
                 # A failed turn is still recorded — a blocked reply_out + a
-                # Cat-A governance block — then re-raised so existing error
-                # handling is unchanged.
+                # Cat-A governance block.  It used to be re-raised here, which
+                # left the bus callback and ended NOTHING: no TASK_COMPLETE,
+                # so a PLAN step whose member lost its LLM connection stayed
+                # RUNNING for good (lighthouse, v0.12.0 fold smoke).  The task
+                # now ends as a blocked completion with the reason, so the
+                # executor cascades and the operator sees why.
                 self._tracelog_error(data, collective_id, _task_exc)
-                raise
+                logger.exception(
+                    "task_loop: process_task failed for task_id=%s — completing blocked",
+                    data.get("task_id", ""),
+                )
+                result = failed_task_result(_task_exc)
 
             # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 2b —
             # Assistant proposal I/O.  Cognitive core parsed +

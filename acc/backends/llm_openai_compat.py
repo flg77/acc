@@ -245,6 +245,28 @@ class OpenAICompatBackend:
                 last_exc = timeout_err
                 await asyncio.sleep(2 ** (attempt - 1))
                 continue
+            except httpx.HTTPError as exc:
+                # A broken transport mid-request (``RemoteProtocolError``:
+                # "Server disconnected without sending a response", a
+                # ``ReadError``…) is what a gateway under load does now and
+                # then.  Retry like a timeout; when the attempts are gone
+                # raise the typed error so the task loop ends the task
+                # instead of the exception escaping the bus callback.
+                transport_err = LLMCallError(
+                    f"openai_compat: transport error talking to {self._base_url}: "
+                    f"{type(exc).__name__}: {exc}",
+                    retryable=True,
+                    status_code=None,
+                )
+                if attempt == self._max_retries:
+                    raise transport_err from exc
+                logger.warning(
+                    "openai_compat: %s on attempt %s/%s — retrying",
+                    type(exc).__name__, attempt, self._max_retries,
+                )
+                last_exc = transport_err
+                await asyncio.sleep(2 ** (attempt - 1))
+                continue
 
         # All attempts exhausted
         if last_exc is not None:

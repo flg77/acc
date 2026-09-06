@@ -60,6 +60,8 @@
       its parent, gate on a member blocks the member, forgotten member folds with role;
       transition records exactly once; mirror body + TTL; no Redis no error; summaries
       shape / bound / newest; observer cold start + update; only the arbiter seeds
+- [x] a member folded under its step takes the step's role when the topology row has none
+      (lighthouse v0.12.0 smoke: `role=` on the folded member)
 - [ ] "cancel requested" sub-state while the agent finishes
 - [ ] request region on the Board itself
 
