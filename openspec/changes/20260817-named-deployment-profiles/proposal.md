@@ -98,9 +98,10 @@ along.
 
 ## Open questions
 
-1. Does a profile isolate **state** (memory, registry, sessions) or only
-   configuration? The existing design assumes configuration; stronger isolation
-   may be more useful on shared hosts, and is a much larger change.
+1. ~~Does a profile isolate **state** (memory, registry, sessions) or only
+   configuration?~~ Answered 2026-09-06: a profile is a **posture** and stays
+   configuration; state isolation is the **instance** — a collective bound to
+   an owner, a posture and its own roots — `20260906-acc-instance`.
 2. Do distributable profiles need signing? The design specification identified
    distribution as the trigger for that question; this change makes it real.
 3. What is the relationship between a profile and the external tooling once this

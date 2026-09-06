@@ -1032,6 +1032,36 @@ case "$COMMAND" in
             --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || true
         ;;
 
+    instance)
+        # `20260906-acc-instance` (HG-40.1a) — run a collective bound to an
+        # owner, a posture and its own state roots.  The overlay is rendered
+        # from instances/<id>/collective.yaml with the instance's env + mount
+        # (acc-cli instance synth); the base compose supplies NATS / Redis.
+        #   acc-deploy.sh instance up <id> | down <id> | synth <id>
+        IACTION="${1:?usage: instance up|down|synth <id>}"; IID="${2:?usage: instance $IACTION <id>}"
+        IOVERLAY="$REPO_ROOT/container/production/instance.${IID}.yml"
+        case "$IACTION" in
+            synth)
+                python -m acc.cli instance synth "$IID" -o "$IOVERLAY" --image "localhost/acc-agent-core:${ACC_VERSION}" ;;
+            up)
+                python -m acc.cli instance synth "$IID" -o "$IOVERLAY" --image "localhost/acc-agent-core:${ACC_VERSION}" \
+                    || { echo "ERROR: instance overlay failed" >&2; exit 1; }
+                echo "▶ Instance $IID up (overlay $IOVERLAY)"
+                podman-compose -f "$COMPOSE_FILE" -f "$IOVERLAY" up -d
+                podman ps --filter "label=acc.collective_id=$IID" --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || true
+                echo "  attach a surface: eval \"\$(acc-cli instance env $IID)\" && acc-tui" ;;
+            down)
+                [[ -f "$IOVERLAY" ]] || { echo "ERROR: no overlay for instance $IID ($IOVERLAY); run synth first" >&2; exit 1; }
+                echo "▶ Instance $IID down (state under instances/$IID stays)"
+                podman-compose -f "$COMPOSE_FILE" -f "$IOVERLAY" stop $(python - "$IOVERLAY" <<'PY'
+import sys, yaml
+print(" ".join((yaml.safe_load(open(sys.argv[1])) or {}).get("services", {}).keys()))
+PY
+) ;;
+            *) echo "instance: unknown action '$IACTION' (up|down|synth)" >&2; exit 1 ;;
+        esac
+        ;;
+
     hibernate)
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b — stop
         # the sub-collective's containers but KEEP the named volumes so

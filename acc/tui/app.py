@@ -42,6 +42,7 @@ from acc.tui.screens.prompt import PromptScreen
 from acc.tui.widgets.nav_bar import NavigateTo
 from acc.tui.widgets.collective_tabs import CollectiveTabStrip, SwitchCollective
 from acc.tui.palette import ScreenCommands, ScreenActionCommands
+from acc.tui.actor import tui_actor as _tui_actor
 from acc.tui.registry import (
     ALL_PROFILES,
     PROFILE_ENV,
@@ -607,7 +608,7 @@ class ACCTUIApp(App):
             "signal_type": "OVERSIGHT_DECISION",
             "oversight_id": message.oversight_id,
             "decision": decision,
-            "approver_id": "tui:anonymous",
+            "approver_id": _tui_actor(),
             "reason": message.reason,
             "ts": _time.time(),
             "collective_id": cid,

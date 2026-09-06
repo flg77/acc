@@ -24,6 +24,7 @@ from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Label, Static
 
 from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar, NavScreen
+from acc.tui.actor import tui_actor
 from acc.work_board import KIND_PLAN_STEP, WorkItem, columns, project_board
 
 logger = logging.getLogger("acc.tui.board")
@@ -203,7 +204,7 @@ class BoardScreen(NavScreen):
             "action": action,
             "role": role,
             "reason": reason,
-            "actor": "tui:anonymous",
+            "actor": tui_actor(),
             "ts": time.time(),
         })
         self.notify(f"{action} → {item.step_id} ({item.plan_id[:8]})", title="Board")
@@ -221,7 +222,7 @@ class BoardScreen(NavScreen):
         self._publish(subject_task_cancel(cid), {
             "signal_type": SIG_TASK_CANCEL, "task_id": item.task_id,
             "collective_id": cid, "reason": "cancelled from the Board",
-            "actor": "tui:anonymous", "ts": time.time(),
+            "actor": tui_actor(), "ts": time.time(),
         })
         self.notify(f"cancel → task {item.task_id[:12]}", title="Board")
 

@@ -32,6 +32,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from acc.channels.base import PromptResponse
+from acc.tui.actor import tui_attribution as _tui_attribution
 from acc.signals import SIG_TASK_ASSIGN, subject_task_assign
 
 if TYPE_CHECKING:
@@ -134,6 +135,10 @@ class TUIPromptChannel:
             "signal_type": SIG_TASK_ASSIGN,
             "task_id": task_id,
             "collective_id": self._collective_id,
+            # `20260906-acc-instance` -- the person at the keyboard, the way a
+            # channel adapter stamps an admitted requester.  Empty when no
+            # principal could be resolved (the task stays unattributed).
+            **_tui_attribution(),
             "from_agent": self._from_agent,
             "target_role": target_role,
             "ts": time.time(),

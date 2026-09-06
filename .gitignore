@@ -162,3 +162,6 @@ container/production/podman-compose.local.yml
 /roles/financial_analyst/
 /roles/contract_analyst/
 /roles/okf_transformer/
+
+# `20260906-acc-instance` -- instances carry state (LanceDB, sessions, trace); never committed.
+/instances/

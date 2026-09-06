@@ -38,8 +38,10 @@ with a human oversight queue for what a role's grants do not cover.
 - **A prompt.** A surface publishes `TASK_ASSIGN` (`target_role`, `operating_mode`,
   `requester`, optional `session_id`); the agent that owns the role runs the
   cognitive core; `TASK_PROGRESS` streams steps; `TASK_COMPLETE` carries the
-  reply, invocations and outcome. Continuity replays earlier turns from the
-  durable tracelog, never from a client transcript (RP-02).
+  reply, invocations and outcome; a task whose LLM call failed still ends,
+  as a blocked completion with `task_error` (v0.12.1). Continuity replays
+  earlier turns from the durable tracelog, never from a client transcript
+  (RP-02).
 - **A gate.** Anything beyond the role's grants — a system-access skill, acting
   on behalf, an off-role tool, a proposal in `ASK_PERMISSIONS` — submits an
   oversight item (unless it is above the requester's ceiling, which refuses
@@ -93,4 +95,4 @@ with a human oversight queue for what a role's grants do not cover.
 - **Reasoning bench**: the promote gate scores deliberation depth; run for any
   reasoning-affecting change (role prompts), advisory on the 3B edge model.
 
-_Last updated: 2026-09-06 (v0.11.4)_
+_Last updated: 2026-09-06 (v0.12.1)_

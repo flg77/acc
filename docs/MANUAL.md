@@ -64,6 +64,11 @@ required).
   `checkpoints`, `logs --task`, `objective`, `hooks`, `scan`, `mcp`, `auth`
   (credential pools), `egress`, `access` (who may ask, and how far — a
   requester's work stops at MEDIUM unless the role is narrower), `secrets scope`.
+- **Instances** — `acc-cli instance create alice-dev --owner system:alice
+  --profile edge-lean --pack @acc/workspace-roles`, then `./acc-deploy.sh
+  instance up alice-dev` and `eval "$(acc-cli instance env alice-dev)" &&
+  acc-tui`: the same runtime, its own memory / sessions / trace / overlays,
+  owned by one person. `export` moves the definition, not the state.
 - **OpenAI-compatible endpoint** — set `ACC_COMPAT_API_KEYS`; `model` names a
   role; gated work returns 202 with a pollable handle; `X-ACC-Session` names a
   thread.
@@ -98,7 +103,15 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
 - **LLM calls fail with `BackendConnectionError`** — `.env` may be an empty
   *directory* (podman artefact) so `ACC_LLM_*` fell back to the template;
   replace it with a file.
+- **A reply comes back blocked with `task_error: <type>: <message>`** — the
+  agent's LLM call failed (a gateway disconnect, an out-of-credits 400); since
+  v0.12.1 the task ends instead of stranding a plan step. Check the agent log
+  and the LLM endpoint; retry the step from the Board.
+- **`refused: skill 'x' is HIGH -- above the requester's ceiling MEDIUM`** —
+  by design (D-014): work asked for by an admitted requester or an API key
+  stops at MEDIUM. If the work is legitimate, an operator runs the prompt;
+  admissions can only narrow a ceiling, never widen it.
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-06 (v0.11.4)_
+_Last updated: 2026-09-06 (v0.12.1)_

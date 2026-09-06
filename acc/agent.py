@@ -3113,7 +3113,13 @@ class Agent:
             roles_root = _Path(str(resolve_manifest_root("ACC_ROLES_ROOT", "roles")))
             role_dir = roles_root / role_label
             cwd = _Path.cwd()
-            collective_dir = cwd if (cwd / "collective.md").is_file() else None
+            # `20260906-acc-instance` -- an instance's cells get their overlay
+            # dir from the environment; the cwd convention stays the fallback.
+            env_dir = os.environ.get("ACC_COLLECTIVE_DIR", "").strip()
+            if env_dir and (_Path(env_dir) / "collective.md").is_file():
+                collective_dir = _Path(env_dir)
+            else:
+                collective_dir = cwd if (cwd / "collective.md").is_file() else None
 
             sources = load_overlay_sources(role_dir, collective_dir=collective_dir)
             local_skills, local_mcps = discover_local_capabilities(role_dir)

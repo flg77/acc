@@ -46,6 +46,7 @@ to ignore the page.
 
 | Command | What it does |
 |---|---|
+| `acc-cli instance create/list/show/archive/export/import/synth/env` | An **instance**: a collective bound to an owner, a posture and its own state roots (`instances/<id>/`). `synth` renders its compose overlay, `./acc-deploy.sh instance up <id>` runs it; `export` carries the definition, never state. |
 | `acc-cli access whoami` | The identity this process acts as, and which substrate vouched for it. |
 | `acc-cli access list/admit/revoke/check` | External requesters (chat, webhooks). **Default deny**; admitting is an explicit operator action, and an external identity can never be granted the operator tier. Every admission carries a **category ceiling** (`requester` MEDIUM by default; `--ceiling` narrows it, nothing widens it): work above it is refused outright, never offered to a human (D-014). |
 | `acc-cli auth list/status/add/remove/reset` | Credential pools. A `429` rests a key; a `401` **faults** it and it stays out until cleared — rotating past a rejection hides a revoked credential. |

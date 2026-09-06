@@ -17,6 +17,34 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.13.0] — 2026-09-06
+
+Instances (HG-40.1a, #354): a collective bound to an owner, a posture and its
+own state, and a TUI that carries its owner. Minor bump: new surface, new
+attribution on every TUI prompt.
+
+### Added
+
+- **Instances** (`20260906-acc-instance`, HG-40.1a). A collective bound to
+  an **owner** (a principal the substrate vouches for), a **posture** (a
+  deployment profile) and its **own state roots** — LanceDB, sessions, trace,
+  overlays — under `instances/<id>/`, with the instance id as the collective
+  id. `acc-cli instance create|list|show|archive|export|import|synth|env`;
+  `./acc-deploy.sh instance up|down|synth <id>` runs it beside the base stack
+  with the instance's environment and mount (`roles_to_compose(extra_env=,
+  extra_volumes=)`); cells read their overlay dir from `ACC_COLLECTIVE_DIR`.
+  `export` carries the definition (installed set, overlays, posture), never
+  state, and says so; the signature field is reserved.
+- **The TUI carries its owner.** Decisions and board actions are stamped with
+  the resolved principal (`system:<user>`, `kubernetes:<sa>`) instead of
+  `tui:anonymous`, and every prompt from the TUI is attributed
+  (`requested_by`, tier, ceiling; memory source stays `tui`). An
+  unattributed TUI still works.
+
+### Changed
+
+### Fixed
+
 ## [0.12.1] — 2026-09-06
 
 Two fixes from the v0.12.0 lighthouse smokes (#351).

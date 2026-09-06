@@ -749,7 +749,10 @@ need an explicit override decision kind, deliberately not built.
 
 ## D-014 — A principal carries a category ceiling; above it the work is refused, not asked
 
-**Status:** LANDED (`20260906-principal-category-ceiling`); unreleased.
+**Status:** LANDED, released **v0.12.0** (2026-09-06, #348) and verified on
+lighthouse the same evening: a HIGH skill refused for a Slack-attributed
+requester with no gate row, the SYSTEM-ACCESS gate for the operator as before,
+an INFUSE proposal dropped under AUTO, `access admit --ceiling` narrow-only.
 **Date:** 2026-09-06
 **Context:** `20260823-attributed-memory` settled requester-vs-role authority
 by the floor rule and found ACC could not express one side of it: tiers say

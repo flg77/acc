@@ -553,10 +553,29 @@ def _dormant_service(
     return svc_name, service
 
 
+def _apply_cell_extras(
+    services: dict[str, Any],
+    env: dict[str, str] | None,
+    volumes: list[str] | None,
+) -> None:
+    """`20260906-acc-instance` -- stamp every synthesised cell with the
+    instance's environment (``{aid}`` in a value becomes the cell's agent id)
+    and mount its directory.  Explicit values win over the defaults above."""
+    for service in services.values():
+        cell_env = service.setdefault("environment", {})
+        aid = str(cell_env.get("ACC_AGENT_ID", ""))
+        for key, value in (env or {}).items():
+            cell_env[key] = str(value).replace("{aid}", aid)
+        if volumes:
+            service.setdefault("volumes", []).extend(volumes)
+
+
 def roles_to_compose(
     spec: CollectiveSpec,
     *,
     image: str = "localhost/acc-agent-core:0.2.0",
+    extra_env: dict[str, str] | None = None,
+    extra_volumes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Render *spec* as a podman-compose overlay dict.
 
@@ -600,6 +619,7 @@ def roles_to_compose(
         for n in range(1, spec.worker_pool + 1):
             svc_name, service = _dormant_service(n, spec, image=image)
             services[svc_name] = service
+        _apply_cell_extras(services, extra_env, extra_volumes)
         return {
             "services": services,
             "networks": {
@@ -687,6 +707,7 @@ def roles_to_compose(
                     "acc.cluster_id": agent.cluster_id or "",
                 },
             }
+    _apply_cell_extras(services, extra_env, extra_volumes)
     return {
         "services": services,
         "networks": {"acc-net": {"driver": "bridge"}},  # match base's bare bridge decl (not external+hardcoded project name) so -f base -f overlay merges into ONE shared project network
