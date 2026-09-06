@@ -60,7 +60,9 @@ set + `--agent` roles + `--pack` installed set, `collective_id = id`),
 **The environment** — `cell_env()` for every cell: `ACC_COLLECTIVE_ID`,
 `ACC_INSTANCE_ID`, `ACC_INSTANCE_OWNER`, `ACC_LANCEDB_PATH=…/lancedb/{aid}`,
 `ACC_TRACELOG_DIR`, `ACC_COLLECTIVE_DIR`, `ACC_HUB_COLLECTIVE_ID` when bound;
-`cell_volumes()` mounts `instances/<id>` at `/app/instances/<id>`.
+`cell_volumes()` mounts `instances/<id>/{lancedb,trace}` with `U,z` (the
+cell's sub-uid owns them — rootless podman), `overlays/` read-only, and not
+`sessions/` (the TUI's, on the host).
 `roles_to_compose(extra_env=, extra_volumes=)` stamps every synthesised cell (worker-pool
 cells too; `{aid}` resolved per cell). `surface_env()` gives the TUI / CLI the
 same instance with host paths. The agent takes its overlay dir from

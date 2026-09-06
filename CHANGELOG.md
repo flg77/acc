@@ -17,6 +17,21 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.13.1] — 2026-09-06
+
+One fix from HG-40.1a Phase 2 on lighthouse (#356): instances run under
+rootless podman.
+
+### Fixed
+
+- **Instance cells could not write their roots under rootless podman.** The
+  cells now mount `lancedb/` and `trace/` with `U,z` like the base volumes
+  (the cell's sub-uid owns them on start), `overlays/` read-only (the
+  operator's to edit) and do not mount `sessions/` (the TUI's, on the host);
+  the first lighthouse run of v0.13.0 crash-looped every cell on
+  `Permission denied: …/lancedb/<aid>`. Reading a cell-owned root from the
+  host is `podman unshare`.
+
 ## [0.13.0] — 2026-09-06
 
 Instances (HG-40.1a, #354): a collective bound to an owner, a posture and its

@@ -318,9 +318,23 @@ def cell_env(inst: Instance) -> dict[str, str]:
     return env
 
 
+#: What the cells mount, and how.  ``lancedb`` and ``trace`` are written by
+#: the cells: ``U`` the way the base compose mounts its volumes -- under
+#: rootless podman the cell runs as a sub-uid and a directory the host user
+#: just created is not writable by it (the first lighthouse run crash-looped
+#: every cell on ``Permission denied: …/lancedb/analyst-1``); ``U`` chowns
+#: the mount to the cell's uid on start.  ``overlays`` is the operator's to
+#: edit and the cells' to read: read-only, no chown.  ``sessions`` is the
+#: TUI's on the host and is not mounted at all.  ``z`` relabels for SELinux.
+CELL_MOUNTS = (("lancedb", "U,z"), ("trace", "U,z"), ("overlays", "ro,z"))
+
+
 def cell_volumes(inst: Instance, *, host_prefix: str = HOST_PREFIX) -> list[str]:
-    """The one mount every cell of the instance needs."""
-    return [f"{host_prefix}/{inst.id}:{CONTAINER_ROOT}/{inst.id}:z"]
+    """The mounts every cell of the instance needs (see :data:`CELL_MOUNTS`)."""
+    return [
+        f"{host_prefix}/{inst.id}/{name}:{CONTAINER_ROOT}/{inst.id}/{name}:{opts}"
+        for name, opts in CELL_MOUNTS
+    ]
 
 
 def surface_env(inst: Instance, repo_root: Path | None = None) -> dict[str, str]:
