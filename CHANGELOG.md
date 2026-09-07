@@ -17,6 +17,29 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.14.3] — 2026-09-07
+
+### Added
+
+- **Plan steps run as the person whose plan it is**
+  (`20260906-principal-category-ceiling`, the task it left for a separate
+  change; D-017's second gap). The executor's step `TASK_ASSIGN` now carries
+  the plan's attribution — `requested_by`, subject, source, tier, **ceiling**,
+  channel, scope (`attribution.ATTRIBUTION_KEYS`, `inherit_attribution`) — on
+  every dispatch, fan-out member and re-issue. So D-014 holds one hop down (a
+  requester's step is refused above the requester's ceiling, not run under
+  the role's grants alone), the step's episode lands in the requester's
+  memory scope, and the note distilled from it carries their ceiling instead
+  of reading CRITICAL and hiding from them. A step that names its own
+  requester keeps it; an unattributed plan keeps its wire shape.
+
+### Changed
+
+- **`acc-cli plan submit` stamps the full attribution** of the submitting
+  principal (it stamped `requested_by` alone since v0.14.2), as surface `cli`;
+  `cli` is a **pooled** memory source like `tui` and `webgui`, so the
+  operator's plan work is not isolated from their other work.
+
 ## [0.14.2] — 2026-09-07
 
 ### Added

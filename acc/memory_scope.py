@@ -47,6 +47,7 @@ LOCAL_SCOPE = "local"
 DEFAULT_MODES: dict[str, str] = {
     "tui": POOLED,
     "webgui": POOLED,
+    "cli": POOLED,       # `acc-cli plan submit` -- the host principal, like the TUI
     "slack": PER_GROUP,
     "voice": PER_REQUESTER,
     "compat_endpoint": ISOLATED,

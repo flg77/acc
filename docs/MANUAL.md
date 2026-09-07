@@ -128,7 +128,13 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
   promotion needs an operator-tier approver (D-016); a requester's approval,
   or a surface older than v0.14.1 that sends no tier, is refused and
   journalled as `note_publish_refused`.
+- **A viewer's Board or Web GUI board is empty while the operator's is full**
+  — by design (D-017): a non-operator sees only the items they asked for,
+  matched by person *per surface*, and never unattributed work. Check the
+  task's `requested_by` (`webgui:<user>`, `slack:<id>@<channel>`); a prompt
+  from another surface does not show (cross-surface identity is on the
+  HG-40.1 list). A plan's steps carry the plan's requester, ceiling included.
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-07 (v0.14.1)_
+_Last updated: 2026-09-07 (v0.14.2)_

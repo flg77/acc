@@ -13,8 +13,14 @@
 ## 2. On the task
 - [x] `channel_access.Admission.task_attribution()` stamps `requester_ceiling` (journal too)
 - [x] `compat_endpoint.Caller.attribution()` stamps `requester_tier` + `requester_ceiling`
-- [ ] plan steps dispatched by the executor inherit the submitting task's attribution
-      (separate change; today they run under the role's grants alone)
+- [x] plan steps dispatched by the executor inherit the submitting task's attribution
+      (2026-09-07, priority list 12.1): `attribution.ATTRIBUTION_KEYS` + `inherit_attribution`;
+      `PlanExecutor._publish_task_assign` carries the plan's seven keys onto every step,
+      member and re-issue unless the step names its own requester; `plan submit` stamps
+      the full set as surface `cli` (a pooled memory source); tests
+      `tests/test_plan_step_attribution.py` (11): every key copied, own requester kept,
+      unattributed plan unchanged on the wire, ceiling_of on s1/s2/re-issue, memory scope
+      of a slack plan's step = the requester's group, of a CLI plan's = the `cli` pool
 
 ## 3. Enforcement
 - [x] `capability_dispatch.dispatch_invocations(requester_ceiling=)` → `_dispatch_one`:

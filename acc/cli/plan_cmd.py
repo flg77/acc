@@ -38,14 +38,24 @@ _TERMINAL = {"COMPLETE", "FAILED"}
 
 def attribute_plan_payload(payload: dict) -> dict:
     """Stamp the submitting principal on a PLAN (HG-40.1b item 4): the Board
-    and the Web GUI show a plan to the person who asked for it.  A payload that
-    already names a requester keeps it; nothing resolvable leaves it
-    unattributed (the operator's own)."""
+    and the Web GUI show a plan to the person who asked for it, and every step
+    the executor dispatches inherits the stamp (tier and ceiling included), so
+    the steps run as that person.  A payload that already names a requester
+    keeps it; nothing resolvable leaves it unattributed (the operator's own)."""
     if payload.get("requested_by"):
         return payload
     try:
         from acc.identity import current  # noqa: PLC0415
-        payload["requested_by"] = current().attribution()
+        p = current()
+        payload.update({
+            "requested_by": p.attribution(),
+            "requester_subject": p.subject,
+            "requester_source": "cli",
+            "requester_tier": p.tier,
+            "requester_ceiling": p.effective_ceiling,
+            "requester_channel": "cli",
+            "requester_scope": "direct",
+        })
     except Exception:  # noqa: BLE001
         pass
     return payload

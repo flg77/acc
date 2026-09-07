@@ -25,6 +25,39 @@ from typing import Any, Iterable
 #: counted as one.
 UNATTRIBUTED = "unattributed"
 
+#: What an admitting surface stamps on a task
+#: (:meth:`acc.channel_access.Admission.task_attribution` is the reference
+#: shape; the TUI, the Web GUI, the compat endpoint and ``plan submit`` stamp
+#: the same keys). Anything that derives a task from another -- a plan step
+#: from its plan -- carries these forward with :func:`inherit_attribution`.
+ATTRIBUTION_KEYS = (
+    "requested_by",
+    "requester_subject",
+    "requester_source",
+    "requester_tier",
+    "requester_ceiling",
+    "requester_channel",
+    "requester_scope",
+)
+
+
+def inherit_attribution(child: dict[str, Any], parent: dict[str, Any] | None) -> dict[str, Any]:
+    """Carry *parent*'s attribution onto *child*, in place.
+
+    A child that already names a requester keeps everything it has; a parent
+    that names nobody leaves the child untouched, so unattributed work (the
+    operator's own) keeps its wire shape. Otherwise every attribution key the
+    parent carries is copied -- the ceiling included, so D-014 holds one hop
+    down: a step of a requester's plan may go no further than the requester.
+    """
+    if not isinstance(parent, dict) or child.get("requested_by") or not parent.get("requested_by"):
+        return child
+    for key in ATTRIBUTION_KEYS:
+        value = parent.get(key)
+        if value not in (None, ""):
+            child[key] = value
+    return child
+
 
 def is_attributed(requester: Any) -> bool:
     """True when *requester* names someone.

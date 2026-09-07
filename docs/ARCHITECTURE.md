@@ -23,7 +23,7 @@ with a human oversight queue for what a role's grants do not cover.
 | Memory (`acc/memory_*`, `acc/attribution.py`, `acc/memory_scope.py`, `acc/memory_curate.py`) | Episodes per requester + scope, private / shared note tiers, publish proposals with a quorum of people, erasure. A **hub's enterprise tier** (D-016) is the only cross-instance read path; every note carries the highest ceiling of its sources and is never read below it. |
 | `acc/pkg/` | `.accpkg` packages: cosign-verified install (keyless bundle or key), catalogs (built-in day-0, https, local), AgentBOM. |
 | `acc/tui/` (Textual) | Thirteen screens declared in one registry (`acc/tui/registry.py`), two profiles (`operator`, `user`), the `NATSObserver` that folds every signal into a `CollectiveSnapshot`, the Prompt pane's `PermissionRequest`, the Board. |
-| `acc/webgui/` (FastAPI + React) | The same snapshot over a WebSocket, attributed actions (`webgui:<user>`), config surface, Board, the OpenAI-compatible endpoint. |
+| `acc/webgui/` (FastAPI + React) | The same snapshot over a WebSocket — each socket receives its principal's view (D-017) — attributed actions and prompts (`webgui:<user>`), config surface, Board, the OpenAI-compatible endpoint. |
 | `acc/instances.py` + `acc/cli/instance_cmd.py` | An **instance** (D-015): a collective bound to an owner, a posture and its own state roots under `instances/<id>/`; `acc-cli instance …`, `./acc-deploy.sh instance up`; export carries the definition, never state. |
 | `acc/cli/` (`acc-cli`, `acc-pkg`) | Headless operator surface: doctor, status, config, profiles, sessions, oversight, plan, memory, access, auth, egress, backup, scan… (see `CAPABILITIES.md`). |
 | `operator/` (Go) | The OpenShift/Kubernetes operator: `AgentCorpus` / collectives as CRDs, role sync, SPIFFE, NetworkPolicy, pack installs, the console plugin. |
@@ -101,4 +101,4 @@ with a human oversight queue for what a role's grants do not cover.
 - **Reasoning bench**: the promote gate scores deliberation depth; run for any
   reasoning-affecting change (role prompts), advisory on the 3B edge model.
 
-_Last updated: 2026-09-07 (v0.14.1)_
+_Last updated: 2026-09-07 (v0.14.2)_

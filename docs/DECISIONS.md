@@ -867,10 +867,70 @@ contribution from the hub. Since v0.14.1 the curator is a role
 (`roles/hub_curator`: no chat surface — its tasks are dropped — no skills,
 proposes on `curate_interval_s`, never calls the LLM) and every decision
 carries `approver_tier`; a hub promotion is refused unless operator tier,
-fail closed and journalled. Not yet: two-approver promotions (needs a
-multi-decision proposal state D-013 does not have — an operator decision),
-per-requester views, retention. Two operator confirmations pending:
-hub-only reads, and no learning at the hub.
+fail closed and journalled. Per-requester views followed in **v0.14.2**
+(#365, D-017). Still not built: two-approver promotions, retention,
+cross-host erasure. The operator answered the HG-40.1 questions on
+2026-09-07 (recorded under D-017 *Operator direction*); hub-only reads and
+no learning at the hub were not contradicted and stand as built.
+
+## D-017 — Who sees what: an operator sees the collective, anyone else sees what they asked for, and unattributed work is the operator's
+
+**Status:** LANDED, released **v0.14.2** (2026-09-07, #365); verified on
+lighthouse before the cut in token auth mode (operator board both tasks,
+viewer board and snapshot only its own, no token 401).
+**Date:** 2026-09-07
+**Context:** the shared surfaces — the TUI Board, Compliance and Comms, the
+Web GUI board, snapshot and WebSocket — showed the whole collective to
+anyone who could open them. Under one collective with many people (T1, the
+team agent) a viewer saw other people's tasks and gates. HG-40.1 said the
+projection "already carries `requester`"; it did not, and neither did the
+observer's signal log, the plan snapshot or `acc-cli plan submit`. Two more
+things were found: the observer had no `TASK_ASSIGN` handler, so no single
+task was ever logged on a live bus (the Board's single-task source worked
+only in tests that seed the log) and a 30-entry signal ring was evicted in
+under a minute; and since v0.13.0 every Web GUI prompt had been attributed
+to the server process's OS user through the inherited TUI attribution.
+
+**Decision:** one policy, in `work_board` (`viewer_can_see` / `visible_to`
+/ `filter_snapshot`), applied by every surface: an **operator sees
+everything**; anyone else sees the items **they asked for**, matched by
+person with the scope suffix dropped (`slack:U1@C1` and `slack:U1@C2` are
+one person), and **nothing unattributed**, because unattributed work is the
+operator's own. **Identity is per surface**: `slack:U1` and `webgui:alice`
+are two people until the substrate vouches for a map. The requester reaches
+every view source (`WorkItem.requester` from the plan, the signal-log entry
+or the step for a folded member; `PlanSnapshot.requested_by`; `plan submit`
+stamps the submitting principal; the executor's summaries carry it). Each
+WebSocket receives its principal's view; the Web GUI stamps its own session
+(`webgui:<user>`, tier, ceiling; `from_web` is source `webgui`). The
+observer logs `TASK_ASSIGN` and keeps 300 signals; Comms still renders 30.
+
+**Consequences:** T1 is a team agent: a Slack requester at a shared TUI or a
+viewer token in the Web GUI sees their own tasks, steps, gates and signals
+and nobody else's; the runtime (agents, metrics) stays visible to all. Two
+gaps are now explicit. A person who prompts from Slack and looks at the Web
+GUI sees nothing of their own (per-surface identity). Plan steps are
+unattributed on the wire — the executor's step `TASK_ASSIGN` copies the
+step's fields only — so the *Board* is right (the projection inherits the
+plan's requester) but the ceiling and memory sides treat every step as the
+operator's: a requester's plan is not ceiling-checked per step and a note
+distilled from it reads CRITICAL, invisible to them.
+
+**Operator direction (2026-09-07, HG-40.1 §5 in the vault), not yet built:**
+(1) a **person map** across surfaces is a must; (2) **propagate the
+submitter's attribution onto every plan step** the arbiter dispatches;
+(3) **both hub gates** — single operator-tier approval *and* a two-approver
+gate for a class of promotions (proposed axis: the note's ceiling, HIGH /
+CRITICAL needs two) — with the caveat that decision-history statistics must
+inform the approver, never the gate, or the hub becomes the learner D-016
+says it is not; (4) `hub_curator` **signed into the control-roles pack** and
+an AgentBOM for every role; (5) **retention** belongs to the curator, with
+dreaming and OKF attached; (6) cross-host erasure needs a deeper look first.
+One answer is under challenge before it is built: a `requester` reaching
+**HIGH in critical functions under AUTO** reverses D-014's narrow-only
+ceiling; the proposed consistent form is one explicit, expiring,
+operator-signed widening grant per requester and role, to HIGH and never
+CRITICAL, with the 1.2 gates still asking.
 
 ## Future considerations (not yet decided)
 

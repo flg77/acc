@@ -101,7 +101,7 @@ to ignore the page.
 | `acc-cli oversight pending/approve/reject` | The human decision point. An approval dispatches exactly one action — the claim is atomic, so a six-agent collective performs one install, not six. `pending` prints full ids; `approve`/`reject` take the full id or a **unique prefix** (an ambiguous one is refused). A decision is **final**: a conflicting second decision is refused, the first stands. |
 | `acc-cli oversight submit` | Raise a proposal for a decision. |
 | `acc-cli sessions list/show/verify` | Replay the durable, hash-linked tracelog. **`verify` re-checks each recorded step against the Category A/B/C gates** — a tamper-evident audit of what an agent actually did. |
-| `acc-cli plan submit/watch` | Submit a plan and follow it. |
+| `acc-cli plan submit/watch` | Submit a plan and follow it. The plan carries the submitting principal, and every step the executor dispatches runs as that person: their ceiling holds per step (D-014), their memory scope receives the episode, the Board shows it to them. |
 | `acc-cli trace` | Follow reasoning traces. |
 
 ### Diagnostics and operations

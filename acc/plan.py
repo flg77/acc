@@ -41,6 +41,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
+from acc.attribution import inherit_attribution
 from acc.signals import (
     SIG_PLAN,
     SIG_TASK_ASSIGN,
@@ -1025,6 +1026,13 @@ class PlanExecutor:
         # task_type defaults to the role if the operator didn't set one;
         # the receiving agent's role.task_types filter will accept it.
         body.setdefault("task_type", step.raw.get("task_type", step.role.upper()))
+        # `20260906-principal-category-ceiling` -- a step runs as the person
+        # whose plan it is: the requester's ceiling holds on every step, the
+        # episode lands in their memory scope, and the note distilled from it
+        # is theirs to read (D-016 counted an unattributed step as the
+        # operator's, CRITICAL).  A step that names its own requester keeps
+        # it; an unattributed plan changes nothing on the wire.
+        inherit_attribution(body, plan.raw)
 
         # PR-1 — only attach cluster fields when explicitly set.  Empty
         # / missing keys keep the back-compat wire shape so receivers
