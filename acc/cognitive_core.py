@@ -724,6 +724,7 @@ class CognitiveCore:
         compliance_config: Optional[ComplianceConfig] = None,
         peer_collectives: Optional[list[str]] = None,
         bridge_enabled: bool = False,
+        hub_collective_id: str = "",
         skill_registry: Optional[Any] = None,
         mcp_registry: Optional[Any] = None,
     ) -> None:
@@ -735,6 +736,9 @@ class CognitiveCore:
         self._role_label = role_label
         self._peer_collectives: list[str] = peer_collectives or []
         self._bridge_enabled: bool = bridge_enabled
+        # `20260906-enterprise-brain-hub-scope` -- the hub whose enterprise
+        # tier this collective reads on the prompt path ("" = none).
+        self._hub_collective_id: str = str(hub_collective_id or "")
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 3b —
         # populated by the agent constructor after registry init
         # from CollectiveSpec.managed_sub_collectives.  None on
@@ -1177,9 +1181,11 @@ class CognitiveCore:
         # injected silently; now the operator sees "Checking prior learnings").
         memory_notes: list[str] = []
         if getattr(role, "memory_retrieval", True):
+            from acc.identity import ceiling_of as _ceiling_of  # noqa: PLC0415
             memory_notes = self._read_memory_notes(
                 scope_key(task_payload),
                 int(getattr(role, "memory_note_bandwidth", 3) or 3),
+                reader_ceiling=_ceiling_of(task_payload),
             )
         emit_stage("acc.pipeline.memory_retrieve", {
             "episodes_count": len(retrieved_episodes),
@@ -2242,6 +2248,7 @@ class CognitiveCore:
 
     def _read_memory_notes(
         self, scope: str = LOCAL_SCOPE, bandwidth: int = 3,
+        *, reader_ceiling: str = "",
     ) -> list[str]:
         """PR-MEM3 — O(1) read of this role's consolidated memory notes
         from the Redis hot-cache.  Best-effort: returns ``[]`` on miss or
@@ -2257,7 +2264,8 @@ class CognitiveCore:
             from acc.memory_reflection import read_hot_cache  # noqa: PLC0415
             return read_hot_cache(
                 self._redis, self._collective_id, self._role_label, scope,
-                bandwidth,
+                bandwidth, reader_ceiling=reader_ceiling,
+                hub_collective_id=self._hub_collective_id,
             )
         except Exception:
             return []

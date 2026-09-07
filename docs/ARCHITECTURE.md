@@ -23,6 +23,7 @@ with a human oversight queue for what a role's grants do not cover.
 | `acc/pkg/` | `.accpkg` packages: cosign-verified install (keyless bundle or key), catalogs (built-in day-0, https, local), AgentBOM. |
 | `acc/tui/` (Textual) | Thirteen screens declared in one registry (`acc/tui/registry.py`), two profiles (`operator`, `user`), the `NATSObserver` that folds every signal into a `CollectiveSnapshot`, the Prompt pane's `PermissionRequest`, the Board. |
 | `acc/webgui/` (FastAPI + React) | The same snapshot over a WebSocket, attributed actions (`webgui:<user>`), config surface, Board, the OpenAI-compatible endpoint. |
+| `acc/instances.py` + `acc/cli/instance_cmd.py` | An **instance** (D-015): a collective bound to an owner, a posture and its own state roots under `instances/<id>/`; `acc-cli instance …`, `./acc-deploy.sh instance up`; export carries the definition, never state. |
 | `acc/cli/` (`acc-cli`, `acc-pkg`) | Headless operator surface: doctor, status, config, profiles, sessions, oversight, plan, memory, access, auth, egress, backup, scan… (see `CAPABILITIES.md`). |
 | `operator/` (Go) | The OpenShift/Kubernetes operator: `AgentCorpus` / collectives as CRDs, role sync, SPIFFE, NetworkPolicy, pack installs, the console plugin. |
 
@@ -65,7 +66,11 @@ with a human oversight queue for what a role's grants do not cover.
 
 - **Standalone / edge**: `acc-deploy.sh` + podman-compose — NATS, Redis, one
   container per cell (`acc-agent-core`), `acc-tui`, optional `acc-webgui`
-  (`up --webgui`), MCP servers; images tagged by `git describe`. Lighthouse
+  (`up --webgui`), MCP servers; images tagged by `git describe`. An
+  **instance** runs beside the base stack from its own overlay
+  (`instance up <id>`): its cells share NATS, Redis and the pack registry and
+  nothing else; under rootless podman they own their `lancedb/` and `trace/`
+  roots (`U` mounts). Lighthouse
   (RHEL 10, RHAIIS vLLM, 3B FP8) is the reference edge box.
 - **OpenShift / RHOAI**: the Go operator reconciles collectives from CRDs, with
   SPIFFE identity, NKeys on the bus, NetworkPolicy, pack installs into agent
@@ -95,4 +100,4 @@ with a human oversight queue for what a role's grants do not cover.
 - **Reasoning bench**: the promote gate scores deliberation depth; run for any
   reasoning-affecting change (role prompts), advisory on the 3B edge model.
 
-_Last updated: 2026-09-06 (v0.12.1)_
+_Last updated: 2026-09-06 (v0.13.1)_

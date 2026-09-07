@@ -58,7 +58,11 @@ required).
   watch it on the Board or in Comms.
 - **Memory** — per requester / channel / isolated scopes; `acc-cli memory notes
   --scope …`; publication to the shared tier is a proposal with a quorum of two
-  people; `acc-cli memory forget --person <id>` (dry run by default).
+  people (`memory propose --to <scope>`); `acc-cli memory forget --person <id>`
+  (dry run by default). Instances bound to a hub publish into its enterprise
+  tier (`memory propose --to hub:<cid>`, `memory curate --hub <cid>`) and read
+  it on every prompt; a note is never read below the ceiling of the work it
+  came from.
 - **Operations** — `profile list/apply/revert` (whole posture, reversible),
   `backup`/`restore` (no secret values), `sessions browse/resume/retention`,
   `checkpoints`, `logs --task`, `objective`, `hooks`, `scan`, `mcp`, `auth`
@@ -111,7 +115,10 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
   by design (D-014): work asked for by an admitted requester or an API key
   stops at MEDIUM. If the work is legitimate, an operator runs the prompt;
   admissions can only narrow a ceiling, never widen it.
+- **Instance cells crash-loop on `Permission denied` under their roots** — an
+  image older than v0.13.1 mounted the instance directory without `U`;
+  rebuild. Reading a cell-owned root from the host is `podman unshare`.
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-06 (v0.12.1)_
+_Last updated: 2026-09-06 (v0.13.1)_

@@ -17,6 +17,46 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.14.0] — 2026-09-07
+
+The enterprise brain (HG-40.1b Phase 1, #359): a hub memory scope as the only
+cross-instance read path, and the information rule enforced at every memory
+boundary. Minor bump: memory retrieval now filters by the requester's ceiling.
+
+### Added
+
+- **The enterprise brain: a hub memory scope** (`20260906-enterprise-brain-hub-scope`,
+  HG-40.1b Phase 1). A publish proposal may name `hub:<hub collective id>`
+  as its destination; on approval the note lands in the hub's **enterprise
+  tier** under the hub's collective id, which every instance bound to that
+  hub (`hub_collective_id`) reads on the prompt path — the only
+  cross-instance read path (instances never read each other's shared
+  tiers). `acc-cli memory notes --hub`, `memory propose --to …`
+  (queues a publish proposal from the cache; a person approves),
+  `memory curate --hub … [--propose]` (the curator's job by hand: shared
+  notes across the bound instances that meet quorum and are past
+  probation); `memory forget` unpublishes from the hub too.
+- **The information rule is enforced.** A memory note carries the highest
+  category ceiling among its source tasks (an unattributed source counts as
+  the operator's, CRITICAL); hot-cache entries and published copies carry
+  it; the prompt-path read skips any note above the requester's ceiling —
+  at every boundary, hub included. Cache entries also carry the note id and
+  the people behind it, so a note can be proposed from the cache alone.
+
+### Changed
+
+### Fixed
+
+- **Two instances on one host collided on container names.** The compose
+  renderer names cells by role; an instance's overlay now prefixes every
+  service and container name with the instance id (`acc-<id>-analyst-1`).
+  Found by the HG-40.1b Phase 2 run, which brought up two instances and got
+  one set of cells.
+- **`acc-cli memory forget` never had a vector backend.** `_backends()` read a
+  misspelt config attribute (`cfg.vector.path`), so every erasure was refused
+  with "no vector backend"; it now opens `vector_db.lancedb_path`, and its
+  diagnostics go to stderr so `--json` output stays parseable.
+
 ## [0.13.1] — 2026-09-06
 
 One fix from HG-40.1a Phase 2 on lighthouse (#356): instances run under

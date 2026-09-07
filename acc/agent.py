@@ -504,6 +504,7 @@ class Agent:
                 role_label=self.config.agent.role,
                 peer_collectives=peer_collectives,
                 bridge_enabled=self.config.agent.bridge_enabled,
+                hub_collective_id=self.config.agent.hub_collective_id,
                 skill_registry=self._skill_registry,
                 mcp_registry=self._mcp_registry,
             )
@@ -2748,6 +2749,7 @@ class Agent:
                 role_label=self.config.agent.role,
                 peer_collectives=peer_collectives,
                 bridge_enabled=self.config.agent.bridge_enabled,
+                hub_collective_id=self.config.agent.hub_collective_id,
                 skill_registry=self._skill_registry,
                 mcp_registry=self._mcp_registry,
             )

@@ -66,6 +66,60 @@ PROBATION_S = 900.0
 #: Marker the summariser uses to separate disagreement from the lesson.
 _DISSENT_MARKER = "DISSENT:"
 
+#: `20260906-enterprise-brain-hub-scope` -- the hub's tier.  A note reaches it
+#: only as the destination of an approved publish proposal from an instance
+#: (``hub:<hub collective id>``); every instance bound to that hub reads it.
+#: There is no other cross-instance read path: instances never read each
+#: other's shared tiers (hub-only, HG-40.1 Q2).
+HUB_TIER = "enterprise"
+_HUB_PREFIX = "hub:"
+
+
+def hub_destination(hub_collective_id: str) -> str:
+    """The destination string a publish proposal uses to name a hub."""
+    return f"{_HUB_PREFIX}{hub_collective_id}"
+
+
+def parse_destination(destination: str) -> tuple[str, str]:
+    """``(collective_id, scope)`` a destination resolves to.
+
+    ``hub:<cid>`` is the hub's enterprise tier under the hub's collective id;
+    anything else is a scope inside the publishing collective ("" as the
+    collective id means "the caller's own").
+    """
+    dest = str(destination or "").strip()
+    if dest.startswith(_HUB_PREFIX):
+        return dest[len(_HUB_PREFIX):].strip(), HUB_TIER
+    return "", dest
+
+
+def note_ceiling(episodes: list[dict]) -> str:
+    """The category ceiling a note distilled from *episodes* carries.
+
+    The information rule (`20260823-attributed-memory` [2]): a fragment carries
+    the ceiling of the task that produced it and is not retrieved below it.
+    A note rests on several tasks, so it carries the **highest** of theirs --
+    the level a reader must reach to see any of what went into it.  An
+    unattributed source (the operator's own surface before v0.13.0, a plan
+    step) counts as the operator's: CRITICAL.  Authority is a proxy for
+    sensitivity here, deliberately and imperfectly (the spec says why).
+    """
+    from acc.identity import CEILING_RANK, ceiling_of  # noqa: PLC0415
+    best = ""
+    for ep in episodes:
+        payload = ep.get("payload_json") if isinstance(ep, dict) else None
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (json.JSONDecodeError, TypeError):
+                payload = {}
+        elif not isinstance(payload, dict):
+            payload = dict(ep) if isinstance(ep, dict) else {}
+        c = ceiling_of(payload) or "CRITICAL"
+        if not best or CEILING_RANK.get(c, 0) > CEILING_RANK.get(best, 0):
+            best = c
+    return best
+
 
 @dataclass
 class MemoryNote:
@@ -90,6 +144,10 @@ class MemoryNote:
     #: one found false is more useful, and more honest, with the disagreement
     #: attached than without it.
     dissent: str = ""
+    #: The information rule: the highest ceiling among the sources; a reader
+    #: below it never sees the note.  "" only for notes built before this
+    #: field existed (read as CRITICAL).
+    ceiling: str = ""
 
     @property
     def people(self) -> list[str]:
@@ -262,6 +320,7 @@ async def consolidate(
             role_label=role_label,
             source_ids=[str(m.get("id") or "") for m in members if m.get("id")],
             source_requesters=distinct_requesters(members),
+            ceiling=note_ceiling(members),
             source_count=len(members),
             scope=scope,
             dissent=dissent,
@@ -324,7 +383,15 @@ def write_hot_cache(
     ok = True
     for scope, in_scope in by_scope.items():
         key = redis_memory_notes_key(collective_id, role_label, scope)
-        payload = json.dumps([n.summary for n in in_scope[:top_n]])
+        # Entries carry what a proposal and the information rule need --
+        # the note id, the people behind it, its ceiling -- so a surface can
+        # propose a note from the cache alone (``acc-cli memory propose``).
+        payload = json.dumps([{
+            "summary": n.summary, "note_id": n.note_id,
+            "source_requesters": list(n.source_requesters),
+            "ceiling": n.ceiling or "CRITICAL", "scope": n.scope,
+            "dissent": n.dissent,
+        } for n in in_scope[:top_n]])
         try:
             redis_client.set(key, payload)
             redis_client.expire(key, ttl_s)
@@ -337,8 +404,15 @@ def write_hot_cache(
 def read_hot_cache(
     redis_client: Any, collective_id: str, role_label: str,
     scope: str = LOCAL_SCOPE, bandwidth: int = 3,
+    *, reader_ceiling: str = "", hub_collective_id: str = "",
 ) -> list[str]:
     """Read the role's memory-note summaries for *scope*, plus shared ones.
+
+    `20260906-enterprise-brain-hub-scope`: a third read when the collective
+    is bound to a hub -- the hub's enterprise tier for this role, the only
+    cross-instance path -- and the **information rule** at every read: an
+    entry whose ceiling is above *reader_ceiling* is skipped ("" = an
+    unrestricted reader, the operator's own surface).
 
     O(1); returns ``[]`` on miss or ANY error — the prompt build must
     never block or raise on memory.
@@ -361,13 +435,21 @@ def read_hot_cache(
     """
     if redis_client is None:
         return []
+    from acc.identity import exceeds_ceiling  # noqa: PLC0415
     now = time.time()
     out: list[str] = []
-    for key in (redis_memory_notes_key(collective_id, role_label, scope),
-                redis_shared_notes_key(collective_id, role_label, scope)):
+    keys = [redis_memory_notes_key(collective_id, role_label, scope),
+            redis_shared_notes_key(collective_id, role_label, scope)]
+    if hub_collective_id and hub_collective_id != collective_id:
+        keys.append(redis_shared_notes_key(hub_collective_id, role_label, HUB_TIER))
+    for key in keys:
         for entry in _raw_note_entries(redis_client, key):
             summary = str(entry.get("summary") or "").strip()
             if not summary:
+                continue
+            # The information rule.  A bare-string entry (a cache written
+            # before ceilings) carries none and reads as CRITICAL.
+            if exceeds_ceiling(str(entry.get("ceiling") or "CRITICAL"), reader_ceiling):
                 continue
             # Probation: a published note waits before it starts shaping
             # replies, so a human has a window to see it in the journal and
@@ -391,6 +473,19 @@ def quorum_met(note: MemoryNote, k: int = QUORUM_DEFAULT) -> bool:
     return len(note.people) >= max(1, k)
 
 
+def list_notes(
+    redis_client: Any, collective_id: str, role_label: str, scope: str,
+    *, tier: str = TIER_PRIVATE,
+) -> list[dict[str, Any]]:
+    """The cache entries for *scope* (private tier) or published INTO it
+    (shared tier), as dicts -- what a surface needs to propose one."""
+    if redis_client is None:
+        return []
+    key = (redis_memory_notes_key(collective_id, role_label, scope) if tier == TIER_PRIVATE
+           else redis_shared_notes_key(collective_id, role_label, scope))
+    return _raw_note_entries(redis_client, key)
+
+
 def publish_note(
     redis_client: Any,
     collective_id: str,
@@ -399,6 +494,9 @@ def publish_note(
     destination: str,
     *,
     dissent: str = "",
+    ceiling: str = "",
+    source_requesters: list[str] | None = None,
+    note_id: str = "",
     ttl_s: int = 21600,
 ) -> bool:
     """Make one note readable in *destination*.
@@ -413,9 +511,17 @@ def publish_note(
     existing = _raw_note_entries(redis_client, key)
     if any(e.get("summary") == summary for e in existing):
         return True
-    entry = {"summary": summary, "at": time.time()}
+    entry: dict[str, Any] = {"summary": summary, "at": time.time()}
     if dissent:
         entry["dissent"] = dissent
+    if ceiling:
+        entry["ceiling"] = str(ceiling).upper()
+    # Carried so a published note can be proposed further (the curator counts
+    # people from the entry) and traced back (the note id).
+    if source_requesters:
+        entry["source_requesters"] = [str(r) for r in source_requesters]
+    if note_id:
+        entry["note_id"] = str(note_id)
     try:
         redis_client.set(key, json.dumps([*existing, entry]))
         redis_client.expire(key, ttl_s)

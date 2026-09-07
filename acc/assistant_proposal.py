@@ -573,6 +573,9 @@ def build_publish_proposal(
             "summary": summary_text,
             "role_label": str(getattr(note, "role_label", "") or ""),
             "source_scope": source_scope,
+            # The information rule travels with the proposal: the destination
+            # copy carries the note's ceiling, whoever approved it.
+            "ceiling": str(getattr(note, "ceiling", "") or "CRITICAL"),
             "source_ids": [str(i) for i in (getattr(note, "source_ids", None) or [])],
             "source_requesters": requesters,
             "source_people": people,
@@ -632,10 +635,18 @@ async def _dispatch_publish(
         )
         return False
 
-    from acc.memory_reflection import publish_note  # noqa: PLC0415
+    from acc.memory_reflection import parse_destination, publish_note  # noqa: PLC0415
+    # `20260906-enterprise-brain-hub-scope`: ``hub:<cid>`` lands the note in
+    # the hub's enterprise tier under the hub's collective id -- the one
+    # place every instance bound to that hub reads.  Anything else stays a
+    # scope inside this collective, as before.
+    dest_cid, dest_scope = parse_destination(destination)
     ok = publish_note(
-        redis_client, cid, role_label, summary, destination,
+        redis_client, dest_cid or cid, role_label, summary, dest_scope,
         dissent=str(params.get("dissent") or ""),
+        ceiling=str(params.get("ceiling") or "CRITICAL"),
+        source_requesters=[str(r) for r in (params.get("source_requesters") or [])],
+        note_id=str(params.get("note_id") or ""),
     )
 
     from acc.signals import subject_assistant_proposal  # noqa: PLC0415
@@ -649,6 +660,8 @@ async def _dispatch_publish(
             "note_id": params.get("note_id", ""),
             "source_scope": params.get("source_scope", ""),
             "destination_scope": destination,
+            "destination_collective": dest_cid or cid,
+            "ceiling": params.get("ceiling", ""),
             "source_requesters": params.get("source_requesters", []),
             "approved_by": p.operator_id,
             "written": ok,

@@ -176,6 +176,11 @@ class TestEnvironment:
             assert svc["labels"]["acc.collective_id"] == "alice-dev"
         ids = [svc["environment"]["ACC_AGENT_ID"] for svc in services.values()]
         assert len(set(ids)) == len(ids) > 1                      # each cell keeps its own id
+        # names carry the instance id, so two instances on one host never collide
+        assert all(name.startswith("acc-alice-dev-") for name in services)
+        assert all(svc["container_name"] == name for name, svc in services.items())
+        other = I.create("bob-dev", owner="system:bob", agents=["coding_agent"])
+        assert not set(I.compose_overlay(other)["services"]) & set(services)
 
     def test_roles_to_compose_without_extras_is_unchanged(self, site):
         spec = CollectiveSpec.model_validate({"collective_id": "sol-01",

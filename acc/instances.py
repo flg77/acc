@@ -360,7 +360,20 @@ def compose_overlay(
     instance's roots. ``podman-compose -f <base> -f <overlay> up -d``."""
     from acc.collective import load_collective, roles_to_compose  # noqa: PLC0415
     spec = load_collective(instance_dir(inst.id, repo_root) / COLLECTIVE_FILE)
-    return roles_to_compose(spec, image=image, extra_env=cell_env(inst), extra_volumes=cell_volumes(inst))
+    overlay = roles_to_compose(spec, image=image, extra_env=cell_env(inst), extra_volumes=cell_volumes(inst))
+    # Service and container names carry the instance id: the renderer names
+    # cells by role (``acc-cell-analyst-1``), so two instances on one host
+    # would collide on the same container names (the HG-40.1b Phase 2 run
+    # brought up two instances and got one set of cells).
+    services = {}
+    for name, svc in overlay.get("services", {}).items():
+        new_name = f"acc-{inst.id}-{name.removeprefix('acc-cell-').removeprefix('acc-')}"
+        svc = dict(svc)
+        if svc.get("container_name"):
+            svc["container_name"] = new_name
+        services[new_name] = svc
+    overlay["services"] = services
+    return overlay
 
 
 # ---------------------------------------------------------------------------

@@ -787,6 +787,44 @@ is unchanged. Not done here, and now expressible: the memory retrieval /
 publication floor on the stamped ceiling (memory change `[2]`, Phase 4+),
 and attribution propagation onto plan steps the arbiter dispatches.
 
+## D-015 — An instance is a collective bound to an owner, a posture and its own state; the definition travels, the state never does
+
+**Status:** LANDED, released **v0.13.0** (2026-09-06, #354) + **v0.13.1** (#356);
+verified on lighthouse the same evening (`20260906-acc-instance` Phase 2).
+**Date:** 2026-09-06
+**Context:** HG-40 asked for Hermes-style profiles that keep their own memory,
+registry and sessions. `20260817-named-deployment-profiles` shipped a
+*posture* and left "does a profile isolate state?" open. The word was
+overloaded three ways (posture, TUI view, what Hermes means). The runtime
+already isolates by `collective_id` (NATS, Redis, LanceDB); the tracelog and
+the TUI's sessions were unpartitioned env-read directories; overlays came
+from the cwd; nothing bound any of it to a person; the TUI acted as
+`tui:anonymous`.
+
+**Decision:** the missing thing is a **binding**, not a mechanism. An
+**instance** is a collective (the id is the collective id) owned by one
+principal the substrate vouches for (`kubernetes` / `system` / `web` — never
+an external identity), running under one posture, with its own directory
+holding the collective definition (the installed set), the overlays and the
+state roots. Cells get their roots by environment and mounts; the agent
+reads its overlay dir from `ACC_COLLECTIVE_DIR`. `profile` keeps naming the
+posture; `instance` is the binding. **Export carries the definition** —
+collective, overlays, posture, hub binding — **never the owner and never the
+state**, and says what it left behind; the signature field is reserved for
+when archives travel. `archive` never deletes state; erasure is `memory
+forget`. Under rootless podman the cells own `lancedb/` and `trace/` (`U`),
+read `overlays/` read-only, and do not mount `sessions/` (the TUI's, on the
+host). The TUI carries its owner: decisions, board actions and every prompt
+are attributed to the resolved principal; the memory source stays `tui`.
+
+**Consequences:** a personal, long-lived agent is one `instance create` and
+one `instance up`, beside the base stack, with nothing shared but the bus,
+Redis and the pack registry; the enterprise brain (HG-40.1b) gets a `hub`
+field already stored and passed to the cells. Plan steps inside an instance
+still run unattributed (the owner rides the prompt path only). T2 — an
+instance is a whole collective per person — is assumed; T1 (many people in
+one collective) is the team agent and needs HG-40.1b's per-requester views.
+
 ## Future considerations (not yet decided)
 
 * **Multi-collective infusion** — today PR-D writes to a single

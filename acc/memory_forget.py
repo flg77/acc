@@ -116,8 +116,14 @@ def forget_person(
     collective_id: str = "",
     k: int = QUORUM_DEFAULT,
     dry_run: bool = False,
+    hub_collective_id: str = "",
 ) -> ForgetReport:
-    """Erase *person*'s episodes and reconcile the notes drawn from them."""
+    """Erase *person*'s episodes and reconcile the notes drawn from them.
+
+    *hub_collective_id*: the hub this collective publishes into
+    (`20260906-enterprise-brain-hub-scope`); a demoted or deleted note is
+    pulled from the hub's enterprise tier too.
+    """
     who = person_of(person)
     report = ForgetReport(person=who)
     if not who:
@@ -143,7 +149,7 @@ def forget_person(
         _reconcile_note(
             vector, note, doomed, who, report,
             redis_client=redis_client, collective_id=collective_id,
-            k=k, dry_run=dry_run,
+            k=k, dry_run=dry_run, hub_collective_id=hub_collective_id,
         )
 
     if not dry_run and doomed:
@@ -179,6 +185,7 @@ def _reconcile_note(
     collective_id: str,
     k: int,
     dry_run: bool,
+    hub_collective_id: str = "",
 ) -> None:
     note_id = str(note.get("id") or "")
     source_ids = _decode(note.get("source_ids"))
@@ -204,7 +211,8 @@ def _reconcile_note(
         })
         if not dry_run:
             vector.delete_where("memory_notes", f"id = '{_sql_quote(note_id)}'")
-        _unpublish(note, redis_client, collective_id, role_label, report, dry_run)
+        _unpublish(note, redis_client, collective_id, role_label, report, dry_run,
+                   hub_collective_id=hub_collective_id)
         return
 
     demote = len(people) < max(1, k) and str(note.get("tier")) == TIER_SHARED
@@ -230,7 +238,8 @@ def _reconcile_note(
     if not dry_run:
         vector.replace_row("memory_notes", note_id, updated)
     if demote:
-        _unpublish(note, redis_client, collective_id, role_label, report, dry_run)
+        _unpublish(note, redis_client, collective_id, role_label, report, dry_run,
+                   hub_collective_id=hub_collective_id)
 
 
 def _unpublish(
@@ -240,6 +249,7 @@ def _unpublish(
     role_label: str,
     report: ForgetReport,
     dry_run: bool,
+    hub_collective_id: str = "",
 ) -> None:
     """Pull a note out of every context it was published into.
 
@@ -254,19 +264,25 @@ def _unpublish(
     if not summary:
         return
 
-    from acc.memory_reflection import _raw_note_entries  # noqa: PLC0415
+    from acc.memory_reflection import HUB_TIER, _raw_note_entries  # noqa: PLC0415
 
-    for destination in _published_destinations(
-        redis_client, collective_id, role_label,
-    ):
-        key = redis_shared_notes_key(collective_id, role_label, destination)
+    # `20260906-enterprise-brain-hub-scope`: the hub's enterprise tier is a
+    # destination like any other -- a demoted note leaves it too.
+    targets = [
+        (collective_id, d, d)
+        for d in _published_destinations(redis_client, collective_id, role_label)
+    ]
+    if hub_collective_id and hub_collective_id != collective_id:
+        targets.append((hub_collective_id, HUB_TIER, f"hub:{hub_collective_id}"))
+    for target_cid, destination, label in targets:
+        key = redis_shared_notes_key(target_cid, role_label, destination)
         entries = _raw_note_entries(redis_client, key)
         remaining = [e for e in entries if e.get("summary") != summary]
         if len(remaining) == len(entries):
             continue
-        report.unpublished_from.append(destination)
+        report.unpublished_from.append(label)
         report.journal.append({
-            "event": "note_unpublished", "destination": destination,
+            "event": "note_unpublished", "destination": label,
         })
         if dry_run:
             continue

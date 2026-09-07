@@ -152,7 +152,9 @@
 > but the authority check that has to gate it — settled question 2, *a fragment
 > carries the ceiling of the context that produced it and is not retrieved below
 > it* — is **not enforced**, because per-principal ceilings do not exist yet
-> (task `[1b]`). Nothing can reach the shared tier until promotion exists, so
+> (task `[1b]`). **Enforced since 2026-09-07** (`20260906-enterprise-brain-hub-scope`:
+> notes carry the highest source ceiling, the prompt-path read compares it to the
+> requester's, at every boundary including the hub). Nothing can reach the shared tier until promotion exists, so
 > the gap is not reachable today. It becomes reachable the moment Phase 4 lands.
 
 ## Phase 4 — Promotion as a proposal (done 2026-08-23)
