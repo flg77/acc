@@ -175,6 +175,16 @@ def match_prefix(prefix: str, ids: list[str]) -> str:
     raise ValueError(f"{prefix!r} is ambiguous: " + ", ".join(hits))
 
 
+
+def _approver_tier() -> str:
+    """The tier of the principal running this command (a hub promotion needs
+    operator tier); "" when nothing resolves."""
+    try:
+        from acc.identity import current  # noqa: PLC0415
+        return str(current().tier or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
 async def _resolve_oversight_id(nc: Any, cid: str, given: str, timeout_s: float = 35.0) -> str:
     """A full id passes through; a shorter one is resolved against the ids the
     next arbiter heartbeat carries (pending + recent decisions)."""
@@ -219,6 +229,7 @@ async def _cmd_decide(args: argparse.Namespace, decision: str) -> int:
         "oversight_id": oversight_id,
         "decision": decision,
         "approver_id": args.approver_id,
+        "approver_tier": _approver_tier(),
         "reason": getattr(args, "reason", ""),
         "ts": time.time(),
         "collective_id": cid,

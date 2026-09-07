@@ -470,6 +470,8 @@ async def dispatch_approved_proposal(
     signaling,
     proposal: AssistantProposal,
     redis_client: Any = None,
+    *,
+    approver_tier: str = "",
 ) -> bool:
     """Publish the actual mutation that fulfils ``proposal``.
 
@@ -505,7 +507,7 @@ async def dispatch_approved_proposal(
             return await _dispatch_role_gap(signaling, cid, proposal)
         if proposal.kind == PROPOSAL_PUBLISH:
             return await _dispatch_publish(
-                signaling, cid, proposal, redis_client,
+                signaling, cid, proposal, redis_client, approver_tier=approver_tier,
             )
     except Exception:
         logger.exception(
@@ -597,6 +599,7 @@ def build_publish_proposal(
 
 async def _dispatch_publish(
     signaling, cid: str, p: AssistantProposal, redis_client: Any = None,
+    approver_tier: str = "",
 ) -> bool:
     """Make an approved note readable in the destination a human named.
 
@@ -641,6 +644,27 @@ async def _dispatch_publish(
     # place every instance bound to that hub reads.  Anything else stays a
     # scope inside this collective, as before.
     dest_cid, dest_scope = parse_destination(destination)
+    # Phase 2: a promotion INTO a hub needs an operator-tier approver
+    # (HG-40.1 §2.5).  Fail closed: a decision from a surface that sends no
+    # tier cannot promote into a hub; an ordinary scope keeps working as
+    # before.  Journalled either way so the refusal is visible.
+    if dest_cid and str(approver_tier or "").lower() != "operator":
+        logger.warning(
+            "assistant_proposal: publish %s into hub %s refused — approver %r is "
+            "%s, operator tier required", p.proposal_id, dest_cid, approver,
+            f"tier {approver_tier!r}" if approver_tier else "of unknown tier",
+        )
+        from acc.signals import subject_assistant_proposal as _sap  # noqa: PLC0415
+        try:
+            await signaling.publish(_sap(cid), {
+                "trigger": "note_publish_refused", "proposal_id": p.proposal_id,
+                "destination_scope": destination, "destination_collective": dest_cid,
+                "approved_by": approver, "approver_tier": approver_tier or "",
+                "reason": "operator tier required for a hub promotion", "ts": time.time(),
+            })
+        except Exception:  # noqa: BLE001
+            logger.debug("assistant_proposal: refusal ack failed", exc_info=True)
+        return False
     ok = publish_note(
         redis_client, dest_cid or cid, role_label, summary, dest_scope,
         dissent=str(params.get("dissent") or ""),

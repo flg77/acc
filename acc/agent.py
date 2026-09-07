@@ -933,6 +933,46 @@ class Agent:
                 "policy_layer: failed to start reward harness"
             )
 
+    async def _queue_assistant_proposal(self, p, collective_id: str) -> str:
+        """Queue one proposal outside the task path: an oversight row, the
+        cached payload the approval dispatcher loads, and the pending
+        announcement -- the same three writes the task path's queued branch
+        makes in :meth:`_handle_assistant_proposals`.  Used by the curator
+        loop.  Returns the oversight id ("" when there is no queue)."""
+        queue = self._oversight_queue
+        redis = self._redis
+        if queue is None:
+            return ""
+        oversight_id = await queue.submit(
+            task_id=p.proposal_id,
+            risk_level=p.risk_level or "HIGH",
+            summary=p.summary,
+            role_id=self.config.agent.role,
+        )
+        if redis is not None and oversight_id:
+            try:
+                ov_ttl = getattr(queue, "_timeout_s", 300) or 300
+                ttl = max(int(ov_ttl), _ASSISTANT_PROPOSAL_CACHE_TTL_S)
+                redis.setex(
+                    f"acc:{collective_id}:assistant_proposal:{oversight_id}", ttl,
+                    json.dumps(p.to_payload(), default=str),
+                )
+                redis.setex(
+                    f"acc:{collective_id}:assistant_proposal_meta:{oversight_id}", ttl,
+                    json.dumps({"kind": p.kind, "proposal_id": p.proposal_id,
+                                "summary": p.summary}, default=str),
+                )
+            except Exception:
+                logger.exception(
+                    "assistant_proposal: redis cache failed for %s", oversight_id,
+                )
+        try:
+            from acc.assistant_proposal import publish_proposal_pending  # noqa: PLC0415
+            await publish_proposal_pending(self.backends.signaling, p)
+        except Exception:
+            logger.exception("assistant_proposal: pending announcement failed")
+        return oversight_id
+
     async def _handle_assistant_proposals(
         self,
         result,
@@ -1087,6 +1127,7 @@ class Agent:
         collective_id: str,
         oversight_id: str,
         approver_id: str = "",
+        approver_tier: str = "",
     ) -> None:
         """When ``oversight_id`` matches a cached Assistant proposal,
         publish the underlying mutation.
@@ -1215,6 +1256,7 @@ class Agent:
         try:
             ok = await dispatch_approved_proposal(
                 self.backends.signaling, proposal, self._redis,
+                approver_tier=approver_tier,
             )
             logger.info(
                 "assistant_proposal: approved + dispatched kind=%s "
@@ -1745,6 +1787,15 @@ class Agent:
                 logger.debug(
                     "task_loop: drop TASK_ASSIGN target_agent_id=%r != self=%r",
                     target_aid, self.agent_id,
+                )
+                return
+
+            # `20260906-enterprise-brain-hub-scope` Phase 2 -- a role with no
+            # chat surface (the hub curator) answers nobody.
+            if not getattr(self._active_role, "chat_surface", True):
+                logger.info(
+                    "task_loop: drop TASK_ASSIGN — role %r has no chat surface",
+                    self.config.agent.role,
                 )
                 return
 
@@ -3498,6 +3549,7 @@ class Agent:
             oversight_id = payload.get("oversight_id", "")
             decision = (payload.get("decision") or "").upper()
             approver = payload.get("approver_id", "tui:anonymous")
+            approver_tier = str(payload.get("approver_tier", "") or "")
             reason = payload.get("reason", "")
 
             if not oversight_id:
@@ -3520,6 +3572,7 @@ class Agent:
                     # and dispatch the underlying mutation.
                     await self._maybe_dispatch_assistant_proposal(
                         collective_id, oversight_id, approver,
+                        approver_tier=approver_tier,
                     )
                 elif decision == "REJECT":
                     if not await queue.reject(oversight_id, approver, reason):
@@ -3762,6 +3815,78 @@ class Agent:
             )
         except Exception:
             logger.exception("reflection: pass failed (non-fatal)")
+
+    async def _curate_once(self) -> int:
+        """One curator pass (`20260906-enterprise-brain-hub-scope` Phase 2).
+
+        This collective is the hub.  Every shared note across the collectives
+        on this Redis that rests on the quorum, is past probation and is not
+        in the enterprise tier yet becomes ONE publish proposal into this hub,
+        queued here (the hub's operators approve, at operator tier).  A note
+        proposed once is not proposed again for a week (``curator:proposed``).
+        Returns the number of proposals queued.  Never raises.
+        """
+        try:
+            from acc.assistant_proposal import QuorumNotMet, build_publish_proposal  # noqa: PLC0415
+            from acc.memory_curate import candidates  # noqa: PLC0415
+            from acc.memory_reflection import hub_destination  # noqa: PLC0415
+            hub = self.config.agent.collective_id
+            redis = self._redis
+            if redis is None or self._oversight_queue is None:
+                return 0
+            seen_key = f"acc:{hub}:curator:proposed"
+            try:
+                raw = redis.smembers(seen_key) or set()
+                seen = {m.decode() if isinstance(m, (bytes, bytearray)) else str(m) for m in raw}
+            except Exception:  # noqa: BLE001
+                seen = set()
+            queued = 0
+            for c in candidates(redis, hub):
+                fingerprint = c.note_id or f"{c.collective_id}:{c.role_label}:{c.summary[:80]}"
+                if fingerprint in seen:
+                    continue
+                try:
+                    proposal = build_publish_proposal(
+                        c.note(), hub_destination(hub), collective_id=hub,
+                        agent_id=self.agent_id,
+                    )
+                except QuorumNotMet:
+                    continue
+                proposal.collective_id = hub
+                proposal.rationale = (
+                    f"Published in {c.collective_id} ({c.scope}) by {c.people} people; "
+                    f"past probation; not in the hub's enterprise tier yet."
+                )
+                oversight_id = await self._queue_assistant_proposal(proposal, hub)
+                if not oversight_id:
+                    continue
+                queued += 1
+                try:
+                    redis.sadd(seen_key, fingerprint)
+                    redis.expire(seen_key, 7 * 24 * 3600)
+                except Exception:  # noqa: BLE001
+                    pass
+            if queued:
+                logger.info("curator: queued %d hub promotion proposal(s)", queued)
+            return queued
+        except Exception:  # noqa: BLE001
+            logger.exception("curator: pass failed (non-fatal)")
+            return 0
+
+    async def _curator_loop(self) -> None:
+        """Run :meth:`_curate_once` every ``role.curate_interval_s`` seconds;
+        returns at once for roles that do not curate."""
+        role = getattr(self, "_active_role", None)
+        interval = int(getattr(role, "curate_interval_s", 0) or 0)
+        if interval <= 0:
+            return
+        logger.info("curator: enabled interval=%ds hub=%s", interval, self.config.agent.collective_id)
+        while not self._stop_event.is_set():
+            await self._curate_once()
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                continue
 
     async def _reflection_loop(self) -> None:
         """PR-MEM2 — periodic out-of-band memory consolidation.
@@ -4012,6 +4137,7 @@ class Agent:
                 # No-ops unless ACC_REFLECTION_INTERVAL_S > 0 + a
                 # CognitiveCore is present + the role opted in.
                 self._reflection_loop(),
+                self._curator_loop(),
                 # Proactive wakeup self-check (2026-06-09). No-ops unless the
                 # active role sets proactive_wakeup: true (only the Assistant
                 # does). Keeps an opted-in agent active instead of purely

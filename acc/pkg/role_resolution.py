@@ -43,7 +43,10 @@ from acc.pkg.registry import Registry, RegistryEntry
 logger = logging.getLogger("acc.pkg.role_resolution")
 
 # Substrate roles — never served from a package even if one tries to
-# ship them.  Matches the CONTROL classification in
+# ship them.  ``hub_curator`` (`20260906-enterprise-brain-hub-scope`) is a
+# built-in role but deliberately NOT a CONTROL role: CONTROL roles resolve
+# only from the signed @acc/control-roles pack, and the curator ships in
+# ``roles/`` like any core role until that pack is rebuilt to carry it.  Matches the CONTROL classification in
 # ``openspec/changes/20260604-role-ecosystem-strategy/ecosystem-implementation.md``.
 CONTROL_ROLES: frozenset[str] = frozenset(
     {

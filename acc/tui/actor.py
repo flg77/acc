@@ -53,6 +53,12 @@ def tui_actor() -> str:
         return ANONYMOUS
 
 
+def tui_actor_tier() -> str:
+    """The tier of the person at the keyboard ("" when nobody resolved)."""
+    p = tui_principal()
+    return str(getattr(p, "tier", "") or "") if p is not None else ""
+
+
 def tui_attribution() -> dict[str, Any]:
     """What a prompt from this TUI carries (the shape ``channel_access``
     stamps for a channel). Empty when nobody could be resolved."""

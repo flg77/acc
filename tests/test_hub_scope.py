@@ -103,7 +103,7 @@ async def test_approved_hub_publication_lands_under_the_hub():
     redis = _FakeRedis()
     p = build_publish_proposal(_note(), "hub:enterprise", collective_id="alice-dev")
     p.operator_id = "system:flg"; p.collective_id = "alice-dev"
-    ok = await dispatch_approved_proposal(AsyncMock(), p, redis_client=redis)
+    ok = await dispatch_approved_proposal(AsyncMock(), p, redis_client=redis, approver_tier="operator")
     assert ok is True
     hub_key = redis_shared_notes_key("enterprise", "analyst", M.HUB_TIER)
     entries = json.loads(redis.store[hub_key])

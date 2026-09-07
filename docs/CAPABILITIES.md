@@ -46,6 +46,7 @@ to ignore the page.
 
 | Command | What it does |
 |---|---|
+| **`hub_curator`** (role) | The enterprise brain's only agent: no chat surface, no skills; on a schedule it proposes qualifying shared notes from the bound instances into the hub's enterprise tier. People approve at **operator tier** — a hub promotion by a lower tier is refused. |
 | `acc-cli memory notes --hub` / `memory propose --to <scope|hub:<cid>>` / `memory curate --hub <cid> [--propose]` | The enterprise brain: a hub's **enterprise tier** fills only through approved publish proposals from the bound instances (quorum of two people, probation, ceiling carried) and is the only cross-instance read path. `curate` lists the candidates; `propose` queues one for a person to approve. |
 | `acc-cli instance create/list/show/archive/export/import/synth/env` | An **instance**: a collective bound to an owner, a posture and its own state roots (`instances/<id>/`). `synth` renders its compose overlay, `./acc-deploy.sh instance up <id>` runs it; `export` carries the definition, never state. |
 | `acc-cli access whoami` | The identity this process acts as, and which substrate vouched for it. |

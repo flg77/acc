@@ -153,6 +153,13 @@ class RoleDefinitionConfig(BaseModel):
     # would otherwise cause a runaway routing loop (observed live).  Only the
     # orchestrator role sets this True.
     can_route: bool = False
+    # `20260906-enterprise-brain-hub-scope` Phase 2 -- a role with no chat
+    # surface drops every TASK_ASSIGN addressed to it (the hub curator: it
+    # proposes on a schedule and answers nobody).
+    chat_surface: bool = True
+    # Seconds between curator passes over the bound instances' shared tiers;
+    # 0 (default) = the role does not curate.
+    curate_interval_s: int = 0
 
     # PR-V3b — externalize reasoning.  When True, the CognitiveCore appends a
     # reasoning-externalization block to the system prompt asking the model to

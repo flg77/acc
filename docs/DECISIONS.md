@@ -825,6 +825,48 @@ still run unattributed (the owner rides the prompt path only). T2 — an
 instance is a whole collective per person — is assumed; T1 (many people in
 one collective) is the team agent and needs HG-40.1b's per-requester views.
 
+## D-016 — The enterprise brain is a hub's shared tier, filled only through people, read by every bound instance, and the information rule holds at every memory boundary
+
+**Status:** LANDED, released **v0.14.0** (2026-09-07, #359); verified on
+lighthouse with cells built from the branch (`20260906-enterprise-brain-hub-scope`).
+**Date:** 2026-09-07
+**Context:** `20260823-attributed-memory` built the brain's behaviour —
+private notes, publication only through a proposal a person approves,
+quorum of two people, dissent, probation, erasure — inside one collective.
+Instances (D-015) gave each person a collective; nothing let them publish
+into, or read from, a scope above their own. Three things were found while
+building this: nothing at runtime ever *built* a publish proposal; notes
+carried no ceiling, so the information rule the memory change settled
+(a fragment is not retrieved below the ceiling of the task that produced it)
+was not enforced; and `hub_collective_id` never reached memory.
+
+**Decision:** a **hub** is a collective id; its **enterprise tier** is its
+shared tier under a fixed destination. A publish proposal may name
+`hub:<cid>`; on approval the note lands there, under the hub's collective
+id, never in the publisher's own shared tier, with everything the memory
+change requires still applying. A collective bound to a hub reads that tier
+on the prompt path and **nothing else across instances** — never a peer's
+shared tier, never the hub twice (hub-only; peer reads would bring back
+"one person's habit becomes everyone's" without a quorum). **The
+information rule is enforced**: a note carries the highest ceiling among
+its source tasks (an unattributed source counts as the operator's,
+CRITICAL), the cache entry and every published copy carry it with the note
+id and the people behind it, and the read skips anything above the
+requester's ceiling in the own scope, the shared tier and the hub alike; a
+cache written before ceilings reads as CRITICAL. Proposing is a person's act
+(`acc-cli memory propose`, queued the way the assistant queues, approved
+where every proposal is approved); the curator's job is a deterministic
+look (`memory curate`) before it is a role. Erasure reaches the hub. **θ
+stays per instance; the hub never learns.**
+
+**Consequences:** two people's approvals put a lesson in front of every
+instance on the host; a requester below the lesson's ceiling never sees it,
+whatever a human approved; `forget` in one instance pulls a person's
+contribution from the hub. Not yet: the curator role and its schedule, an
+approver-tier check on hub promotions (the decision payload carries no
+tier), per-requester views, retention. Two operator confirmations pending:
+hub-only reads, and no learning at the hub.
+
 ## Future considerations (not yet decided)
 
 * **Multi-collective infusion** — today PR-D writes to a single

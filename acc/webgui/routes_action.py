@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import time
 
+from acc import identity as _identity
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -203,6 +205,9 @@ async def oversight_decision(
         "oversight_id": req.oversight_id,
         "decision": req.decision,
         "approver_id": f"webgui:{principal.user}",
+        # Phase 2 of the hub scope: a hub promotion needs an operator-tier
+        # approver; the web session's role maps onto the shared tiers.
+        "approver_tier": _identity.from_web(principal.user, principal.role).tier,
         "reason": req.reason,
         "ts": time.time(),
         "collective_id": req.collective_id,

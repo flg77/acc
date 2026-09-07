@@ -123,6 +123,12 @@ class TestShippedRolesHaveOsBasics:
                 continue
             data = yaml.safe_load(ry.read_text(encoding="utf-8"))
             rd = (data or {}).get("role_definition", {})
+            if rd.get("chat_surface", True) is False:
+                # `20260906-enterprise-brain-hub-scope` Phase 2: a role with no
+                # chat surface (the hub curator) never builds a prompt, calls
+                # the LLM or dispatches a skill; the OS-basics grant is a
+                # prompt-side invariant and does not apply to it.
+                continue
             if not rd.get("os_basics"):
                 missing.append(child.name)
         assert missing == [], f"roles without os_basics: {missing}"
@@ -177,6 +183,8 @@ class TestShippedRolesHaveOsBasics:
                 continue
             data = yaml.safe_load(ry.read_text(encoding="utf-8"))
             rd = (data or {}).get("role_definition", {})
+            if rd.get("chat_surface", True) is False:
+                continue  # no prompt, no tools -- see test_all_roles_have_os_basics
             role = RoleDefinitionConfig(**rd)
             absent = triad - set(role.allowed_mcps)
             if absent:

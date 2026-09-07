@@ -32,12 +32,21 @@
       bound collectives
 - [x] docs: CHANGELOG, CAPABILITIES row, MANUAL memory line
 
-## Phase 2 — the curator and the checks
-- [ ] `roles/hub_curator/role.yaml` (operator-tier service principal, PUBLISH-only,
-      `acts_on_behalf` always gated, no chat surface) + a schedule that runs
-      `memory_curate.candidates` and proposes
-- [ ] the oversight decision carries the approver's tier; a hub publication requires
-      operator tier (HG-40.1 §2.5)
+## Phase 2 — the curator and the checks (2026-09-07)
+- [x] `roles/hub_curator/role.yaml`: no chat surface (`chat_surface: false` — the task loop
+      drops `TASK_ASSIGN`), no skills / MCPs / actions, `curate_interval_s: 900`; known to the
+      operator's `known_roles.txt`; deliberately not in `CONTROL_ROLES` (those resolve only from
+      the signed control-roles pack, whose fixture needs the signing key to rebuild)
+- [x] `Agent._curate_once` / `_curator_loop`: `memory_curate.candidates(redis, hub=self)` →
+      one publish proposal per candidate into the hub's own queue via the extracted
+      `_queue_assistant_proposal` (row + cached payload + pending announcement); a note
+      proposed once is remembered for 7 days (`acc:<hub>:curator:proposed`)
+- [x] the decision carries `approver_tier` (TUI from the resolved principal, Web GUI from the
+      session role, CLI from `identity.current()`); `dispatch_approved_proposal(approver_tier=)`;
+      `_dispatch_publish` refuses a hub destination unless operator tier — fail closed,
+      journalled as `note_publish_refused`
+- [ ] two-approver promotions (HG-40.1 §2.5 "2 distinct people approve"): needs a
+      multi-decision proposal state; D-013 made a decision final — a deliberate later change
 - [ ] lighthouse: two instances bound to one hub; a note published from one reaches the
       other on the prompt path and nothing else does; a MEDIUM requester never sees a
       CRITICAL hub note; `memory forget` in one instance pulls the note from the hub

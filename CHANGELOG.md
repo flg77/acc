@@ -17,6 +17,33 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.14.1] — 2026-09-07
+
+The hub curator (HG-40.1b Phase 2, #362): the enterprise brain's only agent,
+and hub promotions approved at operator tier only.
+
+### Added
+
+- **The hub curator** (`20260906-enterprise-brain-hub-scope` Phase 2, HG-40.1b
+  item 11). A control role (`roles/hub_curator`) with no chat surface and no
+  skills that, every `curate_interval_s`, looks at the shared tiers of the
+  instances bound to its hub and queues one publish proposal into the hub's
+  enterprise tier per note that rests on two people, is past probation and is
+  not in the hub yet (a note proposed once is not re-proposed for a week).
+  People approve. Roles gain `chat_surface` (a role without one drops every
+  `TASK_ASSIGN`) and `curate_interval_s`. The curator ships in `roles/` (the
+  operator's catalogue knows it); it is not in the signed control-roles pack.
+- **Hub promotions need an operator-tier approver.** Every decision surface
+  (TUI, Web GUI, `acc-cli oversight approve`) now stamps `approver_tier`;
+  a publish proposal into `hub:<cid>` is refused, and journalled as
+  `note_publish_refused`, unless the approver is at operator tier (fail
+  closed for a surface that sends no tier). Ordinary destinations are
+  unchanged.
+
+### Changed
+
+### Fixed
+
 ## [0.14.0] — 2026-09-07
 
 The enterprise brain (HG-40.1b Phase 1, #359): a hub memory scope as the only

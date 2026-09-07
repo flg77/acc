@@ -62,7 +62,9 @@ required).
   (dry run by default). Instances bound to a hub publish into its enterprise
   tier (`memory propose --to hub:<cid>`, `memory curate --hub <cid>`) and read
   it on every prompt; a note is never read below the ceiling of the work it
-  came from.
+  came from. A hub with a curator (`instance create enterprise --stack-profile
+  edge-min --agent hub_curator`) proposes promotions on its own; an operator
+  approves them.
 - **Operations** — `profile list/apply/revert` (whole posture, reversible),
   `backup`/`restore` (no secret values), `sessions browse/resume/retention`,
   `checkpoints`, `logs --task`, `objective`, `hooks`, `scan`, `mcp`, `auth`
@@ -121,4 +123,4 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-06 (v0.13.1)_
+_Last updated: 2026-09-07 (v0.14.0)_

@@ -8,6 +8,7 @@
 arbiter
 assistant
 compliance_officer
+hub_curator
 ingester
 observer
 orchestrator
