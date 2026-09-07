@@ -827,7 +827,8 @@ one collective) is the team agent and needs HG-40.1b's per-requester views.
 
 ## D-016 — The enterprise brain is a hub's shared tier, filled only through people, read by every bound instance, and the information rule holds at every memory boundary
 
-**Status:** LANDED, released **v0.14.0** (2026-09-07, #359); verified on
+**Status:** LANDED, released **v0.14.0** (2026-09-07, #359) and, for the
+curator and the operator-tier check, **v0.14.1** (#362); both verified on
 lighthouse with cells built from the branch (`20260906-enterprise-brain-hub-scope`).
 **Date:** 2026-09-07
 **Context:** `20260823-attributed-memory` built the brain's behaviour —
@@ -862,9 +863,13 @@ stays per instance; the hub never learns.**
 **Consequences:** two people's approvals put a lesson in front of every
 instance on the host; a requester below the lesson's ceiling never sees it,
 whatever a human approved; `forget` in one instance pulls a person's
-contribution from the hub. Not yet: the curator role and its schedule, an
-approver-tier check on hub promotions (the decision payload carries no
-tier), per-requester views, retention. Two operator confirmations pending:
+contribution from the hub. Since v0.14.1 the curator is a role
+(`roles/hub_curator`: no chat surface — its tasks are dropped — no skills,
+proposes on `curate_interval_s`, never calls the LLM) and every decision
+carries `approver_tier`; a hub promotion is refused unless operator tier,
+fail closed and journalled. Not yet: two-approver promotions (needs a
+multi-decision proposal state D-013 does not have — an operator decision),
+per-requester views, retention. Two operator confirmations pending:
 hub-only reads, and no learning at the hub.
 
 ## Future considerations (not yet decided)

@@ -12,11 +12,19 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from acc.webgui.auth import require_viewer
+from acc.webgui.auth import Principal, require_viewer
 from acc.webgui.deps import get_hub
 from acc.webgui.observers import ObserverHub
 
 router = APIRouter()
+
+
+def _web_principal(principal):
+    """The web session's user on the shared identity ladder (HG-40.1b item 4):
+    ``webgui:<user>`` is what its prompts are attributed to, so the same
+    string is what its views are filtered by."""
+    from acc.identity import from_web  # noqa: PLC0415
+    return from_web(principal.user, principal.role)
 
 
 @router.get("/health", tags=["meta"])
@@ -38,7 +46,8 @@ def list_collectives(hub: ObserverHub = Depends(get_hub)) -> dict:
 
 @router.get("/api/board/{collective_id}", tags=["read"],
             dependencies=[Depends(require_viewer)])
-def board(collective_id: str, hub: ObserverHub = Depends(get_hub)) -> dict:
+def board(collective_id: str, hub: ObserverHub = Depends(get_hub),
+          principal: Principal = Depends(require_viewer)) -> dict:
     """The work board (`20260903-work-board-webgui`): the same pure
     projection the TUI Board renders, over the hub's latest snapshot.
 
@@ -47,7 +56,7 @@ def board(collective_id: str, hub: ObserverHub = Depends(get_hub)) -> dict:
     ``POST /api/board/control`` and the arbiter moves the card."""
     from dataclasses import asdict  # noqa: PLC0415
 
-    from acc.work_board import columns, project_board  # noqa: PLC0415
+    from acc.work_board import columns, project_board, visible_to  # noqa: PLC0415
 
     if hub.observer(collective_id) is None:
         raise HTTPException(status_code=404,
@@ -61,6 +70,10 @@ def board(collective_id: str, hub: ObserverHub = Depends(get_hub)) -> dict:
         assistant_outcomes=snap.get("assistant_outcomes"),
         signal_flow_log=snap.get("signal_flow_log"),
     )
+    # HG-40.1b item 4 -- a viewer sees the items they asked for; an operator
+    # sees the collective.
+    viewer = _web_principal(principal)
+    items = visible_to(items, viewer.attribution(), viewer.tier)
     return {
         "collective_id": collective_id,
         "generated_ts": time.time(),
@@ -78,6 +91,7 @@ def board(collective_id: str, hub: ObserverHub = Depends(get_hub)) -> dict:
             dependencies=[Depends(require_viewer)])
 def get_snapshot(
     collective_id: str, hub: ObserverHub = Depends(get_hub),
+    principal: Principal = Depends(require_viewer),
 ) -> dict:
     """Return the most recent `CollectiveSnapshot` for *collective_id*.
 
@@ -93,4 +107,7 @@ def get_snapshot(
         # Observed, but no signal received yet — not an error.
         return {"collective_id": collective_id, "snapshot": None,
                 "note": "no snapshot received yet"}
-    return {"collective_id": collective_id, "snapshot": snap}
+    from acc.work_board import filter_snapshot  # noqa: PLC0415
+    viewer = _web_principal(principal)
+    return {"collective_id": collective_id,
+            "snapshot": filter_snapshot(snap, viewer.attribution(), viewer.tier)}

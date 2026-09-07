@@ -89,6 +89,10 @@ out of the hub's enterprise tier too (`hub_collective_id` threaded through
 * **θ stays per instance; the hub never learns** (HG-40.1 Q3): the policy
   layer is per role per collective and nothing here touches it. Recorded, not
   built.
+* **Who sees what (item 4).** An operator sees everything; anyone else sees
+  what they asked for, matched by person with the scope suffix dropped, and
+  nothing unattributed. Identity is per surface: a person's Slack items are
+  not their web items — mapping one person across surfaces is not built.
 * **The hub is a collective id.** Its enterprise tier is its shared tier
   under a fixed destination; a hub may itself run cells (the curator, later)
   or be a name only — the tier exists the moment something is published

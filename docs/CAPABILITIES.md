@@ -140,7 +140,7 @@ chord away. A profile is a view choice — nothing about what may be done differ
 | **Marketplace** | Browse and install packages | `/` filter, `enter` install, `r` refresh, `+`/`-` rate |
 | **Catalogs** | Catalog sources and priority | `n` new, `d` delete, `r` refresh, `+`/`-` priority |
 | **Compliance** | Governance, oversight queue, proposals, **decision history** (one row per decision, `By` = approver or `policy:<mode>`) | `a` approve, `r` reject, `g`/`o`/`p` focus |
-| **Board** | Work in flight — PLAN steps (with their fanned-out members folded under them), direct cluster members, single tasks, the gate that blocks a step — under QUEUED · RUNNING · BLOCKED · DONE · FAILED; cold-starts from the arbiter heartbeat | `c` cancel, `r` retry, `a` reassign, `g` go to the gate, `Enter` detail |
+| **Board** | Work in flight — PLAN steps (with their fanned-out members folded under them), direct cluster members, single tasks, the gate that blocks a step — under QUEUED · RUNNING · BLOCKED · DONE · FAILED; cold-starts from the arbiter heartbeat. A non-operator sees the items they asked for (same on Compliance, Comms and the Web GUI) | `c` cancel, `r` retry, `a` reassign, `g` go to the gate, `Enter` detail |
 | **Diagnostics** | Golden-prompt suite; **`h` runs the same health checks as `acc-cli doctor`** | `r` run, `a` run all, `e` edit, `h` health |
 | **Configuration** | Role→model mapping, live backends | — |
 | **Performance** | Throughput and latency | — |

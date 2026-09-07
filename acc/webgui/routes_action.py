@@ -159,6 +159,7 @@ async def send_prompt(
     channel = WebPromptChannel(
         obs, collective_id=req.collective_id,
         from_agent=f"webgui:{principal.user}",
+        user=principal.user, role=principal.role,
     )
     task_id = await channel.send(
         prompt=req.content,

@@ -54,7 +54,7 @@ STATE_DIRS = ("lancedb", "sessions", "trace", "overlays")
 
 #: Sources whose principals may own an instance. An external identity nothing
 #: vouches for cannot own one, for the same reason it cannot be an operator.
-OWNER_SOURCES = ("kubernetes", "system", "web")
+OWNER_SOURCES = ("kubernetes", "system", "web", "webgui")
 
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$")
 

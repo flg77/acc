@@ -50,7 +50,14 @@
 - [ ] lighthouse: two instances bound to one hub; a note published from one reaches the
       other on the prompt path and nothing else does; a MEDIUM requester never sees a
       CRITICAL hub note; `memory forget` in one instance pulls the note from the hub
-- [ ] per-requester views on the Board / Compliance / Comms (HG-40.1 item 4)
+- [x] per-requester views (HG-40.1b item 4, 2026-09-07): `WorkItem.requester` from the plan /
+      the signal-log entry / the step (members); `visible_to` / `viewer_can_see` /
+      `task_requesters` / `filter_snapshot` in `work_board`; the observer's log entries and
+      `PlanSnapshot` carry `requested_by`; `plan submit` stamps the submitting principal;
+      `summaries()` carries it; TUI Board / Compliance / Comms via `tui.actor.visible_rows`;
+      Web GUI board + snapshot + WebSocket (`register_ws(viewer=)`, `view_for`); the Web GUI's
+      prompts are attributed to the session user (`from_web` source `webgui`) instead of the
+      server's OS user; tests `tests/test_requester_views.py`
 
 ## Phase 3 — the long run
 - [ ] retention per tier (episodes age out, private notes TTL unless promoted, hub notes

@@ -15,6 +15,7 @@ with a human oversight queue for what a role's grants do not cover.
 |---|---|
 | `acc/agent.py` (one process per cell) | `CognitiveCore` task loop: gate → retrieve memory → build prompt → LLM → post-gate → persist episode → drift. Subscribes to the collective's subjects; applies `OVERSIGHT_DECISION`s; dispatches assistant proposals under an atomic claim. |
 | **arbiter** (a cell with the arbiter role) | Signs `ROLE_UPDATE`s (Ed25519), runs the `PlanExecutor` (PLAN DAGs, `PLAN_STEP_CONTROL`), the worker-pool reconcile, cluster fan-out; its HEARTBEAT carries the oversight queue and the decision history. |
+| **hub_curator** (role, v0.14.1) | The enterprise brain's only agent: no chat surface, no skills; on its schedule it proposes qualifying shared notes from the instances bound to its hub into the hub's enterprise tier; a person approves at operator tier. |
 | **assistant** (role) | The operator's router: proposes infusion of catalog roles, specialist hand-off (spawn/route), never learns across people without a publish proposal (D-011, memory Phases 4–6). |
 | `acc/oversight.py` `HumanOversightQueue` | Pending / decided items in Redis (shared by every cell). A decision is final; one row per decision; one row per submit (D-013). |
 | `acc/capability_dispatch.py` + `acc/operating_modes.py` | Skill / MCP invocation behind the role's `allowed_*`, gate categories (system access, acts on behalf), escalation for an off-role grant, operating modes `AUTO / PLAN / ACCEPT_EDITS / ASK_PERMISSIONS`. The requester's **category ceiling** (`acc/identity.py`, D-014) is checked first: above it, refused, never asked. |
@@ -100,4 +101,4 @@ with a human oversight queue for what a role's grants do not cover.
 - **Reasoning bench**: the promote gate scores deliberation depth; run for any
   reasoning-affecting change (role prompts), advisory on the 3B edge model.
 
-_Last updated: 2026-09-07 (v0.14.0)_
+_Last updated: 2026-09-07 (v0.14.1)_

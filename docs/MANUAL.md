@@ -43,6 +43,9 @@ required).
   twice. `Esc` leaves it pending, `Ctrl+G` returns, `r` prefills a reason. Every
   answer is recorded in Compliance. A decision is final — a conflicting second
   one is refused.
+- **Who sees what** — an operator sees the whole collective; anyone else
+  (a viewer token, a Slack requester at a shared TUI) sees the tasks, plan
+  steps, gates and signals they asked for, on every surface.
 - **The Board** — what the runtime is doing: plan steps, cluster members,
   single tasks and the gate that blocks a step, under QUEUED · RUNNING ·
   BLOCKED · DONE · FAILED. `c` cancel, `r` retry, `a` reassign, `g` go to the
@@ -120,7 +123,12 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
 - **Instance cells crash-loop on `Permission denied` under their roots** — an
   image older than v0.13.1 mounted the instance directory without `U`;
   rebuild. Reading a cell-owned root from the host is `podman unshare`.
+- **A hub promotion was approved but nothing landed** — the agent log says
+  `publish … into hub … refused — approver … operator tier required`: a hub
+  promotion needs an operator-tier approver (D-016); a requester's approval,
+  or a surface older than v0.14.1 that sends no tier, is refused and
+  journalled as `note_publish_refused`.
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-07 (v0.14.0)_
+_Last updated: 2026-09-07 (v0.14.1)_

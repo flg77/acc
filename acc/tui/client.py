@@ -512,6 +512,9 @@ class NATSObserver:
             # tasks (TASK_ASSIGN / TASK_COMPLETE pairs) from the log.
             "task_id": str(data.get("task_id", "") or ""),
             "target_role": str(data.get("target_role", "") or ""),
+            # HG-40.1b item 4 -- who asked, so a non-operator's Comms / Board
+            # shows their own tasks only.
+            "requested_by": str(data.get("requested_by", "") or ""),
         })
 
         self._snapshot.last_updated_ts = time.time()
@@ -663,6 +666,17 @@ class NATSObserver:
                 for summary in plans:
                     if isinstance(summary, dict):
                         self._apply_plan(summary)
+
+    @handles("TASK_ASSIGN")
+    def _route_task_assign(self, agent_id: str, data: dict) -> None:
+        """Nothing to fold into the snapshot -- the point is the signal log.
+
+        A signal type without a handler never reaches ``append_signal_log``,
+        so until HG-40.1b item 4 no TASK_ASSIGN was ever logged live and the
+        Board's single-task source (`20260903-work-board-tui` 1.2) only worked
+        in tests that seed the log.  Registering the handler is the fix.
+        """
+        return
 
     @handles("TASK_COMPLETE")
     def _route_task_complete(self, agent_id: str, data: dict) -> None:
@@ -897,9 +911,12 @@ class NATSObserver:
                 step_progress=step_progress,
                 step_tasks=dict(step_tasks) if isinstance(step_tasks, dict) else {},
                 step_meta=dict(step_meta) if isinstance(step_meta, dict) else {},
+                requested_by=str(data.get("requested_by", "") or ""),
             )
         else:
             existing.steps = steps
+            if data.get("requested_by"):
+                existing.requested_by = str(data.get("requested_by") or "")
             existing.step_progress.update(progress)
             if isinstance(step_tasks, dict):
                 existing.step_tasks.update(step_tasks)

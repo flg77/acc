@@ -1153,6 +1153,7 @@ class PlanExecutor:
                           "critique": (s.last_critique or "")[:200]}
                     for sid, s in plan.steps.items()
                 },
+                "requested_by": str(plan.raw.get("requested_by", "") or ""),
                 "ts": plan.submitted_ts,
             })
         return out

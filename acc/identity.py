@@ -176,7 +176,7 @@ class Principal:
     @property
     def vouched(self) -> bool:
         """Did a substrate authenticate this, or is it a claim?"""
-        return self.source in ("kubernetes", "system", "web")
+        return self.source in ("kubernetes", "system", "web", "webgui")
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -277,7 +277,9 @@ def from_web(user: str, role: str, *, scope: str = "") -> Principal:
     the browser a separate notion of who someone is.
     """
     tier = Tier.OPERATOR if role == "operator" else Tier.VIEWER
-    return Principal(subject=user, source="web", tier=tier, scope=scope)
+    # ``webgui`` as the source: it is the string the Web GUI stamps on its
+    # tasks (``webgui:<user>``) and the memory-scope policy keys on.
+    return Principal(subject=user, source="webgui", tier=tier, scope=scope)
 
 
 # ---------------------------------------------------------------------------

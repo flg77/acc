@@ -24,8 +24,8 @@ from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Label, Static
 
 from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar, NavScreen
-from acc.tui.actor import tui_actor
-from acc.work_board import KIND_PLAN_STEP, WorkItem, columns, project_board
+from acc.tui.actor import tui_actor, tui_actor_tier
+from acc.work_board import KIND_PLAN_STEP, WorkItem, columns, project_board, visible_to
 
 logger = logging.getLogger("acc.tui.board")
 
@@ -107,6 +107,8 @@ class BoardScreen(NavScreen):
             assistant_outcomes=getattr(snap, "assistant_outcomes", None),
             signal_flow_log=getattr(snap, "signal_flow_log", None),
         )
+        # HG-40.1b item 4 -- a non-operator at this keyboard sees their own work.
+        items = visible_to(items, tui_actor(), tui_actor_tier())
         keep = self._selected_id()
         table.clear()
         self._items = {}

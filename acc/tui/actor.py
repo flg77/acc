@@ -59,6 +59,62 @@ def tui_actor_tier() -> str:
     return str(getattr(p, "tier", "") or "") if p is not None else ""
 
 
+def visible_rows(snapshot: Any, rows: list, *, task_key: str = "task_id") -> list:
+    """The rows of *rows* (oversight items, signal-log entries) the person at
+    this keyboard may see (HG-40.1b item 4): every row for an operator; for
+    anyone else the rows whose task they asked for, resolved through the work
+    board's task → requester join over *snapshot*."""
+    tier = tui_actor_tier()
+    if tier == "operator":
+        return list(rows)
+    from acc.work_board import project_board, task_requesters, viewer_can_see  # noqa: PLC0415
+    items = project_board(
+        active_plans=getattr(snapshot, "active_plans", None),
+        cluster_topology=getattr(snapshot, "cluster_topology", None),
+        oversight_pending_items=getattr(snapshot, "oversight_pending_items", None),
+        oversight_recent_items=getattr(snapshot, "oversight_recent_items", None),
+        assistant_outcomes=getattr(snapshot, "assistant_outcomes", None),
+        signal_flow_log=getattr(snapshot, "signal_flow_log", None),
+    )
+    owned = task_requesters(items)
+    me = tui_actor()
+    out = []
+    for row in rows:
+        get = row.get if isinstance(row, dict) else (lambda k, d="": getattr(row, k, d))
+        requester = str(get("requested_by", "") or owned.get(str(get(task_key, "") or ""), ""))
+        if viewer_can_see(requester, me, tier):
+            out.append(row)
+    return out
+
+
+def visible_rows(snapshot: Any, rows: list, *, task_key: str = "task_id") -> list:
+    """The rows of *rows* (oversight items, signal-log entries) the person at
+    this keyboard may see (HG-40.1b item 4): every row for an operator; for
+    anyone else the rows whose task they asked for, resolved through the work
+    board's task -> requester join over *snapshot*."""
+    tier = tui_actor_tier()
+    if tier == "operator":
+        return list(rows)
+    from acc.work_board import project_board, task_requesters, viewer_can_see  # noqa: PLC0415
+    items = project_board(
+        active_plans=getattr(snapshot, "active_plans", None),
+        cluster_topology=getattr(snapshot, "cluster_topology", None),
+        oversight_pending_items=getattr(snapshot, "oversight_pending_items", None),
+        oversight_recent_items=getattr(snapshot, "oversight_recent_items", None),
+        assistant_outcomes=getattr(snapshot, "assistant_outcomes", None),
+        signal_flow_log=getattr(snapshot, "signal_flow_log", None),
+    )
+    owned = task_requesters(items)
+    me = tui_actor()
+    out = []
+    for row in rows:
+        get = row.get if isinstance(row, dict) else (lambda k, d="": getattr(row, k, d))
+        requester = str(get("requested_by", "") or owned.get(str(get(task_key, "") or ""), ""))
+        if viewer_can_see(requester, me, tier):
+            out.append(row)
+    return out
+
+
 def tui_attribution() -> dict[str, Any]:
     """What a prompt from this TUI carries (the shape ``channel_access``
     stamps for a channel). Empty when nobody could be resolved."""

@@ -34,6 +34,7 @@ from textual.widgets import (
     Static,
 )
 
+from acc.tui.actor import visible_rows
 from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
@@ -855,7 +856,7 @@ class ComplianceScreen(NavScreen):
         # snapshot on every cursor move.
         self._pending_items_by_id: dict[str, dict] = {}
 
-        items = snap.oversight_pending_items or []
+        items = visible_rows(snap, list(snap.oversight_pending_items or []))  # HG-40.1b item 4
         if items:
             for item in items:
                 if item.get("status", "PENDING") != "PENDING":
@@ -918,7 +919,7 @@ class ComplianceScreen(NavScreen):
         except Exception:  # not mounted yet
             return
         table.clear()
-        for item in snap.oversight_recent_items or []:
+        for item in visible_rows(snap, list(snap.oversight_recent_items or [])):  # HG-40.1b item 4
             if not isinstance(item, dict):
                 continue
             oid = str(item.get("oversight_id", ""))

@@ -21,6 +21,7 @@ from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Label, Static
 
+from acc.tui.actor import visible_rows
 from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
@@ -165,7 +166,7 @@ class CommunicationsScreen(NavScreen):
             return
 
         lines: list[str] = []
-        for entry in reversed(snap.signal_flow_log[-30:]):
+        for entry in reversed(visible_rows(snap, list(snap.signal_flow_log[-30:]))):  # HG-40.1b item 4
             ts_str = time.strftime(
                 "%H:%M:%S", time.localtime(entry.get("ts", 0))
             )

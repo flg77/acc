@@ -66,6 +66,7 @@ class WorkItem:
     parent: str = ""              # plan_id for a step; the step's item id (or the
                                   # cluster_id) for a member
     members: int = 0              # a fanned-out step: how many members the board sees
+    requester: str = ""           # who asked (``source:subject[@scope]``); "" = unattributed
     depends_on: tuple[str, ...] = ()
     blocked_on: str = ""          # oversight_id the item waits on
     iteration: str = ""           # "2/3" when the reviewer loop is on
@@ -122,6 +123,7 @@ def project_board(
         step_tasks = dict(_get(plan, "step_tasks", {}) or {})
         step_meta = dict(_get(plan, "step_meta", {}) or {})
         updated = float(_get(plan, "received_ts", 0.0) or _get(plan, "ts", 0.0) or 0.0)
+        plan_requester = str(_get(plan, "requested_by", "") or "")
         for i, step in enumerate(_get(plan, "steps", []) or []):
             sid = str(_get(step, "step_id", "") or i)
             raw_status = str(progress.get(sid, "PENDING") or "PENDING").upper()
@@ -145,7 +147,7 @@ def project_board(
                 plan_id=str(plan_id), step_id=sid, task_id=task_id, parent=str(plan_id),
                 depends_on=tuple(str(d) for d in (_get(step, "depends_on", []) or [])),
                 iteration=iteration, critique=_first_line(meta.get("critique", ""), 120),
-                updated_ts=updated,
+                updated_ts=updated, requester=plan_requester,
             )
             if task_id:
                 by_task[task_id] = item_id
@@ -182,6 +184,7 @@ def project_board(
                 plan_id=step.plan_id if step else "", step_id=step.step_id if step else "",
                 iteration=f"{cur}/{tot}" if tot else "",
                 updated_ts=float(_get(m, "last_seen", 0.0) or 0.0),
+                requester=step.requester if step else "",
             )
             if step is not None:
                 items[step_item] = _replace(step, members=step.members + 1)
@@ -209,13 +212,14 @@ def project_board(
                     title=_first_line(_get(entry, "target_role", "") or step.role or task_id[:12]),
                     status=RUNNING, role=str(_get(entry, "target_role", "") or step.role),
                     task_id=task_id, parent=step_item, plan_id=step.plan_id, step_id=step.step_id,
-                    updated_ts=ts,
+                    updated_ts=ts, requester=str(_get(entry, "requested_by", "") or step.requester),
                 )
                 items[step_item] = _replace(step, members=step.members + 1)
             else:
                 items[item_id] = WorkItem(
                     id=item_id, kind=KIND_TASK, title=f"task {task_id[:12]}", status=RUNNING,
                     role=str(_get(entry, "target_role", "") or ""), task_id=task_id, updated_ts=ts,
+                    requester=str(_get(entry, "requested_by", "") or ""),
                 )
             by_task[task_id] = item_id
         elif sig == "TASK_COMPLETE" and task_id in by_task:
@@ -291,3 +295,85 @@ __all__ = [
     "KIND_PLAN_STEP", "KIND_TASK", "QUEUED", "RUNNING", "WorkItem", "columns",
     "project_board",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Per-requester views (`20260906-enterprise-brain-hub-scope` item 4, HG-40.1b)
+# ---------------------------------------------------------------------------
+#
+# The shared surfaces showed the whole collective to everyone who could open
+# them: under one collective with many people (T1, the team agent) a viewer saw
+# other people's tasks and gates.  One policy, applied by every surface:
+# an **operator** sees everything; anyone else sees the items **they asked
+# for** -- matched by person (``attribution.person_of``: the scope suffix is
+# dropped, so ``slack:U1@C1`` and ``slack:U1@C2`` are the same person) -- and
+# nothing unattributed, because unattributed work is the operator's own.
+# Identity is per surface: a person's Slack items are not their web items.
+
+
+def viewer_can_see(requester: str, viewer: str, tier: str) -> bool:
+    """Whether a viewer of *tier* asking as *viewer* may see an item *requester* asked for."""
+    from acc.attribution import person_of  # noqa: PLC0415
+    if str(tier or "").lower() == "operator":
+        return True
+    who = person_of(viewer)
+    return bool(who) and person_of(requester) == who
+
+
+def visible_to(items: Iterable[WorkItem], viewer: str, tier: str) -> list[WorkItem]:
+    """The board items a principal may see (the whole list for an operator)."""
+    return [it for it in items if viewer_can_see(it.requester, viewer, tier)]
+
+
+def task_requesters(items: Iterable[WorkItem]) -> dict[str, str]:
+    """``task_id -> requester`` for every item that has a task -- the join the
+    Compliance queue and the Comms log use to filter rows by person."""
+    out: dict[str, str] = {}
+    for it in items:
+        if it.task_id and it.task_id not in out:
+            out[it.task_id] = it.requester
+    return out
+
+
+def filter_snapshot(snapshot: dict, viewer: str, tier: str) -> dict:
+    """A snapshot dict reduced to what *viewer* may see.
+
+    Operators get the dict back untouched.  For anyone else: plans they asked
+    for, oversight rows (pending and decided) whose task they asked for, the
+    signal-log entries of their tasks, and nothing collective-wide (agents and
+    metrics stay -- they are the runtime, not someone's work).
+    """
+    if str(tier or "").lower() == "operator" or not isinstance(snapshot, dict):
+        return snapshot
+    items = project_board(
+        active_plans=snapshot.get("active_plans"),
+        cluster_topology=snapshot.get("cluster_topology"),
+        oversight_pending_items=snapshot.get("oversight_pending_items"),
+        oversight_recent_items=snapshot.get("oversight_recent_items"),
+        assistant_outcomes=snapshot.get("assistant_outcomes"),
+        signal_flow_log=snapshot.get("signal_flow_log"),
+    )
+    owned = task_requesters(items)
+    out = dict(snapshot)
+    plans = dict(snapshot.get("active_plans") or {})
+    out["active_plans"] = {
+        pid: p for pid, p in plans.items()
+        if viewer_can_see(str(_get(p, "requested_by", "") or ""), viewer, tier)
+    }
+    for key in ("oversight_pending_items", "oversight_recent_items"):
+        rows = list(snapshot.get(key) or [])
+        out[key] = [
+            r for r in rows
+            if viewer_can_see(str(_get(r, "requested_by", "") or owned.get(str(_get(r, "task_id", "") or ""), "")), viewer, tier)
+        ]
+    log = list(snapshot.get("signal_flow_log") or [])
+    out["signal_flow_log"] = [
+        e for e in log
+        if viewer_can_see(str(_get(e, "requested_by", "") or owned.get(str(_get(e, "task_id", "") or ""), "")), viewer, tier)
+    ]
+    out["cluster_topology"] = {
+        cid: row for cid, row in dict(snapshot.get("cluster_topology") or {}).items()
+        if any(viewer_can_see(owned.get(str(_get(m, "task_id", "") or ""), ""), viewer, tier)
+               for m in dict(_get(row, "members", {}) or {}).values())
+    }
+    return out

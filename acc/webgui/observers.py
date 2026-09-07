@@ -56,6 +56,8 @@ class ObserverHub:
         # cid -> latest snapshot dict; cid -> set of WebSocket clients.
         self._latest: dict[str, dict] = {}
         self._ws_clients: dict[str, set] = {cid: set() for cid in collective_ids}
+        # socket -> (attribution, tier) for principals whose view is filtered
+        self._ws_viewers: dict = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -159,7 +161,7 @@ class ObserverHub:
         dead = []
         for ws in list(clients):
             try:
-                await ws.send_json(data)
+                await ws.send_json(self.view_for(ws, data))
             except Exception:
                 dead.append(ws)
         for ws in dead:
@@ -181,13 +183,29 @@ class ObserverHub:
         (proposal 015 PR-3: `WebPromptChannel`, role infusion, etc.)."""
         return self._observers.get(cid)
 
-    def register_ws(self, cid: str, ws) -> bool:
+    def register_ws(self, cid: str, ws, viewer: "tuple[str, str] | None" = None) -> bool:
         """Register a WebSocket client for *cid*.  Returns False for an
-        unknown collective."""
+        unknown collective.
+
+        *viewer* is ``(attribution, tier)`` of the principal behind the socket
+        (HG-40.1b item 4): a non-operator's socket receives snapshots reduced to
+        what they asked for; ``None`` (or an operator) receives everything.
+        """
         if cid not in self._ws_clients:
             return False
         self._ws_clients[cid].add(ws)
+        if viewer is not None:
+            self._ws_viewers[ws] = viewer
         return True
 
     def unregister_ws(self, cid: str, ws) -> None:
         self._ws_clients.get(cid, set()).discard(ws)
+        self._ws_viewers.pop(ws, None)
+
+    def view_for(self, ws, data: dict) -> dict:
+        """*data* as the socket's principal may see it."""
+        viewer = self._ws_viewers.get(ws)
+        if viewer is None:
+            return data
+        from acc.work_board import filter_snapshot  # noqa: PLC0415
+        return filter_snapshot(data, viewer[0], viewer[1])

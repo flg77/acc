@@ -163,6 +163,10 @@ class AgentSnapshot:
         return "health-score-red"
 
 
+#: Entries kept in ``CollectiveSnapshot.signal_flow_log`` (see ``append_signal_log``).
+SIGNAL_LOG_CAP = 300
+
+
 @dataclass
 class PlanSnapshot:
     """Snapshot of a single PLAN signal received from the arbiter (REQ-TUI-016)."""
@@ -177,6 +181,8 @@ class PlanSnapshot:
     # id per step (joins a Blocked gate) and the reviewer loop per step.
     step_tasks: dict[str, str] = field(default_factory=dict)
     step_meta: dict[str, dict] = field(default_factory=dict)
+    # HG-40.1b item 4 -- who submitted the plan ("" = unattributed / operator).
+    requested_by: str = ""
 
 
 @dataclass
@@ -382,10 +388,17 @@ class CollectiveSnapshot:
             self.owasp_violation_log = self.owasp_violation_log[-_MAX_OWASP_LOG:]
 
     def append_signal_log(self, entry: dict) -> None:
-        """Append to signal_flow_log, capping at 30 (FIFO)."""
+        """Append to signal_flow_log, capping at ``SIGNAL_LOG_CAP`` (FIFO).
+
+        300, not 30: the Board derives single tasks from TASK_ASSIGN /
+        TASK_COMPLETE pairs in this log, and one task's progress lines plus
+        the heartbeats of a six-agent collective evicted a 30-entry ring in
+        well under a minute (lighthouse, HG-40.1b item 4).  Comms still
+        renders the last 30.
+        """
         self.signal_flow_log.append(entry)
-        if len(self.signal_flow_log) > 30:
-            self.signal_flow_log = self.signal_flow_log[-30:]
+        if len(self.signal_flow_log) > SIGNAL_LOG_CAP:
+            self.signal_flow_log = self.signal_flow_log[-SIGNAL_LOG_CAP:]
 
     # ------------------------------------------------------------------
     # PR-telemetry — capability invocation aggregates

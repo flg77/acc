@@ -17,6 +17,36 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.14.2] — 2026-09-07
+
+### Added
+
+- **Per-requester views** (`20260906-enterprise-brain-hub-scope` item 4,
+  HG-40.1b). The shared surfaces showed the whole collective to anyone who
+  could open them. One policy now applies everywhere (`work_board.visible_to`
+  / `filter_snapshot`): an **operator sees everything**; anyone else sees
+  the items **they asked for** — matched by person, scope suffix dropped —
+  and nothing unattributed (the operator's own). Applied by the TUI Board,
+  Compliance (pending queue and decision history) and Comms, and by the Web
+  GUI board, snapshot and WebSocket (each socket receives its principal's
+  view). For it to be decidable the requester now reaches every view source:
+  the observer's signal log, the plan snapshot, `acc-cli plan submit`
+  (stamps the submitting principal) and the executor's heartbeat summaries.
+
+### Fixed
+
+- **The Board never saw a single prompt task live.** The TUI observer only
+  logs signal types it has a handler for, and it had none for `TASK_ASSIGN`,
+  so the Board's single-task source (`20260903-work-board-tui` 1.2) only
+  worked in tests that seed the log. A handler is registered, and the
+  signal ring holds 300 entries instead of 30 (one task's progress lines plus
+  a six-agent collective's heartbeats evicted a 30-entry ring in under a
+  minute); Comms still renders the last 30.
+- **Web GUI prompts were attributed to the server's OS user.** Since v0.13.0
+  the inherited TUI attribution stamped `system:<server user>` on every web
+  prompt; the Web GUI now stamps its own session (`webgui:<user>`, the
+  session's tier and ceiling, `requester_source=webgui`).
+
 ## [0.14.1] — 2026-09-07
 
 The hub curator (HG-40.1b Phase 2, #362): the enterprise brain's only agent,

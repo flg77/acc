@@ -38,7 +38,10 @@ async def collective_ws(websocket: WebSocket, collective_id: str) -> None:
 
     await websocket.accept()
 
-    if not hub.register_ws(collective_id, websocket):
+    # HG-40.1b item 4 -- the socket carries its principal's view.
+    from acc.identity import from_web  # noqa: PLC0415
+    who = from_web(principal.user, principal.role)
+    if not hub.register_ws(collective_id, websocket, viewer=(who.attribution(), who.tier)):
         await websocket.send_json({
             "error": f"collective {collective_id!r} not observed",
         })
@@ -50,7 +53,7 @@ async def collective_ws(websocket: WebSocket, collective_id: str) -> None:
         # without waiting for the next collective signal.
         latest = hub.latest(collective_id)
         if latest is not None:
-            await websocket.send_json(latest)
+            await websocket.send_json(hub.view_for(websocket, latest))
         # The hub broadcasts subsequent updates; just keep the socket
         # open and drain any client pings until it disconnects.
         while True:

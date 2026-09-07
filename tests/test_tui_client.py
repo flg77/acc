@@ -799,12 +799,14 @@ class TestSignalFlowLog:
         assert len(obs.snapshot.signal_flow_log) == 0
 
     @pytest.mark.asyncio
-    async def test_signal_flow_log_capped_at_30(self):
-        """FIFO cap: signal_flow_log must not exceed 30 entries."""
+    async def test_signal_flow_log_is_capped(self):
+        """FIFO cap: signal_flow_log must not exceed SIGNAL_LOG_CAP entries
+        (300 since HG-40.1b item 4 -- 30 evicted a task's own TASK_ASSIGN)."""
+        from acc.tui.models import SIGNAL_LOG_CAP
         obs, _ = _make_observer()
-        for _ in range(35):
+        for _ in range(SIGNAL_LOG_CAP + 5):
             await obs._handle_message(_make_msg(_heartbeat("a1")))
-        assert len(obs.snapshot.signal_flow_log) == 30
+        assert len(obs.snapshot.signal_flow_log) == SIGNAL_LOG_CAP
 
 
 class TestObserverToleratesMsgpackMap:

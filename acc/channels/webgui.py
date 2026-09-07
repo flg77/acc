@@ -38,5 +38,25 @@ class WebPromptChannel(TUIPromptChannel):
         *,
         collective_id: str,
         from_agent: str = "webgui:operator",
+        user: str = "",
+        role: str = "",
     ) -> None:
-        super().__init__(observer, collective_id=collective_id, from_agent=from_agent)
+        # HG-40.1b item 4 -- the web session's user is the requester (until
+        # v0.14.2 the inherited TUI attribution stamped the server process's
+        # OS user on every web prompt).  ``requester_source`` stays ``webgui``
+        # so the memory scope policy for the surface applies.
+        attribution = None
+        if user:
+            from acc.identity import from_web  # noqa: PLC0415
+            p = from_web(user, role or "viewer")
+            attribution = {
+                "requested_by": f"webgui:{p.subject}",
+                "requester_subject": p.subject,
+                "requester_source": "webgui",
+                "requester_tier": p.tier,
+                "requester_ceiling": p.effective_ceiling,
+                "requester_channel": "webgui",
+                "requester_scope": "direct",
+            }
+        super().__init__(observer, collective_id=collective_id, from_agent=from_agent,
+                         attribution=attribution)

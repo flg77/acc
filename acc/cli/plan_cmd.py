@@ -36,6 +36,21 @@ from acc.cli._common import (
 _TERMINAL = {"COMPLETE", "FAILED"}
 
 
+def attribute_plan_payload(payload: dict) -> dict:
+    """Stamp the submitting principal on a PLAN (HG-40.1b item 4): the Board
+    and the Web GUI show a plan to the person who asked for it.  A payload that
+    already names a requester keeps it; nothing resolvable leaves it
+    unattributed (the operator's own)."""
+    if payload.get("requested_by"):
+        return payload
+    try:
+        from acc.identity import current  # noqa: PLC0415
+        payload["requested_by"] = current().attribution()
+    except Exception:  # noqa: BLE001
+        pass
+    return payload
+
+
 def register(sub: argparse._SubParsersAction) -> None:
     plan = sub.add_parser("plan", help="Submit and monitor PLAN signals.")
     plan_sub = plan.add_subparsers(
@@ -105,6 +120,7 @@ async def _cmd_submit(args: argparse.Namespace) -> int:
     cid = args.collective or payload.get("collective_id") or default_collective()
     payload["collective_id"] = cid
     payload.setdefault("signal_type", "PLAN")
+    attribute_plan_payload(payload)
     plan_id = str(payload.get("plan_id", "")).strip()
     if not plan_id:
         print("plan: payload missing 'plan_id'", file=sys.stderr)

@@ -318,11 +318,12 @@ class TestCollectiveSnapshotFIFOCaps:
             cs.append_owasp_violation({"code": "LLM01", "idx": i})
         assert cs.owasp_violation_log[-1]["idx"] == _MAX_OWASP_LOG + 4
 
-    def test_signal_flow_log_capped_at_30(self):
+    def test_signal_flow_log_is_capped(self):
+        from acc.tui.models import SIGNAL_LOG_CAP
         cs = CollectiveSnapshot(collective_id="sol-01")
-        for i in range(40):
+        for i in range(SIGNAL_LOG_CAP + 5):
             cs.append_signal_log({"signal_type": "HEARTBEAT", "idx": i})
-        assert len(cs.signal_flow_log) == 30
+        assert len(cs.signal_flow_log) == SIGNAL_LOG_CAP
 
     def test_signal_flow_log_keeps_most_recent(self):
         cs = CollectiveSnapshot(collective_id="sol-01")

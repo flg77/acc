@@ -29,7 +29,7 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from acc.channels.base import PromptResponse
 from acc.tui.actor import tui_attribution as _tui_attribution
@@ -67,10 +67,15 @@ class TUIPromptChannel:
         *,
         collective_id: str,
         from_agent: str = "tui:operator",
+        attribution: "dict[str, Any] | None" = None,
     ) -> None:
         self._observer = observer
         self._collective_id = collective_id
         self._from_agent = from_agent
+        # HG-40.1b item 4 -- the requester a surface stamps on its tasks.
+        # None = resolve the person at the keyboard (the TUI); a surface that
+        # authenticates its own users (the Web GUI) passes theirs.
+        self._attribution = attribution
         # Track futures we created so close() can cancel any that the
         # operator-facing screen never awaited (e.g. screen unmount
         # mid-flight).
@@ -138,7 +143,7 @@ class TUIPromptChannel:
             # `20260906-acc-instance` -- the person at the keyboard, the way a
             # channel adapter stamps an admitted requester.  Empty when no
             # principal could be resolved (the task stays unattributed).
-            **_tui_attribution(),
+            **(self._attribution if self._attribution is not None else _tui_attribution()),
             "from_agent": self._from_agent,
             "target_role": target_role,
             "ts": time.time(),
