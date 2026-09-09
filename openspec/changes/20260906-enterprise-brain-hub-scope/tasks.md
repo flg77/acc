@@ -45,8 +45,16 @@
       session role, CLI from `identity.current()`); `dispatch_approved_proposal(approver_tier=)`;
       `_dispatch_publish` refuses a hub destination unless operator tier — fail closed,
       journalled as `note_publish_refused`
-- [ ] two-approver promotions (HG-40.1 §2.5 "2 distinct people approve"): needs a
-      multi-decision proposal state; D-013 made a decision final — a deliberate later change
+- [x] two-approver promotions (HG-40.1 §2.5 "2 distinct people approve"; Phase 2b,
+      2026-09-07, priority list 12.2): `OversightItem.required_approvals` + `approvals`
+      (approver, tier, ms) + `approvals_needed`; `submit(required_approvals=)` from the
+      proposal's `params.required_approvals`, set by `assistant_proposal.approvals_required`
+      (hub destination and note ceiling ≥ HIGH → 2, else 1); `approve(approver_tier=)`
+      records per *person* and keeps the row PENDING until enough distinct operators,
+      refuses a lower tier on such a row, is idempotent for the same person; reject stays
+      final; `_dispatch_publish(approvals=)` re-checks fail closed and journals the record;
+      `status_label` → `PENDING 1/2` on the CLI, the Compliance queue and the heartbeat;
+      tests `tests/test_two_approver_gate.py` (18)
 - [ ] lighthouse: two instances bound to one hub; a note published from one reaches the
       other on the prompt path and nothing else does; a MEDIUM requester never sees a
       CRITICAL hub note; `memory forget` in one instance pulls the note from the hub

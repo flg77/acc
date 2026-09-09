@@ -72,6 +72,7 @@ class ControlGap:
     severity: str = ""           # gaps: HIGH/MEDIUM; covered: ""
     rationale: str = ""
     proposed_rule_text: str = ""
+    nexus_ids: list[str] = field(default_factory=list)   # AS-01: the control's external ids
 
 
 @dataclass
@@ -164,6 +165,7 @@ def analyze_gaps(
                 mapped_rule_ids=mapped_ids,
                 shared_terms=shared_terms,
                 rationale=rationale,
+                nexus_ids=list(getattr(control, "nexus_ids", None) or []),
             )
         else:
             severity = _severity_for(control.category)
@@ -185,6 +187,7 @@ def analyze_gaps(
                 severity=severity,
                 rationale=rationale,
                 proposed_rule_text=_proposed_rule(control, framework.framework_id),
+                nexus_ids=list(getattr(control, "nexus_ids", None) or []),
             )
         report.controls.append(gap)
     return report
@@ -247,6 +250,8 @@ def render_markdown(report: GapReport) -> str:
     for c in report.controls:
         status = "✅ covered" if c.covered else f"❌ GAP ({c.severity})"
         lines.append(f"### {c.control_id} — {c.title}  [{status}]")
+        if c.nexus_ids:
+            lines.append(f"- nexus: {', '.join(c.nexus_ids)}")
         lines.append(f"- rationale: {c.rationale}")
         if c.mapped_rule_ids:
             lines.append(f"- mapped rules: {', '.join(c.mapped_rule_ids)}")

@@ -17,6 +17,72 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.15.0] — 2026-09-09
+
+### Added
+
+- **ACC speaks the Risk Atlas Nexus vocabulary** (`20260908-asago-alignment`
+  AS-01). asago — Red Hat's policy-to-controls loop, whose evaluation stage
+  is OpenShift AI's EvalHub — keys everything it produces on IBM AI Atlas
+  Nexus ids. A pinned, dated snapshot of those ids lives in
+  `regulatory_layer/nexus/vocabulary.yaml`; framework controls carry
+  `nexus_ids` (the NIST AI RMF catalog its own `nist-gv|mp|ms|mg-<n.m>`
+  ids; the threat model its risks, in the withheld twin only); `acc/nexus.py`
+  validates every id offline, indexes `nexus id → ACC controls`, and exports
+  the mappings as an **SSSOM** TSV; `acc-cli compliance mappings | nexus <id>
+  | coverage`; gap reports carry the ids per control. EU AI Act, ISO 42001
+  and SOC 2 stay unmapped — the Nexus has no entities for them.
+- **Drop an asago policy into ACC** (`acc-cli compliance risks
+  risk-extraction.json`): for every risk asago's policy mapper extracted, the
+  ACC controls and threats that carry the same Nexus id (or one of the
+  risk's cross-mapped ids) and whether the deterministic gap analysis finds
+  a loaded rule covering them; unanswered risks are named; `--json` is the
+  record. `docs/HOWTO-asago-policy.md` is the end-to-end guide.
+- **The two-approver hub gate, beside single approval**
+  (`20260906-enterprise-brain-hub-scope` Phase 2b, HG-40.1 §2.5; operator
+  decision 2026-09-07). A publish proposal into a **hub** whose note is
+  **HIGH or CRITICAL** now asks for **two distinct operator-tier approvals**
+  (`assistant_proposal.approvals_required`; the proposal says
+  `[2 operator approvals]`); MEDIUM and below, and any destination inside the
+  collective, keep the single decision D-013 made final. The oversight row
+  carries `required_approvals` and an `approvals` record (who, tier, when):
+  the first operator's approval is recorded and the row stays `PENDING 1/2`
+  (CLI `oversight pending`, the Compliance queue, the heartbeat); the same
+  person again — in any room, or the fan-out replay of one decision — is one
+  approval; an approver below operator tier is refused on such a row; a
+  reject at any point is final. The publish dispatcher re-checks the record
+  fail-closed (two distinct people, all at operator tier) and journals
+  `note_publish_refused` with the record otherwise. Decision-history
+  statistics never feed the count.
+- **The internal Satellite is the distribution base** for ACC packages
+  (`20260909-acc-install` IN-10). `packaging/rpm/publish-satellite.sh` uploads a
+  built RPM into the `acc-spearhead` repository of the `ACC` product, running
+  `hammer` on the Satellite itself so no API credentials sit on the build host,
+  and refusing a snapshot build unless `ALLOW_SNAPSHOT=1` says so on purpose.
+  A spearhead build still never reaches a public repository; COPR is fed from the
+  mirror only.
+- **Semantic versions map onto RPM versions** (`packaging/rpm/version.py`). RPM
+  cannot hold a semantic version directly — `-` is illegal in both fields and
+  ordering is per field — so `0.15.0-rc.1` becomes Version `0.15.0`, Release
+  `0.rc.1`, which sorts *below* the `1` of the release, and a build that is not
+  the clean, tagged tree takes `0.<commit stamp>.g<sha>` and can never
+  impersonate one in the channel. `RELEASE=2` covers a packaging-only rebuild of
+  the same source. `rpm.labelCompare` is asserted on every ordering.
+
+### Fixed
+
+- **An upgrade could leave the host running the old code**
+  (`20260909-acc-install`, found upgrading acc1 from 0.14.3 to 0.14.4 through the
+  Satellite channel: `rpm -q acc` said 0.14.4 and `acc --version` said 0.14.3).
+  The first `acc` run had written `.pyc` files into the venv — root can write
+  there — owned by no package and using Python's default *timestamp*
+  invalidation. RPM restores each packaged file's recorded mtime, so the new
+  source never looked newer than the cache it was compared against and Python
+  went on serving the old bytecode. The package now compiles the venv itself, so
+  those exact paths are package-owned and an upgrade replaces them, and it
+  compiles them **checked-hash**, so a cache that survives anyway is revalidated
+  against the source it claims to cache rather than against a clock.
+
 ## [0.14.4] — 2026-09-09
 
 ### Added

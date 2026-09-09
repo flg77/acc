@@ -48,10 +48,18 @@ if [[ -z "$DIST" ]]; then
     elif rpm -E "%{?fedora}" | grep -qE "^[0-9]+$"; then DIST=".fc$(rpm -E "%{fedora}")";
     else DIST=""; fi
 fi
-rpmbuild -ba "$TOP/SPECS/acc.spec" --define "_topdir $TOP" --define "acc_version $VERSION" --define "acc_python $PY" --define "acc_python_pkg $PKG" --define "dist $DIST"
+# Semantic version -> (Version, Release).  A pre-release or a build that is not the
+# clean, tagged tree takes a `0.…` release, which sorts BELOW the real release, so it
+# can never impersonate one in the Satellite channel.  RELEASE= overrides (a rebuild
+# of the same source, e.g. a packaging-only fix, is `2`).
+mapfile -t _VR < <("$PY" "$HERE/version.py" "$VERSION" "$ROOT")
+RPM_VERSION="${_VR[0]}"
+RPM_RELEASE="${RELEASE:-${_VR[1]}}"
+echo "== rpm $RPM_VERSION-$RPM_RELEASE$DIST =="
+rpmbuild -ba "$TOP/SPECS/acc.spec" --define "_topdir $TOP" --define "acc_version $RPM_VERSION" --define "acc_wheel_version $VERSION" --define "acc_release $RPM_RELEASE" --define "acc_python $PY" --define "acc_python_pkg $PKG" --define "dist $DIST"
 echo "== built =="
 find "$TOP/RPMS" "$TOP/SRPMS" -name "*.rpm" -exec ls -l {} \;
-RPM="$(find "$TOP/RPMS" -name "acc-$VERSION-*.rpm" ! -name "*.src.rpm" | head -1)"
+RPM="$(find "$TOP/RPMS" -name "acc-$RPM_VERSION-*.rpm" ! -name "*.src.rpm" | head -1)"
 echo "== contents =="
 rpm -qpl "$RPM" | grep -E "^/usr/bin/|^/etc/acc|^/var/lib/acc|^/usr/lib/systemd|^/usr/share/acc$" | sort
 rpm -qp --scripts "$RPM" | grep -E "usermod|enable-linger|systemctl" || true

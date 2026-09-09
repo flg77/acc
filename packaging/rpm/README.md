@@ -26,10 +26,43 @@ service can run rootless podman. Images come from `ACC_IMAGE_PREFIX`
 
 ## Channels (operator decision 2026-09-09)
 
-- the **spearhead** build → a dedicated `acc` channel on the internal Satellite;
+- the **spearhead** build → the internal Satellite, which is **the distribution
+  base** for ACC packages;
 - **COPR** ← the public **mirror** only (the same withheld-files rule as the mirror).
 
 A spearhead build never reaches a public repository.
+
+```bash
+packaging/rpm/publish-satellite.sh dist/rpm/RPMS/x86_64/acc-<version>-<release>.<dist>.x86_64.rpm
+```
+
+It copies the file to the Satellite and uploads it with `hammer` **there**, so no
+API credentials sit on the build host, and it refuses a snapshot build unless
+`ALLOW_SNAPSHOT=1` says so on purpose. Published at:
+
+```
+https://sat1.ic3net.internal/pulp/content/ic3net_internal/Library/custom/ACC/acc-spearhead/
+```
+
+Clients consume it through a `.repo` file pointing at that URL; the script prints
+one.
+
+## Versions in the channel
+
+`packaging/rpm/version.py` maps the project's semantic version to an RPM
+`Version` and `Release`, because RPM cannot hold a semantic version directly
+(`-` is illegal in both fields, and ordering is per field):
+
+| project version | Version | Release | why |
+|---|---|---|---|
+| `0.14.4` | `0.14.4` | `1` | the release |
+| `0.15.0-rc.1` | `0.15.0` | `0.rc.1` | `0.…` sorts **below** the `1` of the release |
+| `0.15.0rc1` | `0.15.0` | `0.rc1` | the PEP 440 spelling, same result |
+| `0.14.4` from an untagged or dirty tree | `0.14.4` | `0.<commit stamp>.g<sha>[.dirty]` | a snapshot can never impersonate the release |
+| a packaging-only rebuild | unchanged | `RELEASE=2` | same source, new package |
+
+`rpm.labelCompare` is asserted on every one of those orderings in
+`tests/test_rpm_semver.py`.
 
 ## Building on a RHEL host
 

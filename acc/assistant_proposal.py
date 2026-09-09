@@ -472,6 +472,7 @@ async def dispatch_approved_proposal(
     redis_client: Any = None,
     *,
     approver_tier: str = "",
+    approvals: list[dict] | None = None,
 ) -> bool:
     """Publish the actual mutation that fulfils ``proposal``.
 
@@ -508,6 +509,7 @@ async def dispatch_approved_proposal(
         if proposal.kind == PROPOSAL_PUBLISH:
             return await _dispatch_publish(
                 signaling, cid, proposal, redis_client, approver_tier=approver_tier,
+                approvals=approvals,
             )
     except Exception:
         logger.exception(
@@ -523,6 +525,32 @@ async def dispatch_approved_proposal(
 
 class QuorumNotMet(Exception):
     """A note rests on too few people to be proposed for publication."""
+
+
+#: The ceiling from which a hub promotion asks for a second operator.
+TWO_APPROVER_CEILING = "HIGH"
+
+
+def approvals_required(destination_scope: str, ceiling: str) -> int:
+    """How many distinct operator-tier approvals a publication needs.
+
+    `20260906-enterprise-brain-hub-scope` Phase 2b (HG-40.1 §2.5, operator
+    decision 2026-09-07): the class that takes two approvers is keyed on the
+    one scale the runtime already enforces -- a note at HIGH or CRITICAL
+    entering a **hub** (the tier every bound instance reads) needs two
+    distinct operators; MEDIUM and below, and any destination inside the
+    publishing collective, keep the single decision D-013 made final.  The
+    source quorum already guarantees "not one person's opinion"; the second
+    approver guards one operator's judgement on the notes that reach
+    furthest.  Decision-history statistics never feed this number.
+    """
+    from acc.identity import CEILING_RANK  # noqa: PLC0415
+    from acc.memory_reflection import parse_destination  # noqa: PLC0415
+    dest_cid, _ = parse_destination(str(destination_scope or ""))
+    if not dest_cid:
+        return 1
+    rank = CEILING_RANK.get(str(ceiling or "CRITICAL").upper(), CEILING_RANK["CRITICAL"])
+    return 2 if rank >= CEILING_RANK[TWO_APPROVER_CEILING] else 1
 
 
 def build_publish_proposal(
@@ -565,9 +593,13 @@ def build_publish_proposal(
     source_scope = str(getattr(note, "scope", "") or "")
     summary_text = str(getattr(note, "summary", "") or "")
     dissent = str(getattr(note, "dissent", "") or "")
+    ceiling = str(getattr(note, "ceiling", "") or "CRITICAL")
+    required_approvals = approvals_required(destination_scope, ceiling)
     marker = " [single source]" if len(people) < 2 else ""
     if override_by:
         marker += f" [quorum overridden by {override_by}]"
+    if required_approvals > 1:
+        marker += f" [{required_approvals} operator approvals]"
     return AssistantProposal(
         kind=PROPOSAL_PUBLISH,
         params={
@@ -577,7 +609,9 @@ def build_publish_proposal(
             "source_scope": source_scope,
             # The information rule travels with the proposal: the destination
             # copy carries the note's ceiling, whoever approved it.
-            "ceiling": str(getattr(note, "ceiling", "") or "CRITICAL"),
+            "ceiling": ceiling,
+            # Phase 2b -- how many distinct operator-tier people must approve.
+            "required_approvals": required_approvals,
             "source_ids": [str(i) for i in (getattr(note, "source_ids", None) or [])],
             "source_requesters": requesters,
             "source_people": people,
@@ -599,7 +633,7 @@ def build_publish_proposal(
 
 async def _dispatch_publish(
     signaling, cid: str, p: AssistantProposal, redis_client: Any = None,
-    approver_tier: str = "",
+    approver_tier: str = "", approvals: list[dict] | None = None,
 ) -> bool:
     """Make an approved note readable in the destination a human named.
 
@@ -648,11 +682,31 @@ async def _dispatch_publish(
     # (HG-40.1 §2.5).  Fail closed: a decision from a surface that sends no
     # tier cannot promote into a hub; an ordinary scope keeps working as
     # before.  Journalled either way so the refusal is visible.
+    refusal = ""
     if dest_cid and str(approver_tier or "").lower() != "operator":
+        refusal = "operator tier required for a hub promotion"
+    # Phase 2b -- a HIGH / CRITICAL note into a hub needs the approvals the
+    # proposal asked for, each at operator tier and each from a different
+    # person.  The queue enforces this before the row is APPROVED; this is
+    # the fail-closed re-check on the record that reached the dispatcher
+    # (an older queue, a hand-built decision, a surface that lost the list).
+    required = int(params.get("required_approvals") or 1)
+    if dest_cid and not refusal and required > 1:
+        from acc.attribution import people_in  # noqa: PLC0415
+        rows = [a for a in (approvals or []) if isinstance(a, dict)]
+        people = people_in([str(a.get("approver_id") or "") for a in rows])
+        tiers = {str(a.get("approver_tier") or "").lower() for a in rows}
+        if len(people) < required or tiers != {"operator"}:
+            refusal = (
+                f"{required} distinct operator-tier approvals required, "
+                f"{len(people)} recorded"
+                + ("" if tiers <= {"operator"} else " (not all at operator tier)")
+            )
+    if refusal:
         logger.warning(
             "assistant_proposal: publish %s into hub %s refused — approver %r is "
-            "%s, operator tier required", p.proposal_id, dest_cid, approver,
-            f"tier {approver_tier!r}" if approver_tier else "of unknown tier",
+            "%s: %s", p.proposal_id, dest_cid, approver,
+            f"tier {approver_tier!r}" if approver_tier else "of unknown tier", refusal,
         )
         from acc.signals import subject_assistant_proposal as _sap  # noqa: PLC0415
         try:
@@ -660,7 +714,8 @@ async def _dispatch_publish(
                 "trigger": "note_publish_refused", "proposal_id": p.proposal_id,
                 "destination_scope": destination, "destination_collective": dest_cid,
                 "approved_by": approver, "approver_tier": approver_tier or "",
-                "reason": "operator tier required for a hub promotion", "ts": time.time(),
+                "approvals": [dict(a) for a in (approvals or []) if isinstance(a, dict)],
+                "reason": refusal, "ts": time.time(),
             })
         except Exception:  # noqa: BLE001
             logger.debug("assistant_proposal: refusal ack failed", exc_info=True)

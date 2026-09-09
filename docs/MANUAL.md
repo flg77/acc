@@ -144,6 +144,12 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
   promotion needs an operator-tier approver (D-016); a requester's approval,
   or a surface older than v0.14.1 that sends no tier, is refused and
   journalled as `note_publish_refused`.
+- **A hub promotion shows `PENDING 1/2` after an approval** — by design: a
+  HIGH or CRITICAL note entering a hub needs two *different* operators; the
+  same person approving again (from any surface) is still one. A second
+  operator approves it in Compliance, the Prompt pane or `acc-cli oversight
+  approve`; a reject by anyone ends it. A requester-tier approval on such a
+  row is refused outright.
 - **A viewer's Board or Web GUI board is empty while the operator's is full**
   — by design (D-017): a non-operator sees only the items they asked for,
   matched by person *per surface*, and never unattributed work. Check the

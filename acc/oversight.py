@@ -30,7 +30,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 from acc.redis_compat import call_redis as _call_redis
@@ -44,6 +44,16 @@ logger = logging.getLogger("acc.oversight")
 
 
 _SYNTHETIC_NS = uuid.UUID("6f1c5c0e-4a3b-4c1d-9e2f-0b7a8d9c1e2f")
+
+
+def status_label(item: dict) -> str:
+    """``PENDING`` or ``PENDING 1/2`` -- what a surface shows for a row that
+    asks for more than one approval."""
+    status = str(item.get("status") or "PENDING")
+    required = int(item.get("required_approvals") or 1)
+    if status == "PENDING" and required > 1:
+        return f"PENDING {len(item.get('approvals') or [])}/{required}"
+    return status
 
 
 def synthetic_oversight_id(payload: dict) -> str:
@@ -79,6 +89,19 @@ class OversightItem:
     # AUTO_APPROVED row, what the policy's execution did ("dispatched" /
     # "dispatch_failed").  Empty on human-decided rows.
     outcome: str = ""
+    # `20260906-enterprise-brain-hub-scope` Phase 2b -- how many distinct
+    # people must approve before the row is APPROVED (1 = a decision is a
+    # decision, D-013).  A hub promotion of a HIGH / CRITICAL note asks for 2
+    # (HG-40.1 §2.5); ``approvals`` records each one (approver, tier, ms).
+    required_approvals: int = 1
+    approvals: list = field(default_factory=list)
+
+    @property
+    def approvals_needed(self) -> int:
+        """Distinct people still to approve (0 once the row is decided)."""
+        if self.status != "PENDING":
+            return 0
+        return max(0, int(self.required_approvals or 1) - len(self.approvals))
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +158,7 @@ class HumanOversightQueue:
         summary: str,
         role_id: str,
         oversight_id: str | None = None,
+        required_approvals: int = 1,
     ) -> str:
         """Submit a task to the oversight queue.
 
@@ -166,14 +190,16 @@ class HumanOversightQueue:
             agent_id=self._agent_id,
             submitted_at_ms=now_ms,
             timeout_ms=now_ms + (self._timeout_s * 1000),
+            required_approvals=max(1, int(required_approvals or 1)),
         )
 
         await self._save(item)
         logger.warning(
-            "oversight: submitted oversight_id=%s task_id=%s risk=%s",
+            "oversight: submitted oversight_id=%s task_id=%s risk=%s%s",
             oversight_id,
             task_id,
             risk_level,
+            f" approvals_required={item.required_approvals}" if item.required_approvals > 1 else "",
         )
         return oversight_id
 
@@ -249,7 +275,9 @@ class HumanOversightQueue:
         decided.sort(key=lambda it: it.resolved_at_ms, reverse=True)
         return decided[:limit]
 
-    async def approve(self, oversight_id: str, approver_id: str) -> bool:
+    async def approve(
+        self, oversight_id: str, approver_id: str, approver_tier: str = "",
+    ) -> bool:
         """Mark an oversight item as approved.
 
         A decision is final: a row that is already APPROVED is left as it is
@@ -258,10 +286,18 @@ class HumanOversightQueue:
         already REJECTED / EXPIRED / AUTO_APPROVED is **refused** -- the first
         decision stands, a late or conflicting one is logged and dropped.
 
+        A row that asks for **more than one approval** (a hub promotion of a
+        HIGH / CRITICAL note) records this approval and stays PENDING until
+        as many *distinct people* have approved; the same person again is a
+        no-op; an approver below operator tier is refused on such a row
+        (the tier is what the second signature is for).  Every agent applies
+        the same decision, so recording is keyed by person, not by call.
+
         Returns:
             ``True`` when the item is APPROVED after this call (freshly, or
-            already), ``False`` when it was refused or not found -- callers use
-            that to decide whether the approved mutation may be dispatched.
+            already), ``False`` when it was refused, not found, or is still
+            waiting for another approver -- callers use that to decide
+            whether the approved mutation may be dispatched.
         """
         item = await self._load(oversight_id)
         if item is None:
@@ -275,13 +311,50 @@ class HumanOversightQueue:
                 "decision stands", oversight_id, item.status, item.approver_id,
             )
             return False
+        required = max(1, int(item.required_approvals or 1))
+        if required > 1:
+            from acc.attribution import person_of  # noqa: PLC0415
+            if str(approver_tier or "").lower() != "operator":
+                logger.warning(
+                    "oversight: approve refused — %s needs %d operator-tier approvals; "
+                    "%s is %s", oversight_id, required, approver_id,
+                    f"tier {approver_tier!r}" if approver_tier else "of unknown tier",
+                )
+                return False
+            who = person_of(approver_id) or str(approver_id)
+            if any((person_of(a.get("approver_id", "")) or a.get("approver_id")) == who
+                   for a in item.approvals):
+                logger.info(
+                    "oversight: %s already approved by %s (%d/%d) — waiting for another person",
+                    oversight_id, approver_id, len(item.approvals), required,
+                )
+                return False
+            item.approvals.append({
+                "approver_id": approver_id, "approver_tier": approver_tier,
+                "ts_ms": int(time.time() * 1000),
+            })
+            if len(item.approvals) < required:
+                await self._save(item)
+                logger.info(
+                    "oversight: %s approved by %s (%d/%d) — waiting for another person",
+                    oversight_id, approver_id, len(item.approvals), required,
+                )
+                return False
+        else:
+            item.approvals = [{
+                "approver_id": approver_id, "approver_tier": approver_tier,
+                "ts_ms": int(time.time() * 1000),
+            }]
         item.status = "APPROVED"
         item.approver_id = approver_id
         item.resolved_at_ms = int(time.time() * 1000)
         await self._save(item)
         await self._remove_from_pending(oversight_id)
         await self._push_decided(oversight_id)
-        logger.info("oversight: approved oversight_id=%s approver=%s", oversight_id, approver_id)
+        logger.info(
+            "oversight: approved oversight_id=%s approver=%s%s", oversight_id, approver_id,
+            f" ({len(item.approvals)} approvals)" if required > 1 else "",
+        )
         return True
 
     async def reject(

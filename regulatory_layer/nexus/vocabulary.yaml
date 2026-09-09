@@ -1,0 +1,197 @@
+# regulatory_layer/nexus/vocabulary.yaml
+#
+# The external risk vocabulary ACC speaks: the ids of IBM's AI Atlas Nexus
+# (github.com/IBM/risk-atlas-nexus, the knowledge graph asago's policy
+# mapper keys its `risk-extraction.json` on).  A pinned SNAPSHOT of the ids
+# ACC references, so validation is offline and a renamed upstream id is a
+# test failure here, not a silent broken link.
+#
+# `20260908-asago-alignment` AS-01.  Refresh: re-fetch the taxonomy files
+# under src/ai_atlas_nexus/data/knowledge_graph/ and bump `fetched`.
+#
+# Families:
+#   atlas-*   IBM AI Risk Atlas risks                      (risk_atlas_data.yaml)
+#   llm*      OWASP Top 10 for LLM Applications 2025       (owasp_llm_2.0_data.yaml)
+#   asi*      OWASP Top 10 for Agentic Applications 2026   (owasp_asi_data.yaml)
+#   ast*      OWASP Agentic Skills Top 10 v1.0             (owasp_ast10_data.yaml)
+#   nist-*    NIST AI RMF GenAI profile risks              (nist_ai_rmf_data.yaml)
+#   nist-<fn>-<n.m>  NIST AI RMF subcategories in the form asago's policy
+#             mapper emits (`nist-ms-2.5`); the Nexus keys the same
+#             subcategories through its action ids (`MS-2.5-001`).  Derived,
+#             not fetched: gv=GOVERN mp=MAP ms=MEASURE mg=MANAGE.
+#
+# Not in the Nexus (no ids to give): EU AI Act articles (the Nexus models the
+# Act as risk categories and system types, not articles), ISO 42001, SOC 2.
+
+source: "https://github.com/IBM/risk-atlas-nexus (main)"
+fetched: "2026-09-08"
+
+families:
+  atlas:
+    taxonomy: ibm-risk-atlas
+    kind: risk
+    ids:
+      - atlas-accountability-agentic
+      - atlas-ai-agent-compliance-agentic
+      - atlas-attribute-inference-attack
+      - atlas-bypassing-learning
+      - atlas-confidential-data-in-prompt
+      - atlas-confidential-information-in-data
+      - atlas-context-overload-attack
+      - atlas-copyright-infringement
+      - atlas-dangerous-use
+      - atlas-data-acquisition
+      - atlas-data-bias
+      - atlas-data-contamination
+      - atlas-data-curation
+      - atlas-data-poisoning
+      - atlas-data-privacy-rights
+      - atlas-data-provenance
+      - atlas-data-transfer
+      - atlas-data-transparency
+      - atlas-data-usage
+      - atlas-data-usage-rights
+      - atlas-decision-bias
+      - atlas-direct-instructions-attack
+      - atlas-discriminatory-actions-agentic
+      - atlas-encoded-interactions-attack
+      - atlas-evasion-attack
+      - atlas-exclusion
+      - atlas-exploit-trust-mismatch-agentic
+      - atlas-exposing-personal-information
+      - atlas-external-resources-attack-agentic
+      - atlas-extraction-attack
+      - atlas-function-calling-hallucination-agentic
+      - atlas-generated-content-ownership
+      - atlas-hallucination
+      - atlas-harmful-code-generation
+      - atlas-harmful-output
+      - atlas-human-exploitation
+      - atlas-impact-environment-agentic
+      - atlas-impact-human-agency-agentic
+      - atlas-impact-human-dignity-agentic
+      - atlas-impact-jobs-agentic
+      - atlas-impact-on-affected-communities
+      - atlas-impact-on-cultural-diversity
+      - atlas-impact-on-human-agency
+      - atlas-impact-on-jobs
+      - atlas-impact-on-the-environment
+      - atlas-improper-retraining
+      - atlas-improper-usage
+      - atlas-inaccessible-training-data
+      - atlas-incomplete-advice
+      - atlas-incomplete-ai-agent-evaluation-agentic
+      - atlas-incomplete-usage-definition
+      - atlas-incorrect-risk-testing
+      - atlas-indirect-instructions-attack
+      - atlas-introduce-data-bias-agentic
+      - atlas-ip-information-in-prompt
+      - atlas-jailbreaking
+      - atlas-lack-domain-expertise
+      - atlas-lack-of-ai-agent-transparency-agentic
+      - atlas-lack-of-data-transparency
+      - atlas-lack-of-model-transparency
+      - atlas-lack-of-system-transparency
+      - atlas-lack-of-testing-diversity
+      - atlas-legal-accountability
+      - atlas-membership-inference-attack
+      - atlas-misaligned-actions-agentic
+      - atlas-mitigation-maintenance-agentic
+      - atlas-model-usage-rights
+      - atlas-non-disclosure
+      - atlas-nonconsensual-use
+      - atlas-output-bias
+      - atlas-over-or-under-reliance
+      - atlas-over-or-under-reliance-on-ai-agents-agentic
+      - atlas-overfitting
+      - atlas-personal-information-in-data
+      - atlas-personal-information-in-prompt
+      - atlas-plagiarism
+      - atlas-poor-model-accuracy
+      - atlas-prompt-injection
+      - atlas-prompt-leaking
+      - atlas-prompt-priming
+      - atlas-redundant-actions-agentic
+      - atlas-reidentification
+      - atlas-reproducibility-agentic
+      - atlas-revealing-confidential-information
+      - atlas-sharing-info-tools-agentic
+      - atlas-sharing-info-user-agentic
+      - atlas-social-hacking-attack
+      - atlas-specialized-tokens-attack
+      - atlas-spreading-disinformation
+      - atlas-spreading-toxicity
+      - atlas-temporal-gap
+      - atlas-toxic-output
+      - atlas-unauthorized-use-agentic
+      - atlas-unexplainable-output
+      - atlas-unexplainable-untraceable-actions-agentic
+      - atlas-unreliable-source-attribution
+      - atlas-unrepresentative-data
+      - atlas-unrepresentative-risk-testing
+      - atlas-untraceable-attribution
+  owasp_llm:
+    taxonomy: owasp-llm-2.0
+    kind: risk
+    ids:
+      - llm01-prompt-injection
+      - llm022025-sensitive-information-disclosure
+      - llm032025-supply-chain
+      - llm042025-data-and-model-poisoning
+      - llm052025-improper-output-handling
+      - llm062025-excessive-agency
+      - llm072025-system-prompt-leakage
+      - llm082025-vector-and-embedding-weaknesses
+      - llm092025-misinformation
+      - llm102025-unbounded-consumption
+  owasp_asi:
+    taxonomy: owasp-asi
+    kind: risk
+    ids:
+      - asi01-agent-goal-hijack
+      - asi02-tool-misuse-and-exploitation
+      - asi03-identity-and-privilege-abuse
+      - asi04-agentic-supply-chain-vulnerabilities
+      - asi05-unexpected-code-execution
+      - asi06-memory-and-context-poisoning
+      - asi07-insecure-inter-agent-communication
+      - asi08-cascading-failures
+      - asi09-human-agent-trust-exploitation
+      - asi10-rogue-agents
+  owasp_ast10:
+    taxonomy: owasp-ast10
+    kind: risk
+    ids:
+      - ast01-malicious-skills
+      - ast02-supply-chain-compromise
+      - ast03-over-privileged-skills
+      - ast04-insecure-metadata
+      - ast05-untrusted-external-instructions
+      - ast06-weak-isolation
+      - ast07-update-drift
+      - ast08-poor-scanning
+      - ast09-no-governance
+      - ast10-cross-platform-reuse
+  nist_genai:
+    taxonomy: nist-ai-rmf
+    kind: risk
+    ids:
+      - nist-cbrn-information-or-capabilities
+      - nist-confabulation
+      - nist-dangerous-violent-or-hateful-content
+      - nist-data-privacy
+      - nist-environmental-impacts
+      - nist-harmful-bias-and-homogenization
+      - nist-human-ai-configuration
+      - nist-information-integrity
+      - nist-information-security
+      - nist-intellectual-property
+      - nist-obscene-degrading-and-or-abusive-content
+      - nist-value-chain-and-component-integration
+  nist_subcategory:
+    taxonomy: nist-ai-rmf
+    kind: control
+    # Derived from the AI RMF 1.0 subcategory ids (asago policy-mapper form);
+    # any `nist-(gv|mp|ms|mg)-<n>.<m>` is accepted by the pattern below.
+    pattern: "^nist-(gv|mp|ms|mg)-[0-9]+\\.[0-9]+$"
+    ids: []

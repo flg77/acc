@@ -31,6 +31,10 @@
 # The interpreter command and the package that provides it: RHEL 10 and
 # Fedora ship 3.12 as `python3`; RHEL 9 needs the `python3.12` module.
 # Override with --define "acc_python python3.12" --define "acc_python_pkg python3.12".
+# The wheel keeps the project version; the RPM Version may differ for a
+# pre-release (0.15.0-rc.1 -> Version 0.15.0, Release 0.rc.1).
+%{!?acc_wheel_version: %global acc_wheel_version %{acc_version}}
+%{!?acc_release: %global acc_release 1}
 %{!?acc_python: %global acc_python python3}
 %{!?acc_python_pkg: %global acc_python_pkg python3}
 %{!?acc_pyver: %global acc_pyver %(%{acc_python} -c 'import sys; print("%d.%d" % sys.version_info[:2])')}
@@ -40,11 +44,11 @@
 
 Name:           acc
 Version:        %{acc_version}
-Release:        1%{?dist}
+Release:        %{acc_release}%{?dist}
 Summary:        Agentic Cell Corpus -- governed agent collectives on the host
 License:        Apache-2.0
 URL:            https://github.com/flg77/acc
-Source0:        agentic_cell_corpus-%{acc_version}-py3-none-any.whl
+Source0:        agentic_cell_corpus-%{acc_wheel_version}-py3-none-any.whl
 Source1:        acc-stack.service
 Source2:        acc.sysusers.conf
 Source3:        acc.tmpfiles.conf
@@ -99,6 +103,19 @@ find %{buildroot}%{acc_venv}/bin -type f -exec sed -i "s|%{buildroot}||g" {} +
 sed -i "s|%{buildroot}||g" %{buildroot}%{acc_venv}/pyvenv.cfg
 # no pip inside the shipped venv: the package is the only writer
 rm -rf %{buildroot}%{acc_venv}/bin/pip* %{buildroot}%{acc_venv}/lib/python%{acc_pyver}/site-packages/pip*
+
+# Bytecode belongs to the package, and is CHECKED-HASH.
+#
+# Found on acc1 upgrading 0.14.3 -> 0.14.4: the host kept running 0.14.3.  The
+# first `acc` run had written .pyc files into the venv (root can write there),
+# owned by no package, with the default TIMESTAMP invalidation.  RPM restores
+# each packaged file's recorded mtime, so the new source did not look newer than
+# the cache it was compared against, and Python went on serving the old
+# bytecode.  Compiling here makes those exact paths package-owned -- so an
+# upgrade replaces them -- and `checked-hash` means a stale cache that survives
+# anyway is revalidated against the source it claims to cache, not against a
+# clock.  `-s`/`-p` keep the buildroot out of the embedded file names.
+%{buildroot}%{acc_venv}/bin/python -m compileall -q -f     --invalidation-mode checked-hash     -s %{buildroot} -p /     %{buildroot}%{acc_venv}/lib/python%{acc_pyver}/site-packages >/dev/null || :
 
 # commands
 install -d %{buildroot}%{_bindir}
@@ -187,6 +204,6 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -R %{_sharedstatedir}/
 %{_tmpfilesdir}/acc.conf
 
 %changelog
-* Wed Sep 09 2026 ACC <flg@nomiras.com> - %{acc_version}-1
+* Wed Sep 09 2026 ACC <flg@nomiras.com> - %{acc_version}-%{acc_release}
 - First package: the host commands, the data trees, /etc/acc, /var/lib/acc,
   acc-stack.service as the unprivileged acc user (proposal 055, IN-06).

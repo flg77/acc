@@ -78,6 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
         backup_cmd,
         checkpoints_cmd,
         collective_cmd,
+        compliance_cmd,
         config_cmd,
         doctor_cmd,
         secrets_cmd,
@@ -108,6 +109,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backup_cmd.register(sub)
     role_cmd.register(sub)
     config_cmd.register(sub)
+    compliance_cmd.register(sub)
     workspace_cmd.register(sub)
     doctor_cmd.register(sub)
     egress_cmd.register(sub)

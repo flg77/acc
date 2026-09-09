@@ -876,13 +876,14 @@ class ComplianceScreen(NavScreen):
                     summary_full[:40] + "…" if len(summary_full) > 40
                     else summary_full or "—"
                 )
+                from acc.oversight import status_label  # noqa: PLC0415
                 table.add_row(
                     oid[:14],
                     str(item.get("agent_id", ""))[:16],
                     str(item.get("risk_level", "HIGH")),
                     ts_str,
                     summary_cell,
-                    "PENDING",
+                    status_label(item),
                     key=oid,
                 )
             # PR-H — refresh detail panel against the (possibly new) cursor

@@ -951,6 +951,7 @@ class Agent:
             risk_level=p.risk_level or "HIGH",
             summary=p.summary,
             role_id=self.config.agent.role,
+            required_approvals=int((p.params or {}).get("required_approvals") or 1),
         )
         if redis is not None and oversight_id:
             try:
@@ -1060,6 +1061,7 @@ class Agent:
                             risk_level=p.risk_level or "MEDIUM",
                             summary=p.summary,
                             role_id="assistant",
+                            required_approvals=int((p.params or {}).get("required_approvals") or 1),
                         )
                     # Cache the proposal under the oversight_id so the
                     # approval handler can dispatch the right mutation
@@ -1131,6 +1133,7 @@ class Agent:
         oversight_id: str,
         approver_id: str = "",
         approver_tier: str = "",
+        approvals: list[dict] | None = None,
     ) -> None:
         """When ``oversight_id`` matches a cached Assistant proposal,
         publish the underlying mutation.
@@ -1259,7 +1262,7 @@ class Agent:
         try:
             ok = await dispatch_approved_proposal(
                 self.backends.signaling, proposal, self._redis,
-                approver_tier=approver_tier,
+                approver_tier=approver_tier, approvals=approvals,
             )
             logger.info(
                 "assistant_proposal: approved + dispatched kind=%s "
@@ -1661,6 +1664,13 @@ class Agent:
                             "summary": it.summary[:200],
                             "submitted_at_ms": it.submitted_at_ms,
                             "status": it.status,
+                            # Phase 2b -- "1/2" on a two-approver row
+                            "required_approvals": int(getattr(it, "required_approvals", 1) or 1),
+                            "approvals": [
+                                {"approver_id": str(a.get("approver_id", "")),
+                                 "approver_tier": str(a.get("approver_tier", ""))}
+                                for a in (getattr(it, "approvals", None) or []) if isinstance(a, dict)
+                            ],
                         })
                 except Exception:
                     logger.exception("oversight: pending serialisation failed")
@@ -3563,19 +3573,26 @@ class Agent:
             assert queue is not None
             try:
                 if decision == "APPROVE":
-                    if not await queue.approve(oversight_id, approver):
-                        # Refused: the row was already decided the other way
-                        # (or expired / not found).  The first decision stands
-                        # and nothing may be dispatched on the strength of a
-                        # late or conflicting approval.
+                    if not await queue.approve(oversight_id, approver, approver_tier):
+                        # Refused, or still waiting for another approver: the
+                        # row was already decided the other way (or expired /
+                        # not found), or it asks for more distinct operators
+                        # than have approved.  Nothing may be dispatched on the
+                        # strength of a late, conflicting or partial approval.
                         return
                     # Proposal 20260530-role-proposal-assistant-agent-of-agents
                     # Phase 2b — if this oversight item originated as
                     # an Assistant proposal, load the cached payload
                     # and dispatch the underlying mutation.
+                    approvals: list[dict] = []
+                    try:
+                        row = await queue._load(oversight_id)
+                        approvals = list(getattr(row, "approvals", None) or [])
+                    except Exception:  # noqa: BLE001
+                        logger.debug("oversight: approvals lookup failed", exc_info=True)
                     await self._maybe_dispatch_assistant_proposal(
                         collective_id, oversight_id, approver,
-                        approver_tier=approver_tier,
+                        approver_tier=approver_tier, approvals=approvals,
                     )
                 elif decision == "REJECT":
                     if not await queue.reject(oversight_id, approver, reason):

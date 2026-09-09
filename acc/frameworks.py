@@ -46,6 +46,10 @@ class FrameworkControl(BaseModel):
     title: str
     description: str = ""
     category: str = ""
+    # `20260908-asago-alignment` AS-01 -- the IBM AI Atlas Nexus ids this
+    # control answers to (a risk it addresses, or the Nexus entry it *is*);
+    # hand-curated, validated against regulatory_layer/nexus/vocabulary.yaml.
+    nexus_ids: list[str] = Field(default_factory=list)
 
 
 class Framework(BaseModel):
@@ -55,6 +59,9 @@ class Framework(BaseModel):
     name: str
     version: str = ""
     source: str = ""
+    # The Nexus taxonomy id this catalog corresponds to, when one exists
+    # (``nist-ai-rmf``); "" for a catalog the Nexus does not carry.
+    nexus_taxonomy: str = ""
     controls: list[FrameworkControl] = Field(default_factory=list)
 
     @property

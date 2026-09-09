@@ -200,6 +200,7 @@ def _queue_publish_proposal(cfg, redis_client, proposal) -> str:
     oversight_id = asyncio.run(queue.submit(
         task_id=proposal.proposal_id, risk_level=proposal.risk_level or "HIGH",
         summary=proposal.summary, role_id="memory",
+        required_approvals=int((proposal.params or {}).get("required_approvals") or 1),
     ))
     ttl = max(int(getattr(queue, "_timeout_s", 300) or 300),
               int(getattr(_agent, "_ASSISTANT_PROPOSAL_CACHE_TTL_S", 3600) or 3600))

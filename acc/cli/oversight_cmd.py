@@ -91,7 +91,8 @@ async def _cmd_pending(args: argparse.Namespace) -> int:
             risk = str(it.get("risk_level", ""))[:14]
             ms = int(it.get("submitted_at_ms") or 0)
             ts_str = time.strftime("%H:%M:%S", time.localtime(ms / 1000.0)) if ms else "—"
-            status = str(it.get("status", "PENDING"))
+            from acc.oversight import status_label  # noqa: PLC0415
+            status = status_label(it)
             print(f"{oid} {agent:<20} {risk:<14} {ts_str:<10} {status}")
 
     async def _on_heartbeat(msg: Any) -> None:

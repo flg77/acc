@@ -100,7 +100,16 @@ out of the hub's enterprise tier too (`hub_collective_id` threaded through
 * **Approver tier is not yet checked.** HG-40.1 wants hub promotions
   approved at operator tier; an oversight decision carries `approver_id`
   but not a tier today. Phase 2 (needs the decision payload to carry the
-  principal's tier, which the TUI now knows).
+  principal's tier, which the TUI now knows). *Done in v0.14.1.*
+* **Both hub gates exist (Phase 2b, operator decision 2026-09-07).** The
+  class that takes two approvers is keyed on the note's ceiling, the one
+  scale the runtime already enforces: HIGH / CRITICAL into a hub → two
+  distinct operator-tier approvals; MEDIUM and below → one. The source
+  quorum already guarantees "not one person's opinion"; the second approver
+  guards one operator's judgement on the notes that reach furthest. The
+  row keeps D-013's finality (a reject ends it; the same person is one
+  approval). Decision-history statistics inform an approver, never the
+  gate — the hub does not learn (Q3).
 
 ## Not here
 

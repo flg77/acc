@@ -27,7 +27,7 @@ def test_spec_layout_and_commands():
     assert "ln -s %{_datadir}/acc/acc-deploy.sh %{buildroot}%{_bindir}/acc-deploy" in spec
     assert "site-packages/acc/_share %{buildroot}%{_datadir}/acc" in spec        # one copy of the trees
     assert "Requires:       podman-compose" in spec and "AutoReqProv:    no" in spec
-    assert "Source0:        agentic_cell_corpus-%{acc_version}-py3-none-any.whl" in spec
+    assert "Source0:        agentic_cell_corpus-%{acc_wheel_version}-py3-none-any.whl" in spec
 
 
 def test_spec_config_is_the_operators_and_secrets_stay_out():
