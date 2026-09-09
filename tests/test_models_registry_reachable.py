@@ -31,7 +31,8 @@ from acc.collective import AgentSpec, CollectiveSpec, roles_to_compose
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = REPO_ROOT / "container" / "production" / "podman-compose.yml"
 
-_MOUNT = "../../models.yaml:/app/models.yaml:ro,z"
+# `20260909-acc-install` IN-05: host paths interpolate the layout (default ../.. = the checkout).
+_MOUNT = "${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z"
 _ENV_KEY = "ACC_MODELS_PATH"
 _ENV_VAL = "/app/models.yaml"
 

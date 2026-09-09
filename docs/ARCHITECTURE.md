@@ -52,7 +52,9 @@ with a human oversight queue for what a role's grants do not cover.
   `OVERSIGHT_DECISION`; every agent applies it, one claims the dispatch.
   Auto-executed proposals under `AUTO` are recorded as `AUTO_APPROVED` rows.
 - **A plan.** `PLAN` → the arbiter's executor dispatches steps as tasks in
-  dependency order (fan-out clusters where the estimator says so), re-broadcasts
+  dependency order (fan-out clusters where the estimator says so), each step
+  carrying the plan's attribution — requester, tier, ceiling, scope — so it
+  runs as the person who submitted the plan (v0.14.3), re-broadcasts
   the PLAN with `step_progress` / `step_tasks` on every transition, records
   each transition in the tracelog (`KIND_PLAN_STEP`), mirrors the body to Redis
   for a day and summarises active plans in its HEARTBEAT (a late observer
@@ -101,4 +103,4 @@ with a human oversight queue for what a role's grants do not cover.
 - **Reasoning bench**: the promote gate scores deliberation depth; run for any
   reasoning-affecting change (role prompts), advisory on the 3B edge model.
 
-_Last updated: 2026-09-07 (v0.14.2)_
+_Last updated: 2026-09-07 (v0.14.3)_

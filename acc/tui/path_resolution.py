@@ -88,6 +88,11 @@ def _discover_repo_root() -> Path | None:
     to do (the resolver falls back to its module-anchored or
     cwd-relative tier).
     """
+    # `20260909-acc-install` -- the same rule everything else uses now.
+    from acc import paths as _paths  # noqa: PLC0415
+    found = _paths.checkout()
+    if found is not None:
+        return found
     raw = os.environ.get("ACC_REPO_ROOT", "").strip()
     if raw:
         candidate = Path(raw).expanduser()

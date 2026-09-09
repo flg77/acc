@@ -1,0 +1,32 @@
+[Unit]
+Description=ACC -- the agent collective (NATS, Redis, one container per cell, the TUI, the Web GUI)
+Documentation=https://github.com/flg77/acc
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The stack runs as the unprivileged `acc` user with rootless podman
+# (a sub-uid range, lingering enabled by the package).  It never gains root:
+# no sudoers entry, no capabilities, NoNewPrivileges.
+User=acc
+Group=acc
+WorkingDirectory=/var/lib/acc
+Environment=ACC_HOME=/etc/acc
+Environment=ACC_SHARE=/usr/share/acc
+Environment=ACC_STATE=/var/lib/acc
+Environment=ACC_ENV_FILE=/etc/acc/acc.env
+Environment=ACC_IMAGE_PREFIX=quay.io/flg77/acc_images
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/%U/bus
+ExecStart=/usr/bin/acc-deploy up --webgui
+ExecStop=/usr/bin/acc-deploy down
+TimeoutStartSec=600
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

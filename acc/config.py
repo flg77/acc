@@ -1584,6 +1584,12 @@ def load_config(path: str | Path = "acc-config.yaml") -> ACCConfig:
         pydantic.ValidationError: If validation fails for the selected deploy_mode.
     """
     config_path = Path(path)
+    if str(path) == "acc-config.yaml" and not config_path.exists():
+        # `20260909-acc-install` -- the bare default is resolved through the
+        # host's ACC layout (ACC_HOME / ~/.config/acc / /etc/acc / the
+        # checkout) before it is declared missing; an explicit path is not.
+        from acc import paths as _paths  # noqa: PLC0415
+        config_path = _paths.resolve("config").path
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path.resolve()}")
 

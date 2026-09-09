@@ -165,3 +165,6 @@ container/production/podman-compose.local.yml
 
 # `20260906-acc-instance` -- instances carry state (LanceDB, sessions, trace); never committed.
 /instances/
+
+# `20260909-acc-install` -- the share tree is built into the wheel by setup.py, never committed.
+acc/_share/

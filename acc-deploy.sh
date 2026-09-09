@@ -133,8 +133,32 @@
 set -euo pipefail
 
 # ── Resolve repo root ──────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR"
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# `20260909-acc-install` IN-05 -- the layout instead of "the checkout I am in":
+#   ACC_HOME   the operator's configuration + state (.env, the four *.yaml,
+#              logs/, workspaces/, .acc-apply/); default: this script's dir
+#   ACC_SHARE  the read-only data trees (container/, roles/, the *.example
+#              templates); default: ACC_HOME when it carries container/, else
+#              this script's dir (the wheel ships the script beside the trees)
+# Unset, everything resolves exactly as before -- a checkout is all three.
+REPO_ROOT="${ACC_HOME:-$SCRIPT_DIR}"
+if [[ -n "${ACC_SHARE:-}" ]]; then
+    SHARE_ROOT="${ACC_SHARE:-}"
+elif [[ -d "$REPO_ROOT/container/production" ]]; then
+    SHARE_ROOT="$REPO_ROOT"
+else
+    SHARE_ROOT="$SCRIPT_DIR"
+fi
+# What the compose file interpolates for its host mounts (default ../.. = the
+# checkout, relative to container/production/).
+export ACC_HOME_DIR="$REPO_ROOT"
+export ACC_SHARE_DIR="$SHARE_ROOT"
+# State (logs, workspaces, instances, .acc-apply): ACC_STATE, else beside the configuration.
+export ACC_STATE_DIR="${ACC_STATE:-$REPO_ROOT}"
+export ACC_IMAGE_PREFIX="${ACC_IMAGE_PREFIX:-localhost}"
+# The secrets file: .env beside the configuration, or wherever ACC_ENV_FILE
+# points (the RPM: /etc/acc/acc.env).  The compose reads the same variable.
+export ACC_ENV_FILE="${ACC_ENV_FILE:-$REPO_ROOT/.env}"
 
 # ── Resolve the ACC code version (semantic, from git tags) ─────────────────────
 # Image tags + the deploy banner track the actual CODE release rather than a
@@ -144,7 +168,9 @@ REPO_ROOT="$SCRIPT_DIR"
 # reproducible/CI tag. Exported so podman-compose interpolates it into the
 # compose `image:` tags and the ACC_VERSION build arg.
 if [[ -z "${ACC_VERSION:-}" ]]; then
-    ACC_VERSION="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null | sed 's/^v//')"
+    ACC_VERSION="$(git -C "$SHARE_ROOT" describe --tags --always --dirty 2>/dev/null | sed 's/^v//')"
+    # Outside a checkout (an installed package) the release is the package's.
+    [[ -z "$ACC_VERSION" ]] && ACC_VERSION="$(python3 -c 'import acc; print(acc.__version__)' 2>/dev/null || true)"
     ACC_VERSION="${ACC_VERSION:-0.0.0-unknown}"
 fi
 export ACC_VERSION
@@ -266,11 +292,11 @@ fi
 # ── Select compose file ────────────────────────────────────────────────────────
 case "$STACK" in
     beta)
-        COMPOSE_FILE="$REPO_ROOT/container/beta/podman-compose.yml"
+        COMPOSE_FILE="$SHARE_ROOT/container/beta/podman-compose.yml"
         STACK_LABEL="ACC Beta (0.1.0 — nats:alpine base)"
         ;;
     production)
-        COMPOSE_FILE="$REPO_ROOT/container/production/podman-compose.yml"
+        COMPOSE_FILE="$SHARE_ROOT/container/production/podman-compose.yml"
         STACK_LABEL="ACC Production ($ACC_VERSION — UBI10 base)"
         ;;
 esac
@@ -327,7 +353,7 @@ fi
 # untouched.  Enable with SPECIALISTS=true.  Role definitions: roles/<role>/
 # (5 ecosystem-pack roles are .gitignored — regenerate with
 # scripts/extract-specialist-roles.sh; 3 are spearhead-native + committed).
-SPECIALISTS_OVERLAY="$REPO_ROOT/container/production/podman-compose.specialists.yml"
+SPECIALISTS_OVERLAY="$SHARE_ROOT/container/production/podman-compose.specialists.yml"
 if [[ "$STACK" == "production" && "$SPECIALISTS" == "true" && -f "$SPECIALISTS_OVERLAY" ]]; then
     BASE_CMD+=(-f "$SPECIALISTS_OVERLAY")
 elif [[ "$SPECIALISTS" == "true" && "$STACK" != "production" ]]; then
@@ -488,8 +514,8 @@ case "$COMMAND" in
         # Scaffold ./.env from the canonical template.  Idempotent: if
         # ./.env already exists, leave it alone.  Operators who prefer
         # a ready-made backend preset use ./env/use.sh instead.
-        ENV_FILE="$REPO_ROOT/.env"
-        ENV_EXAMPLE="$REPO_ROOT/.env.example"
+        ENV_FILE="$ACC_ENV_FILE"
+        ENV_EXAMPLE="$SHARE_ROOT/.env.example"
         if [[ -f "$ENV_FILE" ]]; then
             echo "✓ $ENV_FILE already exists — nothing to do."
             echo "  Use ./env/use.sh <preset> to overwrite with a backend preset."
@@ -511,7 +537,7 @@ case "$COMMAND" in
         # real config and fails at runtime in a confusing way.  Idempotent.
         for _cfg in models.yaml acc-config.yaml collective.yaml catalogs.yaml; do
             _live="$REPO_ROOT/$_cfg"
-            _tmpl="$REPO_ROOT/$_cfg.example"
+            _tmpl="$SHARE_ROOT/$_cfg.example"
             if [[ -f "$_live" ]]; then
                 echo "✓ $_cfg already exists — left untouched."
             elif [[ -f "$_tmpl" ]]; then
@@ -977,7 +1003,7 @@ case "$COMMAND" in
         _ensure_workspace_writable_trusted "$PATH_REAL" || exit 1
         # Persist for subsequent `up` so the mount survives a manual
         # restart.  Upsert into ./.env (touch first if absent).
-        ENV_FILE="$REPO_ROOT/.env"
+        ENV_FILE="$ACC_ENV_FILE"
         touch "$ENV_FILE"
         if grep -qE '^ACC_WORKSPACE_HOST_DIR=' "$ENV_FILE"; then
             sed -i "s|^ACC_WORKSPACE_HOST_DIR=.*|ACC_WORKSPACE_HOST_DIR=$PATH_REAL|" "$ENV_FILE"

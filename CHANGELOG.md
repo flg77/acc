@@ -17,6 +17,105 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.14.4] — 2026-09-09
+
+### Added
+
+- **`acc` — the one command an operator starts with** (`20260909-acc-install`
+  IN-02, proposal 055). `acc` attaches the TUI to the running collective;
+  when nothing answers on the bus it says so in one line (`start it with
+  'acc stack up'`) and exits 3 instead of drawing an empty screen. `acc stack
+  up|down|status` runs the deploy script from the host's ACC layout, `acc
+  doctor` / `acc setup` delegate to `acc-cli`, `acc paths` prints where this
+  host's ACC lives. `acc-cli --version` and `acc-pkg --version` exist
+  (`acc-cli -v` stays verbose).
+- **The RPM** (IN-06, artefacts). `packaging/rpm/`: `acc.spec` (a vendored
+  virtualenv under `/usr/lib/acc/venv`; `/usr/bin/{acc,acc-cli,acc-pkg,
+  acc-tui,acc-webgui,acc-deploy}`; `/etc/acc` with the four configs as
+  `%config(noreplace)` and `acc.env` 0640 root:acc; `/usr/share/acc` = the
+  wheel's data trees; `/var/lib/acc` owned by the `acc` system user), the
+  `acc-stack.service` unit (`acc-deploy up --webgui` / `down` as `acc`,
+  `NoNewPrivileges`, the layout in its environment), sysusers and tmpfiles,
+  `build.sh` (wheel → `rpmbuild -ba`, `MOCK_ROOT` for other targets) and a
+  README with the two channels (Satellite for the spearhead build, COPR fed
+  from the mirror) and the proof order acc1 → bb3 → saturate3. The `acc`
+  user never gains root: no sudoers entry, no capabilities, rootless podman
+  under its own sub-uid range. `ACC_ENV_FILE` names the secrets file for
+  the deploy script and the compose (default `.env` beside the configuration).
+  The package is arch-specific: the vendored virtualenv carries compiled
+  wheels (pydantic-core, LanceDB), which `rpmbuild` refuses in a `noarch`
+  package. The spec pins the FHS directories and `build.sh` computes a clean
+  `%dist`, because a build host may carry decorated macros of its own. The
+  vendored virtualenv installs **CPU torch** from PyTorch's own index before
+  the wheel resolves its dependencies: `sentence-transformers` (the local
+  embedding fallback) makes `torch` a core dependency and the PyPI default
+  pulls ~5 GB of CUDA wheels that a host running the collective in containers
+  never executes; `%install` fails if any of them slip in anyway.
+- **The data trees leave the checkout** (IN-05). The wheel now ships
+  `roles/`, `skills/`, `mcps/`, `collectives/`, `container/production/`,
+  `regulatory_layer/`, the `*.example` configs and `acc-deploy.sh` under
+  `acc/_share` (`packaging/build_share.py`, run by `setup.py` at build
+  time); `acc.paths.share()` finds that tree next to the package, after an
+  operator's home and before `<prefix>/share/acc`. `acc-deploy.sh` reads
+  `ACC_HOME` (configuration + state) and `ACC_SHARE` (the data trees) and
+  exports `ACC_HOME_DIR` / `ACC_SHARE_DIR` / `ACC_IMAGE_PREFIX` for the
+  compose file, whose host mounts and image names now interpolate them
+  (default `../..` and `localhost`: a checkout behaves exactly as before);
+  the version falls back to the package's when there is no git. The overlay
+  generators (`collective.roles_to_compose`, `instances.cell_volumes`) emit
+  the same interpolated layout, and everything the runtime writes (logs,
+  workspaces, instances, `.acc-apply`) interpolates `ACC_STATE_DIR` —
+  `ACC_STATE`, else beside the configuration. A first
+  `setup` on a host with no configuration writes into `~/.config/acc/`,
+  seeded from the shipped template, never into the template. `docs/INSTALL.md`
+  is the install guide (wheel, checkout, the RPM's layout).
+- **The first-run tour** (IN-09; the operator's remark that first-time users
+  need a guided onboarding, in ACC's own terms). The first `acc` on a host
+  with no configuration runs the guided setup (HG-08) and then a seven-step
+  tour over the TUI: who you are here (principal, tier, ceiling), the
+  Prompt and the operating mode (AUTO is never the default), the Board,
+  Compliance with **one sample gate queued for you to decide** (nothing runs
+  on it either way), your workspace and its trust, `/new-agent` and the
+  signed AgentBOM (prod-locked), and what stayed at its floor. Once on an
+  installed layout (a marker under `~/.config/acc`), on request via `acc
+  tour`, never inside a developer's checkout unasked; skippable at any step.
+- **Trusted directories** (IN-03 / IN-04). `acc` started in a directory
+  proposes it as the session's workspace and asks once — `[y = this session
+  / N / always / below = and everything under it]`; a `below` answer on a
+  directory holding many repositories is confirmed a second time. The
+  answer is recorded in `~/.config/acc/trust.yaml` (path, scope, decision,
+  since, by = the resolved principal; a "no" is remembered too), the
+  directory rides the session as `ACC_WORKSPACE_HOST_DIR` — the D-007 mount
+  — with the `.acc-workspace-trust` sentinel the cells check written on
+  grant, `acc stack up` mounts a trusted current directory, and the
+  Select-Directory dialog opens there. A directory never trusted is never
+  mounted, never read by an `fs_*` skill, never selected. `acc-cli
+  workspace list|check|trust [--below]|deny|revoke` manages the record;
+  `--workspace <dir>` / `--no-workspace` on `acc`. The filesystem root, the
+  user's home itself and ACC's own home are never proposed.
+- **One discovery rule for where ACC lives** (`acc/paths.py`, IN-01). Every
+  default that was relative to the current directory — `acc-config.yaml`,
+  `models.yaml`, the roles root (which had two different defaults), the
+  skills and mcps trees — now asks one rule: `$ACC_HOME`, else
+  `~/.config/acc` when it holds `acc-config.yaml`, else `/etc/acc`, else the
+  checkout the current directory is in, else the legacy default. Environment
+  variables keep winning; a developer inside a checkout sees no change; a
+  container's `/app/...` is just a home the image sets. `acc-cli doctor
+  --paths` prints each resolved path with its source (`env` / `home` /
+  `share` / `checkout` / `cwd` / `default`). This is why `acc-cli` and
+  `acc-pkg` worked inside the checkout and nowhere else.
+
+### Fixed
+
+- **Discovery survives a candidate it may not read** (`20260909-acc-install`,
+  found by the first install on acc1). `/etc/acc` is `root:acc`, so an operator
+  outside that group cannot `stat` inside it and `acc paths` died with a
+  `PermissionError` instead of moving on to the next candidate. Every probe in
+  `acc.paths` now treats an unreadable candidate as "not ours". The package
+  also makes `/etc/acc` traversable (0755 root:acc): the four `*.yaml` are
+  already 0644 and the operator's own `acc` must read them without joining
+  group `acc`; `acc.env`, the secrets, stays 0640 root:acc.
+
 ## [0.14.3] — 2026-09-07
 
 ### Added

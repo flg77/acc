@@ -385,7 +385,10 @@ class Agent:
     """ACC agent with role infusion, cognitive core, and heartbeat lifecycle."""
 
     def __init__(self) -> None:
-        config_path = os.environ.get("ACC_CONFIG_PATH", "acc-config.yaml")
+        # `20260909-acc-install` -- ACC_CONFIG_PATH wins; else the host's
+        # ACC layout (paths.resolve keeps the cwd file as the last resort).
+        from acc import paths as _paths  # noqa: PLC0415
+        config_path = os.environ.get("ACC_CONFIG_PATH") or _paths.path_of("config")
         # Stash the path so config.reload handler can re-read the same
         # file (the TUI write-back updates env vars; load_config applies
         # them as the overlay on this file).

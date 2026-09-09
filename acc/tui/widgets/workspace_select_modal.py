@@ -102,9 +102,13 @@ class WorkspaceSelectModal(ModalScreen[str | None]):
         super().__init__(**kwargs)
         self._browse = browse or browse_root()
         self._base = base if base is not None else base_host_path()
-        # DirectoryTree needs an existing root; fall back to home when the
-        # configured mount is absent (dev workstation).
-        start = self._browse if self._browse.is_dir() else Path.home()
+        # DirectoryTree needs an existing root; fall back to the session's
+        # trusted workspace (`acc` sets ACC_WORKSPACE_HOST_DIR, IN-04), then
+        # home, when the configured mount is absent (dev workstation).
+        trusted = os.environ.get("ACC_WORKSPACE_HOST_DIR", "").strip()
+        start = (self._browse if self._browse.is_dir()
+                 else Path(trusted) if trusted and Path(trusted).is_dir() and not self._base
+                 else Path.home())
         # Current tree root ("where we are") and the highlighted dir.
         self._root: Path = start
         self._selected: Path = start

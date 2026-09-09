@@ -114,7 +114,7 @@ def file_by_id(file_id: str) -> ConfigFile:
         ) from None
 
 
-def resolve_path(file_id: str, *, repo_root: Path | None = None) -> Path:
+def resolve_path(file_id: str, *, repo_root: Path | None = None, for_write: bool = False) -> Path:
     """Locate a configuration file on this host.
 
     Precedence mirrors the existing loaders (see :func:`acc.models.models_path`):
@@ -123,18 +123,35 @@ def resolve_path(file_id: str, *, repo_root: Path | None = None) -> Path:
     files are gitignored as of v0.7.0, so a fresh clone has only templates —
     without it, ``config show`` on a clean checkout would report every key
     missing rather than showing the release's defaults.
+
+    `20260909-acc-install` IN-05: the root is the host's ACC home
+    (:func:`acc.paths.home` -- ``$ACC_HOME``, ``~/.config/acc``, ``/etc/acc``,
+    the checkout) and, on a host with none, the user config dir a first
+    ``setup`` will create; the template is looked for in the share tree too
+    (the wheel ships it).  *for_write* returns the live path only -- a write
+    never lands in a shipped template.
     """
     spec = file_by_id(file_id)
     raw = os.environ.get(spec.env_var, "").strip()
     if raw:
         return Path(raw)
-    root = repo_root or Path(__file__).resolve().parent.parent
+    from acc import paths as _paths  # noqa: PLC0415
+    if repo_root is not None:
+        root = Path(repo_root)
+    else:
+        found = _paths.home()
+        root = found[0] if found is not None else _paths.user_config_dir()
     live = root / spec.filename
-    if live.is_file():
+    if for_write or live.is_file():
         return live
-    example = root / f"{spec.filename}.example"
-    if example.is_file():
-        return example
+    candidates = [root / f"{spec.filename}.example"]
+    shared = _paths.share()
+    if shared is not None:
+        candidates.append(shared[0] / f"{spec.filename}.example")
+    candidates.append(Path(__file__).resolve().parent.parent / f"{spec.filename}.example")
+    for example in candidates:
+        if example.is_file():
+            return example
     return live
 
 

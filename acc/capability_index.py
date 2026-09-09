@@ -287,8 +287,31 @@ class CapabilityReply(BaseModel):
 # (``/app/roles`` + ``/app/mcps``).  Operators on dev workstations can
 # override via ACC_ROLES_ROOT + ACC_MCPS_ROOT, mirroring acc-tui's existing
 # ACC_ROLES_ROOT contract (so we don't invent a new env name).
-_DEFAULT_ROLES_ROOT = os.environ.get("ACC_ROLES_ROOT", "/app/roles")
-_DEFAULT_MCPS_ROOT = os.environ.get("ACC_MCPS_ROOT", "/app/mcps")
+
+
+def _default_root(env_var: str, kind: str, legacy: str) -> str:
+    """`20260909-acc-install` -- the env var, else the host's ACC layout,
+    else the container's legacy path.  Resolved at call time, not import."""
+    explicit = os.environ.get(env_var, "").strip()
+    if explicit:
+        return explicit
+    from acc import paths as _paths  # noqa: PLC0415
+    resolved = _paths.resolve(kind)
+    return str(resolved.path) if resolved.source != "default" else legacy
+
+
+# Sentinels: the constructor resolves them at call time (an env var, the
+# host's ACC layout, then the container's legacy path) -- never at import.
+_DEFAULT_ROLES_ROOT = "/app/roles"
+_DEFAULT_MCPS_ROOT = "/app/mcps"
+
+
+def default_roles_root() -> str:
+    return _default_root("ACC_ROLES_ROOT", "roles", _DEFAULT_ROLES_ROOT)
+
+
+def default_mcps_root() -> str:
+    return _default_root("ACC_MCPS_ROOT", "mcps", _DEFAULT_MCPS_ROOT)
 
 
 class CapabilityIndex:
@@ -309,6 +332,11 @@ class CapabilityIndex:
         embed_fn: Callable[[str], list[float]] | None = None,
     ) -> None:
         self.cid = cid
+        # `20260909-acc-install` -- the sentinels resolve here, at call time.
+        if roles_root is _DEFAULT_ROLES_ROOT:
+            roles_root = default_roles_root()
+        if mcps_root is _DEFAULT_MCPS_ROOT:
+            mcps_root = default_mcps_root()
         self.roles_root = Path(roles_root)
         self.mcps_root = Path(mcps_root)
         self._skill_registry = skill_registry

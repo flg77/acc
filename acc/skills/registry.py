@@ -42,7 +42,11 @@ def _skills_root_default() -> str:
     Order: ``ACC_SKILLS_ROOT`` env var → literal ``"skills"`` (relative
     to the cwd).
     """
-    return os.environ.get("ACC_SKILLS_ROOT", "skills")
+    explicit = os.environ.get("ACC_SKILLS_ROOT", "").strip()
+    if explicit:
+        return explicit
+    from acc import paths as _paths  # noqa: PLC0415
+    return _paths.path_of("skills")  # `20260909-acc-install`: the host layout, else "skills"
 
 
 # ---------------------------------------------------------------------------

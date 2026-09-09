@@ -1,3 +1,8 @@
+# `20260909-acc-install` IN-05 -- host paths interpolate ACC_HOME_DIR (the operator's
+# configuration), ACC_SHARE_DIR (the read-only data trees), ACC_STATE_DIR (logs,
+# workspaces, instances, .acc-apply) and ACC_ENV_FILE (the secrets); acc-deploy.sh
+# exports them (default ../.. = the checkout, so nothing changes without it).
+# ACC_IMAGE_PREFIX (default localhost) points the image names at a registry.
 # ACC production deployment (Podman)
 #
 # All images use Red Hat UBI bases (registry.access.redhat.com).
@@ -75,7 +80,7 @@ services:
       dockerfile: container/production/Containerfile.nats
       args:
         NATS_VERSION: "2.10.22"
-    image: localhost/acc-nats:2.10.22
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-nats:2.10.22
     container_name: acc-nats
     # Default: flags-only, no authentication (unchanged).
     command: ["-js", "-m", "8222", "--store_dir", "/data/jetstream"]
@@ -118,10 +123,10 @@ services:
         #   rhel               = entitled RHEL AppStream redis on UBI9 (supported)
         ACC_SUPPORT_TIER: ${ACC_SUPPORT_TIER:-upstream}
         REDIS_BASE: ${REDIS_BASE:-docker.io/library/redis:7.2}
-    image: localhost/acc-redis:7.2
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-redis:7.2
     container_name: acc-redis
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -146,7 +151,7 @@ services:
       dockerfile: container/production/Containerfile.agent-core
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-ingester
     depends_on:
       nats:
@@ -154,7 +159,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_AGENT_ROLE: ingester
@@ -183,23 +188,23 @@ services:
       # Role definitions (roles/<role>/role.yaml) — without this the role
       # falls to the generic default and the agent boots DORMANT, dropping
       # every routed task.  Same mount the assistant/coding/compliance agents use.
-      - ../../roles:/app/roles:ro,z
+      - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
-      - ../../models.yaml:/app/models.yaml:ro,z
-      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
 
   # ── Agent: Analyst ────────────────────────────────────────────────────────
   acc-agent-analyst:
-    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-analyst
     depends_on:
       nats:
@@ -207,7 +212,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_AGENT_ROLE: analyst
@@ -236,23 +241,23 @@ services:
       # Role definitions (roles/<role>/role.yaml) — without this the role
       # falls to the generic default and the agent boots DORMANT, dropping
       # every routed task.  Same mount the assistant/coding/compliance agents use.
-      - ../../roles:/app/roles:ro,z
+      - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
-      - ../../models.yaml:/app/models.yaml:ro,z
-      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
 
   # ── Agent: Arbiter ────────────────────────────────────────────────────────
   acc-agent-arbiter:
-    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-arbiter
     depends_on:
       nats:
@@ -260,7 +265,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_AGENT_ROLE: arbiter
@@ -289,16 +294,16 @@ services:
       # Role definitions (roles/<role>/role.yaml) — without this the role
       # falls to the generic default and the agent boots DORMANT, dropping
       # every routed task.  Same mount the assistant/coding/compliance agents use.
-      - ../../roles:/app/roles:ro,z
+      - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
-      - ../../models.yaml:/app/models.yaml:ro,z
-      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -309,7 +314,7 @@ services:
   # prompt times out at 180s.  Ships as baseline so `./acc-deploy.sh up`
   # brings the gatekeeper live by default.
   acc-agent-assistant:
-    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-assistant
     depends_on:
       nats:
@@ -317,7 +322,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_AGENT_ROLE: assistant
@@ -345,14 +350,14 @@ services:
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
-      - ../../models.yaml:/app/models.yaml:ro,z
-      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
-      - ../../roles:/app/roles:ro,z
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
+      - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -363,7 +368,7 @@ services:
   # the TUI dropdown resolve).  The multi-replica peer pool stays available
   # behind the `coding-split` profile below.
   acc-agent-coding-agent:
-    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-coding-agent
     depends_on:
       nats:
@@ -371,7 +376,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
@@ -399,14 +404,14 @@ services:
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
-      - ../../models.yaml:/app/models.yaml:ro,z
-      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
-      - ../../roles:/app/roles:ro,z
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
+      - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -416,7 +421,7 @@ services:
   # mutations).  Gated on the agent.role Literal in acc/config.py including
   # `compliance_officer` — fix shipped alongside this PR.
   acc-agent-compliance-officer:
-    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-agent-compliance-officer
     depends_on:
       nats:
@@ -424,7 +429,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_AGENT_ROLE: compliance_officer
@@ -451,15 +456,15 @@ services:
     volumes:
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
-      - ../../models.yaml:/app/models.yaml:ro,z
-      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
-      - ../../roles:/app/roles:ro,z
-      - ../../regulatory_layer:/app/regulatory_layer:ro
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
+      - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
+      - ${ACC_SHARE_DIR:-../..}/regulatory_layer:/app/regulatory_layer:ro
     networks:
       - acc-net
     restart: unless-stopped
@@ -478,7 +483,7 @@ services:
   acc-coding-1:
     profiles:
       - coding-split
-    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-coding-1
     depends_on:
       nats:
@@ -486,7 +491,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
@@ -515,14 +520,14 @@ services:
       - acc-packages:/var/lib/acc/packages:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
-      - ../../models.yaml:/app/models.yaml:ro,z
-      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
-      - ../../roles:/app/roles:ro,z
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
+      - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -530,7 +535,7 @@ services:
   acc-coding-2:
     profiles:
       - coding-split
-    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-coding-2
     depends_on:
       nats:
@@ -538,7 +543,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
@@ -567,14 +572,14 @@ services:
       - acc-packages:/var/lib/acc/packages:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
-      - ../../models.yaml:/app/models.yaml:ro,z
-      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
-      - ../../roles:/app/roles:ro,z
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
+      - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -582,7 +587,7 @@ services:
   acc-coding-3:
     profiles:
       - coding-split
-    image: localhost/acc-agent-core:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}
     container_name: acc-coding-3
     depends_on:
       nats:
@@ -590,7 +595,7 @@ services:
       acc-redis:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent
@@ -619,14 +624,14 @@ services:
       - acc-packages:/var/lib/acc/packages:U,z
       # D-007 (PR-U2b) -- trusted workspace, SELinux-labelled (:z).
       - ${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
-      - ../../models.yaml:/app/models.yaml:ro,z
-      - ../../catalogs.yaml:/app/catalogs.yaml:ro,z
-      - ../../roles:/app/roles:ro,z
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
+      - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
     networks:
       - acc-net
     restart: unless-stopped
@@ -644,7 +649,7 @@ services:
       dockerfile: container/production/Containerfile.cli
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-cli:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-cli:${ACC_VERSION:-0.2.0}
     container_name: acc-cli
     # The CLI is one-shot: print help and exit.  Any real invocation goes
     # through `./acc-cli.sh <subcommand>` from the host.
@@ -672,7 +677,7 @@ services:
       dockerfile: container/production/Containerfile.echo-mcp-server
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-mcp-echo:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-mcp-echo:${ACC_VERSION:-0.2.0}
     container_name: acc-mcp-echo
     environment:
       ACC_MCP_ECHO_HOST: "0.0.0.0"
@@ -708,7 +713,7 @@ services:
       dockerfile: container/production/Containerfile.web-search-brave
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-mcp-web-search-brave:0.1.0
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-mcp-web-search-brave:0.1.0
     container_name: acc-mcp-web-search-brave
     environment:
       BRAVE_API_KEY: "${BRAVE_API_KEY:-}"
@@ -732,7 +737,7 @@ services:
       dockerfile: container/production/Containerfile.web-fetch
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-mcp-web-fetch:0.1.0
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-mcp-web-fetch:0.1.0
     container_name: acc-mcp-web-fetch
     environment:
       ACC_LOG_LEVEL: INFO
@@ -755,7 +760,7 @@ services:
       dockerfile: container/production/Containerfile.web-browser-harness
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-mcp-web-browser-harness:0.1.0
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-mcp-web-browser-harness:0.1.0
     container_name: acc-mcp-web-browser-harness
     environment:
       # The harness's LLM client picks one of these credential sets
@@ -799,7 +804,7 @@ services:
       dockerfile: container/production/Containerfile.tui
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-tui:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-tui:${ACC_VERSION:-0.2.0}
     container_name: acc-tui
     # PR-S — the userns remap that lets the Configuration screen write
     # back to /app/.env is NOT set here.  ``keep-id`` is incompatible
@@ -820,7 +825,7 @@ services:
     # picks up ACC_LLM_* overrides — agents/webgui have this; acc-tui
     # was missing it and the panel silently showed Pydantic defaults.
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_NATS_URL: nats://nats:4222
@@ -876,21 +881,21 @@ services:
       # containers actually use.  Without this, the TUI falls back to
       # the image's built-in defaults (typically backend=ollama) and
       # silently misleads the operator about what's running.
-      - ../../acc-config.yaml:/app/acc-config.yaml:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z
       # Durable, gitignored session tracelog (acc.tracelog → /logs/sessions):
       # prompts in/out, tool calls + output, Cat-ABC governance verdicts. :z
       # (not :U) so the operator can read the JSONL on the host post-session.
-      - ../../logs:/logs:z
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
       # Mount the host's .env READ-WRITE so the Configuration screen's
       # Save button can persist operator-tunable LLM knobs.  Only the
       # acc-tui service gets :rw — agents/webgui keep RO env_file
       # access.  See acc/tui/env_writeback.py for the atomic upsert.
-      - ../../.env:/app/.env:rw,z
+      - ${ACC_ENV_FILE:-../../.env}:/app/.env:rw,z
       # PR-C — Agentset tab.  The TUI's collective.yaml editor saves
       # back through `acc.collective.dump_collective`; needs a RW
       # mount on this file.  Apply writes `.acc-apply.request` in the
       # same dir (the repo root) for a host-side watcher to pick up.
-      - ../../collective.yaml:/app/collective.yaml:rw,z
+      - ${ACC_HOME_DIR:-../..}/collective.yaml:/app/collective.yaml:rw,z
       # PR-MM2 -- central model registry for the Agentset Model dropdown
       # (acc.models.load_models).  READ-WRITE (:z, not :ro,z): the
       # Configuration pane's MODEL REGISTRY is a CRUD surface -- Add model /
@@ -900,7 +905,7 @@ services:
       # '/app/models.yaml'" while the pane still advertised "Edits save to
       # models.yaml".  acc-tui is the ONLY writer -- acc-webgui and every
       # agent keep :ro,z (they only read the registry).
-      - ../../models.yaml:/app/models.yaml:z
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:z
       # D-007 (PR-U2b) -- trusted workspace mount, SELinux-labelled (:z).
       # The TUI's "Select Directory" modal (WorkspaceSelectModal) browses
       # this shared host dir to let the operator pick / create + trust a
@@ -917,7 +922,7 @@ services:
       # PR-X -- apply-request channel.  The TUI writes the chosen host
       # path here; the host-side acc-apply-watcher reads it and recreates
       # the agents onto that directory.  rw so the TUI can write.
-      - ../../.acc-apply:/app/.acc-apply:rw,z
+      - ${ACC_STATE_DIR:-../..}/.acc-apply:/app/.acc-apply:rw,z
       # PR-Y-2 -- writable golden-prompt store (named volume, :U so the
       # uid-1001 TUI can write without a host-uid mismatch).
       - acc-golden-data:/app/.acc-golden:U,z
@@ -927,7 +932,7 @@ services:
       - acc-session-data:/app/.acc-sessions:U,z
       # PR-Z1 -- governance policy files (read-only) so the Compliance
       # pane can show + browse the loaded Cat-A/B/C rules.
-      - ../../regulatory_layer:/app/regulatory_layer:ro
+      - ${ACC_SHARE_DIR:-../..}/regulatory_layer:/app/regulatory_layer:ro
       # PR-Z2 -- writable stores for imported framework catalogs + the
       # generated gap-analysis audit reports (named volumes, :U).
       - acc-frameworks-data:/app/.acc-frameworks:U,z
@@ -958,13 +963,13 @@ services:
       dockerfile: container/production/Containerfile.webgui
       args:
         ACC_VERSION: *acc-version
-    image: localhost/acc-webgui:${ACC_VERSION:-0.2.0}
+    image: ${ACC_IMAGE_PREFIX:-localhost}/acc-webgui:${ACC_VERSION:-0.2.0}
     container_name: acc-webgui
     depends_on:
       nats:
         condition: service_healthy
     env_file:
-      - path: ../../.env
+      - path: ${ACC_ENV_FILE:-../../.env}
         required: false
     environment:
       ACC_NATS_URL: nats://nats:4222
@@ -995,11 +1000,11 @@ services:
       # file is absent on the host, podman still tries to mount it and
       # the bind fails; the safe workaround is to keep an empty
       # placeholder at the repo root (or just don't use htpasswd mode).
-      - ../../acc-webgui.htpasswd:/app/acc-webgui.htpasswd:ro,z
+      - ${ACC_HOME_DIR:-../..}/acc-webgui.htpasswd:/app/acc-webgui.htpasswd:ro,z
       # PR-W — governance parity: the policy files + model registry
       # (read-only) and the writable stores shared with acc-tui.
-      - ../../regulatory_layer:/app/regulatory_layer:ro
-      - ../../models.yaml:/app/models.yaml:ro,z
+      - ${ACC_SHARE_DIR:-../..}/regulatory_layer:/app/regulatory_layer:ro
+      - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
       - acc-frameworks-data:/app/.acc-frameworks:U,z
       - acc-compliance-data:/app/.acc-compliance:U,z
     ports:

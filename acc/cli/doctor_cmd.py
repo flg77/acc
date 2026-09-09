@@ -38,6 +38,10 @@ def register(sub: argparse._SubParsersAction) -> None:
     p.add_argument(
         "--quiet", action="store_true", help="Print only checks that are not OK."
     )
+    p.add_argument(
+        "--paths", action="store_true",
+        help="Print where this host's ACC lives (home / share / state and every resolved path with its source).",
+    )
     p.set_defaults(func=_cmd_doctor)
 
 
@@ -55,6 +59,15 @@ def _make_stdout_lossy() -> None:
 
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
+    if getattr(args, "paths", False):
+        from acc import paths as _paths  # noqa: PLC0415
+        if args.json:
+            print(json.dumps([{"kind": r.kind, "path": str(r.path), "source": r.source, "exists": r.exists}
+                              for r in _paths.report()], indent=2))
+        else:
+            _make_stdout_lossy()
+            print(_paths.describe())
+        return 0
     ctx = preflight.Context(probe_endpoints=args.probe)
     results = preflight.run(ctx, only=args.check)
 

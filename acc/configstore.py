@@ -523,8 +523,12 @@ def _write(
     """Shared write path for :func:`set_key` and :func:`set_value`."""
     validate_reference(dotted, value, repo_root=repo_root)
 
-    path = cs.resolve_path(spec.id, repo_root=repo_root)
-    text, newline = _read_raw(path)
+    # `20260909-acc-install` IN-05 -- write to the live file in the host's ACC
+    # home; when it does not exist yet, start from the shipped template (the
+    # read path may resolve to it) but never write into the template.
+    path = cs.resolve_path(spec.id, repo_root=repo_root, for_write=True)
+    source = path if path.is_file() else cs.resolve_path(spec.id, repo_root=repo_root)
+    text, newline = _read_raw(source) if source.is_file() else ("", LF)
     lines = text.splitlines()
     index = scan(text)
     before, _ = _dig(read(spec.id, repo_root=repo_root), dotted)
@@ -553,6 +557,7 @@ def _write(
         diff=_one_line_diff(text, new_text),
     )
     if not dry_run:
+        path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(path, new_text, mode=0o644, newline="")
     return change
 

@@ -207,12 +207,12 @@ class TestRolesToCompose:
         assert env["ACC_LANCEDB_PATH"] == "/app/data/lancedb/coding-1"
         # Volume mounts match the base compose's coding-split shape.
         assert "lancedb-data:/app/data/lancedb:U,z" in svc["volumes"]
-        assert "../../acc-config.yaml:/app/acc-config.yaml:ro,z" in svc["volumes"]
+        assert "${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z" in svc["volumes"]
         # Packages root (parity with the base compose) so infused packs persist,
         # + roles mounted RW (:z, not :ro,z) so the assistant can self-author
         # role.yaml and have the edit survive a restart (lighthouse autonomy e2e).
         assert "acc-packages:/var/lib/acc/packages:U,z" in svc["volumes"]
-        assert "../../roles:/app/roles:z" in svc["volumes"]
+        assert "${ACC_SHARE_DIR:-../..}/roles:/app/roles:z" in svc["volumes"]
         # Synthesized-label so the reconciler can find them.
         assert svc["labels"]["acc.synthesized"] == "true"
         assert svc["labels"]["acc.collective_id"] == "sol-01"
@@ -340,7 +340,7 @@ class TestWorkerPool:
         assert svc["labels"]["acc.role"] == "dormant"
         assert svc["labels"]["acc.worker_pool"] == "true"
         # the .env env_file passthrough carries ACC_ARBITER_VERIFY_KEY.
-        assert {"path": "../../.env", "required": False} in svc["env_file"]
+        assert {"path": "${ACC_ENV_FILE:-../../.env}", "required": False} in svc["env_file"]
 
     def test_zero_pool_keeps_concrete_agents(self):
         """Default (worker_pool=0) is the PR-B path: concrete agents."""

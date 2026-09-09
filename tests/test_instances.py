@@ -150,9 +150,9 @@ class TestEnvironment:
         assert env["ACC_TRACELOG_DIR"] == "/app/instances/alice-dev/trace"
         assert env["ACC_COLLECTIVE_DIR"] == "/app/instances/alice-dev/overlays"
         assert I.cell_volumes(inst) == [
-            "../../instances/alice-dev/lancedb:/app/instances/alice-dev/lancedb:U,z",     # cells write: U (rootless)
-            "../../instances/alice-dev/trace:/app/instances/alice-dev/trace:U,z",
-            "../../instances/alice-dev/overlays:/app/instances/alice-dev/overlays:ro,z",  # operator edits, cells read
+            "${ACC_STATE_DIR:-../..}/instances/alice-dev/lancedb:/app/instances/alice-dev/lancedb:U,z",     # cells write: U (rootless)
+            "${ACC_STATE_DIR:-../..}/instances/alice-dev/trace:/app/instances/alice-dev/trace:U,z",
+            "${ACC_STATE_DIR:-../..}/instances/alice-dev/overlays:/app/instances/alice-dev/overlays:ro,z",  # operator edits, cells read
         ]
         assert not any("sessions" in v for v in I.cell_volumes(inst))                   # the TUI's, on the host
         standalone = I.create("carol", owner="system:carol")
@@ -170,8 +170,8 @@ class TestEnvironment:
             assert env["ACC_LANCEDB_PATH"] == f"/app/instances/alice-dev/lancedb/{aid}"   # {aid} resolved per cell
             assert env["ACC_TRACELOG_DIR"] == "/app/instances/alice-dev/trace"
             assert env["ACC_COLLECTIVE_DIR"] == "/app/instances/alice-dev/overlays"
-            assert "../../instances/alice-dev/lancedb:/app/instances/alice-dev/lancedb:U,z" in svc["volumes"]
-            assert "../../instances/alice-dev/overlays:/app/instances/alice-dev/overlays:ro,z" in svc["volumes"]
+            assert "${ACC_STATE_DIR:-../..}/instances/alice-dev/lancedb:/app/instances/alice-dev/lancedb:U,z" in svc["volumes"]
+            assert "${ACC_STATE_DIR:-../..}/instances/alice-dev/overlays:/app/instances/alice-dev/overlays:ro,z" in svc["volumes"]
             assert svc["image"] == "localhost/acc-agent-core:9.9.9"
             assert svc["labels"]["acc.collective_id"] == "alice-dev"
         ids = [svc["environment"]["ACC_AGENT_ID"] for svc in services.values()]
@@ -194,11 +194,11 @@ class TestEnvironment:
         spec = CollectiveSpec.model_validate({"collective_id": "alice-dev", "worker_pool": 2})
         overlay = roles_to_compose(spec, extra_env={"ACC_TRACELOG_DIR": "/app/instances/alice-dev/trace",
                                               "ACC_LANCEDB_PATH": "/app/instances/alice-dev/lancedb/{aid}"},
-                                   extra_volumes=["../../instances/alice-dev/trace:/app/instances/alice-dev/trace:U,z"])
+                                   extra_volumes=["${ACC_STATE_DIR:-../..}/instances/alice-dev/trace:/app/instances/alice-dev/trace:U,z"])
         for svc in overlay["services"].values():
             assert svc["environment"]["ACC_TRACELOG_DIR"] == "/app/instances/alice-dev/trace"
             assert svc["environment"]["ACC_LANCEDB_PATH"].endswith(svc["environment"]["ACC_AGENT_ID"])
-            assert "../../instances/alice-dev/trace:/app/instances/alice-dev/trace:U,z" in svc["volumes"]
+            assert "${ACC_STATE_DIR:-../..}/instances/alice-dev/trace:/app/instances/alice-dev/trace:U,z" in svc["volumes"]
 
     def test_surface_env_uses_host_paths(self, site):
         inst = I.create("alice-dev", owner="system:alice")

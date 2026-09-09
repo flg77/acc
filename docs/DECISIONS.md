@@ -785,7 +785,10 @@ skill or queue an INFUSE on its key's word (it could before, with a human
 approval as the only check). The operator's TUI / Web GUI / Kubernetes work
 is unchanged. Not done here, and now expressible: the memory retrieval /
 publication floor on the stamped ceiling (memory change `[2]`, Phase 4+),
-and attribution propagation onto plan steps the arbiter dispatches.
+and attribution propagation onto plan steps the arbiter dispatches. *Both
+since done: the floor in v0.14.0 (D-016), the plan steps in v0.14.3 (#368 —
+every step carries the plan's attribution, ceiling included, so the ceiling
+holds one hop down).*
 
 ## D-015 — An instance is a collective bound to an owner, a posture and its own state; the definition travels, the state never does
 
@@ -821,7 +824,9 @@ are attributed to the resolved principal; the memory source stays `tui`.
 one `instance up`, beside the base stack, with nothing shared but the bus,
 Redis and the pack registry; the enterprise brain (HG-40.1b) gets a `hub`
 field already stored and passed to the cells. Plan steps inside an instance
-still run unattributed (the owner rides the prompt path only). T2 — an
+ran unattributed until v0.14.3 (#368): a plan submitted by `acc-cli plan
+submit` now carries the owner as surface `cli` and every step inherits it.
+T2 — an
 instance is a whole collective per person — is assumed; T1 (many people in
 one collective) is the team agent and needs HG-40.1b's per-requester views.
 
@@ -909,16 +914,19 @@ observer logs `TASK_ASSIGN` and keeps 300 signals; Comms still renders 30.
 viewer token in the Web GUI sees their own tasks, steps, gates and signals
 and nobody else's; the runtime (agents, metrics) stays visible to all. Two
 gaps are now explicit. A person who prompts from Slack and looks at the Web
-GUI sees nothing of their own (per-surface identity). Plan steps are
-unattributed on the wire — the executor's step `TASK_ASSIGN` copies the
-step's fields only — so the *Board* is right (the projection inherits the
-plan's requester) but the ceiling and memory sides treat every step as the
-operator's: a requester's plan is not ceiling-checked per step and a note
-distilled from it reads CRITICAL, invisible to them.
+GUI sees nothing of their own (per-surface identity). Plan steps *were*
+unattributed on the wire — the executor's step `TASK_ASSIGN` copied the
+step's fields only — so the *Board* was right (the projection inherits the
+plan's requester) but the ceiling and memory sides treated every step as the
+operator's. **Closed in v0.14.3** (#368, lighthouse-verified on a branch
+image): `attribution.inherit_attribution` carries the plan's seven keys onto
+every step, member and re-issue; `plan submit` stamps the full set as surface
+`cli` (a pooled memory source like `tui`); a requester's steps are refused
+above the requester's ceiling and their episodes land in their scope.
 
 **Operator direction (2026-09-07, HG-40.1 §5 in the vault), not yet built:**
-(1) a **person map** across surfaces is a must; (2) **propagate the
-submitter's attribution onto every plan step** the arbiter dispatches;
+(1) a **person map** across surfaces is a must; (2) ~~propagate the
+submitter's attribution onto every plan step~~ — **done, v0.14.3**;
 (3) **both hub gates** — single operator-tier approval *and* a two-approver
 gate for a class of promotions (proposed axis: the note's ceiling, HIGH /
 CRITICAL needs two) — with the caveat that decision-history statistics must

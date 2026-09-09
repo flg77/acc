@@ -527,7 +527,7 @@ def _dormant_service(
             "nats": {"condition": "service_healthy"},
             "acc-redis": {"condition": "service_healthy"},
         },
-        "env_file": [{"path": "../../.env", "required": False}],
+        "env_file": [{"path": "${ACC_ENV_FILE:-../../.env}", "required": False}],
         "environment": env,
         "volumes": [
             "lancedb-data:/app/data/lancedb:U,z",
@@ -535,11 +535,11 @@ def _dormant_service(
             # that self-promotes can resolve + persist infused packs (mirrors
             # the base agents).
             "acc-packages:/var/lib/acc/packages:U,z",
-            "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
+            "${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z",
             # roles/ is RW (:z, not :ro,z) so a promoted assistant can
             # self-author role.yaml; writes stay gated by the role-authoring
             # boundary + operator_mode, the mount only enables them.
-            "../../roles:/app/roles:z",
+            "${ACC_SHARE_DIR:-../..}/roles:/app/roles:z",
         ],
         "networks": ["acc-net"],
         "restart": "unless-stopped",
@@ -599,7 +599,7 @@ def roles_to_compose(
     composes cleanly with the base file:
 
     * ``image``: ``localhost/acc-agent-core:0.2.0`` (overridable).
-    * ``env_file``: ``../../.env`` from the compose-dir (matches base).
+    * ``env_file``: ``${ACC_ENV_FILE:-../../.env}`` -- the layout, default the compose-dir's ../.. (matches base).
     * ``environment``: standard ACC_* vars +
       ``ACC_CLUSTER_ID`` / ``ACC_AGENT_PURPOSE`` for the
       standalone-only knobs, + any operator ``extra_env``.
@@ -677,7 +677,7 @@ def roles_to_compose(
                     "nats": {"condition": "service_healthy"},
                     "acc-redis": {"condition": "service_healthy"},
                 },
-                "env_file": [{"path": "../../.env", "required": False}],
+                "env_file": [{"path": "${ACC_ENV_FILE:-../../.env}", "required": False}],
                 "environment": env,
                 "volumes": [
                     "lancedb-data:/app/data/lancedb:U,z",
@@ -685,18 +685,18 @@ def roles_to_compose(
                     # infused packs persist + resolve across restarts (mirrors
                     # the base agent template).
                     "acc-packages:/var/lib/acc/packages:U,z",
-                    "../../acc-config.yaml:/app/acc-config.yaml:ro,z",
+                    "${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z",
                     # B6 (proposal 044) — the role->model registry.  Without
                     # this mount (+ ACC_MODELS_PATH above) acc.models
                     # .load_role_models() cannot read models.yaml, returns {},
                     # and EVERY synthesized agent silently falls back to the
                     # global ACC_LLM_* default — role_models looks configured
                     # in the TUI but never reaches the agent.
-                    "../../models.yaml:/app/models.yaml:ro,z",
+                    "${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z",
                     # roles/ is RW (:z, not :ro,z) so the assistant can
                     # self-author role.yaml and have the edit persist; writes
                     # stay gated by the role-authoring boundary + operator_mode.
-                    "../../roles:/app/roles:z",
+                    "${ACC_SHARE_DIR:-../..}/roles:/app/roles:z",
                 ],
                 "networks": ["acc-net"],
                 "restart": "unless-stopped",

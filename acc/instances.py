@@ -45,8 +45,9 @@ COLLECTIVE_FILE = "collective.yaml"
 #: Where an instance directory is mounted inside its cells.
 CONTAINER_ROOT = "/app/instances"
 #: The host path of the instances directory relative to the compose file
-#: (``container/production/``), the way the base compose reaches ``../../logs``.
-HOST_PREFIX = "../../instances"
+#: (``container/production/``), the way the base compose reaches its state; the
+#: layout interpolates ``ACC_STATE_DIR`` (acc-deploy.sh exports it; default ../.. = the checkout).
+HOST_PREFIX = "${ACC_STATE_DIR:-../..}/instances"
 
 #: The state an instance owns. ``overlays`` holds ``collective.md`` (the
 #: instance's voice above the shared roles); the rest is runtime state.

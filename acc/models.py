@@ -127,6 +127,12 @@ def models_path() -> Path:
     raw = os.environ.get("ACC_MODELS_PATH", "").strip()
     if raw:
         return Path(raw)
+    # `20260909-acc-install` -- the host's ACC layout first (an operator's
+    # ~/.config/acc/models.yaml, /etc/acc, or the checkout the cwd is in).
+    from acc import paths as _paths  # noqa: PLC0415
+    found = _paths.resolve("models")
+    if found.source not in ("default",) and found.exists:
+        return found.path
     repo_root = Path(__file__).resolve().parent.parent
     for candidate in (repo_root / "models.yaml", repo_root / "models.yaml.example"):
         if candidate.is_file():

@@ -33,8 +33,13 @@ def default_collective() -> str:
 
 
 def roles_root() -> str:
-    """Resolve the roles/ directory from ``ACC_ROLES_ROOT`` or fallback."""
-    return os.environ.get("ACC_ROLES_ROOT", _DEFAULT_ROLES_ROOT)
+    """Resolve the roles/ directory: ``ACC_ROLES_ROOT``, else the host's ACC
+    layout (`20260909-acc-install`), else the legacy ``roles``."""
+    explicit = os.environ.get("ACC_ROLES_ROOT", "").strip()
+    if explicit:
+        return explicit
+    from acc import paths as _paths  # noqa: PLC0415
+    return _paths.path_of("roles") if _paths.share() else _DEFAULT_ROLES_ROOT
 
 
 async def connect_nats() -> Any:

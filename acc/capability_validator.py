@@ -122,11 +122,19 @@ def format_findings(findings: Iterable[ValidationFinding]) -> str:
 
 
 def _skills_root_default() -> str:
-    return os.environ.get("ACC_SKILLS_ROOT", "skills")
+    explicit = os.environ.get("ACC_SKILLS_ROOT", "").strip()
+    if explicit:
+        return explicit
+    from acc import paths as _paths  # noqa: PLC0415
+    return _paths.path_of("skills")
 
 
 def _mcps_root_default() -> str:
-    return os.environ.get("ACC_MCPS_ROOT", "mcps")
+    explicit = os.environ.get("ACC_MCPS_ROOT", "").strip()
+    if explicit:
+        return explicit
+    from acc import paths as _paths  # noqa: PLC0415
+    return _paths.path_of("mcps")
 
 
 # ---------------------------------------------------------------------------

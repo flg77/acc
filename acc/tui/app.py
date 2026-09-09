@@ -231,6 +231,16 @@ class ACCTUIApp(App):
         # 1b: the operator opens on Soma, the user on Prompt.
         self.push_screen(start_screen())
 
+        # `20260909-acc-install` IN-09 -- the first-run tour: once on an
+        # installed layout, on request (`acc tour`), never in a checkout
+        # unasked.  A modal over the start screen; Skip at any step.
+        try:
+            from acc.tui.screens.tour import TourScreen, tour_wanted  # noqa: PLC0415
+            if tour_wanted():
+                self.push_screen(TourScreen(self.active_collective_id))
+        except Exception:  # noqa: BLE001
+            logger.debug("app: tour not shown", exc_info=True)
+
         # Mount multi-collective tab strip when more than one collective (REQ-TUI-007)
         if len(self._collective_ids) > 1:
             tab_strip = CollectiveTabStrip(
@@ -276,6 +286,24 @@ class ACCTUIApp(App):
     # ------------------------------------------------------------------
     # Role-sync subscription (proposal 010 wire-up)
     # ------------------------------------------------------------------
+
+    @property
+    def active_collective_id(self) -> str:
+        """The collective the active tab shows (the first one otherwise)."""
+        try:
+            return str(self._active_collective_id)
+        except (AttributeError, IndexError, TypeError):
+            return ""
+
+    async def publish_json(self, subject: str, payload: dict) -> None:
+        """One message on the first connected observer's NATS client, in the
+        wire format every agent decodes (IN-09: the tour's sample gate)."""
+        from acc.cli._common import encode_payload  # noqa: PLC0415
+        for obs in self._observers:
+            if obs._nc is not None:
+                await obs._nc.publish(subject, encode_payload(payload))
+                return
+        raise RuntimeError("no connected NATS client")
 
     async def _subscribe_role_sync(self) -> None:
         """Subscribe the active NATS client to ``acc.role.sync.>``.

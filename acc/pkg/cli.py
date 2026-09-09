@@ -603,6 +603,8 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="acc-pkg",
         description="ACC role-package toolchain (build / verify / install / inspect / list).",
     )
+    from acc import __version__ as _acc_version  # noqa: PLC0415
+    p.add_argument("--version", action="version", version=f"acc-pkg {_acc_version}")
     p.add_argument("--quiet", action="store_true", help="suppress non-error stdout")
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="emit machine-readable JSON output")

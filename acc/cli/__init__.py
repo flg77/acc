@@ -65,6 +65,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Increase log verbosity; -v for INFO, -vv for DEBUG.",
     )
+    from acc import __version__ as _acc_version  # noqa: PLC0415
+    parser.add_argument("--version", action="version", version=f"acc-cli {_acc_version}")
     sub = parser.add_subparsers(dest="command", required=False, metavar="COMMAND")
 
     # Lazy-import each command module so pip-install is fast and unused
@@ -92,6 +94,7 @@ def _build_parser() -> argparse.ArgumentParser:
         mcp_cmd,
         trace_cmd,
         memory_cmd,
+        workspace_cmd,
         sessions_cmd,
         setup_cmd,
         objective_cmd,
@@ -105,6 +108,7 @@ def _build_parser() -> argparse.ArgumentParser:
     backup_cmd.register(sub)
     role_cmd.register(sub)
     config_cmd.register(sub)
+    workspace_cmd.register(sub)
     doctor_cmd.register(sub)
     egress_cmd.register(sub)
     hooks_cmd.register(sub)

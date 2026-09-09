@@ -6,6 +6,22 @@ release history is `CHANGELOG.md`.
 
 ## Getting started
 
+The short form, once ACC is installed on the host (`uv tool install
+agentic-cell-corpus[tui]`, or the RPM when it ships):
+
+```bash
+acc setup                          # guided first run: posture, model, storage
+acc stack up --webgui              # the collective (NATS, Redis, one container per cell)
+acc                                # the TUI, attached — exits 3 with a hint if nothing answers
+acc paths                          # where this host's ACC lives, and why each file was picked
+acc tour                           # the first-run tour, again (it runs by itself the first time)
+```
+
+ACC finds its files through one rule — `$ACC_HOME`, else `~/.config/acc`,
+else `/etc/acc`, else the checkout you are in — so the commands work from
+any directory (`docs/INSTALL.md`). From a checkout, the long form still works:
+
+
 **Standalone / edge (podman):**
 
 ```bash
@@ -137,4 +153,4 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-07 (v0.14.2)_
+_Last updated: 2026-09-07 (v0.14.3)_

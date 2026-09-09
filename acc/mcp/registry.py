@@ -45,7 +45,11 @@ def _mcps_root_default() -> str:
     Order: ``ACC_MCPS_ROOT`` env var → literal ``"mcps"`` (relative to
     the cwd).  Same convention as :func:`acc.skills.registry._skills_root_default`.
     """
-    return os.environ.get("ACC_MCPS_ROOT", "mcps")
+    explicit = os.environ.get("ACC_MCPS_ROOT", "").strip()
+    if explicit:
+        return explicit
+    from acc import paths as _paths  # noqa: PLC0415
+    return _paths.path_of("mcps")  # `20260909-acc-install`: the host layout, else "mcps"
 
 
 def list_mcp_server_ids(base_dir: str | Path = "mcps") -> list[str]:

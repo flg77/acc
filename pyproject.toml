@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-cell-corpus"
-version = "0.14.3"
+version = "0.14.4"
 description = "Biologically-inspired distributed AI agent governance framework"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -165,6 +165,8 @@ speech = [
 acc-agent = "acc.agent:main"
 acc-tui = "acc.tui.app:main"
 acc-cli = "acc.cli:main"
+# `20260909-acc-install` -- the one command an operator starts with (proposal 055).
+acc = "acc.launcher:main"
 acc-webgui = "acc.webgui.app:main"
 acc-catalog = "acc.catalog.server:main"
 acc-pkg = "acc.pkg.cli:main"
@@ -193,6 +195,11 @@ include = ["acc*"]
 # causing a silent FileNotFoundError exit (code 1) inside the alternate-
 # screen buffer — invisible to podman logs.
 "acc.tui" = ["*.tcss"]
+# `20260909-acc-install` IN-05 -- the data trees (roles, skills, mcps,
+# collectives, container/production, regulatory_layer, the *.example
+# configs, acc-deploy.sh) are copied into acc/_share by setup.py's build_py
+# (packaging/build_share.py) so an installed package needs no checkout.
+"acc" = ["_share/**/*", "_share/**/.*"]
 # Per-screen help markdown loaded via importlib.resources by HelpScreen
 # (acc/tui/screens/help.py).  Bundled into the installed package so the
 # ? key works after `pip install --no-deps .` in the production image.
