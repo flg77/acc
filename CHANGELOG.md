@@ -17,6 +17,73 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ### Fixed
 
+## [0.16.0] — 2026-09-10
+
+### Added
+
+- **`acc-runtime` — the half of the package that belongs in a container**
+  (`IN-11`). The RPM now splits: `acc-runtime` carries the vendored virtualenv,
+  the commands and the data trees under `/usr/share/acc`; the full `acc` package
+  adds the host layer on top (the configuration under `/etc/acc`, the state root,
+  `acc-deploy`, the systemd unit and the `acc` system user) and requires the
+  runtime. The host package is now 21 KB. In a pod those host parts are dead
+  weight or worse: the unit drives podman-compose inside a container, the `acc`
+  user is not the UID OpenShift assigns, and a `0750 acc:acc` state root is
+  unwritable by it. Measured on a real image, an arbitrary UID runs the commands
+  and reads the content.
+- **The agent image can be built from the released RPM**
+  (`container/production/Containerfile.agent-core-rpm`,
+  `packaging/images/build-agent-rpm.sh`), so the version a host installs and the
+  version a pod runs are the same NEVRA from the same channel. It installs
+  `acc-runtime`, pins the version, keeps configuration out of the image, and runs
+  under an arbitrary UID in group 0. The pipeline builds from a **tag**, then
+  checks the package it carries, that `acc --version` agrees with it, that it
+  runs as an arbitrary UID, and that `acc.agent` imports; pushing stays the
+  operator's step.
+
+  **Only this image.** The RPM vendors one dependency set while the other images
+  each carry a hand-picked one — the web GUI installs ten packages and no ML,
+  which is why it is 487 MB, and from the RPM it would be about 2.5 GB. The agent
+  is the one component whose weight already matches, because it does embeddings.
+  A test guards the decision rather than trusting it.
+
+- **The release pipeline is one command** (`packaging/rpm/release-pipeline.sh`,
+  driven by the `acc-package-release` skill). The internal Satellite is the
+  distribution base, so a tag that is not in the channel is a release the hosts
+  cannot get. The pipeline takes a tag the whole way: `git archive` of the **tag**
+  (never the working tree) to the build host, build, refuse a package carrying
+  CUDA or missing the layout, publish to the channel, then upgrade a real client
+  **from the channel** and require `rpm -q` and `acc --version` to agree. That
+  last check is why it exists: an upgrade once installed 0.14.4 and left the host
+  running 0.14.3, and `rpm -q` alone called it a success. `RELEASE=2` rebuilds
+  the same source as a new package, `--dry-run` says what would happen, and
+  `--no-client` skips the proof and says so.
+
+- **`acc-prompt` — the decision panel in the Prompt pane** (`UX-01`). When one
+  request of one step is waiting, the Prompt pane now renders it in full: the
+  question in the operator's terms, the numbered options, and **beside them what
+  the highlighted option actually does** — its consequence, whether it is
+  remembered for the task or asked again, the destination, the risk, and how many
+  approvals it still needs. `PENDING 1/2` and who has approved show where the
+  decision is made rather than only in the Compliance queue. `↑`/`↓` and `Enter`
+  or the digit decide; a HIGH or CRITICAL approval still takes the key twice.
+  `n` types a note onto the decision without leaving it, and `c` asks a question
+  about the decision **while it stays pending** — a doubt no longer has to become
+  a dismissal. `Esc` leaves it pending and `Ctrl+G` returns to it. A reply
+  proposing several steps keeps the compact request region, which can approve all
+  or take rows one at a time: depth for one decision, a list for many.
+  `ACC_PROMPT_PANEL=0` sends everything to the compact region. No new signal — a
+  decision still resolves through the same `_OversightAction` the Compliance
+  queue uses.
+
+### Changed
+
+- **An approval can carry the operator's reason.** `OversightQueue.approve()`
+  takes a `note` and keeps it on **that person's** approval record, so a
+  two-approver row carries a reason per signature rather than one shared field;
+  the agent's decision handler passes the wire's existing `reason` through on
+  APPROVE instead of dropping it. Rejection is unchanged.
+
 ## [0.15.0] — 2026-09-09
 
 ### Added

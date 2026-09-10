@@ -3573,7 +3573,12 @@ class Agent:
             assert queue is not None
             try:
                 if decision == "APPROVE":
-                    if not await queue.approve(oversight_id, approver, approver_tier):
+                    # `reason` on an APPROVE is the operator's note from the
+                    # acc-prompt panel; it is kept on their approval record so a
+                    # two-approver row carries a reason per signature.
+                    if not await queue.approve(
+                        oversight_id, approver, approver_tier, note=reason,
+                    ):
                         # Refused, or still waiting for another approver: the
                         # row was already decided the other way (or expired /
                         # not found), or it asks for more distinct operators

@@ -450,6 +450,14 @@ class PromptScreen(NavScreen):
         from acc.tui.widgets.permission_request import PermissionRequest  # noqa: PLC0415
         yield PermissionRequest(id="prompt-gate-cards")
 
+        # acc-prompt: one request gets the decision panel -- the question,
+        # the options, and what each option actually does -- so the operator
+        # answers it here instead of leaving the pane to find out.  Several
+        # requests keep the compact region above: depth for one, a list for
+        # many.  Both resolve through the same `_OversightAction`.
+        from acc.tui.widgets.acc_prompt_panel import AccPromptPanel  # noqa: PLC0415
+        yield AccPromptPanel(id="acc-prompt-panel")
+
         # PR-4 — collapsible cluster topology panel.  Rendered above
         # the transcript so the operator can see active sub-agent
         # clusters without leaving the prompt pane.  The watcher on
@@ -736,7 +744,8 @@ class PromptScreen(NavScreen):
         stashes them on ``self._pending_gates`` so ``/allow`` / ``/disallow``
         and the B14 affirmation path can resolve them.  Best-effort: any failure
         leaves the region as-is (it never blocks a snapshot tick)."""
-        from acc.tui.gate_cards import pending_gates  # noqa: PLC0415
+        from acc.tui.gate_cards import group_requests, pending_gates  # noqa: PLC0415
+        from acc.tui.widgets.acc_prompt_panel import panel_enabled  # noqa: PLC0415
         from acc.tui.widgets.permission_request import (  # noqa: PLC0415
             PermissionRequest,
             region_enabled,
@@ -766,10 +775,33 @@ class PromptScreen(NavScreen):
             widget.show_legacy(cards)
             return
         widget.legacy = False
-        widget.show(cards)
         ids = {c.oversight_id for c in cards}
         new_ids = ids - self._seen_gate_ids - self._dismissed_gate_ids
         self._seen_gate_ids |= ids
+
+        # One request of ONE step -> the acc-prompt panel; anything else -> the
+        # compact region.  The split is by shape, not preference: a single
+        # decision earns the detail, while a reply proposing several steps needs
+        # the list the region already gives (approve all, or `a`/`d` per row).
+        panel = self._acc_prompt_panel()
+        groups = group_requests(cards) if cards else []
+        single = (
+            panel is not None
+            and len(groups) == 1
+            and len(groups[0]) == 1
+            and panel_enabled()
+        )
+        if single:
+            widget.show([])
+            group = groups[0]
+            proposal = proposals.get(group[0].task_id) if group else None
+            panel.show(group, proposal=proposal, more=0)
+            if new_ids:
+                panel.focus()
+            return
+        if panel is not None:
+            panel.clear()
+        widget.show(cards)
         if new_ids:
             widget.focus()
 
@@ -830,7 +862,79 @@ class PromptScreen(NavScreen):
         except Exception:  # noqa: BLE001
             logger.debug("prompt: reason prefill failed", exc_info=True)
 
+    # -- acc-prompt panel messages ---------------------------------------
+
+    def _acc_prompt_panel(self):
+        """The decision panel, or ``None`` before it is mounted."""
+        try:
+            from acc.tui.widgets.acc_prompt_panel import AccPromptPanel  # noqa: PLC0415
+            return self.query_one("#acc-prompt-panel", AccPromptPanel)
+        except Exception:  # noqa: BLE001 -- not mounted yet
+            return None
+
+    def on_acc_prompt_panel_decided(self, message) -> None:
+        """One decision, resolved in the pane.  The note travels with it."""
+        for oid in message.oversight_ids:
+            self._resolve_gate(
+                oid, approve=message.approve, reason=message.note,
+            )
+        if message.note:
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"note on the decision: {message.note}",
+                "ts": time.time(), "blocked": False,
+            })
+        if message.grant:
+            self._task_grants.add(message.grant)
+            _task, kind, target = message.grant
+            self._append_history({
+                "role": "system", "task_id": _task,
+                "text": f"allowed for this task: {kind.lower()} {target}",
+                "ts": time.time(), "blocked": False,
+            })
+        try:
+            self.query_one("#prompt-textarea", TextArea).focus()
+        except Exception:  # noqa: BLE001
+            logger.debug("prompt: refocus after panel decision failed", exc_info=True)
+
+    def on_acc_prompt_panel_dismissed(self, message) -> None:
+        self._dismissed_gate_ids |= {
+            c.oversight_id for c in getattr(self, "_pending_gates", []) or []
+        }
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": "left pending — Ctrl+G returns to the decision",
+            "ts": time.time(), "blocked": False,
+        })
+        try:
+            self.query_one("#prompt-textarea", TextArea).focus()
+        except Exception:  # noqa: BLE001
+            logger.debug("prompt: refocus after panel dismiss failed", exc_info=True)
+
+    def on_acc_prompt_panel_reason_requested(self, message) -> None:
+        self.on_permission_request_reason_requested(message)
+
+    def on_acc_prompt_panel_chat_requested(self, message) -> None:
+        """``c`` — ask about the decision WITHOUT resolving it.
+
+        The panel stays open and the request stays PENDING; only the input is
+        prefilled, so the question carries what it is about.  This is the whole
+        point of the panel: a doubt does not have to become a dismissal.
+        """
+        decision = message.decision
+        try:
+            ta = self.query_one("#prompt-textarea", TextArea)
+            ta.text = f"About the pending decision '{decision.title}': "
+            ta.move_cursor(ta.document.end)
+            ta.focus()
+        except Exception:  # noqa: BLE001
+            logger.debug("prompt: chat prefill failed", exc_info=True)
+
     def action_focus_permission_request(self) -> None:
+        panel = self._acc_prompt_panel()
+        if panel is not None and panel.display and panel.decision is not None:
+            panel.focus()
+            return
         try:
             widget = self.query_one("#prompt-gate-cards")
         except Exception:  # noqa: BLE001

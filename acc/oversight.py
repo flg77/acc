@@ -277,6 +277,7 @@ class HumanOversightQueue:
 
     async def approve(
         self, oversight_id: str, approver_id: str, approver_tier: str = "",
+        note: str = "",
     ) -> bool:
         """Mark an oversight item as approved.
 
@@ -285,6 +286,10 @@ class HumanOversightQueue:
         second and later calls are the norm, not an error), and a row that is
         already REJECTED / EXPIRED / AUTO_APPROVED is **refused** -- the first
         decision stands, a late or conflicting one is logged and dropped.
+
+        *note* is what the operator typed onto the decision -- it is kept on
+        **their** approval record, so a two-approver row can carry a reason
+        from each signature rather than one shared field.
 
         A row that asks for **more than one approval** (a hub promotion of a
         HIGH / CRITICAL note) records this approval and stays PENDING until
@@ -332,6 +337,7 @@ class HumanOversightQueue:
             item.approvals.append({
                 "approver_id": approver_id, "approver_tier": approver_tier,
                 "ts_ms": int(time.time() * 1000),
+                **({"note": note} if note else {}),
             })
             if len(item.approvals) < required:
                 await self._save(item)
@@ -344,6 +350,7 @@ class HumanOversightQueue:
             item.approvals = [{
                 "approver_id": approver_id, "approver_tier": approver_tier,
                 "ts_ms": int(time.time() * 1000),
+                **({"note": note} if note else {}),
             }]
         item.status = "APPROVED"
         item.approver_id = approver_id

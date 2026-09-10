@@ -126,3 +126,46 @@ def test_the_venv_bytecode_is_package_owned_and_checked_hash():
     assert "-s %{buildroot} -p /" in spec
     # and it has to run after pip, or there is nothing to compile
     assert spec.index("pip install") < spec.index("-m compileall")
+
+
+# ---------------------------------------------------------------------------
+# the release pipeline
+# ---------------------------------------------------------------------------
+
+def _pipeline() -> str:
+    return (ROOT / "packaging" / "rpm" / "release-pipeline.sh").read_text(encoding="utf-8")
+
+
+def test_the_pipeline_builds_the_tag_not_the_working_tree():
+    """What lands in the channel must be exactly what was tagged."""
+    s = _pipeline()
+    assert "git archive --format=tar" in s and '"$TAG"' in s
+    # and it refuses a tag that does not exist, or one whose pyproject disagrees
+    assert 'git rev-parse -q --verify "refs/tags/$TAG"' in s
+    assert '"$TAG_VERSION" != "$VERSION"' in s
+
+
+def test_the_pipeline_refuses_a_package_carrying_cuda():
+    s = _pipeline()
+    assert "grep -c nvidia" in s and "the CPU torch pin did not hold" in s
+
+
+def test_the_pipeline_checks_the_layout_it_promises():
+    s = _pipeline()
+    for path in ("/usr/bin/acc", "/usr/share/acc", "/etc/acc", "/var/lib/acc"):
+        assert path in s, path
+
+
+def test_the_pipeline_makes_the_client_agree_with_itself():
+    """`rpm -q` alone once called a broken upgrade a success: the package said
+    0.14.4 while the command still ran 0.14.3."""
+    s = _pipeline()
+    assert "rpm -q --qf '%{VERSION}' acc" in s
+    assert "acc --version" in s
+    assert '"$cmd" != "$VERSION"' in s
+    assert "Do not ship this" in s
+
+
+def test_the_pipeline_can_say_what_it_would_do_without_doing_it():
+    s = _pipeline()
+    assert "--dry-run" in s and "would:" in s

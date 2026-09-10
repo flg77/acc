@@ -1248,7 +1248,12 @@ async def test_gate_card_renders_and_allow_posts_oversight_action():
         await pilot.pause()
 
         assert len(screen._pending_gates) == 1
-        assert screen.query_one("#prompt-gate-cards", Static).display is True
+        # acc-prompt: a request of ONE step is rendered by the decision panel;
+        # the compact region stays for a reply proposing several steps.
+        from acc.tui.widgets.acc_prompt_panel import AccPromptPanel  # noqa: PLC0415
+        panel = screen.query_one("#acc-prompt-panel", AccPromptPanel)
+        assert panel.display is True and panel.decision is not None
+        assert screen.query_one("#prompt-gate-cards", Static).display is False
 
         screen._dispatch_slash("/allow")          # no id → the single gate
         await pilot.pause()

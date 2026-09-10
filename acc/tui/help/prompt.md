@@ -170,16 +170,32 @@ and stops listening.
 |--------|-------|----------|
 | Send | "Send" button | `Ctrl+S` |
 | Clear history | "Clear history" button | `Ctrl+L` |
-| Return to a pending permission request | — | `Ctrl+G` |
+| Return to a pending decision or permission request | — | `Ctrl+G` |
 | Reach a screen that is not on the strip (`user` profile) | — | `Ctrl+A` then its digit, or `Ctrl+P` |
 | Navigate to other screens | NavBar buttons | `1`–`7` |
 
 ## Approvals — the permission request
 
 When something needs your yes, it is asked **here**, not in Compliance
-(Compliance keeps the record and the history).  The request region above
-the transcript takes focus when it appears and offers numbered options by
-what it is:
+(Compliance keeps the record and the history).
+
+**One decision gets the panel.**  A request of a single step opens the
+`acc-prompt` decision panel: the question, the numbered options, and beside
+them what the highlighted option *actually does* — what it will run, whether it
+is remembered for the task or asked again next time, where it lands, its risk,
+and how many approvals it still needs.  A two-approver row shows `PENDING 1/2`
+and who has signed, so you are not deciding blind.
+
+| Key | In the panel |
+|-----|--------------|
+| `↑` / `↓`, then `Enter` — or the option's digit | choose |
+| `n` | type a note onto the decision; it is kept on **your** approval record |
+| `c` | ask about this decision — the request **stays pending** while you do |
+| `r` | reject with a reason typed in the input |
+| `Esc` | later — still pending; `Ctrl+G` brings it back |
+
+**Several steps get the list.**  A reply proposing more than one step keeps the
+compact request region, which offers numbered options by what it is:
 
 | Request | Options |
 |---------|---------|

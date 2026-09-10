@@ -32,6 +32,23 @@ service can run rootless podman. Images come from `ACC_IMAGE_PREFIX`
 
 A spearhead build never reaches a public repository.
 
+**After every release tag, run the whole pipeline** — the channel must never lag
+the tag, because a host upgrading from it believes it is current:
+
+```bash
+packaging/rpm/release-pipeline.sh v0.15.0        # tag -> build -> verify -> publish -> prove
+RELEASE=2 packaging/rpm/release-pipeline.sh v0.15.0   # same source, new package
+packaging/rpm/release-pipeline.sh v0.15.0 --dry-run
+```
+
+It builds from `git archive <tag>` (never the working tree), refuses a package
+carrying CUDA or missing the layout, publishes, and then upgrades a real client
+from the channel and requires `rpm -q` and `acc --version` to **agree** — the
+check that catches an upgrade which installs new files and keeps running the old
+code. The `acc-package-release` skill drives it.
+
+To publish an already-built package on its own:
+
 ```bash
 packaging/rpm/publish-satellite.sh dist/rpm/RPMS/x86_64/acc-<version>-<release>.<dist>.x86_64.rpm
 ```
@@ -46,6 +63,88 @@ https://sat1.ic3net.internal/pulp/content/ic3net_internal/Library/custom/ACC/acc
 
 Clients consume it through a `.repo` file pointing at that URL; the script prints
 one.
+
+## The mirror on acc1 — installing without a Satellite subscription
+
+`rpm.ic3net.internal` (acc1) serves a copy of the same channel, so a host can
+install ACC without being registered to the Satellite and without its CA:
+
+```bash
+sudo tee /etc/yum.repos.d/acc-mirror.repo >/dev/null <<'REPO'
+[acc-mirror]
+name=ACC packages (mirror of the sat1 channel, on acc1)
+baseurl=http://rpm.ic3net.internal:8080/acc-spearhead/
+enabled=1
+gpgcheck=0
+REPO
+sudo dnf install acc
+```
+
+Port **8080** on purpose: `:80` and `:443` on that address are the LAN frontend,
+an nginx L4 proxy to the cluster ingress, rendered by lab-gitops
+`ansible/host-frontend-proxy` — the mirror is a separate httpd server beside it
+and must never be folded into that config. The DNS record lives in lab-gitops
+`ansible/dns/group_vars/bind_servers/zones.yml`, not in the zone file.
+
+`acc-repo-sync.timer` on acc1 pulls from the Satellite hourly
+(`/usr/local/sbin/acc-repo-sync`). It syncs **every** package the upstream
+metadata advertises, not only the newest: a mirror that downloads the newest
+package alone still publishes metadata promising the others, and those 404.
+
+The Satellite stays the source of truth. Only hosts on the lab network can reach
+either; **bb3 and saturate3 can reach neither**, so they are staged by file
+until an online mirror exists.
+
+## The container half — `acc-runtime`, and the agent image
+
+The package splits. **`acc-runtime`** is what runs — the virtualenv, the commands
+and `/usr/share/acc` — and nothing that belongs to a host. **`acc`** adds the host
+layer on top (the configuration under `/etc/acc`, the state root, `acc-deploy`,
+the unit and the `acc` user) and requires it; it is 21 KB.
+
+In a pod the host layer is dead weight or worse: the unit drives podman-compose
+inside a container, the `acc` user is not the UID OpenShift assigns, and a
+`0750 acc:acc` state root is unwritable by it.
+
+**One image is built from the RPM**, `acc-agent-core`:
+
+```bash
+packaging/images/build-agent-rpm.sh v0.15.0
+```
+
+Not the others, and this is a measurement, not a preference: the RPM vendors one
+dependency set while the images each carry a hand-picked one. The web GUI
+installs ten packages and no ML, which is why it is 487 MB; from the RPM it would
+be ~2.5 GB. The agent is the one component whose weight already matches, because
+it does embeddings — measured at **2.25 GB from the RPM against 1.98 GB from
+source**. A test asserts that no other Containerfile installs the package, so the
+decision cannot be reversed silently. Vault `IN-11` has the numbers.
+
+What it buys is one provenance chain: the version a host installs and the version
+a pod runs are the same NEVRA from the same channel.
+
+Configuration is not baked. A ConfigMap or a volume at `/etc/acc` supplies it —
+the same place the operator already mounts it, and `acc paths` finds it there:
+
+```
+$ podman run --rm --user 12345:0 -v ./cm:/etc/acc:ro acc-agent-core-rpm:0.15.0 acc paths
+home         home      /etc/acc
+share        env       …/acc/_share
+state        env       /app/data
+config       home      /etc/acc/acc-config.yaml
+```
+
+## Building for another EL release
+
+The build produces a package for the release it runs on: an `el10` package does
+not install on AlmaLinux 9. Build for another release in a container, which needs
+no privileged change on any host:
+
+```bash
+podman run --rm -v <tree>:/src:z -w /src almalinux:9 bash -lc '
+  dnf -y install rpm-build systemd-rpm-macros python3.12 python3.12-pip python3.12-devel gcc
+  PYTHON=python3.12 PYTHON_PKG=python3.12 bash packaging/rpm/build.sh'
+```
 
 ## Versions in the channel
 

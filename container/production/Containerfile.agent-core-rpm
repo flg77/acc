@@ -1,0 +1,107 @@
+# container/production/Containerfile.agent-core-rpm
+#
+# The agent/cell image built from the RELEASED RPM instead of the source tree.
+#
+# Why only this image.  The RPM vendors ONE dependency set; the other images
+# each carry a hand-picked one -- the web GUI installs ten packages and no ML at
+# all, which is why it is 487 MB.  Building those from the RPM would take them to
+# ~2.5 GB, a 5x regression on exactly the GUI-headed path RHOAI surfaces, so they
+# stay source-built.  `acc-agent-core` is the one place the weight already
+# matches: it does embeddings, so it already carries the union (1.98 GB from
+# source, ~2.5 GB from the RPM).  Measured 2026-09-10, vault `IN-11`.
+#
+# What this buys: one provenance chain.  The version a host installs and the
+# version a pod runs are the same NEVRA, patched by the same channel, rather than
+# two builds that happen to agree.
+#
+# It installs `acc-runtime`, NOT `acc`: the full package carries a systemd unit
+# (which drives podman-compose -- a container runtime inside a container), an
+# `acc` system user that is not the UID the pod runs as, and a 0750 acc:acc state
+# root an arbitrary OpenShift UID cannot write.  The runtime subpackage is the
+# half that belongs in a pod.
+#
+# Build:
+#   packaging/images/build-agent-rpm.sh v0.15.0
+# or by hand, with the channel reachable:
+#   podman build -f container/production/Containerfile.agent-core-rpm \
+#       --build-arg ACC_VERSION=0.15.0 --build-arg ACC_REPO_URL=<baseurl> .
+
+ARG BASE_IMAGE=registry.access.redhat.com/ubi10/python-312-minimal:latest
+FROM ${BASE_IMAGE}
+
+ARG ACC_VERSION
+ARG ACC_REPO_URL=http://rpm.ic3net.internal:8080/acc-spearhead/
+ARG ACC_REPO_NAME=acc-spearhead
+
+LABEL org.opencontainers.image.title="acc-agent-core (from the RPM)" \
+      org.opencontainers.image.description="ACC agent/cell, installed from the released acc-runtime RPM" \
+      org.opencontainers.image.version="${ACC_VERSION}" \
+      org.opencontainers.image.vendor="ACC"
+
+USER 0
+
+# The channel, and the runtime package pinned to the release being built.  The
+# version is required: an image that silently takes "whatever is newest" is not
+# a release artefact.
+RUN set -eu; \
+    test -n "${ACC_VERSION}" || { echo "ACC_VERSION is required" >&2; exit 1; }; \
+    printf '[%s]\nname=ACC packages\nbaseurl=%s\nenabled=1\ngpgcheck=0\n' \
+        "${ACC_REPO_NAME}" "${ACC_REPO_URL}" > /etc/yum.repos.d/acc.repo; \
+    microdnf install -y --nodocs "acc-runtime-${ACC_VERSION}" git nano; \
+    microdnf clean all; \
+    rm -f /etc/yum.repos.d/acc.repo; \
+    rpm -q "acc-runtime-${ACC_VERSION}"
+
+# The agent shells out to `cosign` to verify .accpkg signatures during an
+# AccPackageInstall; without it any signed pack fails with CosignNotInstalled.
+RUN python3 -c "import platform, urllib.request; m={'x86_64':'amd64','aarch64':'arm64'}.get(platform.machine(),'amd64'); urllib.request.urlretrieve(f'https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-{m}', '/usr/local/bin/cosign')" \
+    && chmod 0755 /usr/local/bin/cosign
+
+# The embedding model, which the RPM does not carry (it is model data, not code).
+# Offline at runtime: HF_HUB_OFFLINE below.
+RUN /usr/lib/acc/venv/bin/python -c "\
+from sentence_transformers import SentenceTransformer; \
+SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', cache_folder='/app/models')" \
+    || echo "WARNING: the embedding model was not baked in; set ACC_EMBEDDING_* or mount it"
+
+COPY container/production/entrypoint.sh /app/entrypoint.sh
+
+# OpenShift restricted-SCC pattern: an arbitrary UID in group 0.  UID 1001 is
+# only the default; everything the agent writes is group-writable so the random
+# UID OpenShift assigns works too.
+RUN echo "acc:x:1001:0:ACC Agent:/app:/bin/sh" >> /etc/passwd \
+    && mkdir -p /app/data/lancedb/ingester /app/data/lancedb/analyst /app/data/lancedb/arbiter \
+    && chown -R 1001:0 /app \
+    && chmod -R g=u /app \
+    && chmod 0755 /app/entrypoint.sh
+
+# The data trees come from the package, at the layout `acc.paths` already knows:
+# /usr/share/acc is the share root the RPM installs.  Config is NOT baked --
+# a ConfigMap or a volume provides /etc/acc, the same place the operator already
+# mounts it.
+#
+# ACC_MODELS_PATH points at the SHIPPED example, deliberately.  The source-built
+# image does `COPY models.yaml`, but models.yaml is NOT tracked in git -- only
+# models.yaml.example is -- so that COPY works from a developer's tree and would
+# fail from a clean clone or a `git archive` of a tag.  This image builds from a
+# tag, so it takes the registry the package ships and expects the real one from a
+# mount, a ConfigMap or ACC_MODELS_PATH.
+ENV ACC_SHARE=/usr/share/acc \
+    ACC_SKILLS_ROOT=/usr/share/acc/skills \
+    ACC_MCPS_ROOT=/usr/share/acc/mcps \
+    ACC_ROLES_ROOT=/usr/share/acc/roles \
+    ACC_REGULATORY_ROOT=/usr/share/acc/regulatory_layer \
+    ACC_MODELS_PATH=/usr/share/acc/models.yaml.example \
+    ACC_STATE=/app/data \
+    SENTENCE_TRANSFORMERS_HOME=/app/models \
+    TRANSFORMERS_CACHE=/app/models \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/usr/lib/acc/venv/bin:$PATH
+
+USER 1001
+WORKDIR /app
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["python3", "-m", "acc.agent"]

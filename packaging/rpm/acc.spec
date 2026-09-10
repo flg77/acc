@@ -57,7 +57,7 @@ Source3:        acc.tmpfiles.conf
 BuildRequires:  %{acc_python_pkg}
 BuildRequires:  %{acc_python_pkg}-pip
 BuildRequires:  systemd-rpm-macros
-Requires:       %{acc_python_pkg}
+Requires:       %{name}-runtime = %{version}-%{release}
 Requires:       podman
 Requires:       podman-compose
 Requires:       bash
@@ -73,6 +73,26 @@ signed packages.  This package installs the host commands (acc, acc-cli,
 acc-pkg, acc-tui, acc-webgui, acc-deploy), the data trees, the configuration
 layout under /etc/acc, the state root under /var/lib/acc, and a systemd unit
 that brings the collective up as the unprivileged `acc` user.
+
+%package runtime
+Summary:        ACC without the host: the runtime and the data trees, for a container
+Requires:       %{acc_python_pkg}
+AutoReqProv:    no
+
+%description runtime
+Everything ACC needs to RUN and nothing that belongs to a host: the vendored
+virtualenv, the commands, and the data trees under /usr/share/acc.
+
+No systemd unit, no `acc` system user, no state directories.  In a pod those
+three are dead weight or worse -- OpenShift runs a container under an arbitrary
+UID that is not the `acc` user and cannot write a 0750 acc:acc state root, the
+unit drives podman-compose (a container runtime inside a container), and the
+user is not the identity the pod runs as.  Configuration and state come from the
+platform: a ConfigMap or Secret mounted at /etc/acc, a volume for what is
+written.  Measured on a real image, an arbitrary UID runs the commands and reads
+this content.
+
+The full `acc` package adds the host layer on top of this one.
 
 %prep
 # nothing to unpack: Source0 is a wheel
@@ -171,7 +191,9 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -R %{_sharedstatedir}/
 %systemd_postun_with_restart acc-stack.service
 # /etc/acc and /var/lib/acc are the operator's: never removed
 
-%files
+# The runtime: what runs, and what it reads.  Nothing here assumes a host --
+# no unit, no system user, no state -- so a container can install just this.
+%files runtime
 %{acc_venv}
 %{_bindir}/acc
 %{_bindir}/acc-cli
@@ -180,8 +202,13 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -R %{_sharedstatedir}/
 %{_bindir}/acc-webgui
 %{_bindir}/acc-agent
 %{_bindir}/acc-catalog
-%{_bindir}/acc-deploy
 %{_datadir}/acc
+
+# The host layer on top: the operator's configuration, the state root, the unit
+# and the user that runs it.  `acc-deploy` lives here because it drives the
+# host's podman-compose stack, which is precisely what a pod does not do.
+%files
+%{_bindir}/acc-deploy
 # 0755: the four *.yaml are 0644 and only reachable through a traversable
 # directory -- the operator's own `acc` must read them without joining group
 # acc.  The secrets are the one file that stays 0640 root:acc.
