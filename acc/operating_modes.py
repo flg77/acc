@@ -35,6 +35,7 @@ prefill it.
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 # ---------------------------------------------------------------------------
@@ -159,6 +160,98 @@ def gate_categories(kind: str, target: str, manifest: object = None) -> frozense
     if behalf:
         cats.add(CATEGORY_ACTS_ON_BEHALF)
     return frozenset(cats)
+
+
+# ---------------------------------------------------------------------------
+# Destructive functions (`20260911-question-envelope`)
+# ---------------------------------------------------------------------------
+#
+# A call that deletes or overwrites data is asked about in every mode but PLAN
+# (operator, 2026-09-11: "super high critical functions like file deletion, data
+# modification ... are double checked as questions to the user").  Three sources
+# of evidence, strongest first:
+#
+# * the COMMAND an exec skill is about to run -- checked whatever the manifest
+#   declares, because it is what will actually happen;
+# * a declared flag: ``destructive`` on a skill, ``destructive_tools`` on an MCP;
+# * the target's name, when nothing is declared (the gate_categories rule).
+
+_EXEC_SKILLS: Final[frozenset[str]] = frozenset({"shell_exec", "ssh_exec", "python_exec"})
+
+_DESTRUCTIVE_NAME_MARKERS: Final[tuple[str, ...]] = (
+    "delete", "remove", "drop", "destroy", "purge", "wipe", "truncate",
+    "rmdir", "unlink",
+)
+
+# Where a shell command word can start: the beginning, after a separator or a
+# subshell opener, or after sudo / xargs and their flags.
+_AT_CMD = r"(?:^|[;&|(`\n]|\$\()\s*(?:sudo\s+(?:-\S+\s+)*)?(?:xargs\s+(?:-\S+\s+)*)?"
+# The rest of one simple command.
+_REST = r"[^;&|\n]*"
+
+_DESTRUCTIVE_COMMANDS: Final[tuple[re.Pattern[str], ...]] = tuple(
+    re.compile(p) for p in (
+        _AT_CMD + r"(?:\S*/)?(?:rm|rmdir|unlink|shred|wipefs|truncate|mkfs(?:\.\w+)?)\b" + _REST,
+        r"\bfind\b" + r"[^;&|\n]*\s-delete\b",
+        r"\bdd\b[^;&|\n]*\bof=" + _REST,
+        r"\bgit\s+push\b[^;&|\n]*\s(?:--force(?:-with-lease)?|-f)\b" + _REST,
+        r"\bgit\s+reset\b[^;&|\n]*\s--hard\b" + _REST,
+        r"\bgit\s+clean\b[^;&|\n]*\s-\w*f" + _REST,
+        r"\bgit\s+branch\b[^;&|\n]*\s(?:-[dD]|--delete)\b" + _REST,
+        r"\b(?:kubectl|oc)\b[^;&|\n]*\sdelete\b" + _REST,
+        r"\b(?:podman|docker)\b[^;&|\n]*\s(?:rm|rmi|prune)\b" + _REST,
+        r"(?i)\bdrop\s+(?:table|database|schema|index|view)\b" + _REST,
+        r"(?i)\btruncate\s+table\b" + _REST,
+        r"(?i)\bdelete\s+from\b" + _REST,
+        r"(?i)\bupdate\s+\S+\s+set\b" + _REST,
+        r"\bos\.(?:remove|unlink|rmdir|removedirs)\s*\(" + _REST,
+        r"\bshutil\.rmtree\s*\(" + _REST,
+        r"\.(?:unlink|rmdir)\s*\(" + _REST,
+    )
+)
+
+
+def _command_text(target: str, args: object) -> str:
+    """What an exec skill is about to run: ``cmd``, ``argv`` or ``code``."""
+    if not isinstance(args, dict):
+        return ""
+    if target == "python_exec":
+        return str(args.get("code") or "")
+    argv = args.get("argv")
+    if isinstance(argv, list) and argv:
+        return " ".join(str(a) for a in argv)
+    return str(args.get("cmd") or "")
+
+
+def destructive_evidence(
+    kind: str, target: str, args: object = None, manifest: object = None,
+) -> str:
+    """Why this call deletes or overwrites data, or ``""`` when it does not.
+
+    The evidence is what the question shows the operator: the matched command
+    (``rm -rf build/``), or the function and why it counts."""
+    name = str(target or "")
+    if kind == "skill" and name in _EXEC_SKILLS:
+        text = _command_text(name, args)
+        for pattern in _DESTRUCTIVE_COMMANDS:
+            m = pattern.search(text)
+            if m:
+                found = m.group(0).strip().lstrip(";&|(`$").strip()
+                return found if len(found) <= 120 else found[:117] + "..."
+    tool = name.partition(".")[2] if kind == "mcp" else name
+    if kind == "mcp":
+        declared_tools = getattr(manifest, "destructive_tools", None) if manifest is not None else None
+        if isinstance(declared_tools, list) and tool in declared_tools:
+            return f"{name} (declared destructive by its manifest)"
+    else:
+        declared = _declared(manifest, "destructive")
+        if declared is True:
+            return f"{name} (declared destructive by its manifest)"
+        if declared is False:
+            return ""
+    if any(m in tool.lower() for m in _DESTRUCTIVE_NAME_MARKERS):
+        return f"{name} (its name says it deletes)"
+    return ""
 
 
 # ---------------------------------------------------------------------------

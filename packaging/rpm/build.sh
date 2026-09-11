@@ -59,9 +59,15 @@ echo "== rpm $RPM_VERSION-$RPM_RELEASE$DIST =="
 rpmbuild -ba "$TOP/SPECS/acc.spec" --define "_topdir $TOP" --define "acc_version $RPM_VERSION" --define "acc_wheel_version $VERSION" --define "acc_release $RPM_RELEASE" --define "acc_python $PY" --define "acc_python_pkg $PKG" --define "dist $DIST"
 echo "== built =="
 find "$TOP/RPMS" "$TOP/SRPMS" -name "*.rpm" -exec ls -l {} \;
-RPM="$(find "$TOP/RPMS" -name "acc-$RPM_VERSION-*.rpm" ! -name "*.src.rpm" | head -1)"
+# Two packages now: `acc-runtime` is what runs (the venv, the commands, the data
+# trees) and `acc` is the host layer on top.  Show both -- a listing of one of
+# them looks like half the package went missing.
 echo "== contents =="
-rpm -qpl "$RPM" | grep -E "^/usr/bin/|^/etc/acc|^/var/lib/acc|^/usr/lib/systemd|^/usr/share/acc$" | sort
+for RPM in $(find "$TOP/RPMS" -name "acc-$RPM_VERSION-*.rpm" -o -name "acc-runtime-$RPM_VERSION-*.rpm"              | grep -v "\.src\.rpm$" | sort); do
+    echo "--- $(basename "$RPM")"
+    rpm -qpl "$RPM" | grep -E "^/usr/bin/|^/etc/acc|^/var/lib/acc|^/usr/lib/systemd|^/usr/share/acc$|^/usr/lib/acc/venv$" | sort
+done
+RPM="$(find "$TOP/RPMS" -name "acc-$RPM_VERSION-*.rpm" ! -name "*.src.rpm" | head -1)"
 rpm -qp --scripts "$RPM" | grep -E "usermod|enable-linger|systemctl" || true
 
 if [[ -n "${MOCK_ROOT:-}" ]]; then

@@ -64,6 +64,43 @@ https://sat1.ic3net.internal/pulp/content/ic3net_internal/Library/custom/ACC/acc
 Clients consume it through a `.repo` file pointing at that URL; the script prints
 one.
 
+## Signing — every package, with its channel's key
+
+Each channel has **one** GPG signing key, made once by lab-gitops
+`ansible/satellite-content/playbooks/channels.yml`, which keeps the private half
+**only in OpenBao** (`lab/satellite/channels/<org>/<product>/<repo>`) and
+registers the public half as the channel's content credential. A rebuilt lab gets
+the same key back, so hosts that trust a channel keep trusting it.
+
+The release pipeline signs both packages before it publishes them:
+
+```bash
+export BAO_TOKEN=…                                  # never committed, never echoed
+packaging/rpm/release-pipeline.sh v0.16.0           # … verify → SIGN → fetch → publish → prove
+packaging/rpm/sign-rpms.sh ic3net_internal/ACC/acc-spearhead lighthouse:<dir>   # on its own
+```
+
+`sign-rpms.sh` reads the key from the vault into memory and pipes it over ssh into
+a signer container on the build host that has **no network** and keeps its keyring
+on a **tmpfs**: the key never touches a disk and cannot leave. Every signature is
+then checked against the channel's **public** key alone.
+
+`publish-satellite.sh` refuses an unsigned package into any channel that carries
+a key: a *subscribed* host is handed `gpgcheck=1` for such a channel, so an
+unsigned package there is an install failure on every one of them. It checks on
+the Satellite, against the key the channel itself serves. A channel with no key
+yet still takes packages, which is the only thing `--unsigned` is for.
+
+A client verifies with nothing but what the Satellite serves:
+
+```bash
+sudo rpm --import https://sat1.ic3net.internal/katello/api/v2/repositories/<id>/gpg_key_content
+# then gpgcheck=1 in the .repo
+```
+
+Signed repository metadata (`repo_gpgcheck=1`) is not available: `hammer` exposes
+no metadata-signing option for custom yum repositories on this Satellite.
+
 ## The mirror on acc1 — installing without a Satellite subscription
 
 `rpm.ic3net.internal` (acc1) serves a copy of the same channel, so a host can

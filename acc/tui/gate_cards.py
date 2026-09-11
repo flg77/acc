@@ -25,6 +25,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from acc.question import Question
+
 
 @dataclass(frozen=True)
 class GateCard:
@@ -44,6 +46,14 @@ class GateCard:
     category: str = ""       # SYSTEM-ACCESS / ACTS-ON-BEHALF / ESCALATION / CRITICAL
     target: str = ""         # skill_id or server.tool for a capability gate
     submitted_at_ms: int = 0
+    # `20260911-question-envelope` -- the typed question the row carries.
+    question: Question | None = None
+
+
+def is_destructive(card: GateCard) -> bool:
+    """A request that deletes or overwrites data: answered on its own, in the
+    panel — never batched, granted for the task, or approved by "yes" / /allow."""
+    return card.question is not None and card.question.destructive
 
 
 @dataclass(frozen=True)
@@ -79,10 +89,14 @@ _CATEGORY_COPY: dict[str, tuple[str, str]] = {
         "CRITICAL-risk capability",
         "runs once",
     ),
+    "DESTRUCTIVE": (
+        "deletes or overwrites data",
+        "runs once; asked again every time",
+    ),
 }
 _HEAD_RE = re.compile(
     (
-        r"^(CRITICAL|ESCALATION|SYSTEM-ACCESS\+ACTS-ON-BEHALF|SYSTEM-ACCESS|ACTS-ON-BEHALF)"
+        r"^(CRITICAL|DESTRUCTIVE|ESCALATION|SYSTEM-ACCESS\+ACTS-ON-BEHALF|SYSTEM-ACCESS|ACTS-ON-BEHALF)"
         r"\s+(skill|mcp)\s+(\S+):\s*(.*)"
     ),
     re.DOTALL,
@@ -230,6 +244,7 @@ def pending_gates(
             category=category,
             target=target,
             submitted_at_ms=int(item.get("submitted_at_ms") or 0),
+            question=Question.from_dict(item.get("question")),
         ))
     if target_role:
         cards.sort(key=lambda c: 0 if c.role == target_role else 1)
@@ -273,6 +288,9 @@ def request_options(cards: list[GateCard]) -> list[RequestOption]:
             RequestOption("2", "reject all", False),
         ]
     c = cards[0]
+    if c.question is not None:
+        # The agent's own answers.  None of them is a task grant.
+        return [RequestOption(o.key, o.label, o.proceeds) for o in c.question.options]
     if c.category == "ESCALATION":
         return [
             RequestOption("1", "allow for this task", True, grant=True),

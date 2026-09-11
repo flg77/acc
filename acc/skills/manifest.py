@@ -101,6 +101,10 @@ class SkillManifest(BaseModel):
     # Optional on purpose: None means "undeclared -> name-table default".
     system_access: bool | None = None
     acts_on_behalf: bool | None = None
+    # `20260911-question-envelope` -- the skill deletes or overwrites data, so
+    # every call is asked as a question (all modes but PLAN).  None = the name
+    # decides; an exec skill's command text is checked whatever this says.
+    destructive: bool | None = None
 
     # Operator-facing metadata
     description: str = ""

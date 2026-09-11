@@ -11,11 +11,44 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-09-11
+
 ### Added
 
-### Changed
+- **A destructive call is asked as a question, in the Prompt pane**
+  (`20260911-question-envelope`, UX-02; operator answer 2026-09-11: *file
+  deletion, data modification … are double checked as questions to the user*).
+  An agent can now ask the operator a typed question: the text, the options, and
+  for each one whether the action runs. It rides on the oversight row, so
+  finality, the two-approver rule and the way a decision reaches a worker are
+  unchanged; the chosen option comes back as `answer` on the same
+  OVERSIGHT_DECISION, and an answer that does not fit the decision is refused.
+  The first thing it asks: a call that **deletes or overwrites data**. That is
+  judged by an exec skill's command (`rm`, `find -delete`, `git push --force`,
+  `kubectl delete`, `DROP TABLE`, `shutil.rmtree`, …), a manifest's
+  `destructive` / `destructive_tools`, or the name. Such a call is asked in
+  every mode but PLAN — in AUTO too — at HIGH at least, and refused outright
+  where there is no queue to ask. The question names what will be destroyed and
+  is answered **on its own** in the decision panel: never batched, never covered
+  by "allow for this task", never approved by "yes" or `/allow`, and always a
+  double press. A call a destructive or CRITICAL gate let through is marked
+  **critical** in the transcript and the session trace, and the answered
+  question is journalled with who chose what. A gate that stops waiting now
+  expires its row, so a late approval is refused instead of recorded for a call
+  that never ran.
 
-### Fixed
+- **Every package is signed with its channel's key** (repo signing, operator
+  answer 2026-09-11: *a must have*). Each channel has one GPG key, created once
+  by lab-gitops `ansible/satellite-content/playbooks/channels.yml` and kept only
+  in OpenBao, so a rebuilt lab gets the same key back and hosts keep trusting
+  the channel. `packaging/rpm/sign-rpms.sh` signs on the build host inside a
+  signer container with **no network** and its keyring on a **tmpfs** — the
+  private key is piped in, never written to a disk, and every signature is
+  checked against the channel's public key alone. The release pipeline signs
+  both packages before publishing. `publish-satellite.sh` **refuses an unsigned
+  package into a channel that carries a key**, checking against the key the
+  channel itself serves, because a subscribed host is handed `gpgcheck=1` there.
+  `--unsigned` exists only for a channel with no key yet.
 
 ## [0.16.0] — 2026-09-10
 

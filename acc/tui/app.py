@@ -642,6 +642,9 @@ class ACCTUIApp(App):
             "ts": _time.time(),
             "collective_id": cid,
         }
+        answer = getattr(message, "answer", "")
+        if answer:
+            payload["answer"] = answer
         try:
             await obs.publish(subject, payload)
             logger.info(

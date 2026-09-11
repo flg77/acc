@@ -1263,10 +1263,15 @@ class _OversightAction(Message):
             App handler skips publishing in that case.
         reason: Optional free-text rejection reason (Phase 1.3 keeps it
             empty; future TUI prompt can populate it).
+        answer: The key of the option chosen on a row that asked a question
+            (`20260911-question-envelope`); empty for a plain approval.
     """
 
-    def __init__(self, action: str, oversight_id: str = "", reason: str = "") -> None:
+    def __init__(
+        self, action: str, oversight_id: str = "", reason: str = "", answer: str = "",
+    ) -> None:
         super().__init__()
         self.action = action  # "approve" | "reject"
         self.oversight_id = oversight_id
         self.reason = reason
+        self.answer = answer

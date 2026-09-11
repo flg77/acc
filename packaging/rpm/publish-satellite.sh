@@ -46,6 +46,43 @@ fi
 echo "== $NAME -> $SAT_HOST $SAT_ORG / $SAT_PRODUCT / $SAT_REPO =="
 ssh "$SAT_HOST" "mkdir -p $SAT_TMP"
 scp -q "$RPM" "$SAT_HOST:$SAT_TMP/$NAME"
+
+# A channel that carries a signing key only takes packages signed with it.  A
+# SUBSCRIBED host is handed gpgcheck=1 for such a channel, so an unsigned package
+# there is an install failure on every one of them.  The check runs on the
+# Satellite, against the public key the channel itself serves -- the same key a
+# client verifies with.  A channel with no key yet takes the package as it is.
+verdict="$(ssh "$SAT_HOST" "sudo bash -s -- '$SAT_ORG' '$SAT_PRODUCT' '$SAT_REPO' '$SAT_TMP/$NAME'" <<'REMOTE'
+set -euo pipefail
+org="$1"; product="$2"; repo="$3"; file="$4"
+cred_id="$(hammer --output json repository info --organization-label "$org" \
+    --product "$product" --name "$repo" \
+  | python3 -c 'import json,sys; g=json.load(sys.stdin).get("GPG Key") or {}; print(g.get("Id","") if isinstance(g,dict) else "")')"
+if [ -z "$cred_id" ]; then echo "NO-KEY"; exit 0; fi
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+hammer --output json content-credentials info --id "$cred_id" --organization-label "$org" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["Content"])' > "$tmp/channel.asc"
+mkdir -p "$tmp/db"
+rpmkeys --dbpath "$tmp/db" --import "$tmp/channel.asc"
+out="$(rpmkeys --dbpath "$tmp/db" --checksig "$file" 2>&1 || true)"
+case "$out" in
+    *"signatures OK"*) echo "SIGNED-OK" ;;
+    *) echo "UNSIGNED ${out#*: }" ;;
+esac
+REMOTE
+)"
+case "$verdict" in
+    NO-KEY)
+        echo "   the channel carries no signing key yet -- accepted as it is" ;;
+    SIGNED-OK)
+        echo "   signed with the channel's key -- verified against the key the channel serves" ;;
+    *)
+        ssh "$SAT_HOST" "rm -f $SAT_TMP/$NAME"
+        echo "REFUSING: $NAME does not verify against the signing key of $SAT_PRODUCT/$SAT_REPO." >&2
+        echo "          (${verdict#UNSIGNED })" >&2
+        echo "          Sign it first: packaging/rpm/sign-rpms.sh $SAT_ORG/$SAT_PRODUCT/$SAT_REPO <host>:<dir>" >&2
+        exit 1 ;;
+esac
 ssh "$SAT_HOST" "$HAMMER repository upload-content \
     --organization-label '$SAT_ORG' --product '$SAT_PRODUCT' --name '$SAT_REPO' \
     --path '$SAT_TMP/$NAME'"

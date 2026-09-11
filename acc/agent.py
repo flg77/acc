@@ -1420,9 +1420,24 @@ class Agent:
                 p = o.parsed
                 out = "" if o.result is None else json.dumps(
                     o.result, default=str)[:4000]
+                critical = bool(getattr(o, "critical", False))
                 tracelog.log_tool_call(
                     session_id, task_id=task_id, kind=p.kind, target=p.target,
-                    args=p.args, ok=o.ok, output=out, error=o.error)
+                    args=p.args, ok=o.ok, output=out, error=o.error,
+                    **({"critical": True} if critical else {}))
+                # `20260911-question-envelope` -- a question the gate asked is
+                # journalled with how it was answered, and by whom.
+                q = getattr(o, "question", None) or {}
+                if q.get("oversight_id"):
+                    tracelog.log_oversight(
+                        session_id, task_id=task_id,
+                        oversight_id=str(q["oversight_id"]),
+                        status=str(q.get("status", "")),
+                        approver_id=str(q.get("approver_id", "")),
+                        kind="question", summary=str(q.get("text", "")),
+                        answer=str(q.get("answer", "")),
+                        evidence=str(q.get("evidence", "")),
+                        target=f"{p.kind}:{p.target}", critical=critical)
 
             # Cat A (constitutional, ENFORCED): a blocked LLM output or an
             # A-017/A-018 tool refusal is a Cat-A block; else allow.
@@ -1647,6 +1662,8 @@ class Agent:
                             "status": it.status,
                             "approver_id": it.approver_id,
                             "outcome": it.outcome,
+                            # the option the operator chose on a row that asked
+                            **({"answer": it.answer} if getattr(it, "answer", "") else {}),
                         })
                 except Exception:
                     logger.exception("oversight: recent serialisation failed")
@@ -1671,6 +1688,8 @@ class Agent:
                                  "approver_tier": str(a.get("approver_tier", ""))}
                                 for a in (getattr(it, "approvals", None) or []) if isinstance(a, dict)
                             ],
+                            # `20260911-question-envelope` -- what the agent asks
+                            **({"question": it.question} if getattr(it, "question", None) else {}),
                         })
                 except Exception:
                     logger.exception("oversight: pending serialisation failed")
@@ -2125,6 +2144,8 @@ class Agent:
                         "target": o.parsed.target,
                         "ok": o.ok,
                         "error": o.error,
+                        # a destructive / CRITICAL call a gate let through
+                        **({"critical": True} if getattr(o, "critical", False) else {}),
                     }
                     for o in outcomes
                 ],
@@ -3564,6 +3585,10 @@ class Agent:
             approver = payload.get("approver_id", "tui:anonymous")
             approver_tier = str(payload.get("approver_tier", "") or "")
             reason = payload.get("reason", "")
+            # `20260911-question-envelope` -- the option chosen on a row that
+            # asked a question; the queue refuses one that does not fit.
+            answer = str(payload.get("answer", "") or "")
+            answer_kw = {"answer": answer} if answer else {}
 
             if not oversight_id:
                 logger.warning("oversight: decision payload missing oversight_id")
@@ -3577,7 +3602,7 @@ class Agent:
                     # acc-prompt panel; it is kept on their approval record so a
                     # two-approver row carries a reason per signature.
                     if not await queue.approve(
-                        oversight_id, approver, approver_tier, note=reason,
+                        oversight_id, approver, approver_tier, note=reason, **answer_kw,
                     ):
                         # Refused, or still waiting for another approver: the
                         # row was already decided the other way (or expired /
@@ -3600,7 +3625,7 @@ class Agent:
                         approver_tier=approver_tier, approvals=approvals,
                     )
                 elif decision == "REJECT":
-                    if not await queue.reject(oversight_id, approver, reason):
+                    if not await queue.reject(oversight_id, approver, reason, **answer_kw):
                         return
                     # Reject path — drop the cached proposal so it
                     # can't be re-dispatched on a future request with

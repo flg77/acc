@@ -120,6 +120,13 @@ class InvocationOutcome:
     ok: bool = False
     result: dict[str, Any] | None = None
     error: str = ""
+    # `20260911-question-envelope` -- the call went through a destructive or
+    # CRITICAL gate and was let through: a "critical function", marked in the
+    # transcript and the session trace so they can be tracked.
+    critical: bool = False
+    # The question the gate asked and how it ended (oversight_id, text,
+    # evidence, status, answer, approver_id).  Empty when nothing was asked.
+    question: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +364,10 @@ async def _dispatch_one(
     ``invoke_mcp_tool`` regardless of mode — modes only adjust what
     HUMAN review applies to, not what the constitutional engine
     decides.
+
+    `20260911-question-envelope` — a call that deletes or overwrites data
+    (:func:`acc.operating_modes.destructive_evidence`) is asked as a question
+    in every mode that reaches here, and refused when there is no queue to ask.
     """
     if inv.args_error:
         logger.warning(
@@ -370,6 +381,7 @@ async def _dispatch_one(
     # and mirrors what invoke_skill / invoke_mcp_tool would do anyway.
     manifest = _resolve_manifest(inv, core)
     from acc.operating_modes import (  # noqa: PLC0415
+        destructive_evidence,
         gate_categories,
         should_gate_invocation,
     )
@@ -391,6 +403,27 @@ async def _dispatch_one(
         logger.warning("capability_dispatch: %s (task %s)", reason, task_id)
         return InvocationOutcome(parsed=inv, ok=False, error=reason)
 
+    # A destructive call is a question for the operator, whatever the mode
+    # would otherwise do with it -- and with nobody to ask, it does not run.
+    # A call the capability's own sandbox refuses (denied_tools) is never asked
+    # about: no answer could make it run, and the guard below refuses it.
+    question = None
+    record: dict[str, Any] = {}
+    evidence = destructive_evidence(inv.kind, inv.target, inv.args, manifest)
+    if evidence and _sandboxed(inv, manifest, role, core):
+        evidence = ""
+    if evidence:
+        if oversight_queue is None:
+            reason = (
+                f"refused: {inv.kind} {inv.target!r} deletes or overwrites data "
+                f"({evidence}) and there is no oversight queue to ask"
+            )
+            logger.warning("capability_dispatch: %s (task %s)", reason, task_id)
+            return InvocationOutcome(parsed=inv, ok=False, error=reason)
+        from acc.question import destructive_confirm  # noqa: PLC0415
+        question = destructive_confirm(inv.kind, inv.target, evidence)
+    critical_fn = question is not None or str(risk_level).upper() == "CRITICAL"
+
     # 1.2b -- escalation.  An invocation the role-side A-017 / A-018 guard
     # would refuse (not in allowed_skills / allowed_mcps, a missing
     # requires_action, or above the role's risk ceiling) becomes a question
@@ -404,24 +437,25 @@ async def _dispatch_one(
         if denial:
             gate_outcome = await _gate_on_oversight(
                 inv, manifest, role, oversight_queue, task_id,
-                escalation=denial,
+                escalation=denial, question=question, record=record,
             )
             if gate_outcome is not None:
+                gate_outcome.question = record
                 return gate_outcome
             role = _role_with_grant(role, inv, manifest)
             escalated = True
 
     # 1.2 -- system access / acting on the operator's behalf are asked in
     # AUTO and ACCEPT_EDITS regardless of risk_level.  An approved escalation
-    # already covered this exact call; don't ask twice.
+    # already covered this exact call (and asked its question); don't ask twice.
     categories = gate_categories(inv.kind, inv.target, manifest)
     needs_gate = (
         not escalated
         and oversight_queue is not None
-        and should_gate_invocation(
+        and (question is not None or should_gate_invocation(
             operating_mode, kind=inv.kind, target=inv.target,
             risk_level=str(risk_level), categories=categories,
-        )
+        ))
     )
     if needs_gate:
         # In AUTO mode we still need a manifest to gate (CRITICAL is
@@ -434,21 +468,28 @@ async def _dispatch_one(
         )
         gate_outcome = await _gate_on_oversight(
             inv, gate_manifest, role, oversight_queue, task_id,
-            categories=categories,
+            categories=categories, question=question, record=record,
         )
         if gate_outcome is not None:
             # Either rejected or timed out — surface and skip dispatch.
+            gate_outcome.question = record
             return gate_outcome
         # APPROVED — fall through to normal dispatch below.
 
+    # A call a destructive or CRITICAL gate let through is a critical function.
+    critical = critical_fn and (escalated or needs_gate)
     try:
         if inv.kind == "skill":
             result = await core.invoke_skill(inv.target, inv.args, role)
-            return InvocationOutcome(parsed=inv, ok=True, result=result)
+            return InvocationOutcome(
+                parsed=inv, ok=True, result=result, critical=critical, question=record,
+            )
         if inv.kind == "mcp":
             server_id, _, tool_name = inv.target.partition(".")
             result = await core.invoke_mcp_tool(server_id, tool_name, inv.args, role)
-            return InvocationOutcome(parsed=inv, ok=True, result=result)
+            return InvocationOutcome(
+                parsed=inv, ok=True, result=result, critical=critical, question=record,
+            )
         return InvocationOutcome(
             parsed=inv,
             ok=False,
@@ -465,7 +506,9 @@ async def _dispatch_one(
             "capability_dispatch: %s dispatch failed for %s: %s",
             inv.kind, inv.target, err,
         )
-        return InvocationOutcome(parsed=inv, ok=False, error=err)
+        return InvocationOutcome(
+            parsed=inv, ok=False, error=err, critical=critical, question=record,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -532,15 +575,14 @@ _ROLE_SIDE_DENIALS: tuple[str, ...] = (
 )
 
 
-def _guard_denial(
+def _guard_reason(
     inv: ParsedInvocation,
     manifest: "Any",
     role: "RoleDefinitionConfig",
     core: "CognitiveCore",
 ) -> str:
-    """The reason A-017 / A-018 would refuse *inv* on the role's side, or
-    ``""`` when it passes, there is no enforcing guard / manifest, or the
-    refusal is the manifest's own sandbox (never escalated)."""
+    """Why A-017 / A-018 would refuse *inv*, or ``""`` when it passes or there
+    is no enforcing guard / manifest."""
     guard = getattr(core, "_capability_guard", None)
     if guard is None or manifest is None:
         return ""
@@ -556,8 +598,32 @@ def _guard_denial(
         return ""
     if getattr(decision, "allowed", True):
         return ""
-    reason = str(getattr(decision, "reason", "") or "")
+    return str(getattr(decision, "reason", "") or "") or "refused"
+
+
+def _guard_denial(
+    inv: ParsedInvocation,
+    manifest: "Any",
+    role: "RoleDefinitionConfig",
+    core: "CognitiveCore",
+) -> str:
+    """The reason A-017 / A-018 would refuse *inv* on the role's side, or
+    ``""`` when it passes, there is no enforcing guard / manifest, or the
+    refusal is the manifest's own sandbox (never escalated)."""
+    reason = _guard_reason(inv, manifest, role, core)
     return reason if any(m in reason for m in _ROLE_SIDE_DENIALS) else ""
+
+
+def _sandboxed(
+    inv: ParsedInvocation,
+    manifest: "Any",
+    role: "RoleDefinitionConfig",
+    core: "CognitiveCore",
+) -> bool:
+    """The capability's own sandbox (``denied_tools`` / ``allowed_tools``)
+    refuses *inv* -- a refusal no approval and no escalation can lift."""
+    reason = _guard_reason(inv, manifest, role, core)
+    return bool(reason) and not any(m in reason for m in _ROLE_SIDE_DENIALS)
 
 
 def _role_with_grant(
@@ -599,8 +665,14 @@ async def _gate_on_oversight(
     *,
     categories: frozenset[str] = frozenset(),
     escalation: str = "",
+    question: "Any | None" = None,
+    record: "dict[str, Any] | None" = None,
 ) -> "InvocationOutcome | None":
     """Submit an oversight item and block on its resolution.
+
+    *question* (an :class:`acc.question.Question`) rides on the row; how it
+    ended is written into *record* (oversight_id, text, evidence, status,
+    answer, approver_id) for the outcome and the session trace.
 
     Returns:
         ``None`` when the operator APPROVED — caller proceeds with
@@ -610,29 +682,41 @@ async def _gate_on_oversight(
         ``error`` field for REJECT / EXPIRED / queue failure — caller
         surfaces this directly without dispatching the adapter.
     """
+    destructive = bool(getattr(question, "destructive", False))
     summary = _build_oversight_summary(
-        inv, manifest, categories, escalation=escalation,
+        inv, manifest, categories, escalation=escalation, destructive=destructive,
     )
     role_label = getattr(role, "domain_id", "") or "agent"
     # A category gate or an escalation carries the manifest's own risk (HIGH
     # for shell_exec, MEDIUM for telegram_send); every other gate keeps the
-    # historical CRITICAL label.
+    # historical CRITICAL label.  A destructive call is at least HIGH, whatever
+    # its manifest says -- deleting data is not a LOW-risk act.
     manifest_risk = str(getattr(manifest, "risk_level", "") or "").upper()
     risk_level = (
         manifest_risk if (categories or escalation) and manifest_risk else "CRITICAL"
     )
+    if destructive:
+        risk_level = manifest_risk if manifest_risk in ("HIGH", "CRITICAL") else "HIGH"
 
+    record = record if record is not None else {}
+    submit_kwargs: dict[str, Any] = {}
+    if question is not None:
+        submit_kwargs["question"] = question.to_dict()
+        record.update(text=question.text, evidence=question.evidence)
     try:
         oversight_id = await queue.submit(
             task_id=task_id,
             risk_level=risk_level,
             summary=summary,
             role_id=role_label,
+            **submit_kwargs,
         )
     except Exception as exc:
         err = f"oversight_submit_failed: {type(exc).__name__}: {exc}"
         logger.warning("capability_dispatch: %s — %s", inv.raw, err)
         return InvocationOutcome(parsed=inv, ok=False, error=err)
+    if question is not None:
+        record["oversight_id"] = oversight_id
 
     # Headless / unattended: no reviewer will ever resolve this, so blocking
     # up to oversight_timeout_s only wedges the agent's serial task loop before
@@ -652,6 +736,8 @@ async def _gate_on_oversight(
             "oversight_id=%s kind=%s target=%s",
             oversight_id, inv.kind, inv.target,
         )
+        if question is not None:
+            record.update(status="REJECTED", approver_id="headless-auto")
         return InvocationOutcome(
             parsed=inv,
             ok=False,
@@ -682,6 +768,26 @@ async def _gate_on_oversight(
         )
 
     status = getattr(item, "status", "PENDING")
+    if status == "PENDING":
+        # The wait hit its cap and the call is refused, so the row must not
+        # stay approvable: expire it.  If a decision landed between the last
+        # poll and now, that decision stands and is honoured instead.
+        expire = getattr(queue, "expire", None)
+        if expire is not None:
+            try:
+                if await expire(oversight_id):
+                    status = "EXPIRED"
+                else:
+                    item = await queue.wait_for_decision(oversight_id, timeout_s=0) or item
+                    status = getattr(item, "status", "PENDING")
+            except Exception:  # noqa: BLE001 -- the call is refused either way
+                logger.debug("capability_dispatch: expiring %s failed", oversight_id, exc_info=True)
+    if question is not None:
+        record.update(
+            status=status,
+            answer=str(getattr(item, "answer", "") or ""),
+            approver_id=str(getattr(item, "approver_id", "") or ""),
+        )
     if status == "APPROVED":
         logger.info(
             "capability_dispatch: oversight APPROVED oversight_id=%s — proceeding",
@@ -701,8 +807,8 @@ async def _gate_on_oversight(
             ok=False,
             error=f"oversight_expired: id={oversight_id} timed out before approval",
         )
-    # Still PENDING after wait_for_decision returned — the wait hit
-    # the timeout cap.  Treat as expired from the dispatcher's POV.
+    # Still PENDING and it could not be expired (a queue without expire(), or
+    # the store failed) — refused all the same.
     return InvocationOutcome(
         parsed=inv,
         ok=False,
@@ -716,6 +822,7 @@ def _build_oversight_summary(
     categories: frozenset[str] = frozenset(),
     *,
     escalation: str = "",
+    destructive: bool = False,
 ) -> str:
     """One-line description shown to the human approver in the TUI.
 
@@ -733,12 +840,17 @@ def _build_oversight_summary(
 
         ESCALATION skill shell_exec: Run a process ...
             not granted: skill 'shell_exec' not in role.allowed_skills (...)
+
+    A destructive call leads with DESTRUCTIVE, whatever else applies — the
+    row's question says what will be destroyed.
     """
     purpose = getattr(manifest, "purpose", "")
     args_repr = json.dumps(inv.args, separators=(",", ":"), default=str)
     if len(args_repr) > 200:
         args_repr = args_repr[:197] + "..."
-    if escalation:
+    if destructive:
+        tag = "DESTRUCTIVE"
+    elif escalation:
         tag = "ESCALATION"
     elif categories:
         tag = "+".join(c.upper().replace("_", "-") for c in sorted(categories))

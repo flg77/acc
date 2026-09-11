@@ -95,6 +95,11 @@ class OversightItem:
     # (HG-40.1 §2.5); ``approvals`` records each one (approver, tier, ms).
     required_approvals: int = 1
     approvals: list = field(default_factory=list)
+    # `20260911-question-envelope` -- what the agent asked (an
+    # ``acc.question.Question`` as a dict; empty = a plain approval) and the key
+    # of the option the operator chose.
+    question: dict = field(default_factory=dict)
+    answer: str = ""
 
     @property
     def approvals_needed(self) -> int:
@@ -159,6 +164,7 @@ class HumanOversightQueue:
         role_id: str,
         oversight_id: str | None = None,
         required_approvals: int = 1,
+        question: dict | None = None,
     ) -> str:
         """Submit a task to the oversight queue.
 
@@ -171,6 +177,8 @@ class HumanOversightQueue:
                 several agents enqueue from one bus event (``OVERSIGHT_SUBMIT``
                 reaches every agent) must share an id, or the queue shows one
                 row per agent.  An id that already exists is left untouched.
+            question: What the agent asks (``Question.to_dict()``); the
+                decision then carries the chosen option as ``answer``.
 
         Returns:
             ``oversight_id`` — UUID string identifying this oversight request.
@@ -191,6 +199,7 @@ class HumanOversightQueue:
             submitted_at_ms=now_ms,
             timeout_ms=now_ms + (self._timeout_s * 1000),
             required_approvals=max(1, int(required_approvals or 1)),
+            question=dict(question or {}),
         )
 
         await self._save(item)
@@ -275,9 +284,27 @@ class HumanOversightQueue:
         decided.sort(key=lambda it: it.resolved_at_ms, reverse=True)
         return decided[:limit]
 
+    def _answer_refused(self, item: OversightItem, answer: str, *, proceeds: bool) -> bool:
+        """An answer that is not one of the row's options, or whose option
+        does not match the decision it came with, is refused (logged).  No
+        answer is always accepted: the Compliance pane and ``acc-cli`` decide
+        without one."""
+        if not answer:
+            return False
+        from acc.question import Question  # noqa: PLC0415
+        q = Question.from_dict(item.question)
+        option = q.option(answer) if q is not None else None
+        if option is None or option.proceeds is not proceeds:
+            logger.warning(
+                "oversight: %s refused — answer %r is not an option that %s",
+                item.oversight_id, answer, "proceeds" if proceeds else "stops",
+            )
+            return True
+        return False
+
     async def approve(
         self, oversight_id: str, approver_id: str, approver_tier: str = "",
-        note: str = "",
+        note: str = "", answer: str = "",
     ) -> bool:
         """Mark an oversight item as approved.
 
@@ -298,6 +325,9 @@ class HumanOversightQueue:
         (the tier is what the second signature is for).  Every agent applies
         the same decision, so recording is keyed by person, not by call.
 
+        *answer* is the key of the option the operator chose on a row that
+        asked a question; it must be an option that proceeds.
+
         Returns:
             ``True`` when the item is APPROVED after this call (freshly, or
             already), ``False`` when it was refused, not found, or is still
@@ -315,6 +345,8 @@ class HumanOversightQueue:
                 "oversight: approve refused — %s is already %s by %s; the first "
                 "decision stands", oversight_id, item.status, item.approver_id,
             )
+            return False
+        if self._answer_refused(item, answer, proceeds=True):
             return False
         required = max(1, int(item.required_approvals or 1))
         if required > 1:
@@ -354,6 +386,7 @@ class HumanOversightQueue:
             }]
         item.status = "APPROVED"
         item.approver_id = approver_id
+        item.answer = answer
         item.resolved_at_ms = int(time.time() * 1000)
         await self._save(item)
         await self._remove_from_pending(oversight_id)
@@ -365,7 +398,8 @@ class HumanOversightQueue:
         return True
 
     async def reject(
-        self, oversight_id: str, approver_id: str, reason: str = ""
+        self, oversight_id: str, approver_id: str, reason: str = "",
+        answer: str = "",
     ) -> bool:
         """Mark an oversight item as rejected.
 
@@ -376,6 +410,8 @@ class HumanOversightQueue:
             oversight_id: The oversight request ID.
             approver_id:  Identifier of the human reviewer.
             reason:       Optional rejection reason.
+            answer:       The chosen option on a row that asked a question;
+                it must be an option that stops the action.
         """
         item = await self._load(oversight_id)
         if item is None:
@@ -389,9 +425,12 @@ class HumanOversightQueue:
                 "decision stands", oversight_id, item.status, item.approver_id,
             )
             return False
+        if self._answer_refused(item, answer, proceeds=False):
+            return False
         item.status = "REJECTED"
         item.approver_id = approver_id
         item.rejection_reason = reason
+        item.answer = answer
         item.resolved_at_ms = int(time.time() * 1000)
         await self._save(item)
         await self._remove_from_pending(oversight_id)
@@ -436,6 +475,28 @@ class HumanOversightQueue:
                 )
 
         return expired
+
+    async def expire(self, oversight_id: str) -> bool:
+        """Expire one row the dispatcher stopped waiting on.
+
+        A gate that timed out has been refused -- the call did not run -- so
+        its row must not stay approvable: a late approval would be recorded as
+        the approval of a call that never happened.  Only a PENDING row is
+        expired; ``False`` when it was decided in the meantime (the caller
+        re-reads it) or is gone."""
+        item = await self._load(oversight_id)
+        if item is None or item.status != "PENDING":
+            return False
+        item.status = "EXPIRED"
+        item.resolved_at_ms = int(time.time() * 1000)
+        await self._save(item)
+        await self._remove_from_pending(oversight_id)
+        await self._push_decided(oversight_id)
+        logger.warning(
+            "oversight: expired oversight_id=%s task_id=%s — the gate stopped waiting",
+            oversight_id, item.task_id,
+        )
+        return True
 
     async def pending_count(self) -> int:
         """Return count of pending oversight items (for StressIndicators)."""

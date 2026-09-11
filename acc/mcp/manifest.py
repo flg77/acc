@@ -127,6 +127,10 @@ class MCPManifest(BaseModel):
     # read-first server such as google_workspace declares nothing here.
     system_access: bool | None = None
     acts_on_behalf: bool | None = None
+    # `20260911-question-envelope` -- tools that delete or overwrite data, per
+    # tool (a server is rarely destructive as a whole).  A tool not listed
+    # falls back to its name ("files.delete_file").
+    destructive_tools: list[str] = Field(default_factory=list)
 
     # Operator-facing metadata
     description: str = ""

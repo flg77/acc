@@ -940,6 +940,143 @@ ceiling; the proposed consistent form is one explicit, expiring,
 operator-signed widening grant per requester and role, to HIGH and never
 CRITICAL, with the 1.2 gates still asking.
 
+## D-018 — ACC installs as a package, and the internal Satellite is the distribution base
+
+**Status:** LANDED, released **v0.14.4** (2026-09-09, #374) and **v0.15.0**
+(2026-09-09, #379); installed and verified on acc1, mirrored on acc1 for hosts
+that are not subscribed to the Satellite.
+**Date:** 2026-09-09
+**Context:** ACC was a checkout, not an installation. No console script reached
+any PATH, every default was relative to the working directory, and `packaging/`
+held a single file. There was also no channel: a release existed as a tag and
+reached a host only by someone copying a file.
+
+**Decision:** one discovery rule finds where ACC lives on a host — home (the
+operator's configuration), share (the read-only data trees), state (what the
+runtime writes) — with the environment first and the checkout last, printed by
+`acc paths`. ACC ships as an RPM carrying that layout, and **the internal
+Satellite is the distribution base**: every release reaches it through
+`packaging/rpm/release-pipeline.sh`, which builds from the *tag*, refuses a
+package carrying CUDA or missing the layout, publishes, and then upgrades a real
+client from the channel. Semantic versions map onto RPM's Version and Release,
+so a pre-release or a snapshot takes a `0.…` release and sorts *below* the real
+one — a build that is not the clean tagged tree can never impersonate a release
+in the channel.
+
+**Rationale:** a channel that lags the tag is worse than no channel, because a
+host that upgrades from it believes it is current. Making the package step part
+of the release rather than a remembered one is the whole point; the same
+reasoning that made release commits go through a PR.
+
+**Consequences:** the `acc` system user never gains root (no sudoers entry, no
+capabilities, rootless podman under its own sub-uid range). The channel is
+unsigned today, and an online mirror for hosts outside the lab network does not
+exist — both open. The pipeline verifies by asking the package *and* the command
+what version they are: an upgrade once installed 0.14.4 and left a host running
+0.14.3, because bytecode written at runtime and validated against timestamps
+survived it, and `rpm -q` alone called that a success.
+
+## D-019 — The package splits, and exactly one image is built from it
+
+**Status:** LANDED, released **v0.16.0** (2026-09-10, #381).
+**Date:** 2026-09-10
+**Context:** the RHOAI environment runs ACC as containers under an arbitrary UID,
+with no systemd and a web-headed surface. The question was whether the RPM is the
+right *content* for those images, so a host and a pod would share one provenance
+chain. It was measured rather than assumed.
+
+**Decision:** the package splits. `acc-runtime` is what runs — the vendored
+virtualenv, the commands, the data trees — and `acc` adds the host layer on top
+(the configuration, the state root, `acc-deploy`, the unit, the system user) and
+requires it. **Exactly one image is built from the package**, `acc-agent-core`;
+every other image stays source-built. A test asserts that no other Containerfile
+installs it.
+
+**Rationale:** an arbitrary UID already runs the commands and reads the data
+trees, and the operator already mounts its configuration where the RPM puts it —
+so the layouts agree. But three host-shaped things are dead weight or hostile in
+a pod (the unit drives a container runtime inside a container, the system user is
+not the UID the platform assigns, the state root is unwritable by it), and the
+package vendors **one** dependency set while the images each carry a hand-picked
+one. Measured: the agent is 2.25 GB from the package against 1.98 GB from source
+— the same weight class, because it does embeddings — while the web GUI installs
+ten packages and no ML at 487 MB and would become roughly 2.5 GB.
+
+**Consequences:** a release is now two packages, and publishing only one leaves
+`dnf install acc` unresolvable, so the pipeline ships both with the runtime
+first. The size conflict has no small fix: making the package right for every
+image would mean re-modelling in RPM the dependency curation the Containerfiles
+already carry. Moving the embedding stack out of the core dependency set would
+change that arithmetic and stays open.
+
+## D-020 — A decision is answered where the operator already is
+
+**Status:** LANDED, released **v0.16.0** (2026-09-10, #381). Not yet exercised on
+lighthouse.
+**Date:** 2026-09-10
+**Context:** when an agent came back with something the operator had to answer,
+the Prompt pane could show the *choices* and nothing about what they *meant*. So
+the operator left the pane to find out — and leaving is where the flow dies: the
+queue is another screen, the evidence another again, and the decision gets
+answered from memory or postponed.
+
+**Decision:** one request of one step renders as a full decision in the Prompt
+pane — the question, the numbered options, and beside them what the highlighted
+option will actually do, at what risk, with what still outstanding. A reply
+proposing several steps keeps the compact list. Depth for one decision, a list
+for many. `n` types a note onto the decision and `c` asks about it **while it
+stays pending**. An approval carries that note on **that person's** approval
+record, so a two-approver row holds a reason per signature.
+
+**Rationale:** the reason people leave the pane is not knowing what an option
+means, so the fix is to say what it does, not to add another screen. Keeping the
+request PENDING while a question is asked is the sharp edge: previously a doubt
+had to become a dismissal.
+
+**Consequences:** the panel renders choices that are approvals wearing labels,
+because ACC has exactly one decision envelope — the oversight item, answered
+APPROVE or REJECT. An agent still cannot ask "which of these three?". That
+envelope, and evidence in the panel (a diff, a dry-run, the journal line), are
+the backlog's `UX-02` and `UX-03`, and everything richer depends on the first.
+
+
+## D-021 — A channel's signing key is made once and kept in the vault, never with the lab
+
+**Status:** LANDED 2026-09-11 (acc-spearhead #385, lab-gitops #287); verified end
+to end on a throwaway vault and a self-test channel. **Not yet applied to the live
+ACC channel** — creating its key needs the operator's OpenBao token.
+**Date:** 2026-09-11
+**Context:** the operator made repo signing a must-have, and said the lab may be
+recreated. A channel whose signing key is recreated with the lab is a channel
+every host stops trusting. The lab's own supply-chain HOWTO already required
+signing with an org key from a signing service, never a key generated in a build
+workspace — but no such service held one, and the only key in the procedure was a
+throwaway demo key.
+
+**Decision:** each channel gets one GPG key, generated **once** by lab-gitops
+`channels.yml` in a throwaway keyring, stored in OpenBao under
+`lab/satellite/channels/<org>/<product>/<repo>`, and **read back before** its
+public half is registered on the Satellite. Every later run takes the key from
+the vault. Packages are signed at build time by `packaging/rpm/sign-rpms.sh`,
+which pipes the key into a container with no network and a tmpfs keyring and
+checks every signature against the public key alone. `publish-satellite.sh`
+refuses an unsigned package into a channel that carries a key.
+
+**Rationale:** the vault is the one thing that survives a rebuild and already
+governs the lab's secrets, so it is the signing service the HOWTO asked for. The
+read-back ordering exists because a credential whose private half was never kept
+is unrecoverable. The publish gate sits at the Satellite, checked against the key
+the channel itself serves, because a subscribed host is handed `gpgcheck=1` for a
+keyed channel and an unsigned package there fails on every such host.
+
+**Consequences:** a rebuilt Satellite comes back with the same fingerprint — proven
+by deleting the channel and re-running. Rotation is explicit and guarded; it writes
+a new key version and the channel serves both keys until the next rotation, so
+packages signed before it keep verifying. A release now needs an OpenBao token, or
+`--unsigned` into a channel that has no key yet. Signed repository metadata
+(`repo_gpgcheck=1`) is not available: `hammer` exposes no metadata signing for
+custom yum repositories on this Satellite.
+
 ## Future considerations (not yet decided)
 
 * **Multi-collective infusion** — today PR-D writes to a single

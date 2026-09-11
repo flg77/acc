@@ -147,7 +147,8 @@ def test_the_pipeline_builds_the_tag_not_the_working_tree():
 
 def test_the_pipeline_refuses_a_package_carrying_cuda():
     s = _pipeline()
-    assert "grep -c nvidia" in s and "the CPU torch pin did not hold" in s
+    # `/nvidia/` and not `nvidia`: sympy ships files whose NAMES contain it.
+    assert "grep -c /nvidia/" in s and "the CPU torch pin did not hold" in s
 
 
 def test_the_pipeline_checks_the_layout_it_promises():
@@ -169,3 +170,84 @@ def test_the_pipeline_makes_the_client_agree_with_itself():
 def test_the_pipeline_can_say_what_it_would_do_without_doing_it():
     s = _pipeline()
     assert "--dry-run" in s and "would:" in s
+
+
+def test_the_pipeline_ships_both_packages_runtime_first():
+    """The split made this a two-package release.  Publishing only `acc` leaves
+    `dnf install acc` unresolvable, so the pipeline finds, checks and publishes
+    both — and the runtime goes first, so the window between the two uploads has
+    a runtime with no host package rather than the reverse."""
+    s = _pipeline()
+    assert "acc-runtime-$VERSION-$RELEASE_N" in s
+    assert "breaks 'dnf install acc'" in s
+    runtime_publish = s.index('publish-satellite.sh" "$LOCAL_RUNTIME"')
+    host_publish = s.index('publish-satellite.sh" "$LOCAL_RPM"')
+    assert runtime_publish < host_publish, "the runtime must be published first"
+
+
+def test_the_pipeline_checks_each_package_for_what_it_should_hold():
+    """After the split, looking for /usr/bin/acc in the host package finds
+    nothing — which is exactly how the v0.16.0 run failed, correctly."""
+    s = _pipeline()
+    assert "acc-runtime:$path" in s and "acc:$path" in s
+    # the host package must depend on the runtime, or a host installs nothing
+    assert "acc does not require acc-runtime" in s
+    # CUDA would show up in the runtime, which is where the ML stack lives
+    assert "CUDA files in acc-runtime" in s
+
+
+# ---------------------------------------------------------------------------
+# signing, with the channel's key from OpenBao
+# ---------------------------------------------------------------------------
+
+def _rpm_file(name: str) -> str:
+    return (ROOT / "packaging" / "rpm" / name).read_text(encoding="utf-8")
+
+
+def test_the_signer_has_no_network_and_keeps_the_key_on_a_tmpfs():
+    """The private key is piped in over ssh: it must never touch a disk, and the
+    container it lives in must not be able to send it anywhere."""
+    s = _rpm_file("sign-rpms.sh")
+    assert "--network none" in s
+    assert "--tmpfs /gnupg:rw,mode=0700" in s
+    assert "field private_key | ssh" in s          # on stdin, never through a file
+
+
+def test_the_signer_image_holds_nothing_but_the_signing_tools():
+    c = _rpm_file("signer/Containerfile")
+    assert "rpm-sign gnupg2" in c and 'ENTRYPOINT ["/usr/local/bin/acc-sign"]' in c
+
+
+def test_every_signature_is_checked_against_the_public_key_alone():
+    inner = _rpm_file("signer/acc-sign.sh")
+    assert "rpmkeys --dbpath /tmp/rpmdb --import /tmp/channel.pub" in inner
+    assert '*"signatures OK"*' in inner
+
+
+def test_the_signer_refuses_a_key_that_is_not_the_one_the_vault_named():
+    assert "^fpr:::::::::${FPR}:" in _rpm_file("signer/acc-sign.sh")
+
+
+def test_sign_rpms_finds_a_python_that_actually_runs():
+    """On Windows `python3` can be a Microsoft Store stub that prints an install
+    prompt and fails -- the first run picked exactly that."""
+    s = _rpm_file("sign-rpms.sh")
+    assert "for c in python3 python py" in s and "-c 'import json'" in s
+
+
+def test_publishing_refuses_an_unsigned_package_into_a_keyed_channel():
+    """A subscribed host is handed gpgcheck=1 for a channel with a key, so an
+    unsigned package there is an install failure on every such host."""
+    s = _rpm_file("publish-satellite.sh")
+    assert "REFUSING:" in s and "does not verify against the signing key" in s
+    # checked against the key the CHANNEL serves -- the one a client verifies with
+    assert "content-credentials info --id" in s and '["Content"]' in s
+    # a channel with no key yet still takes packages
+    assert '"NO-KEY"' in s or "NO-KEY)" in s
+
+
+def test_the_pipeline_signs_before_it_publishes():
+    s = _pipeline()
+    assert s.index('bash "$HERE/sign-rpms.sh"') < s.index('publish-satellite.sh" "$LOCAL_RUNTIME"')
+    assert "--unsigned) SIGN=0" in s
+    assert "signing needs BAO_TOKEN" in s

@@ -1,0 +1,14 @@
+# packaging/rpm/signer/Containerfile -- the throwaway place an RPM gets signed.
+#
+# Run by packaging/rpm/sign-rpms.sh, always with `--network none` and the keyring
+# on a tmpfs: the channel's private key is piped in on stdin, lives only in that
+# tmpfs for the length of one run, and cannot leave the container because the
+# container has no network.  Nothing else is ever done with this image.
+FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
+
+RUN microdnf install -y --nodocs rpm-sign gnupg2 && microdnf clean all
+
+COPY acc-sign.sh /usr/local/bin/acc-sign
+RUN chmod 0755 /usr/local/bin/acc-sign
+
+ENTRYPOINT ["/usr/local/bin/acc-sign"]

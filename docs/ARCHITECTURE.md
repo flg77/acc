@@ -22,7 +22,7 @@ with a human oversight queue for what a role's grants do not cover.
 | `acc/backends/` | Pluggable LLM (vLLM, Ollama, Anthropic, OpenAI-compatible, with a failover chain), vector (LanceDB / Milvus / TurboVec), signaling (NATS), metrics (OTel / MLflow). |
 | Memory (`acc/memory_*`, `acc/attribution.py`, `acc/memory_scope.py`, `acc/memory_curate.py`) | Episodes per requester + scope, private / shared note tiers, publish proposals with a quorum of people, erasure. A **hub's enterprise tier** (D-016) is the only cross-instance read path; every note carries the highest ceiling of its sources and is never read below it. |
 | `acc/pkg/` | `.accpkg` packages: cosign-verified install (keyless bundle or key), catalogs (built-in day-0, https, local), AgentBOM. |
-| `acc/tui/` (Textual) | Thirteen screens declared in one registry (`acc/tui/registry.py`), two profiles (`operator`, `user`), the `NATSObserver` that folds every signal into a `CollectiveSnapshot`, the Prompt pane's `PermissionRequest`, the Board. |
+| `acc/tui/` (Textual) | Thirteen screens declared in one registry (`acc/tui/registry.py`), two profiles (`operator`, `user`), the `NATSObserver` that folds every signal into a `CollectiveSnapshot`, the Prompt pane's decision surface (`AccPromptPanel` for one request of one step, `PermissionRequest` for a reply proposing several), the Board. |
 | `acc/webgui/` (FastAPI + React) | The same snapshot over a WebSocket — each socket receives its principal's view (D-017) — attributed actions and prompts (`webgui:<user>`), config surface, Board, the OpenAI-compatible endpoint. |
 | `acc/instances.py` + `acc/cli/instance_cmd.py` | An **instance** (D-015): a collective bound to an owner, a posture and its own state roots under `instances/<id>/`; `acc-cli instance …`, `./acc-deploy.sh instance up`; export carries the definition, never state. |
 | `acc/cli/` (`acc-cli`, `acc-pkg`) | Headless operator surface: doctor, status, config, profiles, sessions, oversight, plan, memory, access, auth, egress, backup, scan… (see `CAPABILITIES.md`). |
@@ -81,9 +81,33 @@ with a human oversight queue for what a role's grants do not cover.
 - **Code execution**: OpenShell Model 2 — agents stay rich pods and delegate
   `shell/python/ssh_exec` to gateway-created sandboxes (`acc/sandbox/`); fails
   closed when the gateway is unreachable.
+- **Delivery to a host**: ACC installs as an RPM. The package splits —
+  `acc-runtime` is what runs (the vendored virtualenv, the commands, the data
+  trees under `/usr/share/acc`) and `acc` adds the host layer on top (the
+  configuration under `/etc/acc`, the state root, `acc-deploy`, the systemd unit
+  and the `acc` system user, which never gains root) and requires it. One
+  discovery rule finds all three roots — home, share, state — with the
+  environment first and the checkout last (`acc paths`).
+- **The channel**: the internal Satellite is the distribution base, with a copy
+  mirrored on acc1 for hosts that are not subscribed to it. Semantic versions map
+  onto RPM's Version and Release so a pre-release or a snapshot sorts *below* the
+  release. `packaging/rpm/release-pipeline.sh` takes a tag the whole way and
+  proves the result by upgrading a real client from the channel and requiring the
+  package and the command to report the same version. Every package is signed
+  with its channel's key: one key per channel, made once by lab-gitops
+  `satellite-content/playbooks/channels.yml` and kept only in OpenBao, so a
+  rebuilt lab gets the same key back. Signing runs on the build host in a
+  container with no network and its keyring on a tmpfs, and publishing refuses
+  an unsigned package into any channel that carries a key.
+- **Images**: built from source, one per component, each with a hand-picked
+  dependency surface — except `acc-agent-core`, which can also be built from the
+  released `acc-runtime` so a host and a pod share one provenance chain. Only
+  that one: the package vendors a single dependency set and the GUI-headed images
+  would grow about fivefold (see `IN-11`).
 - **Release flow**: spearhead leads (`flg77/acc-spearhead`), the public mirror
   (`flg77/acc`) receives a **curated squash** per release minus the four
-  threat-model files; mirror tags differ from spearhead tags.
+  threat-model files; mirror tags differ from spearhead tags. A release is not
+  done at the tag: the packages have to reach the channel too.
 
 ## Testing strategy
 
@@ -103,4 +127,4 @@ with a human oversight queue for what a role's grants do not cover.
 - **Reasoning bench**: the promote gate scores deliberation depth; run for any
   reasoning-affecting change (role prompts), advisory on the 3B edge model.
 
-_Last updated: 2026-09-07 (v0.14.3)_
+_Last updated: 2026-09-11 (v0.16.0 + signing)_

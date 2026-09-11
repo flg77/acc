@@ -771,6 +771,24 @@ class PromptScreen(NavScreen):
         # the reason on it).
         cards = self._apply_task_grants(cards)
         self._pending_gates = cards
+        panel = self._acc_prompt_panel()
+
+        # A destructive question is answered on its own, in the panel, whatever
+        # ACC_PROMPT_PANEL or the region switch say: never batched, never one
+        # row in a list.  Everything else waits behind it.
+        from acc.tui.gate_cards import is_destructive  # noqa: PLC0415
+        destructive = [c for c in cards if is_destructive(c)]
+        if destructive and panel is not None:
+            widget.legacy = False
+            widget.show([])
+            first = destructive[0]
+            new = first.oversight_id not in self._seen_gate_ids
+            self._seen_gate_ids |= {c.oversight_id for c in cards}
+            panel.show([first], more=len(cards) - 1)
+            if new:
+                panel.focus()
+            return
+
         if not region_enabled():
             widget.show_legacy(cards)
             return
@@ -783,7 +801,6 @@ class PromptScreen(NavScreen):
         # compact region.  The split is by shape, not preference: a single
         # decision earns the detail, while a reply proposing several steps needs
         # the list the region already gives (approve all, or `a`/`d` per row).
-        panel = self._acc_prompt_panel()
         groups = group_requests(cards) if cards else []
         single = (
             panel is not None
@@ -806,11 +823,15 @@ class PromptScreen(NavScreen):
             widget.focus()
 
     def _apply_task_grants(self, cards: list) -> list:
+        from acc.tui.gate_cards import is_destructive  # noqa: PLC0415
         kept = []
         for c in cards:
             key = (c.task_id, c.kind, c.target)
+            # A grant never answers a destructive question: "allow shell_exec
+            # for this task", given for an `ls`, is not consent to an `rm`.
             if (
-                c.task_id and c.target and key in self._task_grants
+                not is_destructive(c)
+                and c.task_id and c.target and key in self._task_grants
                 and c.oversight_id not in self._auto_resolved_gate_ids
             ):
                 self._auto_resolved_gate_ids.add(c.oversight_id)
@@ -877,6 +898,7 @@ class PromptScreen(NavScreen):
         for oid in message.oversight_ids:
             self._resolve_gate(
                 oid, approve=message.approve, reason=message.note,
+                answer=getattr(message, "answer", ""),
             )
         if message.note:
             self._append_history({
@@ -1227,11 +1249,18 @@ class PromptScreen(NavScreen):
         # as approving that gate (the 29.6 case: they typed "confirmed" and
         # nothing consumed it). Only auto-resolves when EXACTLY one gate is
         # pending; with several, point them at /allow <id> to disambiguate.
-        from acc.tui.gate_cards import is_affirmation  # noqa: PLC0415
+        from acc.tui.gate_cards import is_affirmation, is_destructive  # noqa: PLC0415
         _pending = list(getattr(self, "_pending_gates", []) or [])
         if _pending and is_affirmation(prompt):
             self.query_one("#prompt-textarea", TextArea).clear()
-            if len(_pending) == 1:
+            if len(_pending) == 1 and is_destructive(_pending[0]):
+                self._append_history({
+                    "role": "system", "task_id": "",
+                    "text": ("that request deletes or overwrites data — a \"yes\" "
+                             "does not approve it; answer it in the decision panel"),
+                    "ts": time.time(), "blocked": True,
+                })
+            elif len(_pending) == 1:
                 self._resolve_gate(_pending[0].oversight_id, approve=True)
             else:
                 ids = ", ".join(g.oversight_id[:12] for g in _pending)
@@ -1531,7 +1560,7 @@ class PromptScreen(NavScreen):
         })
 
     def _resolve_gate(
-        self, oversight_id: str, *, approve: bool, reason: str = "",
+        self, oversight_id: str, *, approve: bool, reason: str = "", answer: str = "",
     ) -> None:
         """Resolve a pending gate inline (proposal 044 B8).
 
@@ -1543,7 +1572,9 @@ class PromptScreen(NavScreen):
         verb = "approve" if approve else "reject"
         try:
             self.app.post_message(
-                _OversightAction(action=verb, oversight_id=oversight_id, reason=reason)
+                _OversightAction(
+                    action=verb, oversight_id=oversight_id, reason=reason, answer=answer,
+                )
             )
         except Exception as exc:  # noqa: BLE001
             self._append_history({
@@ -1884,6 +1915,11 @@ class PromptScreen(NavScreen):
                 ids = ", ".join(g.oversight_id[:12] for g in pending)
                 _system(f"{len(pending)} gates pending — specify which: "
                         f"/{verb} <id>  (ids: {ids})", blocked=True)
+                return
+            from acc.tui.gate_cards import is_destructive  # noqa: PLC0415
+            if approve and any(g.oversight_id == oid and is_destructive(g) for g in pending):
+                _system("that request deletes or overwrites data — /allow does not "
+                        "approve it; answer it in the decision panel", blocked=True)
                 return
             self._resolve_gate(oid, approve=approve)
             return
@@ -2465,6 +2501,7 @@ class PromptScreen(NavScreen):
                 "target": target,
                 "ok": bool(inv.get("ok", False)),
                 "error": str(inv.get("error", "") or ""),
+                "critical": bool(inv.get("critical", False)),
             })
 
         # N5 — make FAILED capability calls impossible to miss with a one-line
@@ -3026,16 +3063,18 @@ class PromptScreen(NavScreen):
                 target = entry.get("target", "?")
                 err = entry.get("error", "")
                 kind_colour = "cyan" if kind == "skill" else "magenta"
+                # a destructive / CRITICAL call a gate let through
+                crit = "  [b yellow]⚠ critical[/b yellow]" if entry.get("critical") else ""
                 if ok:
                     lines.append(
                         f"  [green]✓[/green] "
-                        f"[{kind_colour}]{kind}[/{kind_colour}]:[bold]{target}[/bold]"
+                        f"[{kind_colour}]{kind}[/{kind_colour}]:[bold]{target}[/bold]{crit}"
                     )
                 else:
                     err_short = (err[:80] + "…") if len(err) > 80 else err
                     lines.append(
                         f"  [red]✗[/red] "
-                        f"[{kind_colour}]{kind}[/{kind_colour}]:[bold]{target}[/bold]  "
+                        f"[{kind_colour}]{kind}[/{kind_colour}]:[bold]{target}[/bold]{crit}  "
                         f"[red]{err_short}[/red]"
                     )
 

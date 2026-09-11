@@ -62,6 +62,10 @@ class Decision:
     #: Other requests waiting behind this one.
     more: int = 0
     notes: str = ""
+    #: The row asked a typed question: the chosen option's key is the answer.
+    asked: bool = False
+    #: ...and it deletes or overwrites data: every approval takes the key twice.
+    destructive: bool = False
 
     @property
     def needs_second_approver(self) -> bool:
@@ -102,6 +106,8 @@ def _question(cards: list[GateCard]) -> str:
             f"anything runs. How should these be handled?"
         )
     card = cards[0]
+    if card.question is not None:
+        return card.question.text
     why = (card.rationale or card.why or "").strip()
     what = (card.summary or card.kind).strip()
     goal = f" Goal: {card.goal_text.strip()}" if card.goal_text else ""
@@ -112,6 +118,9 @@ def _question(cards: list[GateCard]) -> str:
 
 def _detail_for(card: GateCard, option: RequestOption, proposal: dict) -> tuple[str, ...]:
     """What this option actually does, in concrete lines."""
+    asked = card.question.option(option.key) if card.question is not None else None
+    if asked is not None and asked.detail:
+        return asked.detail
     lines: list[str] = []
     params = proposal.get("params") if isinstance(proposal, dict) else None
     params = params if isinstance(params, dict) else {}
@@ -181,6 +190,8 @@ def build_decision(
         ) if isinstance(approvals, list) else (),
         more=more,
         notes=notes,
+        asked=head.question is not None,
+        destructive=head.question is not None and head.question.destructive,
     )
 
 
@@ -253,6 +264,11 @@ def render_panel(
     highlighted = max(0, min(highlighted, len(decision.options) - 1))
     width = max(40, int(width))
     lines: list[str] = [f"[b reverse] {decision.title} [/b reverse]"]
+    if decision.destructive:
+        lines.append(
+            "[b red]deletes or overwrites data[/b red] [dim]— answered on its own; "
+            "never remembered for the task[/dim]"
+        )
 
     state = decision.approval_state
     badge = f"  [dim]{state}[/dim]" if decision.needs_second_approver else ""

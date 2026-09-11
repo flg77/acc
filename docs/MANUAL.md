@@ -7,7 +7,27 @@ release history is `CHANGELOG.md`.
 ## Getting started
 
 The short form, once ACC is installed on the host (`uv tool install
-agentic-cell-corpus[tui]`, or the RPM when it ships):
+agentic-cell-corpus[tui]`, or the RPM):
+
+```bash
+# From the channel, on a host on the lab network:
+sudo tee /etc/yum.repos.d/acc.repo >/dev/null <<'REPO'
+[acc]
+name=ACC packages
+baseurl=http://rpm.ic3net.internal:8080/acc-spearhead/
+enabled=1
+gpgcheck=0
+REPO
+sudo dnf install acc
+```
+
+Once the channel is keyed, verify every package against the key the Satellite
+serves, which it publishes without credentials:
+
+```bash
+sudo rpm --import https://sat1.ic3net.internal/katello/api/v2/repositories/30/gpg_key_content
+sudo sed -i 's/^gpgcheck=0/gpgcheck=1/' /etc/yum.repos.d/acc.repo
+```
 
 ```bash
 acc setup                          # guided first run: posture, model, storage
@@ -51,7 +71,10 @@ required).
 - **Operating modes** — `/mode AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS` (or
   `Shift+Tab`). Under `AUTO` a curated infuse / spawn / route executes and is
   tracked as an `AUTO_APPROVED` row; system access and acting on your behalf
-  are always asked; `ASK_PERMISSIONS` asks for everything.
+  are always asked; `ASK_PERMISSIONS` asks for everything. A call that
+  **deletes or overwrites data** (`rm`, `find -delete`, `git push --force`,
+  `kubectl delete`, `DROP TABLE`, a manifest's `destructive: true`, …) is asked
+  as a question in every mode but `PLAN`, and refused where nobody can be asked.
 - **Answering a request in the Prompt pane** — when a gate arrives the request
   region takes focus: a proposal batch offers `1 approve all · 2 reject all ·
   a/d this row`; a capability gate `1 allow once · 2 allow for this task · 3
@@ -59,6 +82,13 @@ required).
   twice. `Esc` leaves it pending, `Ctrl+G` returns, `r` prefills a reason. Every
   answer is recorded in Compliance. A decision is final — a conflicting second
   one is refused.
+- **A destructive question** — the decision panel names what will be destroyed
+  (`shell_exec will delete or overwrite data: rm -rf build/. Run it?`) and
+  offers `1 run it · 2 don't run it`. It is answered on its own, always with
+  the key twice; "allow for this task", a bare "yes" and `/allow` never answer
+  it (`/disallow` still refuses it). A call it lets through is marked
+  `⚠ critical` in the transcript and the session trace, with the answer and who
+  gave it.
 - **Who sees what** — an operator sees the whole collective; anyone else
   (a viewer token, a Slack requester at a shared TUI) sees the tasks, plan
   steps, gates and signals they asked for, on every surface.
@@ -108,16 +138,47 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
 `ACC_WEBGUI_AUTH_MODE`. The schema is derived from the config models:
 `acc-cli config check --all` lists every key.
 
+## Answering a decision without leaving the Prompt pane
+
+When something needs your yes it is asked **in the Prompt pane**, not in
+Compliance (which keeps the record). One request of one step opens the decision
+panel: the question, the numbered options, and **beside them what the
+highlighted option actually does** — what it will run, whether it is remembered
+for the task or asked again, where it lands, its risk, and how many approvals it
+still needs. A two-approver row shows `PENDING 1/2` and who has signed.
+
+| Key | In the panel |
+|---|---|
+| `↑` / `↓` then `Enter`, or the option's digit | choose (HIGH / CRITICAL takes the key twice) |
+| `n` | type a note onto the decision — kept on **your** approval record |
+| `c` | ask about this decision; the request **stays pending** while you do |
+| `r` | reject with a reason |
+| `Esc` | later — still pending; `Ctrl+G` brings it back |
+
+A reply proposing several steps keeps the compact list instead, where `1`/`2`
+take all of them and `a`/`d` take the highlighted row. `ACC_PROMPT_PANEL=0`
+sends everything to that list.
+
 ## Keyboard shortcuts (TUI)
 
 `Ctrl+A` + digit / `Ctrl+P` — jump to a screen · `?` help · `Ctrl+S` send ·
-`Shift+Tab` mode · `Ctrl+G` gates · `Ctrl+O` reasoning · `Ctrl+L` clear · Board:
+`Shift+Tab` mode · `Ctrl+G` the pending decision · `Ctrl+O` reasoning · `Ctrl+L` clear · Board:
 `c` `r` `a` `g` `Enter` · Compliance: `a` approve, `r` reject.
 
 ## Troubleshooting
 
 - **Nothing happens after an approval** — check the arbiter log for the claim;
   a row already decided the other way is refused (the first decision stands).
+- **A release stops at "signing needs BAO_TOKEN"** — the channel's key lives in
+  OpenBao; export a token. Only a channel with no key yet may take `--unsigned`.
+- **`publish-satellite.sh` says REFUSING … does not verify against the signing
+  key** — the package is unsigned, or signed with another key. Sign it with
+  `packaging/rpm/sign-rpms.sh <org>/<product>/<repo> <host>:<dir>`.
+- **`dnf` upgraded ACC but the version did not change** — compare `rpm -q acc`
+  with `acc --version`. If they disagree the host is running code the package
+  did not install; that was possible before v0.16.0, where bytecode written at
+  runtime could survive an upgrade. Reinstall, and check both numbers rather
+  than the package alone.
 - **Proposal card shows no rationale / progress line does not move** — an agent
   older than v0.11.2 is packing dicts on the wire; rebuild it (the TUI tolerates
   it but shows less).
@@ -159,4 +220,4 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-07 (v0.14.3)_
+_Last updated: 2026-09-11 (v0.16.0 + signing)_

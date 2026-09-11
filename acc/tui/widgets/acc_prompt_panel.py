@@ -23,6 +23,7 @@ request gets the panel, several get the list.  Both post the same
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 
 from textual import events
 from textual.message import Message
@@ -67,17 +68,20 @@ class AccPromptPanel(Static):
     class Decided(Message):
         """The operator chose.  ``grant`` is the ``(task_id, kind, target)`` to
         remember for the rest of the task, or ``None``.  ``note`` is whatever
-        they typed onto the decision — it travels with both outcomes."""
+        they typed onto the decision — it travels with both outcomes.
+        ``answer`` is the chosen option's key when the row asked a question."""
 
         def __init__(
             self, oversight_ids: list[str], approve: bool, *,
             note: str = "", grant: tuple[str, str, str] | None = None,
+            answer: str = "",
         ) -> None:
             super().__init__()
             self.oversight_ids = oversight_ids
             self.approve = approve
             self.note = note
             self.grant = grant
+            self.answer = answer
 
     class Dismissed(Message):
         """``Esc`` — the decision stays PENDING and focus returns to the input."""
@@ -168,19 +172,7 @@ class AccPromptPanel(Static):
         if self._decision is None:
             return
         notes = self._note_buffer if self._note_mode else self._note
-        decision = Decision(
-            title=self._decision.title,
-            question=self._decision.question,
-            options=self._decision.options,
-            oversight_ids=self._decision.oversight_ids,
-            risk=self._decision.risk,
-            task_id=self._decision.task_id,
-            role=self._decision.role,
-            required_approvals=self._decision.required_approvals,
-            approvals=self._decision.approvals,
-            more=self._decision.more,
-            notes=notes,
-        )
+        decision = replace(self._decision, notes=notes)
         self._decision = decision
         width = self.size.width or 100
         self.last_markup = render_panel(
@@ -268,8 +260,10 @@ class AccPromptPanel(Static):
         if decision is None:
             return
         # A high-consequence approval takes the same key twice — the Compliance
-        # pane's confirmation modal, refitted to a pane you do not leave.
-        if option.approve and decision.risk in _HIGH and self._confirm != key:
+        # pane's confirmation modal, refitted to a pane you do not leave.  A
+        # destructive one always does, whatever risk the row carries.
+        high = decision.risk in _HIGH or decision.destructive
+        if option.approve and high and self._confirm != key:
             self._confirm = key
             self._paint()
             return
@@ -284,5 +278,6 @@ class AccPromptPanel(Static):
             option.approve,
             note=self._note,
             grant=grant_key,
+            answer=option.key if decision.asked else "",
         ))
         self.clear()

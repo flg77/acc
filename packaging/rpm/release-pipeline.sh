@@ -5,6 +5,7 @@
 #   RELEASE=2 packaging/rpm/release-pipeline.sh v0.15.0     # same source, new package
 #   packaging/rpm/release-pipeline.sh v0.15.0 --no-client   # skip the client check
 #   packaging/rpm/release-pipeline.sh v0.15.0 --dry-run     # say what would happen
+#   packaging/rpm/release-pipeline.sh v0.15.0 --unsigned    # only into a channel with NO key yet
 #
 # The internal Satellite is the distribution base, so every release has to reach
 # it -- a channel that lags the tag is worse than no channel, because a host that
@@ -29,10 +30,12 @@ TAG="${1:-}"
 shift || true
 DRY_RUN=0
 CHECK_CLIENT=1
+SIGN=1
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --no-client) CHECK_CLIENT=0 ;;
+        --unsigned) SIGN=0 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -101,47 +104,98 @@ run ssh "$BUILD_HOST" \
 # carry a decorated one, which is why build.sh computes the tag in the first place.
 ARCH="${ARCH:-x86_64}"
 if [[ $DRY_RUN == 0 ]]; then
-    REMOTE_RPM="$(ssh "$BUILD_HOST"         "find '$WORK/dist/rpm/RPMS' -name 'acc-$VERSION-$RELEASE_N.*.rpm'          ! -name '*.src.rpm' | head -1")"
+    REMOTE_RPM="$(ssh "$BUILD_HOST" "find '$WORK/dist/rpm/RPMS' -name 'acc-$VERSION-$RELEASE_N.*.rpm' ! -name '*.src.rpm' | head -1")"
+    REMOTE_RUNTIME="$(ssh "$BUILD_HOST" "find '$WORK/dist/rpm/RPMS' -name 'acc-runtime-$VERSION-$RELEASE_N.*.rpm' ! -name '*.src.rpm' | head -1")"
     [[ -n "$REMOTE_RPM" ]] || {
         echo "ERROR: the build produced no acc-$VERSION-$RELEASE_N package." >&2
-        ssh "$BUILD_HOST" "find '$WORK/dist/rpm/RPMS' -name '*.rpm' -exec ls -l {} \;" >&2 || true
+        ssh "$BUILD_HOST" "find '$WORK/dist/rpm/RPMS' -name '*.rpm' -exec ls -l {} +" >&2 || true
+        exit 1
+    }
+    [[ -n "$REMOTE_RUNTIME" ]] || {
+        echo "ERROR: no acc-runtime-$VERSION-$RELEASE_N package.  The host package" >&2
+        echo "       requires it; publishing without it breaks 'dnf install acc'." >&2
         exit 1
     }
     RPM_NAME="$(basename "$REMOTE_RPM")"
+    RUNTIME_NAME="$(basename "$REMOTE_RUNTIME")"
 else
     RPM_NAME="acc-$VERSION-$RELEASE_N.<dist>.$ARCH.rpm"
+    RUNTIME_NAME="acc-runtime-$VERSION-$RELEASE_N.<dist>.$ARCH.rpm"
     REMOTE_RPM="$WORK/dist/rpm/RPMS/$ARCH/$RPM_NAME"
+    REMOTE_RUNTIME="$WORK/dist/rpm/RPMS/$ARCH/$RUNTIME_NAME"
 fi
 
 # --------------------------------------------------------- 3. is it the thing?
 say "verify the artefact"
 if [[ $DRY_RUN == 0 ]]; then
-    cuda="$(ssh "$BUILD_HOST" "rpm -qpl '$REMOTE_RPM' 2>/dev/null | grep -c nvidia || true")"
+    # The ML stack lives in the runtime, so that is where CUDA would show up.
+    cuda="$(ssh "$BUILD_HOST" "rpm -qpl '$REMOTE_RUNTIME' 2>/dev/null | grep -c /nvidia/ || true")"
     [[ "$cuda" == "0" ]] || {
-        echo "ERROR: $cuda CUDA files in the package -- the CPU torch pin did not hold." >&2
+        echo "ERROR: $cuda CUDA files in acc-runtime -- the CPU torch pin did not hold." >&2
         exit 1
     }
     missing=""
-    for path in /usr/bin/acc /usr/bin/acc-cli /usr/share/acc /etc/acc /var/lib/acc; do
-        ssh "$BUILD_HOST" "rpm -qpl '$REMOTE_RPM' 2>/dev/null | grep -qx '$path'" \
-            || missing="$missing $path"
+    # What RUNS is in the runtime package ...
+    for path in /usr/bin/acc /usr/bin/acc-cli /usr/share/acc; do
+        ssh "$BUILD_HOST" "rpm -qpl '$REMOTE_RUNTIME' 2>/dev/null | grep -qx '$path'" \
+            || missing="$missing acc-runtime:$path"
     done
-    [[ -z "$missing" ]] || { echo "ERROR: missing from the package:$missing" >&2; exit 1; }
-    ssh "$BUILD_HOST" "ls -l '$REMOTE_RPM'; rpm -qp --qf 'installed: %{SIZE}\n' '$REMOTE_RPM'"
-    echo "   no CUDA, layout present"
+    # ... and the HOST layer is in the main package.
+    for path in /etc/acc /var/lib/acc /usr/bin/acc-deploy; do
+        ssh "$BUILD_HOST" "rpm -qpl '$REMOTE_RPM' 2>/dev/null | grep -qx '$path'" \
+            || missing="$missing acc:$path"
+    done
+    [[ -z "$missing" ]] || { echo "ERROR: missing from the packages:$missing" >&2; exit 1; }
+    # The host package must actually depend on the runtime, or a host can install
+    # `acc` and end up with nothing that runs.
+    ssh "$BUILD_HOST" "rpm -qpR '$REMOTE_RPM' 2>/dev/null | grep -q 'acc-runtime = $VERSION'" || {
+        echo "ERROR: acc does not require acc-runtime = $VERSION" >&2
+        exit 1
+    }
+    ssh "$BUILD_HOST" "ls -l '$REMOTE_RPM' '$REMOTE_RUNTIME'"
+    echo "   no CUDA; the runtime holds what runs, the host package the rest, and requires it"
 else
     echo "   would: check $REMOTE_RPM for CUDA files and the expected layout"
+fi
+
+# ------------------------------------------------------------------- 3b. sign
+# Both packages are signed ON THE BUILD HOST with the channel's key, which lives
+# only in OpenBao (created once by lab-gitops satellite-content channels.yml).
+# The key never touches a disk: sign-rpms.sh pipes it into a network-less signer
+# container whose keyring is a tmpfs, and checks every signature against the
+# channel's public key before returning.  publish-satellite.sh then refuses
+# anything unsigned for a channel that carries a key -- so --unsigned is only a
+# way into a channel that has no key yet, never a way around one.
+SIGN_CHANNEL="${SIGN_CHANNEL:-${SAT_ORG:-ic3net_internal}/${SAT_PRODUCT:-ACC}/${SAT_REPO:-acc-spearhead}}"
+if [[ $SIGN == 1 ]]; then
+    say "sign with the key of $SIGN_CHANNEL"
+    if [[ $DRY_RUN == 0 ]] && [[ -z "${BAO_TOKEN:-${VAULT_TOKEN:-}}" ]]; then
+        echo "ERROR: signing needs BAO_TOKEN (or VAULT_TOKEN) -- the channel key lives in OpenBao." >&2
+        echo "       A channel with no key yet: create it with lab-gitops channels.yml, or" >&2
+        echo "       publish into it unsigned on purpose with --unsigned." >&2
+        exit 1
+    fi
+    run bash "$HERE/sign-rpms.sh" "$SIGN_CHANNEL" "$BUILD_HOST:$(dirname "$REMOTE_RPM")"
+else
+    say "NOT signing (--unsigned)"
+    echo "   publish-satellite.sh will refuse these for any channel that carries a signing key."
 fi
 
 # ------------------------------------------------------------------ 4. fetch
 say "fetch"
 LOCAL_DIR="${LOCAL_DIR:-${TMPDIR:-/tmp}}"
 LOCAL_RPM="$LOCAL_DIR/$RPM_NAME"
+LOCAL_RUNTIME="$LOCAL_DIR/$RUNTIME_NAME"
 run scp -q "$BUILD_HOST:$REMOTE_RPM" "$LOCAL_RPM"
-[[ $DRY_RUN == 1 ]] || ls -l "$LOCAL_RPM"
+run scp -q "$BUILD_HOST:$REMOTE_RUNTIME" "$LOCAL_RUNTIME"
+[[ $DRY_RUN == 1 ]] || ls -l "$LOCAL_RPM" "$LOCAL_RUNTIME"
 
 # ---------------------------------------------------------------- 5. publish
+# The runtime goes FIRST.  Between the two uploads the channel is briefly
+# inconsistent, and a host refreshing in that window should find a runtime with
+# no host package rather than a host package with nothing to run.
 say "publish to the Satellite"
+run env SAT_HOST="$SAT_HOST" bash "$HERE/publish-satellite.sh" "$LOCAL_RUNTIME"
 run env SAT_HOST="$SAT_HOST" bash "$HERE/publish-satellite.sh" "$LOCAL_RPM"
 
 # ----------------------------------------------- 6. a client must agree with itself
