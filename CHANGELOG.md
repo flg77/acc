@@ -11,6 +11,28 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.2] — 2026-09-11
+
+### Changed
+
+- **On a system install the operator shares the service's state** (IN-07,
+  operator decision 2026-09-11). The stack runs as the `acc` user and owns
+  `/var/lib/acc`; the operator's own `acc` / `acc-cli` / `acc-pkg` resolve their
+  state there too, and could not write it. The state tree is now setgid and
+  group-writable for group `acc` (`2770`, spec and tmpfiles), the unit runs with
+  `UMask=0002`, and the host commands clear the group-write bit of their umask
+  when — and only when — their state is the system one. One tree: a package the
+  operator installs with `acc-pkg` is the one the running stack sees. An
+  operator joins with `sudo usermod -aG acc $USER`; until they have, `acc paths`
+  and `acc-cli doctor --paths` say so. `/var/log/acc` stays group-readable only;
+  `/etc/acc` is unchanged.
+- **`docs/INSTALL.md` describes the RPM as it ships**: the two packages, the
+  channel through the acc1 mirror or the Satellite (with its CA), signing, the
+  by-file route for a host that cannot reach the lab (an EL9 build), the group,
+  `systemctl` for the stack, and upgrading with the `acc --version` check. The
+  MANUAL's "Getting started" follows. bb3 is no longer an RPM proof host — it
+  consumes the agent image.
+
 ## [0.17.1] — 2026-09-11
 
 ### Fixed

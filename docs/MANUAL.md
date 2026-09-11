@@ -19,7 +19,12 @@ enabled=1
 gpgcheck=0
 REPO
 sudo dnf install acc
+sudo usermod -aG acc $USER             # share the service's state (/var/lib/acc) -- log in again
+sudo systemctl enable --now acc-stack  # the collective runs as the acc user
 ```
+
+A host that cannot reach the lab installs both packages by file, built for
+its EL release — `docs/INSTALL.md` has the whole procedure, including upgrades.
 
 Once the channel is keyed, verify every package against the key the Satellite
 serves, which it publishes without credentials:
@@ -31,7 +36,7 @@ sudo sed -i 's/^gpgcheck=0/gpgcheck=1/' /etc/yum.repos.d/acc.repo
 
 ```bash
 acc setup                          # guided first run: posture, model, storage
-acc stack up --webgui              # the collective (NATS, Redis, one container per cell)
+acc stack up --webgui              # a wheel install; on the RPM, systemctl runs the stack
 acc                                # the TUI, attached — exits 3 with a hint if nothing answers
 acc paths                          # where this host's ACC lives, and why each file was picked
 acc tour                           # the first-run tour, again (it runs by itself the first time)
@@ -81,7 +86,9 @@ required).
   deny`; an escalation `1 allow for this task · 2 deny`. HIGH takes the key
   twice. `Esc` leaves it pending, `Ctrl+G` returns, `r` prefills a reason. Every
   answer is recorded in Compliance. A decision is final — a conflicting second
-  one is refused.
+  one is refused. Once answered, a request stays out of the pane even while
+  the arbiter's heartbeat still lists it for a few seconds (v0.17.1); one whose
+  decision failed to send stays open.
 - **A destructive question** — the decision panel names what will be destroyed
   (`shell_exec will delete or overwrite data: rm -rf build/. Run it?`) and
   offers `1 run it · 2 don't run it`. It is answered on its own, always with
@@ -220,4 +227,4 @@ sends everything to that list.
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-11 (v0.17.0)_
+_Last updated: 2026-09-11 (v0.17.1)_

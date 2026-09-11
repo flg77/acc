@@ -931,6 +931,8 @@ _HANDLERS = {
 
 
 def main(argv: list[str] | None = None) -> int:
+    from acc import paths as _paths  # noqa: PLC0415
+    _paths.adopt_shared_umask()      # IN-07: a package the operator installs stays the service's too
     parser = _build_parser()
     args = parser.parse_args(argv)
     # Logging — INFO by default, suppressed in --quiet.

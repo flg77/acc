@@ -50,15 +50,27 @@ def test_the_acc_user_never_gains_root():
     assert "ExecStart=/usr/bin/acc-deploy up --webgui" in unit and "ExecStop=/usr/bin/acc-deploy down" in unit
     for env in ("ACC_HOME=/etc/acc", "ACC_SHARE=/usr/share/acc", "ACC_STATE=/var/lib/acc", "ACC_ENV_FILE=/etc/acc/acc.env"):
         assert f"Environment={env}" in unit, env
-    assert "%dir %attr(0750,acc,acc) %{_sharedstatedir}/acc" in spec
+    assert "%dir %attr(2770,acc,acc) %{_sharedstatedir}/acc" in spec
 
 
 def test_tmpfiles_and_state_dirs_match_the_spec():
     tmp = _read("acc.tmpfiles.conf"); spec = _read("acc.spec")
-    for d in ("packages", "instances", "workspaces", "logs"):
-        assert f"d /var/lib/acc/{d} 0750 acc acc -" in tmp
-        assert f"%{{_sharedstatedir}}/acc/{d}" in spec
+    for d in ("packages", "instances", "workspaces", "logs", "sessions", "trace"):
+        assert f"d /var/lib/acc/{d} 2770 acc acc -" in tmp
+        assert f"%dir %attr(2770,acc,acc) %{{_sharedstatedir}}/acc/{d}" in spec
+    assert "d /var/lib/acc 2770 acc acc -" in tmp
     assert "d /var/log/acc 0750 acc acc -" in tmp
+
+
+def test_the_state_is_shared_with_the_operator_through_the_acc_group():
+    """IN-07 (operator, 2026-09-11): one state tree -- a package the operator
+    installs is the one the service runs.  Setgid + group-writable directories,
+    and a unit whose files stay group-writable."""
+    unit = _read("acc-stack.service")
+    assert "UMask=0002" in unit
+    install = (ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+    assert "usermod -aG acc" in install
+    assert "systemctl" in install and "acc-stack" in install
 
 
 def test_build_script_and_readme_carry_the_channels_and_the_proof_order():
@@ -67,7 +79,8 @@ def test_build_script_and_readme_carry_the_channels_and_the_proof_order():
     assert "_share/roles/assistant/role.yaml" in build                              # the wheel must carry the trees
     assert "Satellite" in readme and "COPR" in readme and "mirror" in readme
     assert "never reaches a public repository" in readme
-    assert "acc1 → bb3 → saturate3" in readme
+    # bb3 is the RHOAI host and consumes the agent image, not the RPM (2026-09-10)
+    assert "acc1 → saturate3" in readme and "bb3" in readme
 
 
 def test_the_deploy_script_and_compose_honour_the_env_file():

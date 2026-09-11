@@ -75,9 +75,25 @@
       pulled ~5 GB of CUDA through `sentence-transformers` → CPU torch pinned from PyTorch's index
       before the wheel resolves, and `%install` fails if an `nvidia/` package slips in; the
       `%changelog` date was a bogus weekday
-- [ ] install on acc1 → bb3 → saturate3 (IN-07; needs the operator on each host)
+- [x] install on acc1 (2026-09-09, then every release by `release-pipeline.sh`); bb3 is no longer
+      an RPM host — it is the RHOAI host and consumes the agent image (operator 2026-09-10);
+      saturate3 → IN-07
 
-## IN-07 — docs + playbook; IN-08 — extension + bootc
-- [ ] `packaging/rpm/acc.spec` (vendored venv, `/etc/acc`, `/usr/share/acc`, `/var/lib/acc`,
-      `acc-stack.service`, `acc` system user never root); Satellite channel + COPR (mirror build)
-- [ ] `docs/INSTALL.md`, MANUAL, playbook; proven on acc1 → bb3 → saturate3
+## IN-07 — the operator's state, docs, playbook, the clean-host proof (2026-09-11)
+- [x] **Decision (operator, 2026-09-11): the operator shares the service's state through the `acc`
+      group** — one state tree, so a package the operator installs is the one the running stack
+      sees. (Rejected: a per-user fallback, which diverges from the service; document-only.)
+- [x] packaging: `/var/lib/acc` and its subdirectories `2770 acc:acc` (setgid, group-writable) in
+      the spec and tmpfiles; `acc-stack.service` `UMask=0002`
+- [x] `acc/paths.py`: `shared_state()`, `adopt_shared_umask()` (clears only the group-write bit,
+      only for the system state), `state_hint()` — `acc paths` / `doctor --paths` say "join group
+      `acc`" when the shared state is not writable; `acc`, `acc-cli`, `acc-pkg` adopt the umask first
+- [x] tests: `tests/test_shared_state.py`, `tests/test_rpm_spec.py` updated
+- [ ] `docs/INSTALL.md` (the RPM as it is: two packages, the channel + CA, the acc1 mirror, EL9,
+      signing, the group, `systemctl`, the upgrade check), MANUAL "Getting started"
+- [ ] release (v0.17.2), EL9 build, staged on saturate3; the operator installs (sudo needs a
+      password there); verified: `rpm -q` = `acc --version`, `acc paths`, the group, the service
+- [ ] playbook PB-11 "Install ACC from the RPM on a clean host"
+
+## IN-08 — extension + bootc
+- [ ] Windows and the Podman Desktop extension (the launcher, the discovery rule, the trust record)

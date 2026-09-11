@@ -184,6 +184,49 @@ def system_config_dir() -> Path:
     return Path("/etc/acc")
 
 
+#: A system install's state root, owned by the ``acc`` service user.  It is
+#: shared with the operator through the ``acc`` group (IN-07, operator
+#: 2026-09-11): the package makes it setgid and group-writable, the unit runs
+#: with ``UMask=0002``, and the operator's own commands adopt the same umask.
+SYSTEM_STATE = Path("/var/lib/acc")
+SERVICE_GROUP = "acc"
+
+
+def shared_state() -> bool:
+    """This process's state is the system install's -- shared with the service."""
+    found = state_root()
+    if found is None:
+        return False
+    try:
+        return found[0].resolve() == SYSTEM_STATE.resolve()
+    except OSError:
+        return False
+
+
+def adopt_shared_umask() -> None:
+    """Keep what this process writes into shared state writable for the group.
+
+    Called first by every host command (``acc``, ``acc-cli``, ``acc-pkg``).  It
+    only clears the group-write bit of the current umask, and only when the
+    state is the system install's: a package the operator installs must stay
+    writable for the service, and the reverse.  Nothing else changes.
+    """
+    if not shared_state():
+        return
+    current = os.umask(0)
+    os.umask(current & ~0o020)
+
+
+def state_hint() -> str:
+    """What to do when the shared state is not writable for this user, or ``""``."""
+    if not shared_state() or os.access(SYSTEM_STATE, os.W_OK):
+        return ""
+    return (
+        f"note: {SYSTEM_STATE} is the service's state and you cannot write it -- "
+        f"join its group: sudo usermod -aG {SERVICE_GROUP} $USER (then log in again)"
+    )
+
+
 def home() -> tuple[Path, str] | None:
     """The operator's ACC directory and how it was found."""
     explicit = _dir(os.environ.get("ACC_HOME"))
@@ -288,6 +331,9 @@ def describe() -> str:
     lines = []
     for label, found in (("home", home()), ("share", share()), ("state", state_root())):
         lines.append(f"{label:<12} {found[1]:<9} {found[0]}" if found else f"{label:<12} -         (none)")
+    hint = state_hint()
+    if hint:
+        lines.append(hint)
     lines.append("")
     lines.extend(str(r) for r in report())
     return "\n".join(lines)

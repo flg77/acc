@@ -191,6 +191,7 @@ def run_tui(args: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    paths.adopt_shared_umask()      # IN-07: shared state stays group-writable
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] in ("--version", "-V"):
         print(f"acc {__version__}")

@@ -158,6 +158,8 @@ def _configure_logging(verbosity: int) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point.  Returns the process exit code."""
+    from acc import paths as _paths  # noqa: PLC0415
+    _paths.adopt_shared_umask()      # IN-07: shared state stays group-writable
     parser = _build_parser()
     args = parser.parse_args(argv)
     _configure_logging(args.verbose)

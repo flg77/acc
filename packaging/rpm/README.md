@@ -213,8 +213,15 @@ sudo -u acc acc-cli doctor --paths
 sudo systemctl enable --now acc-stack
 ```
 
-Proof order (operator): acc1 → bb3 → saturate3. `dnf remove acc` leaves
+Proof order (operator): acc1 → saturate3. bb3 is the RHOAI host and consumes
+the agent image, not the RPM (operator, 2026-09-10). `dnf remove acc` leaves
 `/etc/acc` and `/var/lib/acc` in place.
+
+The state is shared with the operator through group `acc` (IN-07, operator
+2026-09-11): `/var/lib/acc` is `2770 acc:acc`, the unit runs with `UMask=0002`,
+and `acc` / `acc-cli` / `acc-pkg` keep what they write there group-writable.
+An operator joins with `sudo usermod -aG acc $USER`; `acc paths` says so until
+they have.
 
 ## Known limits of the first package
 

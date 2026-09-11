@@ -218,13 +218,17 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -R %{_sharedstatedir}/
 %config(noreplace) %attr(0644,root,acc) %{_sysconfdir}/acc/collective.yaml
 %config(noreplace) %attr(0644,root,acc) %{_sysconfdir}/acc/catalogs.yaml
 %config(noreplace) %attr(0640,root,acc) %{_sysconfdir}/acc/acc.env
-%dir %attr(0750,acc,acc) %{_sharedstatedir}/acc
-%dir %attr(0750,acc,acc) %{_sharedstatedir}/acc/packages
-%dir %attr(0750,acc,acc) %{_sharedstatedir}/acc/instances
-%dir %attr(0750,acc,acc) %{_sharedstatedir}/acc/workspaces
-%dir %attr(0750,acc,acc) %{_sharedstatedir}/acc/logs
-%dir %attr(0750,acc,acc) %{_sharedstatedir}/acc/sessions
-%dir %attr(0750,acc,acc) %{_sharedstatedir}/acc/trace
+# IN-07 (operator, 2026-09-11): the state is shared with the operator through
+# group acc -- setgid so everything created here is group acc, group-writable
+# so a package the operator installs is the one the service runs.  The unit
+# and the host commands keep what they write group-writable (umask 0002).
+%dir %attr(2770,acc,acc) %{_sharedstatedir}/acc
+%dir %attr(2770,acc,acc) %{_sharedstatedir}/acc/packages
+%dir %attr(2770,acc,acc) %{_sharedstatedir}/acc/instances
+%dir %attr(2770,acc,acc) %{_sharedstatedir}/acc/workspaces
+%dir %attr(2770,acc,acc) %{_sharedstatedir}/acc/logs
+%dir %attr(2770,acc,acc) %{_sharedstatedir}/acc/sessions
+%dir %attr(2770,acc,acc) %{_sharedstatedir}/acc/trace
 %dir %attr(0750,acc,acc) %{_localstatedir}/log/acc
 %{_unitdir}/acc-stack.service
 %{_sysusersdir}/acc.conf

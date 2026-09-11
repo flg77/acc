@@ -12,6 +12,10 @@ RemainAfterExit=yes
 # no sudoers entry, no capabilities, NoNewPrivileges.
 User=acc
 Group=acc
+# IN-07: /var/lib/acc is shared with the operator through group acc; what the
+# stack writes there stays group-writable.  podman creates its own storage
+# with explicit 0700 modes, which a umask cannot widen.
+UMask=0002
 WorkingDirectory=/var/lib/acc
 Environment=ACC_HOME=/etc/acc
 Environment=ACC_SHARE=/usr/share/acc
