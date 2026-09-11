@@ -352,6 +352,11 @@ class PromptScreen(NavScreen):
         self._seen_gate_ids: set[str] = set()
         self._dismissed_gate_ids: set[str] = set()
         self._auto_resolved_gate_ids: set[str] = set()
+        # Gates the pane published a decision for.  The snapshot keeps listing
+        # a row until the arbiter's next HEARTBEAT, so without this an answered
+        # request re-appeared for ~30 s (v0.17.0 lighthouse smoke).  Forgotten
+        # once the snapshot stops listing the row.
+        self._answered_gate_ids: set[str] = set()
         # 1.5 -- the thread the pane holds open so continuation replies
         # (same task_id, e.g. after an infuse) land under it; released on
         # the next send or /done.  Outcomes are rendered once.
@@ -766,6 +771,10 @@ class PromptScreen(NavScreen):
         except Exception:  # noqa: BLE001
             target = ""
         cards = pending_gates(items, target_role=target, proposals=proposals)
+        # A request answered here stays answered until the snapshot catches up:
+        # hold it back, and forget it once the row is no longer pending.
+        self._answered_gate_ids &= {c.oversight_id for c in cards}
+        cards = [c for c in cards if c.oversight_id not in self._answered_gate_ids]
         # 1.4 -- "allow for this task": a gate matching a grant the operator
         # gave earlier in the same task resolves itself (still a row, with
         # the reason on it).
@@ -1583,6 +1592,9 @@ class PromptScreen(NavScreen):
                 "ts": time.time(), "blocked": True,
             })
             return
+        # Answered: not shown again while the snapshot still lists it.  A
+        # failed publish (above) is not recorded -- that request stays open.
+        self._answered_gate_ids.add(oversight_id)
         self._append_history({
             "role": "system", "task_id": "",
             "text": (

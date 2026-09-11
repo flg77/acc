@@ -1077,6 +1077,53 @@ packages signed before it keep verifying. A release now needs an OpenBao token, 
 (`repo_gpgcheck=1`) is not available: `hammer` exposes no metadata signing for
 custom yum repositories on this Satellite.
 
+## D-022 — An agent's question rides on the oversight row, and a destructive call is always one
+
+**Status:** LANDED 2026-09-11 (acc-spearhead #387, released in v0.17.0). Not yet
+exercised on lighthouse.
+**Date:** 2026-09-11
+**Context:** ACC had one decision envelope — the oversight row, answered APPROVE
+or REJECT — so an agent could not ask the operator anything but "approve?". The
+operator set the first real question (Q8, 2026-09-11): in AUTO, super-high
+critical functions such as file deletion and data modification are
+double-checked as a question in the options panel, and the reasoning marks every
+critical function it runs. The tree had no notion of destructive at all: AUTO
+asked a `shell_exec` the same question for `ls` as for `rm -rf`, an "allow for
+this task" grant given for the first also let the second through, and a gate
+that timed out left its row PENDING and approvable.
+
+**Decision:** a typed `Question` (text, options, and for each option whether the
+action proceeds) is carried **on the oversight row**, and the chosen option comes
+back as `answer` on the same `OVERSIGHT_DECISION`, mapped onto APPROVE / REJECT.
+The queue refuses an answer that is not an option or contradicts the decision; a
+decision with no answer still decides. A call that deletes or overwrites data —
+judged by an exec skill's command text first, whatever its manifest says, then a
+declared `destructive` / `destructive_tools`, then the name — is asked in every
+mode but PLAN, at HIGH at least, and refused where there is no queue. It is
+answered on its own, with a double press, never by a task grant, a bare "yes" or
+`/allow`. A call its own sandbox refuses is not asked about. A call a destructive
+or CRITICAL gate lets through is marked `critical` in the transcript and the
+session trace, with the answer journalled. A gate that stops waiting expires its
+row.
+
+**Rationale:** the first consumer *is* a gate, and the row already has everything
+a gate needs — the wait, finality (D-013), the two-approver rule, and the shared
+store that is how a decision reaches a worker, which may not subscribe to decision
+subjects. A separate `PROMPT_REQUEST` / `PROMPT_REPLY` pair, as UX-00 first
+sketched it, would have needed new NKey grants for nothing the row could not
+carry. The command text wins over the manifest because it is what will actually
+run. There is no switch to turn the question off: that would be an AUTO thaw.
+
+**Consequences:** AUTO asks more than before — a tightening, deliberately. The
+command patterns are a list, so a destructive command it does not recognise is
+gated only as before (in AUTO, `shell_exec` is gated anyway as system access). An
+agent older than v0.17.0 cannot load a row that carries a question and treats it
+as lost, which refuses the call — a mixed collective fails closed. The Compliance
+pane can still decide such a row without a typed answer. **Not decided here:** not
+re-asking agent-set infusions inside a continued AUTO workflow (Q8 point 2) — it
+relaxes AUTO and needs its own proposal (SIP-P2 rail 6). A question that gates
+nothing (UX-00 §5 Q2) may need its own envelope.
+
 ## Future considerations (not yet decided)
 
 * **Multi-collective infusion** — today PR-D writes to a single

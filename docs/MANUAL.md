@@ -220,4 +220,4 @@ sends everything to that list.
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-11 (v0.16.0 + signing)_
+_Last updated: 2026-09-11 (v0.17.0)_

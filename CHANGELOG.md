@@ -11,6 +11,20 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.1] — 2026-09-11
+
+### Fixed
+
+- **An answered request no longer comes back in the Prompt pane.** The
+  arbiter's HEARTBEAT lists a row as pending until its next beat after the
+  decision, so the decision panel and the request region showed a request again
+  — unfocused, for about 30 seconds — right after the operator had answered it.
+  The v0.17.0 lighthouse smoke caught it on a destructive question, where a
+  re-shown "run it" invites a second press. A request the pane published a
+  decision for is now held back until the snapshot stops listing it; one whose
+  decision failed to publish stays open. Applies to the panel, the region, a
+  "yes", `/allow`, `/disallow` and a task grant alike.
+
 ## [0.17.0] — 2026-09-11
 
 ### Added
