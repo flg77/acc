@@ -131,7 +131,10 @@ acc                                   # the TUI, attached to the running stack
 `/var/lib/acc` is setgid and group-writable, the service writes with umask
 `0002`, and `acc` / `acc-cli` / `acc-pkg` do the same there — so a package you
 install with `acc-pkg` is the one the running stack sees. Until you have joined
-the group, `acc paths` says so. Joining `acc` also lets you read
+the group, `acc paths` says so. A group applies only to logins made **after**
+`usermod` — an older shell still reports the state as missing. What ACC's own
+commands write there stays group-writable; a file you copy in by hand keeps
+your shell's umask, so `chmod g+w` it if the service must change it later. Joining `acc` also lets you read
 `/etc/acc/acc.env`; that is what an operator of this host is for.
 
 On a system install, start and stop the stack with **`systemctl`**, not

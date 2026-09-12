@@ -1124,6 +1124,45 @@ re-asking agent-set infusions inside a continued AUTO workflow (Q8 point 2) — 
 relaxes AUTO and needs its own proposal (SIP-P2 rail 6). A question that gates
 nothing (UX-00 §5 Q2) may need its own envelope.
 
+## D-023 — On a system install the operator shares the service's state through group acc
+
+**Status:** LANDED 2026-09-11 (acc-spearhead #393, released in v0.17.2). The
+clean-host proof on saturate3 is in progress (the upgrade from the 0.15.0
+package there needs the operator's sudo).
+**Date:** 2026-09-11
+**Context:** the RPM runs the stack as the unprivileged `acc` user, which owns
+`/var/lib/acc`. The operator's own `acc`, `acc-cli` and `acc-pkg` resolve their
+state to the same tree through the discovery rule (home `/etc/acc` → state
+`/var/lib/acc`), and could not write it: `acc paths` reported every state
+directory missing for them. Found on acc1 (2026-09-09) and seen again on
+saturate3's first install.
+
+**Decision (operator):** one state tree, shared through group `acc`.
+`/var/lib/acc` and its subdirectories are `2770 acc:acc` (setgid,
+group-writable) in the spec and tmpfiles. `acc-stack.service` runs with
+`UMask=0002`. The host commands clear the group-write bit of their umask first,
+and only when their state is the system one (`acc.paths.adopt_shared_umask`).
+`acc paths` and `acc-cli doctor --paths` say "join group acc" until the operator
+has (`sudo usermod -aG acc $USER`, then a fresh login).
+
+**Rationale:** the state is the service's working data: a package the operator
+installs with `acc-pkg` has to be the one the running stack sees. A per-user
+fallback (`~/.local/state/acc`) was rejected because it makes the operator's
+state and the service's diverge silently. Documenting only (`sudo -u acc`,
+`ACC_STATE`) was rejected because it leaves the default broken. A group is the
+Unix shape for "these people operate this service" — the same group already
+owned `/etc/acc/acc.env`.
+
+**Consequences:** joining `acc` is operator privilege on the host: write access
+to the state tree and read access to the secrets in `acc.env`, both documented
+in `docs/INSTALL.md`. The umask cannot widen podman's own storage (explicit
+`0700` modes), so the group does not reach the `acc` user's images.
+`/var/log/acc` stays group-readable only, and `/etc/acc` is unchanged. A shell
+started before `usermod` keeps its old groups; `acc paths` in it still shows the
+state as missing. On a system install the stack is started with `systemctl`,
+not `acc stack up` as the operator: that would be a second collective in the
+operator's own rootless podman store.
+
 ## Future considerations (not yet decided)
 
 * **Multi-collective infusion** — today PR-D writes to a single

@@ -277,9 +277,13 @@ def test_agent_model_marks_override_in_compose(registry_roles):
 
 def test_agent_core_containerfiles_bake_models_yaml():
     """B6 regression guard (proposal 044, v0.5.18): the agent-core images MUST
-    bake ``models.yaml`` — agent services don't mount it, so without the COPY
-    apply_role_model_env() reads an empty registry and role_models never applies
-    (the 29.6 lighthouse symptom: assistant stuck on the global 3B default)."""
+    bake the model registry at ``/app/models.yaml`` — agent services don't mount
+    it, so without the COPY apply_role_model_env() reads an empty registry and
+    role_models never applies (the 29.6 lighthouse symptom: assistant stuck on
+    the global 3B default).  IN-11e: the source is the TRACKED
+    ``models.yaml.example``; `models.yaml` itself is a per-host file git does not
+    track, so copying it built only from a developer's tree and failed from a
+    clean clone or a `git archive` of a tag."""
     from pathlib import Path
     repo = Path(__file__).resolve().parent.parent
     for cf in (
@@ -287,7 +291,11 @@ def test_agent_core_containerfiles_bake_models_yaml():
         repo / "container" / "beta" / "Containerfile.agent-core",
     ):
         text = cf.read_text(encoding="utf-8")
-        assert "COPY models.yaml /app/models.yaml" in text, (
-            f"{cf} must bake models.yaml (B6 role_models needs the registry "
-            f"baked; agent services do not mount it)"
+        assert "COPY models.yaml.example /app/models.yaml" in text, (
+            f"{cf} must bake the registry at /app/models.yaml (B6 role_models "
+            f"needs it baked; agent services do not mount it)"
+        )
+        assert "COPY models.yaml /app/models.yaml" not in text, (
+            f"{cf} copies the untracked models.yaml -- it cannot build from a "
+            f"clean clone or a tag (IN-11e)"
         )

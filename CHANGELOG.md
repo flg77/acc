@@ -11,6 +11,65 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.3] — 2026-09-12
+
+### Changed
+
+- **A question asked about a decision is answered in the panel** (UX-04,
+  `20260912-answers-in-the-panel`). `c` — *chat about this* — already left the
+  request PENDING, but the agent's reply landed in the transcript, under
+  whatever had arrived since, while the decision waited in the panel above it:
+  the operator read one surface to answer another. The question and its answer
+  now render **under the question that prompted them**, with *waiting for the
+  agent…* while it is out. Only the task the panel asked about is routed back;
+  every other reply belongs to the thread alone. The panel keeps the last two
+  exchanges and trims a long answer, saying so — the transcript keeps every
+  word. The exchange survives a refresh of the same decision and is dropped when
+  a different one takes the panel.
+
+### Added
+
+- **The AgentBOM pins the governance it was assessed against** (AS-09,
+  `20260912-governance-pack-pin`; operator answer 2026-09-11). The BOM pinned
+  every capability — exact `@scope/name@version` refs, resolved in a signed
+  catalog under a signing floor — while its one governance field, `spec.policy`,
+  was a free string nothing in the tree read. `spec.governance` now takes pinned
+  governance packs (the risks, scenarios and control map an agentset was
+  assessed against) under the same rules: exact pins only, resolved against the
+  catalog, reported as `unresolved_governance` and counted against the verdict,
+  signed through the BOM's existing floor. `spec.policy` stays what it is — the
+  Enterprise Contract policy applied at **install** — and the two can no longer
+  drift: a `policy` written as a pack pin must also appear in `spec.governance`.
+  Existing BOMs are unaffected (`governance` defaults to empty).
+
+### Added
+
+- **Every component image is built from a release tag, and verified**
+  (`20260912-image-release-pipeline`, IN-11a). The package has had a pipeline
+  since v0.15.0; the images had none — `acc-deploy.sh build` builds the working
+  tree, nothing checked what came out, and a component reached quay only if
+  someone remembered. `packaging/images/build-images.sh <tag>` exports
+  `git archive <tag>` to the build host, builds each component with
+  `--build-arg ACC_VERSION`, tags it `<prefix>:acc-<component>-<version>`, and
+  **verifies** it: an image carrying the ACC package must report the release's
+  version from inside, one without must start. A failure stages nothing; the
+  `podman push` commands are printed, never run (pushing stays the operator's).
+  The eight ACC-code images build at the release's version; the three MCP
+  sidecars and `nats` / `redis` keep their pinned ones behind `--with-sidecars`
+  / `--with-infra`, because a release must not renumber redis.
+  `acc-agent-core` keeps its separate RPM-based pipeline, and
+  `Containerfile.flavour` is a per-deployment bake — a test fails if a new
+  production Containerfile is neither covered nor excluded.
+
+### Fixed
+
+- **The source agent image builds from a clean clone again** (IN-11e).
+  `container/production/Containerfile.agent-core` copied `models.yaml`, which
+  git does not track — it built from a developer's tree and failed from a fresh
+  clone or a `git archive` of a tag. It bakes the shipped
+  `models.yaml.example` now, as the RPM-based image already did; operators still
+  override with a mount or `ACC_MODELS_PATH`.
+
 ## [0.17.2] — 2026-09-11
 
 ### Changed

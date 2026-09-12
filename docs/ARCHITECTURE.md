@@ -87,7 +87,10 @@ with a human oversight queue for what a role's grants do not cover.
   configuration under `/etc/acc`, the state root, `acc-deploy`, the systemd unit
   and the `acc` system user, which never gains root) and requires it. One
   discovery rule finds all three roots — home, share, state — with the
-  environment first and the checkout last (`acc paths`).
+  environment first and the checkout last (`acc paths`). The state root
+  `/var/lib/acc` is shared between the service and its operators through group
+  `acc` (setgid, group-writable, umask `0002` on both sides — D-023), so what an
+  operator installs is what the running stack sees.
 - **The channel**: the internal Satellite is the distribution base, with a copy
   mirrored on acc1 for hosts that are not subscribed to it. Semantic versions map
   onto RPM's Version and Release so a pre-release or a snapshot sorts *below* the
@@ -127,4 +130,4 @@ with a human oversight queue for what a role's grants do not cover.
 - **Reasoning bench**: the promote gate scores deliberation depth; run for any
   reasoning-affecting change (role prompts), advisory on the 3B edge model.
 
-_Last updated: 2026-09-11 (v0.17.0)_
+_Last updated: 2026-09-11 (v0.17.2)_

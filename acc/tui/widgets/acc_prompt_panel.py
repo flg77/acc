@@ -113,6 +113,7 @@ class AccPromptPanel(Static):
         self._note = ""
         self._note_mode = False
         self._note_buffer = ""
+        self._exchanges: list[list[str]] = []   # UX-04: [question, answer]
         self.last_markup = ""
 
     # ------------------------------------------------------------------
@@ -149,6 +150,7 @@ class AccPromptPanel(Static):
             self._note = ""
             self._note_mode = False
             self._note_buffer = ""
+            self._exchanges = []           # a different decision, a different thread
             decision = build_decision(cards, options, proposal=proposal, more=more)
         self._cards = list(cards)
         self._decision = decision
@@ -164,6 +166,7 @@ class AccPromptPanel(Static):
         self._note = ""
         self._note_mode = False
         self._note_buffer = ""
+        self._exchanges = []
         self.last_markup = ""
         self.update("")
         self.display = False
@@ -172,7 +175,10 @@ class AccPromptPanel(Static):
         if self._decision is None:
             return
         notes = self._note_buffer if self._note_mode else self._note
-        decision = replace(self._decision, notes=notes)
+        decision = replace(
+            self._decision, notes=notes,
+            exchanges=tuple((q, a) for q, a in self._exchanges),
+        )
         self._decision = decision
         width = self.size.width or 100
         self.last_markup = render_panel(
@@ -183,6 +189,35 @@ class AccPromptPanel(Static):
             note_mode=self._note_mode,
         )
         self.update(self.last_markup)
+
+    # ------------------------------------------------------------------
+    # UX-04 -- the question asked about this decision, and its answer
+    # ------------------------------------------------------------------
+
+    def ask(self, question: str) -> None:
+        """Record a question the operator asked ABOUT this decision."""
+        text = (question or "").strip()
+        if not text or self._decision is None:
+            return
+        self._exchanges.append([text, ""])
+        self._paint()
+
+    def answer(self, text: str) -> None:
+        """The agent's reply to the last question asked here."""
+        body = (text or "").strip()
+        if not body or self._decision is None:
+            return
+        for exchange in reversed(self._exchanges):
+            if not exchange[1]:
+                exchange[1] = body
+                break
+        else:
+            self._exchanges.append(["", body])
+        self._paint()
+
+    @property
+    def exchanges(self) -> list[tuple[str, str]]:
+        return [(q, a) for q, a in self._exchanges]
 
     # ------------------------------------------------------------------
     # Keys

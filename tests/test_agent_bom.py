@@ -97,3 +97,60 @@ def test_trusted_on():
 def test_json_schema_exports():
     s = agent_bom_json_schema()
     assert "properties" in s and "spec" in s["properties"]
+
+
+# ---------------------------------------------------------------------------
+# AS-09 -- the governance pack, pinned and verified like the capability set
+# ---------------------------------------------------------------------------
+
+
+GOV = "@acc/governance-acme-2026@1.0.0"
+
+
+def test_governance_packs_default_to_none():
+    b = AgentBOM.model_validate(_bom())
+    assert b.spec.governance == []
+
+
+def test_governance_packs_must_be_exact_pins():
+    with pytest.raises(ValueError, match="governance packs must be exact pins"):
+        AgentBOM.model_validate(_bom(governance=["@acc/governance-acme-2026"]))
+    with pytest.raises(ValueError, match="governance packs must be exact pins"):
+        AgentBOM.model_validate(_bom(governance=["@acc/governance-acme-2026@^1.0.0"]))
+
+
+def test_an_unresolvable_governance_pack_fails_the_verdict():
+    """Evidence the catalog cannot offer is evidence nobody can check."""
+    b = AgentBOM.model_validate(_bom(governance=[GOV]))
+    available = set(b.spec.packages)                      # the catalog lacks the pack
+    v = b.verify(available=available)
+    assert v.ok is False
+    assert v.unresolved_governance == [GOV] and v.unresolved == []
+
+
+def test_a_resolvable_governance_pack_verifies():
+    b = AgentBOM.model_validate(_bom(governance=[GOV]))
+    v = b.verify(available=set(b.spec.packages) | {GOV})
+    assert v.ok is True and v.unresolved_governance == []
+
+
+def test_a_policy_written_as_a_pack_pin_must_be_listed_as_governance():
+    """The drift AS-09 exists to stop: `policy` is the install-time EC policy
+    ref; a governance pack pinned there is in the wrong field."""
+    with pytest.raises(ValueError, match="list it in spec.governance"):
+        AgentBOM.model_validate(_bom(policy=GOV))
+    ok = AgentBOM.model_validate(_bom(policy=GOV, governance=[GOV]))
+    assert ok.spec.policy == GOV
+
+
+def test_the_default_policy_ref_is_untouched():
+    b = AgentBOM.model_validate(_bom())
+    assert b.spec.policy == "enterprise-contract/default"
+
+
+def test_governance_is_in_the_schema_and_round_trips(tmp_path):
+    assert "governance" in agent_bom_json_schema()["$defs"]["AgentBOMSpec"]["properties"]
+    b = AgentBOM.model_validate(_bom(governance=[GOV]))
+    p = tmp_path / "bom.yaml"
+    p.write_text(b.to_yaml(), encoding="utf-8")
+    assert load_agent_bom(p).spec.governance == [GOV]

@@ -89,6 +89,11 @@ required).
   one is refused. Once answered, a request stays out of the pane even while
   the arbiter's heartbeat still lists it for a few seconds (v0.17.1); one whose
   decision failed to send stays open.
+- **Asking about a decision** — `c` in the panel asks a question about the
+  request without resolving it: the request stays PENDING, and the agent's
+  answer renders **in the panel, under the question you asked**, not only in
+  the thread. The panel keeps the last couple of exchanges and trims a long
+  answer (the thread keeps all of it).
 - **A destructive question** — the decision panel names what will be destroyed
   (`shell_exec will delete or overwrite data: rm -rf build/. Run it?`) and
   offers `1 run it · 2 don't run it`. It is answered on its own, always with

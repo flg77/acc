@@ -66,6 +66,9 @@ class Decision:
     asked: bool = False
     #: ...and it deletes or overwrites data: every approval takes the key twice.
     destructive: bool = False
+    #: UX-04 -- questions the operator asked ABOUT this decision and the agent's
+    #: answers, newest last.  An empty answer is a question still in flight.
+    exchanges: tuple[tuple[str, str], ...] = ()
 
     @property
     def needs_second_approver(self) -> bool:
@@ -252,6 +255,41 @@ def _plain_len(decision: Decision, index: int, highlighted: int) -> int:
     return len(f"{'>' if index == highlighted else ' '} {opt.key}. {body[0]}")
 
 
+#: How many exchanges the panel keeps on screen, and how many lines an answer
+#: may take before it is trimmed.  The transcript keeps every word; the panel
+#: is a decision surface, not a chat window.
+MAX_EXCHANGES = 2
+MAX_ANSWER_LINES = 6
+
+
+def _exchange_lines(decision: Decision, width: int) -> list[str]:
+    """UX-04 -- what was asked about this decision, and what came back.
+
+    The answer belongs under the question that prompted it: an operator who asks
+    "what does this command touch?" should not have to find the reply in the
+    transcript while the decision waits somewhere else.
+    """
+    if not decision.exchanges:
+        return []
+    out: list[str] = [""]
+    shown = decision.exchanges[-MAX_EXCHANGES:]
+    hidden = len(decision.exchanges) - len(shown)
+    if hidden:
+        out.append(f"[dim]… {hidden} earlier exchange{'s' if hidden != 1 else ''} in the thread[/dim]")
+    for question, answer in shown:
+        for i, text in enumerate(_wrap(question, width - 9)):
+            out.append(f"[b]asked:[/b] {text}" if i == 0 else f"       {text}")
+        if not answer:
+            out.append("[dim italic]       waiting for the agent…[/dim italic]")
+            continue
+        body = _wrap(answer, width - 9)
+        for text in body[:MAX_ANSWER_LINES]:
+            out.append(f"       {text}")
+        if len(body) > MAX_ANSWER_LINES:
+            out.append("[dim]       … the rest is in the thread[/dim]")
+    return out
+
+
 def render_panel(
     decision: Decision,
     *,
@@ -304,6 +342,8 @@ def render_panel(
         lines.extend(opt_lines)
         lines.append("")
         lines.extend(detail)
+
+    lines.extend(_exchange_lines(decision, width))
 
     lines.append("")
     if note_mode:

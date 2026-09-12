@@ -209,3 +209,37 @@ alone. asago's "human oversight at each stage" and ACC's are the same rule.
 
 Backlog and sequence: the asago analysis in the operator's vault
 (`20-backlog/asago/AS-00`), the openspec change `20260908-asago-alignment`.
+
+## 8. The governance pack, pinned in the AgentBOM
+
+An assessment is only worth what you can point at later. The AgentBOM already
+pins every capability — `@scope/name@version`, resolved in a signed catalog,
+under a signing floor — and since AS-09 it pins the **governance** the agentset
+was assessed against the same way:
+
+```yaml
+spec:
+  packages:
+    - "@acc/workspace-roles@1.2.0"
+  governance:
+    - "@acc/governance-acme-2026@1.0.0"   # risks + scenarios + control map
+  policy: "enterprise-contract/default"    # the EC policy applied at INSTALL
+```
+
+Rules, and the reason for each:
+
+* **Exact pins only.** A range would let the evidence change under the document
+  that cites it.
+* **It must resolve.** `verify()` reports `unresolved_governance` and fails the
+  verdict — evidence the catalog cannot offer is evidence nobody can check.
+* **It is signed like everything else**, through the BOM's `required_signer`.
+* **`policy` is not a pack.** It names the Enterprise Contract policy applied at
+  install (`acc/pkg/ec_policy.py`, `--ec-policy`, or
+  `/etc/acc/policy/enterprise-contract.yaml`). A governance pack belongs in
+  `governance`; if `policy` is written as a pack pin it must appear there too, so
+  the two cannot drift apart.
+
+What this does **not** yet do: nothing produces a governance pack yet (AS-02), so
+the pin is filled by hand; and the eval artefacts do not carry it, because the
+run that would write them is AS-05. The BOM says what the agentset was assessed
+*against*, not yet what the assessment *found* (AS-03's `risk_profile`).

@@ -89,11 +89,15 @@
       only for the system state), `state_hint()` — `acc paths` / `doctor --paths` say "join group
       `acc`" when the shared state is not writable; `acc`, `acc-cli`, `acc-pkg` adopt the umask first
 - [x] tests: `tests/test_shared_state.py`, `tests/test_rpm_spec.py` updated
-- [ ] `docs/INSTALL.md` (the RPM as it is: two packages, the channel + CA, the acc1 mirror, EL9,
+- [x] `docs/INSTALL.md` (the RPM as it is: two packages, the channel + CA, the acc1 mirror, EL9,
       signing, the group, `systemctl`, the upgrade check), MANUAL "Getting started"
-- [ ] release (v0.17.2), EL9 build, staged on saturate3; the operator installs (sudo needs a
-      password there); verified: `rpm -q` = `acc --version`, `acc paths`, the group, the service
-- [ ] playbook PB-11 "Install ACC from the RPM on a clean host"
+- [x] released v0.17.2; EL9 built from the tag in `almalinux:9`, staged on saturate3, the operator
+      installed it (upgrading the 0.15.0 single package); verified 2026-09-12 on a fresh login:
+      `rpm -q` 0.17.2 = `acc --version`, state `2770 acc:acc`, unit `UMask=0002`, no `acc paths`
+      note, and a file an ACC command writes in the state tree is 0664 group `acc`. acc1 shows the
+      other side: a user outside the group gets the note
+- [x] playbook PB-11 "Install ACC from the RPM on a clean host" + evidence note (vault)
+- [ ] `acc-stack` started on saturate3 — the operator's call (a collective on their box)
 
 ## IN-08 — extension + bootc
 - [ ] Windows and the Podman Desktop extension (the launcher, the discovery rule, the trust record)

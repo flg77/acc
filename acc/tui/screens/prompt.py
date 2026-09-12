@@ -357,6 +357,10 @@ class PromptScreen(NavScreen):
         # request re-appeared for ~30 s (v0.17.0 lighthouse smoke).  Forgotten
         # once the snapshot stops listing the row.
         self._answered_gate_ids: set[str] = set()
+        # UX-04 -- a question asked ABOUT the open decision (`c`): the next send
+        # belongs to the panel, and that task's reply renders under the question.
+        self._panel_chat_pending: bool = False
+        self._panel_chat_task: str = ""
         # 1.5 -- the thread the pane holds open so continuation replies
         # (same task_id, e.g. after an infuse) land under it; released on
         # the next send or /done.  Outcomes are rendered once.
@@ -731,6 +735,7 @@ class PromptScreen(NavScreen):
         text = reply.output or "(empty response)"
         if reply.blocked:
             text = f"[BLOCKED] {reply.block_reason}\n{text}"
+        self._panel_answer(task_id, text)
         self._append_history({
             "role": "agent",
             "task_id": task_id,
@@ -894,6 +899,23 @@ class PromptScreen(NavScreen):
 
     # -- acc-prompt panel messages ---------------------------------------
 
+    def _panel_answer(self, task_id: str, text: str) -> None:
+        """UX-04 -- route a reply to the question it answers, in the panel.
+
+        Only the task the panel asked about; every other reply belongs to the
+        thread alone.  The transcript keeps every word -- the panel shows the
+        answer where the decision is, and says when it had to trim."""
+        if not task_id or task_id != self._panel_chat_task:
+            return
+        self._panel_chat_task = ""
+        panel = self._acc_prompt_panel()
+        if panel is None or panel.decision is None:
+            return
+        try:
+            panel.answer(text)
+        except Exception:  # noqa: BLE001
+            logger.debug("prompt: panel answer failed", exc_info=True)
+
     def _acc_prompt_panel(self):
         """The decision panel, or ``None`` before it is mounted."""
         try:
@@ -958,6 +980,9 @@ class PromptScreen(NavScreen):
             ta.text = f"About the pending decision '{decision.title}': "
             ta.move_cursor(ta.document.end)
             ta.focus()
+            # UX-04: the answer to THIS question belongs in the panel, under the
+            # question that prompted it -- not only in the thread below.
+            self._panel_chat_pending = True
         except Exception:  # noqa: BLE001
             logger.debug("prompt: chat prefill failed", exc_info=True)
 
@@ -2416,6 +2441,12 @@ class PromptScreen(NavScreen):
                 # smuggle a transcript the client invented.
                 session_id=self._session_id,
             )
+            if self._panel_chat_pending:
+                panel = self._acc_prompt_panel()
+                if panel is not None and panel.decision is not None:
+                    panel.ask(prompt)
+                    self._panel_chat_task = task_id
+                self._panel_chat_pending = False
         except Exception as exc:
             logger.exception("prompt: send failed")
             self._append_history({
@@ -2532,6 +2563,7 @@ class PromptScreen(NavScreen):
         text = reply.output or "(empty response)"
         if reply.blocked:
             text = f"[BLOCKED] {reply.block_reason}\n{text}"
+        self._panel_answer(task_id, text)
         self._append_history({
             "role": "agent",
             "task_id": task_id,

@@ -1,7 +1,8 @@
 """Agent Bill of Materials (A-BOM) — proposal 040, first-class.
 
 A signed manifest describing a customized agentset: its roles + per-role model
-bindings, the PINNED signed package set, the governance policy, and the deploy
+bindings, the PINNED signed package set, the PINNED governance packs it was
+assessed against (AS-09), the install-time EC policy, and the deploy
 scenarios it is *trusted on*.  It is the enterprise differentiator over a hosted
 "launch your agent": every capability is an exact ``@scope/name@version`` from a
 signed catalog, so a launched agent ships a reproducible, air-gap-installable,
@@ -57,8 +58,21 @@ class AgentBOMSpec(BaseModel):
         default_factory=list,
         description="PINNED @scope/name@version capability set (must all resolve + verify)",
     )
+    governance: list[str] = Field(
+        default_factory=list,
+        description=(
+            "PINNED @scope/name@version governance packs -- the risks, scenarios "
+            "and control map the agentset was assessed against (AS-09)"
+        ),
+    )
     policy: str = Field(
-        "enterprise-contract/default", description="EC policy ref applied at install"
+        "enterprise-contract/default",
+        description=(
+            "Enterprise Contract policy applied at INSTALL (a policy ref, not a "
+            "pack).  A governance pack belongs in `governance`, pinned; if this "
+            "field is written as a pack pin it must be listed there too, so the "
+            "two cannot drift"
+        ),
     )
     targets: list[str] = Field(
         ..., min_length=1, description="deploy scenarios this BOM is trusted on"
@@ -80,6 +94,21 @@ class AgentBOMSpec(BaseModel):
             raise ValueError(
                 f"A-BOM packages must be exact pins (@scope/name@version): {unpinned}"
             )
+        # AS-09: a governance pack is evidence about this agentset -- what it was
+        # assessed against.  Evidence that floats is not evidence, so the same
+        # pin rule applies as to the capability set.
+        unpinned = [g for g in self.governance if not is_pinned(g)]
+        if unpinned:
+            raise ValueError(
+                f"A-BOM governance packs must be exact pins (@scope/name@version): {unpinned}"
+            )
+        # `policy` is the install-time EC policy ref.  Written as a pack pin it is
+        # a governance pack in the wrong field -- the drift AS-09 exists to stop.
+        if is_pinned(self.policy) and self.policy not in self.governance:
+            raise ValueError(
+                f"spec.policy {self.policy!r} is a pack pin; list it in spec.governance "
+                f"(policy is the install-time EC policy ref, not a pack)"
+            )
         return self
 
 
@@ -89,6 +118,9 @@ class AgentBOMVerdict(BaseModel):
     unresolved: list[str]
     signing_floor_ok: bool
     targets: list[str]
+    #: Pinned governance packs the catalog does not offer (AS-09).  A BOM whose
+    #: evidence cannot be resolved is not verifiable, so this counts against `ok`.
+    unresolved_governance: list[str] = Field(default_factory=list)
 
 
 class AgentBOM(BaseModel):
@@ -118,6 +150,12 @@ class AgentBOM(BaseModel):
         ``@scope/name@version`` the resolver reports).  Empty ⇒ fully resolvable."""
         return [p for p in self.spec.packages if p not in available]
 
+    def unresolved_governance(self, available: set[str]) -> list[str]:
+        """Pinned governance packs NOT offered by the catalog (AS-09).  Same rule
+        as :meth:`unresolved_packages`: what cannot be resolved cannot be
+        verified, and unverifiable evidence is worth nothing to an auditor."""
+        return [g for g in self.spec.governance if g not in available]
+
     def signing_floor_ok(self) -> bool:
         """A trustable A-BOM names a non-empty keyless signing identity."""
         rs = self.spec.required_signer
@@ -129,13 +167,15 @@ class AgentBOM(BaseModel):
     def verify(self, *, available: set[str]) -> AgentBOMVerdict:
         """Combine resolution + signing-floor + target checks into one verdict."""
         unresolved = self.unresolved_packages(available)
+        unresolved_gov = self.unresolved_governance(available)
         floor = self.signing_floor_ok()
         return AgentBOMVerdict(
             name=self.name,
-            ok=(not unresolved) and floor and bool(self.spec.targets),
+            ok=(not unresolved) and (not unresolved_gov) and floor and bool(self.spec.targets),
             unresolved=unresolved,
             signing_floor_ok=floor,
             targets=list(self.spec.targets),
+            unresolved_governance=unresolved_gov,
         )
 
     def to_yaml(self) -> str:
