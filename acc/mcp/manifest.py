@@ -13,10 +13,16 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
-MCPTransport = Literal["http", "stdio"]
+MCPTransport = Literal["http", "streamable-http", "stdio"]
 """Supported transports.
 
 * ``http`` — JSON-RPC 2.0 over HTTP POST.  Production path.  Requires
+  ``url``.
+* ``streamable-http`` — the MCP HTTP transport (`20260913-mcp-streamable-http`,
+  MC-01).  A session id issued on ``initialize`` and echoed on every later
+  request, and responses that may arrive as JSON or as an SSE stream.  This is
+  what `fastmcp` and most of the current ecosystem serve; plain ``http`` is
+  answered by such a server with ``-32600 Missing session ID``.  Requires
   ``url``.
 * ``stdio`` — subprocess pipe with newline-delimited JSON-RPC.
   Reserved for a future PR; the manifest validator accepts the
@@ -214,10 +220,10 @@ class MCPManifest(BaseModel):
     def _transport_consistency(self) -> "MCPManifest":
         """Each transport requires a different field set; fail fast on
         inconsistencies rather than at first-call time."""
-        if self.transport == "http":
+        if self.transport in ("http", "streamable-http"):
             if not self.url:
                 raise ValueError(
-                    f"server_id={self.server_id!r}: transport=http requires 'url'"
+                    f"server_id={self.server_id!r}: transport={self.transport} requires 'url'"
                 )
         elif self.transport == "stdio":
             if not self.command:

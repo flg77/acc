@@ -410,6 +410,196 @@ class StdioTransport:
 
 
 # ---------------------------------------------------------------------------
+# Streamable HTTP (`20260913-mcp-streamable-http`, MC-01)
+# ---------------------------------------------------------------------------
+
+PROTOCOL_VERSION_HEADER = "MCP-Protocol-Version"
+SESSION_ID_HEADER = "Mcp-Session-Id"
+PROTOCOL_VERSION = "2024-11-05"
+
+
+class StreamableHTTPTransport:
+    """The MCP HTTP transport: a session id, and responses that may stream.
+
+    :class:`HTTPTransport` posts a bare JSON-RPC envelope and expects a JSON
+    body.  That is JSON-RPC over HTTP, and it is not what MCP servers speak: a
+    ``fastmcp`` server answers it with ``-32600 Missing session ID``.  This
+    transport adds the three things the MCP HTTP binding actually requires --
+
+    * the ``Mcp-Session-Id`` the server issues on ``initialize``, echoed on
+      every later request;
+    * the ``notifications/initialized`` the client owes the server once the
+      handshake succeeds (sent here, because it is an obligation of *this*
+      transport and not something :class:`~acc.mcp.client.MCPClient` should
+      have to know);
+    * responses decoded from either a JSON body or a ``text/event-stream``.
+
+    Errors keep the shapes the dispatch layer and the audit line already use.
+    """
+
+    def __init__(self, manifest: MCPManifest, *, bearer_resolver=None) -> None:
+        self._manifest = manifest
+        self._bearer_resolver = bearer_resolver
+        self._session_id = ""
+        headers = {
+            "Content-Type": "application/json",
+            # Both are legal answers to one POST; say so, or a server may
+            # refuse the request outright.
+            "Accept": "application/json, text/event-stream",
+        }
+        if manifest.auth != "oauth" and manifest.api_key_env:
+            api_key = os.environ.get(manifest.api_key_env, "")
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            else:
+                logger.warning(
+                    "mcp: api_key_env=%r set on server_id=%r but env var is "
+                    "empty -- sending request unauthenticated",
+                    manifest.api_key_env, manifest.server_id,
+                )
+        self._client = httpx.AsyncClient(
+            timeout=manifest.timeout_s,
+            headers=headers,
+            # A server mounted at /mcp answers /mcp/ with a 307; httpx does
+            # not follow by default, and the handshake died on the redirect
+            # body.  We post the exact URL below so this is a fallback, not
+            # the mechanism.  httpx drops Authorization on a cross-host
+            # redirect, so following one cannot leak the bearer.
+            follow_redirects=True,
+        )
+
+    @property
+    def session_id(self) -> str:
+        """The session the server issued, or empty before the handshake."""
+        return self._session_id
+
+    async def send_rpc(self, envelope: dict) -> dict:
+        body = await self._post(envelope)
+        if envelope.get("method") == "initialize" and "result" in body:
+            # The server is ready for work only once it has been told the
+            # handshake completed.  Best-effort: a server that does not care
+            # must not cost us the session.
+            try:
+                await self._post(
+                    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                    notification=True,
+                )
+            except (MCPTransportError, MCPProtocolError):
+                logger.warning(
+                    "mcp: server_id=%r did not accept notifications/initialized "
+                    "-- continuing",
+                    self._manifest.server_id,
+                )
+        return body
+
+    async def _post(self, envelope: dict, *, notification: bool = False) -> dict:
+        req_headers: dict = {}
+        if self._manifest.auth == "oauth" and self._bearer_resolver is not None:
+            token = await self._bearer_resolver()
+            if token:
+                req_headers["Authorization"] = f"Bearer {token}"
+        if self._session_id:
+            req_headers[SESSION_ID_HEADER] = self._session_id
+            req_headers[PROTOCOL_VERSION_HEADER] = PROTOCOL_VERSION
+        method = envelope.get("method", "?")
+        try:
+            response = await self._client.post(
+                self._manifest.url, json=envelope, headers=req_headers,
+            )
+        except httpx.TimeoutException as exc:
+            raise MCPTransportError(
+                f"server_id={self._manifest.server_id!r}: timeout "
+                f"calling {method}"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise MCPTransportError(
+                f"server_id={self._manifest.server_id!r}: transport error "
+                f"calling {method}: {exc}"
+            ) from exc
+
+        issued = response.headers.get(SESSION_ID_HEADER)
+        if issued:
+            self._session_id = issued
+
+        if response.status_code >= 500:
+            raise MCPTransportError(
+                f"server_id={self._manifest.server_id!r}: HTTP "
+                f"{response.status_code} from {method}"
+            )
+        if notification:
+            # A notification is answered 202 with no body; nothing to decode.
+            return {}
+        return self._decode(response)
+
+    def _decode(self, response) -> dict:
+        """Read the JSON-RPC response out of a JSON body or an SSE stream."""
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("text/event-stream"):
+            payload = self._last_sse_payload(response.text)
+            if payload is None:
+                raise MCPProtocolError(
+                    f"server_id={self._manifest.server_id!r}: event stream "
+                    f"carried no JSON-RPC message"
+                )
+            return payload
+        try:
+            body = response.json()
+        except Exception as exc:
+            raise MCPProtocolError(
+                f"server_id={self._manifest.server_id!r}: non-JSON response "
+                f"(HTTP {response.status_code})"
+            ) from exc
+        if not isinstance(body, dict):
+            raise MCPProtocolError(
+                f"server_id={self._manifest.server_id!r}: response is not a "
+                f"JSON object"
+            )
+        return body
+
+    def _last_sse_payload(self, text: str):
+        """The last ``data:`` frame that decodes to a JSON object.
+
+        A stream may carry progress notifications before the answer; the
+        response to our request is the one that ends it.
+        """
+        found = None
+        for line in text.splitlines():
+            if not line.startswith("data:"):
+                continue
+            chunk = line[len("data:"):].strip()
+            if not chunk:
+                continue
+            try:
+                candidate = json.loads(chunk)
+            except ValueError:
+                continue
+            if isinstance(candidate, dict):
+                found = candidate
+        return found
+
+    async def close(self) -> None:
+        # The spec ends a session with a DELETE; a server that does not
+        # implement it is not a problem worth surfacing.
+        if self._session_id:
+            try:
+                await self._client.delete(
+                    self._manifest.url,
+                    headers={SESSION_ID_HEADER: self._session_id},
+                )
+            except Exception:
+                logger.debug(
+                    "mcp: session DELETE failed for %r", self._manifest.server_id,
+                )
+        try:
+            await self._client.aclose()
+        except Exception:  # pragma: no cover -- defensive
+            logger.exception(
+                "mcp: streamable-http aclose failed for %r",
+                self._manifest.server_id,
+            )
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -423,6 +613,8 @@ def build_transport(manifest: MCPManifest) -> Transport:
     """
     if manifest.transport == "http":
         return HTTPTransport(manifest)
+    if manifest.transport == "streamable-http":
+        return StreamableHTTPTransport(manifest)
     if manifest.transport == "stdio":
         return StdioTransport(manifest)
     raise NotImplementedError(

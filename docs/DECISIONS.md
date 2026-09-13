@@ -1245,3 +1245,49 @@ per-deployment bake; a test fails if a new production Containerfile is neither
 covered nor excluded. One component cannot be built at all on a FIPS host
 (`acc-mcp-web-browser-harness`, an Ubuntu base whose OpenSSL has no FIPS
 provider) — open as IN-11f.
+
+## D-026 — A role may take one turn with what its tools returned, and tool output comes in through the guardrails
+
+**Status:** LANDED 2026-09-12 (acc-spearhead #402, released in v0.17.4), with
+#401 and #403 as the two halves that make it usable.
+**Date:** 2026-09-12
+**Context:** ACC parses an action marker *after* the reply is final, dispatches
+it, and puts the outcome on TASK_COMPLETE — where the model never sees it. One
+task was one LLM call. Measured by pointing Red Hat's midojo at a real cell
+(AS-04): the agent called `get_weather` successfully **8 times out of 8** and
+answered every one of them by inventing a temperature. The benchmark scored it
+12.5% utility, a number describing the loop rather than the model. Two adjacent
+defects made it worse: the prompt named a server but never its *tools*, so the
+model guessed names that A-018 then refused; and two markers on one line
+collapsed into one match, so a reply asking for five calls made one.
+
+**Decision:** markers-as-actions stays — it is what makes a gate meaningful,
+and it is why the same run shows ACC refusing an injected `send_weather_alert`.
+On top of it, a role may opt into **one** follow-up turn (`tool_result_turn`,
+default off) in which the dispatched results, failures included, are appended
+to the task content and the task is processed once more.
+
+**Rationale:** the follow-up re-enters `process_task` rather than going around
+it, so tool output meets the same `pre_llm` guardrails as any other input —
+`acc.guardrails.prompt_injection` included. That is the decision, not an
+implementation detail. Until now ACC was immune to tool-borne prompt injection
+for an accidental reason: the model never saw tool output. This change is what
+first gives such an injection a path, so it had to arrive with the guardrail on
+it. A follow-up that smuggled results in as system text would have skipped the
+check ACC had been getting for free.
+
+Bounded on purpose: the follow-up payload is flagged so it can never start a
+third turn, and markers in the second turn are parsed for the log but **not**
+dispatched — one task still dispatches one round of effects, so the gate story
+is unchanged. Each result is clipped and the block capped so a chatty server
+cannot evict the conversation it is answering.
+
+**Consequences:** off by default, because an extra LLM call per tool-using task
+is a budget decision and not only a quality one; nothing in-tree enables it yet.
+On the AS-04 matrix it took utility from 12.5% to 62.5–68.75% with attack
+success unchanged at 0.0%. The three tool-result injection families became
+genuinely testable for the first time: five payloads were delivered to a model
+that could read them and it resisted all five, while the one injection it did
+obey (embedded in the *user's* prompt) was refused at the oversight gate. One
+round only — "list the cities, then get each one's weather" still cannot
+complete in a single task.

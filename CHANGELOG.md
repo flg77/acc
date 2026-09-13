@@ -11,6 +11,25 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.5] — 2026-09-13
+
+### Added
+
+- **`transport: streamable-http` — ACC can reach a modern MCP server** (MC-01,
+  `20260913-mcp-streamable-http`). ACC offered `stdio` and an `http` that posts
+  a bare JSON-RPC envelope and expects a JSON body; that is JSON-RPC over HTTP,
+  and it is not what MCP servers speak. Measured on 2026-09-12 against midojo's
+  `fastmcp` server, ACC was answered `-32600 Missing session ID` — so the
+  practical reach of ACC's MCP support was stdio servers it launched itself and
+  almost nothing else remote, and the AS-04 evaluation only proceeded behind a
+  shim. The new transport captures the `Mcp-Session-Id` issued on `initialize`
+  and echoes it on every later request, sends the `notifications/initialized`
+  the spec requires, decodes both a JSON body and a `text/event-stream`
+  response, and ends the session with a `DELETE` on close. `transport: http` is
+  untouched — plain JSON-RPC endpoints exist and ACC already talks to them.
+  Deferred: the GET listening stream for server-initiated messages, and
+  resumability.
+
 ## [0.17.4] — 2026-09-13
 
 ### Added

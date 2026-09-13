@@ -118,9 +118,14 @@ argv (never `shell=True`, never string interpolation of LLM output).
 
 1. Vet the source against the Tier C checklist above.
 2. Create `mcps/<server_id>/mcp.yaml` mirroring the existing
-   `mcps/arxiv/mcp.yaml` shape. Use `transport: stdio` + `command:`
-   for community packages; `transport: http` + `url:` for HTTP servers
-   you run yourself.
+   `mcps/arxiv/mcp.yaml` shape. Pick the transport deliberately:
+   - `stdio` + `command:` for a community package ACC launches itself;
+   - **`streamable-http` + `url:` for a real MCP server over HTTP** —
+     this is what `fastmcp` and most of the current ecosystem serve
+     (session id on `initialize`, responses that may stream);
+   - `http` + `url:` only for a plain JSON-RPC endpoint that is *not*
+     an MCP server. Pointing `http` at an MCP server gets you
+     `-32600 Missing session ID`.
 3. Set `risk_level` honestly (the EU AI Act tier — LOW/MEDIUM/HIGH/CRITICAL).
 4. Tighten `allowed_tools` / `denied_tools` if the upstream exposes
    write-shape tools you don't want roles to call.

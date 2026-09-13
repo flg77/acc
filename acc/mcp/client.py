@@ -34,7 +34,12 @@ from acc.mcp.errors import (
     MCPTransportError,
 )
 from acc.mcp.manifest import MCPManifest
-from acc.mcp.transports import StdioTransport, Transport, build_transport
+from acc.mcp.transports import (
+    PROTOCOL_VERSION as _PROTOCOL_VERSION,
+    StdioTransport,
+    Transport,
+    build_transport,
+)
 
 logger = logging.getLogger("acc.mcp.client")
 
@@ -52,10 +57,12 @@ def _next_id() -> int:
     return _RPC_ID
 
 
-# MCP protocol version this client speaks.  Sent in the initialize
-# request and re-checked against the server's response so we fail fast
-# on incompatible versions instead of misparsing later messages.
-_PROTOCOL_VERSION = "2024-11-05"
+# The MCP protocol version this client speaks lives in acc.mcp.transports
+# (`PROTOCOL_VERSION`, imported above): streamable-http sends it as a
+# request header, so one constant serves both and they cannot drift.  It is
+# sent in the initialize request and re-checked against the server's
+# response, so we fail fast on an incompatible version instead of
+# misparsing later messages.
 _CLIENT_NAME = "acc-mcp-client"
 _CLIENT_VERSION = "0.1.0"
 
