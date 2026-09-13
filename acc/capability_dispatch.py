@@ -49,6 +49,7 @@ first segment is the ``server_id`` and the remainder is the
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -280,6 +281,7 @@ async def dispatch_invocations(
     progress_callback: "Any | None" = None,
     operating_mode: str = "AUTO",
     requester_ceiling: str = "",
+    requester: str = "",
 ) -> list[InvocationOutcome]:
     """Execute each parsed marker through the cognitive core.
 
@@ -385,6 +387,7 @@ async def dispatch_invocations(
             task_id=task_id,
             operating_mode=mode,
             requester_ceiling=requester_ceiling,
+            requester=requester,
         ))
     return outcomes
 
@@ -398,6 +401,7 @@ async def _dispatch_one(
     task_id: str = "",
     operating_mode: str = "AUTO",
     requester_ceiling: str = "",
+    requester: str = "",
 ) -> InvocationOutcome:
     """Run one marker; convert every exception path to an
     :class:`InvocationOutcome` with a populated ``error``.
@@ -490,7 +494,8 @@ async def _dispatch_one(
         if denial:
             gate_outcome = await _gate_on_oversight(
                 inv, manifest, role, oversight_queue, task_id,
-                escalation=denial, question=question, record=record,
+                escalation=denial, question=question, record=record, core=core,
+                requester=requester, requester_ceiling=requester_ceiling,
             )
             if gate_outcome is not None:
                 gate_outcome.question = record
@@ -521,7 +526,8 @@ async def _dispatch_one(
         )
         gate_outcome = await _gate_on_oversight(
             inv, gate_manifest, role, oversight_queue, task_id,
-            categories=categories, question=question, record=record,
+            categories=categories, question=question, record=record, core=core,
+            requester=requester, requester_ceiling=requester_ceiling,
         )
         if gate_outcome is not None:
             # Either rejected or timed out — surface and skip dispatch.
@@ -720,6 +726,9 @@ async def _gate_on_oversight(
     escalation: str = "",
     question: "Any | None" = None,
     record: "dict[str, Any] | None" = None,
+    core: "Any | None" = None,
+    requester: str = "",
+    requester_ceiling: str = "",
 ) -> "InvocationOutcome | None":
     """Submit an oversight item and block on its resolution.
 
@@ -756,6 +765,24 @@ async def _gate_on_oversight(
     if question is not None:
         submit_kwargs["question"] = question.to_dict()
         record.update(text=question.text, evidence=question.evidence)
+    # UX-03 -- what this call actually does, so the panel can show it instead
+    # of asking the operator to trust the summary.  Computed from the parsed
+    # call and the manifest; nothing is executed to produce it.
+    evidence_lines = list(call_evidence(inv.kind, inv.target, inv.args, manifest))
+    # UX-03 Phase 2 -- when the capability DECLARES a dry run, run it once and
+    # show what it would do.  Declared, never inferred; journalled as its own
+    # act; a failure is shown as a failure and resolves nothing.
+    if core is not None:
+        evidence_lines.extend(
+            await run_preview(core, inv, manifest, role, task_id=task_id)
+        )
+    if evidence_lines:
+        submit_kwargs["evidence"] = evidence_lines
+    # UX-09 -- whose work this is and under whose authority it runs.
+    if requester:
+        submit_kwargs["requester"] = requester
+    if requester_ceiling:
+        submit_kwargs["ceiling"] = requester_ceiling
     try:
         oversight_id = await queue.submit(
             task_id=task_id,
@@ -1056,3 +1083,195 @@ def follow_up_payload(task_payload: dict, results_block: str) -> dict:
         str(task_payload.get("content", "") or "") + NEWLINE + NEWLINE + results_block
     )
     return follow_up
+# ---------------------------------------------------------------------------
+# Evidence for the decision panel (`20260913-evidence-in-the-panel`, UX-03)
+# ---------------------------------------------------------------------------
+
+MAX_EVIDENCE_VALUE: int = 160
+"""How much of one argument value the operator is shown."""
+
+MAX_EVIDENCE_LINE: int = 300
+"""Cap per rendered line, so one long argument cannot push the options away."""
+
+_SECRET_KEY_MARKERS: tuple = (
+    "key", "token", "secret", "password", "passwd", "credential", "auth",
+    "cookie", "session", "bearer", "private",
+)
+
+
+def _mask_secrets(args: object) -> dict:
+    """Copy *args* with secret-shaped values replaced by ``***``.
+
+    The panel is a screen an operator may be sharing, and a gated call is
+    exactly where a credential shows up as an argument.  Matching is on the
+    key, not the value: a value that merely looks random is usually an id, and
+    hiding ids would make the evidence useless.
+    """
+    if not isinstance(args, dict):
+        return {}
+    out = {}
+    for key, value in args.items():
+        name = str(key).lower()
+        if any(marker in name for marker in _SECRET_KEY_MARKERS):
+            out[key] = "***"
+            continue
+        text = value if isinstance(value, (int, float, bool)) or value is None else str(value)
+        if isinstance(text, str) and len(text) > MAX_EVIDENCE_VALUE:
+            text = text[:MAX_EVIDENCE_VALUE] + " ..."
+        out[key] = text
+    return out
+
+
+def call_evidence(
+    kind: str, target: str, args: object = None, manifest: object = None,
+) -> tuple:
+    """What this call actually does, as lines for the decision panel.
+
+    The panel said a call was gated and why the category applied; it did not
+    say what would run, so deciding meant trusting the summary rather than
+    checking the call.  ACC already had the material -- the dispatcher computes
+    the destructive evidence and then nothing rendered it.
+
+    Nothing here executes: these are the parsed call and the manifest, not a
+    dry run.  Whether a preview may run part of the work before approval is an
+    open operator question (UX-00 5.3), and Phase 1 deliberately does not
+    prejudge it.
+    """
+    from acc.operating_modes import (  # noqa: PLC0415
+        destructive_evidence,
+    )
+
+    lines: list = []
+    name = str(target or "")
+    shown = _mask_secrets(args)
+    try:
+        rendered = json.dumps(shown, default=str, sort_keys=True) if shown else ""
+    except Exception:  # noqa: BLE001 -- evidence must never break a dispatch
+        rendered = ""
+    call = f"{name} {rendered}".strip() if rendered else name
+    if call:
+        lines.append(f"runs: {_clip(call, MAX_EVIDENCE_LINE)}")
+
+    destructive = destructive_evidence(kind, target, args, manifest)
+    if destructive:
+        lines.append(f"deletes or overwrites: {_clip(destructive, MAX_EVIDENCE_LINE)}")
+
+    if kind == "mcp" and manifest is not None:
+        url = str(getattr(manifest, "url", "") or "")
+        transport = str(getattr(manifest, "transport", "") or "")
+        if url:
+            lines.append(f"reaches: {transport} {url}".strip())
+    return tuple(lines)
+# ---------------------------------------------------------------------------
+# The preview (`20260913-preview-in-the-panel`, UX-03 Phase 2)
+# ---------------------------------------------------------------------------
+
+PREVIEW_TIMEOUT_S: float = 10.0
+"""How long a preview may take before the gate stops waiting for it."""
+
+MAX_PREVIEW_OUTPUT: int = 800
+"""How much of a preview's output the panel shows."""
+
+
+def preview_args_for(manifest: object) -> dict:
+    """The arguments that turn this call into a dry run, or ``{}``.
+
+    Declared, never inferred.  The operator's answer to UX-00 5.3 permits
+    executing a real ``--dry-run``; the risk they accepted is that a dry-run
+    flag is the *capability's* claim and not ACC's guarantee.  Keeping the
+    claim in the manifest means it is written down, reviewed and -- for a
+    packaged capability -- signed, instead of ACC pattern-matching a command
+    string and hoping.
+    """
+    declared = getattr(manifest, "preview_args", None)
+    return dict(declared) if isinstance(declared, dict) and declared else {}
+
+
+async def run_preview(
+    core: "Any",
+    inv: ParsedInvocation,
+    manifest: object,
+    role: "Any",
+    *,
+    task_id: str = "",
+    timeout_s: float | None = None,
+) -> tuple:
+    """Run the declared dry run and render it for the panel.
+
+    Returns evidence lines (empty when the capability declares no preview).
+
+    The preview goes through the same adapter path as the real call, so the
+    role's own guard (A-017 / A-018) still applies -- a preview must not reach
+    anything the call itself could not.  It does NOT re-enter the oversight
+    gate: a preview that asked for approval would be a loop.
+
+    A preview is an execution, and it is journalled as one.  A failure is
+    rendered as a failure and changes nothing else: it never resolves the
+    decision, never pre-approves, and never blocks the gate.
+    """
+    declared = preview_args_for(manifest)
+    if not declared:
+        return ()
+    args = dict(inv.args or {})
+    args.update(declared)
+    limit = PREVIEW_TIMEOUT_S if timeout_s is None else float(timeout_s)
+
+    ok, output, error = True, "", ""
+    try:
+        if inv.kind == "skill":
+            coro = core.invoke_skill(inv.target, args, role)
+        elif inv.kind == "mcp":
+            server_id, _, tool_name = inv.target.partition(".")
+            coro = core.invoke_mcp_tool(server_id, tool_name, args, role)
+        else:
+            return ()
+        result = await asyncio.wait_for(coro, timeout=limit)
+        try:
+            output = json.dumps(result, default=str)
+        except Exception:  # noqa: BLE001
+            output = str(result)
+    except asyncio.TimeoutError:
+        ok, error = False, f"timed out after {limit:g}s"
+    except Exception as exc:  # noqa: BLE001 -- a preview must never break the gate
+        ok, error = False, f"{type(exc).__name__}: {exc}"
+
+    _journal_preview(inv, args, ok, output, error, task_id)
+
+    if not ok:
+        return (f"preview failed: {_clip(error, MAX_PREVIEW_OUTPUT)}",)
+    # An adapter that returns nothing, an empty string or an empty container
+    # has told the operator nothing; say that instead of rendering `""`.
+    if not output or output.strip() in ('""', "{}", "[]", "null"):
+        return ("preview ran, no output",)
+    return tuple(
+        f"preview: {line}" if i == 0 else f"  {line}"
+        for i, line in enumerate(_clip(output, MAX_PREVIEW_OUTPUT).splitlines() or [""])
+    )
+
+
+def _journal_preview(
+    inv: ParsedInvocation, args: dict, ok: bool, output: str, error: str, task_id: str,
+) -> None:
+    """Record the preview as its own act.  Best-effort; never raises."""
+    logger.info(
+        "capability_dispatch: preview ran %s %s (ok=%s)%s",
+        inv.kind, inv.target, ok, "" if ok else f" -- {error}",
+    )
+    try:
+        from acc import tracelog  # noqa: PLC0415
+        if not tracelog.tracelog_enabled():
+            return
+        tracelog.log_tool_call(
+            task_id or "unknown",
+            task_id=task_id,
+            kind=f"{inv.kind}:preview",
+            target=inv.target,
+            args=_mask_secrets(args),
+            ok=ok,
+            output=_clip(output, MAX_PREVIEW_OUTPUT),
+            error=error,
+            preview=True,
+        )
+    except Exception:  # noqa: BLE001 -- journalling must not break a dispatch
+        logger.debug("capability_dispatch: preview journal failed", exc_info=True)
+

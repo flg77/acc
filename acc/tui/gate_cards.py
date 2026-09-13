@@ -48,6 +48,20 @@ class GateCard:
     submitted_at_ms: int = 0
     # `20260911-question-envelope` -- the typed question the row carries.
     question: Question | None = None
+    # `20260913-evidence-in-the-panel` (UX-03) -- what the call actually does,
+    # straight from the row: the parsed call, what makes it destructive, and
+    # where an MCP call goes.  Empty for a row that carries none.
+    evidence: tuple = ()
+    # `20260913-provenance-on-the-decision` (UX-09) -- whose work this is and
+    # under whose authority it runs.  The row carried only the agent before.
+    requester: str = ""
+    ceiling: str = ""
+    # `20260913-live-decision-state` (UX-08) -- the row's own live state.
+    # ``approve()`` writes these; the panel was reading the proposal snapshot,
+    # which does not move when a second approver signs.
+    required_approvals: int = 1
+    approvals: tuple = ()
+    timeout_ms: int = 0
 
 
 def is_destructive(card: GateCard) -> bool:
@@ -245,6 +259,15 @@ def pending_gates(
             target=target,
             submitted_at_ms=int(item.get("submitted_at_ms") or 0),
             question=Question.from_dict(item.get("question")),
+            evidence=tuple(str(line) for line in (item.get("evidence") or [])),
+            requester=str(item.get("requester") or ""),
+            ceiling=str(item.get("ceiling") or ""),
+            required_approvals=max(1, int(item.get("required_approvals") or 1)),
+            approvals=tuple(
+                str(a.get("approver_id", "")) if isinstance(a, dict) else str(a)
+                for a in (item.get("approvals") or [])
+            ),
+            timeout_ms=int(item.get("timeout_ms") or 0),
         ))
     if target_role:
         cards.sort(key=lambda c: 0 if c.role == target_role else 1)

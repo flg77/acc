@@ -22,6 +22,8 @@ to find out.
 
 from __future__ import annotations
 
+import time
+
 from dataclasses import dataclass
 
 from acc.tui.gate_cards import GateCard, RequestOption, is_batch
@@ -69,6 +71,18 @@ class Decision:
     #: UX-04 -- questions the operator asked ABOUT this decision and the agent's
     #: answers, newest last.  An empty answer is a question still in flight.
     exchanges: tuple[tuple[str, str], ...] = ()
+    #: UX-03 -- what this call actually does, shown before the options so the
+    #: operator can check rather than trust.  Nothing was executed for it.
+    evidence: tuple[str, ...] = ()
+    #: UX-09 -- whose work this is (the person the task was admitted for) and
+    #: the ceiling in force.  Both were enforced already; this makes them
+    #: visible to whoever is signing.
+    requester: str = ""
+    ceiling: str = ""
+    #: UX-08 -- when this row stops waiting (epoch ms), or 0 when it does not
+    #: expire.  A decision with a deadline that the panel does not show is a
+    #: decision the operator can lose by reading slowly.
+    expires_at_ms: int = 0
 
     @property
     def needs_second_approver(self) -> bool:
@@ -184,13 +198,33 @@ def build_decision(
             for o in options
         ),
         oversight_ids=tuple(c.oversight_id for c in cards),
+        # UX-03 -- the head card's evidence.  A batch renders the first
+        # request's call; the rest are named in the question line.
+        evidence=tuple(head.evidence),
+        requester=head.requester,
+        ceiling=head.ceiling,
         risk=head.risk,
         task_id=head.task_id,
         role=head.role,
-        required_approvals=required if isinstance(required, int) and required > 0 else 1,
-        approvals=tuple(
-            str(a.get("approver_id", "")) for a in approvals if isinstance(a, dict)
-        ) if isinstance(approvals, list) else (),
+        # UX-08 -- the ROW is the authority on how many approvals a decision
+        # has: ``approve()`` writes it there, while the proposal snapshot the
+        # panel used to read does not move when a second approver signs.
+        # The proposal is the fallback for a decision with no row state.
+        required_approvals=(
+            head.required_approvals if head.required_approvals > 1
+            else (required if isinstance(required, int) and required > 0 else 1)
+        ),
+        approvals=(
+            tuple(head.approvals) if head.approvals
+            else (tuple(
+                str(a.get("approver_id", "")) for a in approvals
+                if isinstance(a, dict)
+            ) if isinstance(approvals, list) else ())
+        ),
+        expires_at_ms=(
+            head.submitted_at_ms + head.timeout_ms
+            if head.submitted_at_ms and head.timeout_ms else 0
+        ),
         more=more,
         notes=notes,
         asked=head.question is not None,
@@ -290,6 +324,29 @@ def _exchange_lines(decision: Decision, width: int) -> list[str]:
     return out
 
 
+def countdown(expires_at_ms: int, now_ms: int) -> str:
+    """How long this decision still has, or "" when it does not expire.
+
+    A gate that times out is rejected (the dispatcher stops waiting), so a
+    deadline the panel does not show is a decision the operator can lose by
+    reading slowly.  Past the deadline it says so rather than counting
+    backwards into negative numbers.
+    """
+    if not expires_at_ms:
+        return ""
+    remaining = int(expires_at_ms) - int(now_ms)
+    if remaining <= 0:
+        return "expired"
+    seconds = remaining // 1000
+    if seconds < 60:
+        return f"expires in {seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"expires in {minutes}m{seconds:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"expires in {hours}h{minutes:02d}m"
+
+
 def render_panel(
     decision: Decision,
     *,
@@ -297,6 +354,7 @@ def render_panel(
     width: int = 100,
     confirm_key: str | None = None,
     note_mode: bool = False,
+    now_ms: int | None = None,
 ) -> str:
     """Rich markup for the panel.  A pure function of the decision and cursor."""
     highlighted = max(0, min(highlighted, len(decision.options) - 1))
@@ -315,6 +373,34 @@ def render_panel(
     if badge:
         already = ", ".join(a for a in decision.approvals if a) or "none yet"
         lines.append(f"[yellow]{state}[/yellow] [dim]— approved so far: {already}[/dim]")
+
+    # UX-08 -- the deadline, so a decision cannot be lost by reading slowly.
+    left = countdown(
+        decision.expires_at_ms,
+        int(time.time() * 1000) if now_ms is None else int(now_ms),
+    )
+    if left:
+        colour = "red" if left == "expired" else "dim"
+        lines.append(f"[{colour}]{left}[/{colour}]")
+
+    if decision.requester or decision.ceiling:
+        lines.append("")
+        who = decision.requester or "unattributed"
+        ceiling = (
+            f" · ceiling {decision.ceiling}" if decision.ceiling else ""
+        )
+        lines.append(f"[dim]for[/dim] [magenta]{who}[/magenta][dim]{ceiling}[/dim]")
+        lines.append(
+            "[dim]  the decision, its answer and who gave it are recorded on "
+            "this row and in the session trace[/dim]"
+        )
+
+    if decision.evidence:
+        lines.append("")
+        lines.append("[dim]what this runs:[/dim]")
+        for item in decision.evidence:
+            for text in _wrap(item, width - 6):
+                lines.append(f"  [cyan]{text}[/cyan]")
 
     lines.append("")
 

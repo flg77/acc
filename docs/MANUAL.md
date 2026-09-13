@@ -94,6 +94,33 @@ required).
   answer renders **in the panel, under the question you asked**, not only in
   the thread. The panel keeps the last couple of exchanges and trims a long
   answer (the thread keeps all of it).
+- **How long you have, and who has signed** — a decision that expires shows
+  its countdown (`expires in 4m00s`, then `expired`), because a gate that
+  times out is rejected and a deadline you cannot see is a decision you can
+  lose by reading slowly. A decision needing two approvers shows `PENDING
+  1/2` and names who has approved so far, read from the row itself so it
+  moves when the second approver signs.
+- **Whose work this is** — the panel names the person the task was admitted
+  for and the ceiling in force (`for slack:alice · ceiling MEDIUM`), so you
+  can see whether you are approving your own request or signing for someone
+  else's. A task that never passed admission says `unattributed` rather than
+  leaving it blank. Nothing here changes enforcement — the ceiling was always
+  checked at dispatch; this makes the check visible.
+- **What this runs** — every gated capability call shows the call itself
+  above the options: `runs: shell_exec {"cmd": "rm -rf build/"}`, what makes
+  it destructive when it is, and for an MCP call the transport and URL it
+  reaches. Argument values whose key looks like a key / token / secret /
+  password are shown as `***`. Nothing is executed to produce these lines —
+  they are the parsed call and the manifest, so the decision stays pending
+  and untouched while you read them.
+- **A preview, when the capability declares one** — a skill or MCP server may
+  declare `preview_args` (e.g. `{"dry_run": true}`); a gated call then runs
+  that dry run once before you are asked, and the panel shows what it would
+  do under `preview:`. **Declared, never inferred** — ACC does not rewrite a
+  shell command to add `--dry-run`, because guessing a third-party CLI's
+  flags is not a dry run, it is a hope. A preview is an execution and is
+  journalled as one; a failed preview shows as `preview failed: …` and
+  changes nothing — it never approves, never rejects, never blocks the gate.
 - **A destructive question** — the decision panel names what will be destroyed
   (`shell_exec will delete or overwrite data: rm -rf build/. Run it?`) and
   offers `1 run it · 2 don't run it`. It is answered on its own, always with

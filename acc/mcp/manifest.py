@@ -171,6 +171,12 @@ class MCPManifest(BaseModel):
     # falls back to its name ("files.delete_file").
     destructive_tools: list[str] = Field(default_factory=list)
 
+    # `20260913-preview-in-the-panel` (UX-03 Phase 2) -- arguments that turn a
+    # call on this server into a dry run, merged at gate time so the decision
+    # panel can show what it WOULD do.  Empty (the default) means no preview
+    # and nothing runs.  Declared, never inferred.
+    preview_args: dict[str, Any] = Field(default_factory=dict)
+
     # Operator-facing metadata
     description: str = ""
     tags: list[str] = Field(default_factory=list)

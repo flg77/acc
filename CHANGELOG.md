@@ -11,6 +11,69 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.6] — 2026-09-13
+
+### Added
+
+- **The decision panel tells the truth about live state** (UX-08,
+  `20260913-live-decision-state`). Two things it was getting wrong. The
+  approval count came from the **proposal snapshot**, which does not move when
+  a second approver signs — `approve()` writes the approvals to the oversight
+  **row** — so a two-approver decision could sit at `PENDING 1/2` after the
+  second approval had landed. The row is the authority now, with the proposal
+  kept as the fallback for a decision that has no row state. And a decision
+  that expires now shows its countdown (`expires in 4m00s`, then `expired`
+  rather than counting backwards): the row carried `timeout_ms`, the card
+  dropped it, and nothing rendered it — while a gate that times out is
+  rejected, so a deadline the panel does not show is a decision an operator can
+  lose by reading slowly. The third part of the item, the "N more waiting"
+  count, was already fed correctly on both paths and is now pinned by tests.
+- **The decision panel names whose work it is, and under whose authority**
+  (UX-09, `20260913-provenance-on-the-decision`). The panel said what was being
+  asked and what would run, never whose request it was. ACC knew both and had
+  for two releases — D-014 stamps a `requester_ceiling` that
+  `capability_dispatch` enforces, and `attribution.requester_of` names the
+  person a task was admitted for — but the oversight row carried only `role_id`
+  and `agent_id`, which are the *agent* and never the person. An operator
+  approving a HIGH-risk call could not tell from the panel whether it was their
+  own work or a request admitted for someone else. The row now carries
+  `requester` and `ceiling`, and the panel renders `for <requester> · ceiling
+  <LEVEL>` above the options, with `unattributed` said plainly rather than left
+  blank, and a line naming what will be recorded when the decision is made.
+  **Nothing about enforcement changes** — the ceiling was always checked at
+  dispatch; this makes the check visible to whoever signs.
+- **A capability can declare a dry run, and the panel shows what it would do**
+  (UX-03 Phase 2, `20260913-preview-in-the-panel`). Phase 1 showed the call;
+  this shows its effect. A skill or MCP manifest may declare `preview_args`
+  (e.g. `{"dry_run": true}`); a gated call is then dispatched once in that form
+  before the row is submitted, and the output lands in the panel under
+  `preview:`. **Declared, never inferred** — ACC does not rewrite a shell
+  command to add `--dry-run`, because guessing a third-party CLI's flags is not
+  a dry run. The preview goes through the same adapter path, so the role's own
+  guard still applies, and it does **not** re-enter the oversight gate. It is
+  journalled as its own act (`<kind>:preview`, arguments masked) because it is
+  an execution, and a failure renders as `preview failed: …` and changes
+  nothing else — it never approves, never rejects, never blocks. Bounded by
+  `ACC_PREVIEW_TIMEOUT_S` (10s). Answering UX-00 §5 Q3, the operator chose
+  "anything with a real --dry-run" (2026-09-13); keeping the claim in a
+  reviewed, signed manifest is how that permission is bounded.
+- **The decision panel shows what a call will actually run** (UX-03 Phase 1,
+  `20260913-evidence-in-the-panel`). The panel said a call was gated, why the
+  category applied and what would happen if you allowed it — but never what
+  would run, so deciding meant trusting the summary rather than checking the
+  call. ACC already had the material and dropped it: UX-02 computes the
+  destructive evidence, the oversight row carries it, and nothing in the TUI
+  rendered it. Every gated capability call now carries `evidence` on its row and
+  the panel renders it above the options: the parsed call
+  (`runs: shell_exec {"cmd": "rm -rf build/"}`), what makes it destructive when
+  it is, and for an MCP call the transport and URL it reaches — a gated call
+  that leaves the host should say so. Argument values whose key looks like a
+  key / token / secret / password are masked, because the panel is a screen an
+  operator may be sharing. **Nothing is executed to produce it**: the lines come
+  from the parsed call and the manifest, so the decision stays pending and a
+  preview never does part of the work before approval. A row without evidence
+  renders exactly as before.
+
 ## [0.17.5] — 2026-09-13
 
 ### Added

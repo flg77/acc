@@ -1291,3 +1291,41 @@ that could read them and it resisted all five, while the one injection it did
 obey (embedded in the *user's* prompt) was refused at the oversight gate. One
 round only — "list the cities, then get each one's weather" still cannot
 complete in a single task.
+
+## D-027 — ACC speaks the MCP HTTP transport, and keeps the plain one beside it
+
+**Status:** LANDED 2026-09-13 (acc-spearhead #406, released in v0.17.5).
+**Date:** 2026-09-13
+**Context:** ACC offered two transports, `stdio` and an `http` that POSTs a bare
+JSON-RPC envelope and expects a JSON body. That is JSON-RPC over HTTP, and it
+is not what MCP servers speak: MCP's HTTP binding issues a session id on
+`initialize`, carries it on every later request, expects a
+`notifications/initialized`, and may answer with an SSE stream instead of a
+JSON body. Measured against midojo's `fastmcp` server — the standard thing, and
+what a large share of today's MCP servers are written with — ACC's POST came
+back `-32600 Missing session ID`. The practical reach of ACC's MCP support was
+therefore stdio servers it launches itself and almost nothing else remote, and
+the AS-04 evaluation only ran behind a shim.
+
+**Decision:** add `transport: streamable-http` as a third value and leave
+`transport: http` exactly as it is.
+
+**Rationale:** the alternative — making `http` MCP-correct — was rejected on
+two grounds. It would silently change the wire format of every existing
+manifest, which is a breaking change nobody asked for; and plain JSON-RPC
+endpoints are a real thing ACC already talks to (`mcps/echo_server`), so the
+capability would be lost rather than upgraded. Two transports with honest names
+cost one dispatch line and let the manifest say which dialect a server speaks
+instead of ACC guessing. The `notifications/initialized` is sent by the
+transport rather than by `MCPClient`, because it is an obligation of this
+binding and not a fact the client should have to learn.
+
+**Consequences:** an operator now picks the transport deliberately, and
+`docs/howto-mcp-sources.md` says which is which — pointing `http` at an MCP
+server gets you `-32600`, which is a legible failure. Verified on lighthouse
+against a real `fastmcp` server with the AS-04 shim stopped: handshake,
+notification and tool call on the exact path, and a full 16-eval matrix through
+it with no fixture in the path, so the shim is retired. Deferred: the GET
+listening stream for server-initiated messages, and resumability — a server
+that only pushes results rather than answering the POST will not work, and the
+failure is a clean timeout rather than a wrong answer.

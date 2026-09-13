@@ -106,6 +106,14 @@ class SkillManifest(BaseModel):
     # decides; an exec skill's command text is checked whatever this says.
     destructive: bool | None = None
 
+    # `20260913-preview-in-the-panel` (UX-03 Phase 2) -- arguments that turn
+    # this call into a dry run, merged into the call at gate time so the
+    # decision panel can show what it WOULD do.  Empty (the default) means no
+    # preview and nothing runs.  Declared, never inferred: a dry-run flag is
+    # the capability's claim, so it belongs in a manifest that is reviewed and
+    # signed rather than in a pattern ACC matches against a command string.
+    preview_args: dict[str, Any] = Field(default_factory=dict)
+
     # Operator-facing metadata
     description: str = ""
     tags: list[str] = Field(default_factory=list)

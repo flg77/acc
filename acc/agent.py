@@ -2019,6 +2019,9 @@ class Agent:
                     parse_invocations,
                 )
                 from acc.identity import ceiling_of as _ceiling_of  # noqa: PLC0415
+                from acc.attribution import (  # noqa: PLC0415
+                    requester_of as _requester_of,
+                )
                 invocations = parse_invocations(result.output)
                 if invocations:
                     # PR-L (D-003) — resolve the operating mode for
@@ -2050,6 +2053,9 @@ class Agent:
                         # D-014 -- the ceiling the admitting surface stamped
                         # on the task ("" for the operator's own work).
                         requester_ceiling=_ceiling_of(data),
+                        # UX-09 -- and the person it was admitted for, so the
+                        # decision panel can say whose work is being approved.
+                        requester=_requester_of(data),
                     )
                     logger.info(
                         "task_loop: dispatched %d capability invocation(s) "

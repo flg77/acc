@@ -131,6 +131,12 @@ argv (never `shell=True`, never string interpolation of LLM output).
    write-shape tools you don't want roles to call.
 5. Set `requires_actions` if HIGH risk; the role's `allowed_actions`
    must include the matching label.
+5c. **If the server has a real dry run, declare it** in `preview_args`
+   (e.g. `{"dry_run": true}`). A gated call then runs that form once and the
+   decision panel shows what it would do. Only declare it when the server
+   genuinely does nothing in that mode: ACC executes what you declare, and
+   the operator is shown the result as evidence for a decision they have not
+   made yet.
 5b. **Write the server's tools down** in `tools:` — `name`, a one-line
    `summary`, and the argument names (`mcps/echo_server/mcp.yaml` is the
    shape). The agent is told the marker syntax and the server id; if the

@@ -100,6 +100,19 @@ class OversightItem:
     # of the option the operator chose.
     question: dict = field(default_factory=dict)
     answer: str = ""
+    # `20260913-evidence-in-the-panel` (UX-03) -- what this call actually does,
+    # as operator-facing lines: the parsed call, what makes it destructive, and
+    # where an MCP call goes.  The panel said a call was gated and why the
+    # category applied, but never what would run, so deciding meant trusting
+    # the summary.  Nothing here is executed to produce it.
+    evidence: list = field(default_factory=list)
+    # `20260913-provenance-on-the-decision` (UX-09) -- whose work this is and
+    # under whose authority it runs.  Both were computed at dispatch already
+    # (D-014 checks the ceiling, attribution names the person); the row carried
+    # only role_id and agent_id, which are the AGENT and never the person.  An
+    # operator could not see whether they were approving their own work.
+    requester: str = ""
+    ceiling: str = ""
 
     @property
     def approvals_needed(self) -> int:
@@ -165,6 +178,9 @@ class HumanOversightQueue:
         oversight_id: str | None = None,
         required_approvals: int = 1,
         question: dict | None = None,
+        evidence: list | None = None,
+        requester: str = "",
+        ceiling: str = "",
     ) -> str:
         """Submit a task to the oversight queue.
 
@@ -179,6 +195,9 @@ class HumanOversightQueue:
                 row per agent.  An id that already exists is left untouched.
             question: What the agent asks (``Question.to_dict()``); the
                 decision then carries the chosen option as ``answer``.
+            evidence: What the call actually does, as lines for the decision
+                panel (UX-03).  Empty for a row that has none -- the panel
+                then renders exactly as it did before.
 
         Returns:
             ``oversight_id`` — UUID string identifying this oversight request.
@@ -200,6 +219,9 @@ class HumanOversightQueue:
             timeout_ms=now_ms + (self._timeout_s * 1000),
             required_approvals=max(1, int(required_approvals or 1)),
             question=dict(question or {}),
+            evidence=list(evidence or []),
+            requester=str(requester or ""),
+            ceiling=str(ceiling or ""),
         )
 
         await self._save(item)
