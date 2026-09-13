@@ -436,6 +436,23 @@ class RoleDefinitionConfig(BaseModel):
     max_mcp_risk_level: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = "MEDIUM"
     """Risk ceiling applied by Cat-A A-018 to MCP tool invocations."""
 
+    tool_result_turn: bool = False
+    """Give this role one more LLM turn, with what its tools returned.
+
+    ACC dispatches a marker *after* the reply is final, so a role without
+    this answers a lookup by inventing the answer while the tool it called
+    sits unread on the TASK_COMPLETE payload (measured against midojo:
+    ``get_weather`` succeeded 8 times out of 8 and every reply was made up).
+    With it, the results are appended to the task content and the task is
+    processed once more -- through the same pre-LLM guardrails as any other
+    input, because tool output is untrusted input.
+
+    Costs one extra LLM call per task that used a tool, which is why it is
+    opt-in: turning it on is a budget decision, not only a quality one.
+    Exactly one extra turn, and markers in it are not dispatched --
+    `20260912-the-tool-result-turn` (MC-03).
+    """
+
     # ------------------------------------------------------------------
     # PR-2 — Sub-cluster estimator + parallelism cap
     # ------------------------------------------------------------------

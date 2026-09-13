@@ -18,11 +18,11 @@ with a human oversight queue for what a role's grants do not cover.
 | **hub_curator** (role, v0.14.1) | The enterprise brain's only agent: no chat surface, no skills; on its schedule it proposes qualifying shared notes from the instances bound to its hub into the hub's enterprise tier; a person approves at operator tier. |
 | **assistant** (role) | The operator's router: proposes infusion of catalog roles, specialist hand-off (spawn/route), never learns across people without a publish proposal (D-011, memory Phases 4–6). |
 | `acc/oversight.py` `HumanOversightQueue` | Pending / decided items in Redis (shared by every cell). A decision is final; one row per decision; one row per submit (D-013). A row can carry a typed **question** (`acc/question.py`, v0.17.0): the options and whether each lets the action run; the chosen option comes back as `answer` on the same decision (D-022). A gate that stops waiting expires its row. |
-| `acc/capability_dispatch.py` + `acc/operating_modes.py` | Skill / MCP invocation behind the role's `allowed_*`, gate categories (system access, acts on behalf), escalation for an off-role grant, operating modes `AUTO / PLAN / ACCEPT_EDITS / ASK_PERMISSIONS`. The requester's **category ceiling** (`acc/identity.py`, D-014) is checked first: above it, refused, never asked. A call that **deletes or overwrites data** (`destructive_evidence`: an exec skill's command, a manifest's `destructive`, or the name) is asked as a question in every mode but PLAN, refused with no queue, and marked `critical` on the outcome when let through. |
+| `acc/capability_dispatch.py` + `acc/operating_modes.py` | Skill / MCP invocation behind the role's `allowed_*`, gate categories (system access, acts on behalf), escalation for an off-role grant, operating modes `AUTO / PLAN / ACCEPT_EDITS / ASK_PERMISSIONS`. The requester's **category ceiling** (`acc/identity.py`, D-014) is checked first: above it, refused, never asked. A call that **deletes or overwrites data** (`destructive_evidence`: an exec skill's command, a manifest's `destructive`, or the name) is asked as a question in every mode but PLAN, refused with no queue, and marked `critical` on the outcome when let through. A role may take **one follow-up turn with what its tools returned** (`tool_result_turn`, off by default): the results are appended to the task content and the task is processed once more, so tool output meets the same pre-LLM guardrails as any other input. Exactly one extra turn, and markers in it are not dispatched. |
 | `acc/backends/` | Pluggable LLM (vLLM, Ollama, Anthropic, OpenAI-compatible, with a failover chain), vector (LanceDB / Milvus / TurboVec), signaling (NATS), metrics (OTel / MLflow). |
 | Memory (`acc/memory_*`, `acc/attribution.py`, `acc/memory_scope.py`, `acc/memory_curate.py`) | Episodes per requester + scope, private / shared note tiers, publish proposals with a quorum of people, erasure. A **hub's enterprise tier** (D-016) is the only cross-instance read path; every note carries the highest ceiling of its sources and is never read below it. |
-| `acc/pkg/` | `.accpkg` packages: cosign-verified install (keyless bundle or key), catalogs (built-in day-0, https, local), AgentBOM. |
-| `acc/tui/` (Textual) | Thirteen screens declared in one registry (`acc/tui/registry.py`), two profiles (`operator`, `user`), the `NATSObserver` that folds every signal into a `CollectiveSnapshot`, the Prompt pane's decision surface (`AccPromptPanel` for one request of one step, `PermissionRequest` for a reply proposing several), the Board. |
+| `acc/pkg/` | `.accpkg` packages: cosign-verified install (keyless bundle or key), catalogs (built-in day-0, https, local), AgentBOM — which pins the **governance** it was assessed against (`spec.governance`) under the same rules as its capability pins, while `spec.policy` stays the install-time Enterprise Contract reference (D-024). |
+| `acc/tui/` (Textual) | Thirteen screens declared in one registry (`acc/tui/registry.py`), two profiles (`operator`, `user`), the `NATSObserver` that folds every signal into a `CollectiveSnapshot`, the Prompt pane's decision surface (`AccPromptPanel` for one request of one step, `PermissionRequest` for a reply proposing several), the Board. A question asked about a pending decision (`c`) is answered **in the panel, under the question that prompted it** — only that task's reply is routed back, the last two exchanges are kept and a long answer is trimmed, with the thread keeping every word (v0.17.3). |
 | `acc/webgui/` (FastAPI + React) | The same snapshot over a WebSocket — each socket receives its principal's view (D-017) — attributed actions and prompts (`webgui:<user>`), config surface, Board, the OpenAI-compatible endpoint. |
 | `acc/instances.py` + `acc/cli/instance_cmd.py` | An **instance** (D-015): a collective bound to an owner, a posture and its own state roots under `instances/<id>/`; `acc-cli instance …`, `./acc-deploy.sh instance up`; export carries the definition, never state. |
 | `acc/cli/` (`acc-cli`, `acc-pkg`) | Headless operator surface: doctor, status, config, profiles, sessions, oversight, plan, memory, access, auth, egress, backup, scan… (see `CAPABILITIES.md`). |
@@ -90,7 +90,11 @@ with a human oversight queue for what a role's grants do not cover.
   environment first and the checkout last (`acc paths`). The state root
   `/var/lib/acc` is shared between the service and its operators through group
   `acc` (setgid, group-writable, umask `0002` on both sides — D-023), so what an
-  operator installs is what the running stack sees.
+  operator installs is what the running stack sees. The component **images** have
+  the same shape since v0.17.3: `packaging/images/build-images.sh <tag>` builds
+  each one from `git archive <tag>`, tags it `acc-<component>-<version>` and
+  makes it report its own version before anything is staged; pushing stays the
+  operator's (D-025).
 - **The channel**: the internal Satellite is the distribution base, with a copy
   mirrored on acc1 for hosts that are not subscribed to it. Semantic versions map
   onto RPM's Version and Release so a pre-release or a snapshot sorts *below* the
@@ -130,4 +134,4 @@ with a human oversight queue for what a role's grants do not cover.
 - **Reasoning bench**: the promote gate scores deliberation depth; run for any
   reasoning-affecting change (role prompts), advisory on the 3B edge model.
 
-_Last updated: 2026-09-11 (v0.17.2)_
+_Last updated: 2026-09-13 (v0.17.3)_

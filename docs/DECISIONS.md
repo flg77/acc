@@ -1184,3 +1184,64 @@ operator's own rootless podman store.
 * **Audit-log RAG** — separate from agent-side episode RAG; the
   TUI's `History ▼` button on Nucleus could surface "similar
   past infusions" for the operator to reuse.
+
+## D-024 — The AgentBOM pins the governance it was assessed against, and `spec.policy` stays the install-time reference
+
+**Status:** LANDED 2026-09-12 (acc-spearhead #397, released in v0.17.3).
+**Date:** 2026-09-12
+**Context:** the AgentBOM pinned every capability exactly — `@scope/name@version`
+refs resolved in a signed catalog under a `required_signer` floor — and described
+its governance in one free-text field, `spec.policy`. Reading the tree to answer
+"what does policy do" turned up the real answer: **nothing read it**. So a BOM
+could claim an assessment it could not evidence, and the one field that looked
+like governance was inert.
+
+**Decision (operator, question answered 2026-09-11):** governance is pinned the
+way capabilities are. `spec.governance` takes governance packs — the risks,
+scenarios and control map an agentset was assessed against — as exact pins,
+resolved against the catalog, reported as `unresolved_governance`, counted
+against the verdict, and signed through the BOM's existing floor. `spec.policy`
+keeps its own meaning: the Enterprise Contract policy applied at **install**. The
+two may not drift — a `policy` written as a pack pin must also appear in
+`spec.governance`.
+
+**Rationale:** a governance claim should be verifiable by the same machinery as a
+dependency claim, or it is a comment. Folding `policy` into `governance` was
+rejected: they answer different questions (what this was assessed against vs what
+is enforced when it is installed), and collapsing them would have hidden the fact
+that one of them was doing nothing.
+
+**Consequences:** existing BOMs are unaffected (`governance` defaults to empty).
+A governance pack is a new pack kind (operator, 2026-09-11), so the catalog has
+to carry it before a BOM can pin it. Pins beside every eval result — the rest of
+AS-09 — waits for AS-05, which writes that artefact.
+
+## D-025 — Every component image is built from a release tag and verified before it is staged
+
+**Status:** LANDED 2026-09-12 (acc-spearhead #396, released in v0.17.3).
+**Date:** 2026-09-12
+**Context:** the package has had a release pipeline since v0.15.0 — tag → build
+host → verify → channel → upgrade a real client. The images had none.
+`acc-deploy.sh build` built the **working tree**, nothing checked what came out,
+and a component reached quay only if someone remembered.
+
+**Decision:** `packaging/images/build-images.sh <tag>` is the one way a component
+image is produced. The context is `git archive <tag>` on the build host, never
+the working tree; each component builds with `--build-arg ACC_VERSION` and is
+tagged `<prefix>:acc-<component>-<version>`; each is **verified before staging** —
+an image carrying the ACC package must report the release's version from inside,
+one without must start. A failed component stages nothing. The `podman push`
+commands are printed and never run: publishing stays the operator's.
+
+**Rationale:** the same argument the RPM pipeline makes, one layer up — an
+artefact that cannot say what it is has to be trusted rather than checked, and a
+delivery shape without a pipeline drifts from the tag silently.
+
+**Consequences:** the eight ACC-code images take the release's version; the three
+MCP sidecars and `nats` / `redis` keep their pinned ones behind `--with-sidecars`
+/ `--with-infra`, because a release must not renumber redis. `acc-agent-core-rpm`
+keeps the separate pipeline of D-019 and `Containerfile.flavour` is a
+per-deployment bake; a test fails if a new production Containerfile is neither
+covered nor excluded. One component cannot be built at all on a FIPS host
+(`acc-mcp-web-browser-harness`, an Ubuntu base whose OpenSSL has no FIPS
+provider) — open as IN-11f.

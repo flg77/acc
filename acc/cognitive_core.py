@@ -2161,6 +2161,9 @@ class CognitiveCore:
         if effective_default_mcps:
             advertised = [sid for sid in effective_default_mcps if sid in advertised_mcp_ceiling]
             if advertised:
+                from acc.mcp.manifest import (  # noqa: PLC0415
+                    advertised_tool_lines,
+                )
                 lines = [
                     "\n\nAvailable MCP servers (external tool providers).  "
                     "Invoke a tool by emitting EXACTLY this marker on its "
@@ -2176,8 +2179,14 @@ class CognitiveCore:
                     )
                     if manifest is None:
                         lines.append(f"  - {sid}")
-                    else:
-                        lines.append(f"  - {sid}: {manifest.purpose}")
+                        continue
+                    lines.append(f"  - {sid}: {manifest.purpose}")
+                    # `20260912-mcp-tools-in-the-prompt` (MC-02) -- name the
+                    # tools.  Without this the model is given the marker syntax
+                    # and left to invent <tool_name>; A-018 then refuses the
+                    # invention and the server is unusable in practice.
+                    for tool_line in advertised_tool_lines(manifest):
+                        lines.append(f"      {tool_line}")
                 parts.append("\n".join(lines))
 
         # Bridge delegation instruction (ACC-9) — only when peers are available

@@ -67,20 +67,22 @@ logger = logging.getLogger("acc.capability_dispatch")
 # Regex
 # ---------------------------------------------------------------------------
 
-# Captures: (skill_id, optional " <args>").  The args portion is whatever
-# follows the id up to the closing ']' on the same line.  We deliberately
-# match a single line so an LLM that emits multiple markers in a row
-# (one per line) gets each one parsed independently.
-_SKILL_RE = re.compile(
-    r"\[SKILL:\s*([a-z][a-z0-9_]*)\s*(\{[^\n]*\})?\s*\]",
+# Marker HEADS only.  The argument object is decoded separately, by a real
+# JSON scanner, because an inline args group has to be greedy to reach the
+# closing brace and therefore ran to the LAST brace on the line: two adjacent
+# markers collapsed into one unparseable match and every marker after the
+# first was lost (`20260913-the-marker-channel`, MC-04).  Measured on
+# lighthouse: a reply with five markers dispatched one.
+_SKILL_HEAD_RE = re.compile(r"\[SKILL:\s*([a-z][a-z0-9_]*)\s*")
+
+# Captures: (server_id, tool_name).  server_id matches the same lowercase_snake
+# convention as MCPManifest.server_id; tool_name allows dots so nested
+# namespacing (`fs.read`) is preserved.
+_MCP_HEAD_RE = re.compile(
+    r"\[MCP:\s*([a-z][a-z0-9_]*)\.([a-zA-Z0-9_.\-]+)\s*"
 )
 
-# Captures: (server_id, tool_name, optional args).  server_id matches the
-# same lowercase_snake convention as MCPManifest.server_id; tool_name
-# allows dots so nested namespacing (`fs.read`) is preserved.
-_MCP_RE = re.compile(
-    r"\[MCP:\s*([a-z][a-z0-9_]*)\.([a-zA-Z0-9_.\-]+)\s*(\{[^\n]*\})?\s*\]",
-)
+_DECODER = json.JSONDecoder()
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +136,56 @@ class InvocationOutcome:
 # ---------------------------------------------------------------------------
 
 
+def _read_marker_tail(text: str, pos: int) -> tuple[dict, str, int]:
+    """Read one marker's arguments and its closing bracket, starting at *pos*.
+
+    Returns ``(args, args_error, end_index)``; ``end_index`` is -1 when this is
+    not a marker after all (no closing bracket), so the caller can skip it.
+
+    The arguments are decoded with a real JSON scanner rather than matched by
+    a regex, which is the whole point of MC-04: a pattern that reaches the
+    closing brace is greedy to the LAST brace on the line, so
+    ``[MCP: a.b {}][MCP: a.c {}]`` became one match with unparseable arguments
+    and the second call was never dispatched.  The decoder knows where a value
+    ends -- nesting, strings and escapes included.
+    """
+    length = len(text)
+    idx = pos
+    while idx < length and text[idx] in " 	":
+        idx += 1
+    if idx < length and text[idx] == "]":
+        return {}, "", idx + 1
+    if idx >= length or text[idx] != "{":
+        # Not arguments and not a close: let the caller drop this head.
+        closing = text.find("]", idx)
+        return {}, "", -1 if closing == -1 else -1
+    try:
+        value, offset = _DECODER.raw_decode(text, idx)
+    except ValueError as exc:
+        # Keep the audit line the operator already knows, and resynchronise on
+        # the next bracket so one bad marker cannot swallow the ones after it.
+        closing = text.find("]", idx)
+        return (
+            {},
+            f"skipped a malformed tool call -- its arguments weren't valid "
+            f"JSON ({exc}); expected e.g. [SKILL:name {{\"arg\": \"value\"}}]",
+            -1 if closing == -1 else closing + 1,
+        )
+    if not isinstance(value, dict):
+        closing = text.find("]", idx)
+        return (
+            {},
+            "skipped a malformed tool call -- its arguments must be a JSON "
+            "object; expected e.g. [SKILL:name {{\"arg\": \"value\"}}]",
+            -1 if closing == -1 else closing + 1,
+        )
+    while offset < length and text[offset] in " 	":
+        offset += 1
+    if offset >= length or text[offset] != "]":
+        return {}, "", -1
+    return value, "", offset + 1
+
+
 def parse_invocations(text: str) -> list[ParsedInvocation]:
     """Extract every ``[SKILL:...]`` and ``[MCP:...]`` marker from *text*.
 
@@ -141,42 +193,43 @@ def parse_invocations(text: str) -> list[ParsedInvocation]:
     in the source string, which matters when an LLM expects a
     sequence (e.g. "first echo, then call fs.read").  Empty input
     returns ``[]``.
+
+    Markers may sit next to one another on one line -- a model batching calls
+    is ordinary behaviour, and until MC-04 every marker after the first was
+    silently dropped.
     """
     if not text:
         return []
 
-    # We collect (start_index, ParsedInvocation) tuples then sort by
-    # start_index so the returned list mirrors source order.
     found: list[tuple[int, ParsedInvocation]] = []
 
-    for match in _SKILL_RE.finditer(text):
-        skill_id = match.group(1)
-        args_text = (match.group(2) or "").strip()
-        args, err = _parse_args(args_text)
+    for match in _SKILL_HEAD_RE.finditer(text):
+        args, err, end = _read_marker_tail(text, match.end())
+        if end == -1 and not err:
+            continue
         found.append((
             match.start(),
             ParsedInvocation(
                 kind="skill",
-                target=skill_id,
+                target=match.group(1),
                 args=args,
                 args_error=err,
-                raw=match.group(0),
+                raw=text[match.start():end] if end > 0 else match.group(0),
             ),
         ))
 
-    for match in _MCP_RE.finditer(text):
-        server_id = match.group(1)
-        tool_name = match.group(2)
-        args_text = (match.group(3) or "").strip()
-        args, err = _parse_args(args_text)
+    for match in _MCP_HEAD_RE.finditer(text):
+        args, err, end = _read_marker_tail(text, match.end())
+        if end == -1 and not err:
+            continue
         found.append((
             match.start(),
             ParsedInvocation(
                 kind="mcp",
-                target=f"{server_id}.{tool_name}",
+                target=f"{match.group(1)}.{match.group(2)}",
                 args=args,
                 args_error=err,
-                raw=match.group(0),
+                raw=text[match.start():end] if end > 0 else match.group(0),
             ),
         ))
 
@@ -887,3 +940,119 @@ class _SyntheticManifest:
             f"(synthesised — gated by operating mode, "
             f"target={target!r})"
         )
+# ---------------------------------------------------------------------------
+# The tool-result turn (`20260912-the-tool-result-turn`, MC-03)
+# ---------------------------------------------------------------------------
+
+NEWLINE: str = chr(10)
+
+MAX_RESULT_CHARS: int = 2000
+"""How much of one tool's result the model is shown."""
+
+MAX_RESULTS_BLOCK_CHARS: int = 6000
+"""Ceiling on the whole block, so a chatty server cannot evict the conversation."""
+
+_RESULTS_HEADER = (
+    "Tool results -- you called these, and the requester has not seen them:"
+)
+_RESULTS_FOOTER = (
+    "Answer the request using these results. Do not emit any [SKILL: ...] or "
+    "[MCP: ...] markers in this reply -- they will not run."
+)
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit] + " ... (truncated)"
+
+
+def render_tool_results(
+    outcomes: list[InvocationOutcome],
+    *,
+    max_result_chars: int = MAX_RESULT_CHARS,
+    max_block_chars: int = MAX_RESULTS_BLOCK_CHARS,
+) -> str:
+    """Render *outcomes* as the content of a follow-up turn.
+
+    ACC dispatches a marker after the reply is already final, so without this
+    the model answers a lookup by inventing the answer while the tool it called
+    sits on the TASK_COMPLETE payload (measured against midojo: `get_weather`
+    succeeded 8/8 and every reply was invented).  This renders what came back
+    so a second turn can use it.
+
+    A failure is rendered too, as ``error: ...``.  "I could not look that up"
+    is a better answer than a confident invention, and a refused call is the
+    one the model most needs to know about.
+
+    Returns ``""`` when there is nothing to say, which the caller treats as
+    "no follow-up turn".
+    """
+    if not outcomes:
+        return ""
+    lines: list[str] = [_RESULTS_HEADER, ""]
+    budget = max_block_chars
+    rendered_any = False
+    for outcome in outcomes:
+        parsed = outcome.parsed
+        try:
+            args = json.dumps(parsed.args or {}, default=str)
+        except Exception:  # noqa: BLE001 -- a renderer must never raise
+            args = "{}"
+        if outcome.ok:
+            try:
+                body = json.dumps(outcome.result, default=str)
+            except Exception:  # noqa: BLE001
+                body = str(outcome.result)
+        else:
+            body = f"error: {outcome.error}"
+        entry = (f"  {parsed.target} {args}" + NEWLINE
+                 + f"    {_clip(body, max_result_chars)}")
+        if len(entry) > budget:
+            lines.append("  ... (further results omitted -- block budget)")
+            break
+        budget -= len(entry)
+        lines.append(entry)
+        rendered_any = True
+    if not rendered_any:
+        return ""
+    lines.extend(["", _RESULTS_FOOTER])
+    return NEWLINE.join(lines)
+
+
+FOLLOW_UP_FLAG: str = "acc_tool_result_turn"
+"""Marks a payload as already being the follow-up, so it can never start one."""
+
+
+def should_take_tool_result_turn(
+    role: Any,
+    outcomes: list[InvocationOutcome],
+    task_payload: dict,
+) -> bool:
+    """Whether this task gets one more turn with its tool results.
+
+    Three conditions, each of which is the answer to a real question:
+    the role opted in (it costs an extra LLM call), something actually came
+    back to show the model, and this is not already the follow-up -- the last
+    is what bounds the feature at exactly one extra turn.
+    """
+    if not getattr(role, "tool_result_turn", False):
+        return False
+    if not outcomes:
+        return False
+    return not task_payload.get(FOLLOW_UP_FLAG)
+
+
+def follow_up_payload(task_payload: dict, results_block: str) -> dict:
+    """The task again, with the tool results appended to its content.
+
+    A copy: the original payload is what the tracelog and TASK_COMPLETE still
+    describe.  The content is where the results go so they pass the same
+    ``pre_llm`` guardrails as any other input -- tool output is untrusted
+    input, and a follow-up that smuggled it in as system text would skip the
+    injection check the marker design has been getting for free.
+    """
+    follow_up = dict(task_payload)
+    follow_up[FOLLOW_UP_FLAG] = True
+    follow_up["content"] = (
+        str(task_payload.get("content", "") or "") + NEWLINE + NEWLINE + results_block
+    )
+    return follow_up

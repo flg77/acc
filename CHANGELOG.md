@@ -11,6 +11,72 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.4] — 2026-09-13
+
+### Added
+
+- **A role can take one turn with what its tools returned** (MC-03,
+  `20260912-the-tool-result-turn`). One task was one LLM call: ACC parses a
+  marker *after* the reply is final, dispatches it, and puts the outcome on
+  TASK_COMPLETE where the model never sees it. Measured against midojo on
+  2026-09-12, a cell called `get_weather` successfully 8 times out of 8 and
+  answered every one by inventing a temperature, because the tool's answer
+  arrived after the sentence was written. A role that sets `tool_result_turn`
+  now gets **one** follow-up turn: the results (failures included, as
+  `error: ...`) are appended to the task content and the task is processed
+  once more. The follow-up goes back through `process_task` rather than around
+  it, so tool output meets the same pre-LLM guardrails as any other input --
+  tool output is untrusted input, and a feedback turn that skipped them would
+  open the injection path the marker design avoids today. Bounded: the
+  follow-up payload is flagged so it can never start a third turn, markers in
+  it are parsed for the log but **not** dispatched (one task still dispatches
+  one round of effects, so the gate story is unchanged), each result is clipped
+  and the whole block capped. Off by default -- an extra LLM call per
+  tool-using task is a budget decision, not only a quality one.
+
+### Fixed
+
+- **Two markers on one line no longer lose all but the first** (MC-04,
+  `20260913-the-marker-channel`). The argument group had to be greedy to reach
+  its closing brace, so it ran to the *last* brace on the line: given
+  `[MCP: a.b {}][MCP: a.c {...}]` the regex consumed the whole line as one
+  match, ACC dispatched one invocation with unparseable arguments, and every
+  marker after the first was dropped silently -- the reply simply did less than
+  it said. Measured on lighthouse: a model emitted five markers in a row and one
+  ran; `list_cities` was called four times and succeeded once. Arguments are now
+  decoded with a real JSON scanner, which knows where a value ends, so adjacent
+  markers split correctly, nested arguments keep working, arguments may span
+  lines, and one malformed marker resynchronises instead of swallowing the ones
+  after it. This matters more since the tool-result turn (MC-03): a lost call is
+  a lost result.
+- **Model control tokens no longer reach the answer** (MC-04). gpt-oss speaks the
+  harmony format, and `<|start|>assistant<|channel|>commentary<|message|>...`
+  arrived verbatim in the text ACC handed the channel. The openai-compatible
+  backend now keeps the content before the first control token plus each
+  `<|message|>` segment and drops the rest, so the channel names go with the
+  delimiters instead of being left behind as stray words. A no-op for every
+  model that emits none.
+- **A null `content` from an openai-compatible provider no longer ends the task**
+  (MC-04, found during the MC-03 verification). gpt-oss answers with a null
+  content when it replies on a tool-call channel; that reached `json.loads` and
+  raised `TypeError` out of the backend, completing the task as blocked. It is
+  treated as empty.
+
+- **The prompt names a server's tools, not just the server** (MC-02,
+  `20260912-mcp-tools-in-the-prompt`). An agent was given the marker syntax
+  `[MCP: <server_id>.<tool_name> {...}]` and the server id, and never the tool
+  names — so it invented them. Measured on 2026-09-12 by pointing midojo's
+  weather suite at a real cell: the model called `get_current` on a server whose
+  tool is `get_weather`, A-018 correctly refused the invention, no tool ran, and
+  13 of 15 evaluation cells scored N/A for that reason alone. A manifest may now
+  describe its tools (`tools:` — `name`, one-line `summary`, argument names) and
+  the prompt renders them under their server; with no `tools:` block it falls
+  back to the names in `allowed_tools`, which most manifests already declare, and
+  with neither the prompt is byte-identical to before. A declared tool must be
+  permitted by `allowed_tools` / `denied_tools`, so a manifest can never
+  advertise a call A-018 would block, and at most 12 tools per server are listed
+  (`... and N more`) so a large server cannot quietly eat the context window.
+
 ## [0.17.3] — 2026-09-12
 
 ### Changed

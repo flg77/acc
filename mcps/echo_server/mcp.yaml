@@ -33,6 +33,17 @@ api_key_env:    ""
 allowed_tools:
   - "echo"
 
+# `20260912-mcp-tools-in-the-prompt` (MC-02) -- what the agent is told it
+# can call.  Optional, and the canonical shape for a contributor: without
+# it the prompt names the server and leaves the model to invent the tool
+# name, which A-018 then refuses.  A tool declared here must be permitted
+# by allowed_tools/denied_tools -- the manifest cannot advertise what it
+# would block.
+tools:
+  - name: "echo"
+    summary: "Return the text you send, unchanged."
+    args: ["text"]
+
 requires_actions: []
 risk_level:     "LOW"
 domain_id:      "diagnostic"

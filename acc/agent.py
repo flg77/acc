@@ -2059,6 +2059,52 @@ class Agent:
                         sum(1 for o in outcomes if not o.ok),
                     )
 
+            # `20260912-the-tool-result-turn` (MC-03) -- one more turn, with
+            # what the tools returned.  ACC parses markers only after the
+            # reply is final, so without this the model answers a lookup by
+            # inventing it while the tool's answer sits unread on the
+            # payload.  The follow-up goes back through process_task rather
+            # than around it, so the tool output meets the same pre-LLM
+            # guardrails as any other input -- tool output IS untrusted
+            # input, and a feedback turn that skipped them would open the
+            # injection path the marker design avoids today.
+            from acc.capability_dispatch import (  # noqa: PLC0415
+                follow_up_payload,
+                parse_invocations as _parse_invocations,
+                render_tool_results,
+                should_take_tool_result_turn,
+            )
+            if should_take_tool_result_turn(self._active_role, outcomes, data):
+                results_block = render_tool_results(outcomes)
+                if results_block:
+                    follow_up = follow_up_payload(data, results_block)
+                    try:
+                        second = await self._cognitive_core.process_task(  # type: ignore[union-attr]
+                            task_payload=follow_up,
+                            role=self._active_role,
+                            progress_callback=progress_callback,
+                        )
+                    except Exception:  # noqa: BLE001
+                        # The first answer still stands; a failed follow-up
+                        # must not lose the turn (v0.12.1's lesson).
+                        logger.exception(
+                            'task_loop: tool-result turn failed for task_id=%s'
+                            ' -- keeping the first answer',
+                            data.get('task_id', ''),
+                        )
+                    else:
+                        # Markers in the second turn are parsed for the log
+                        # and NOT dispatched: one task dispatches one round
+                        # of effects, so the gate story is unchanged.
+                        ignored = _parse_invocations(second.output)
+                        logger.info(
+                            'task_loop: tool-result turn used %d result(s)%s',
+                            len(outcomes),
+                            (' (ignored %d marker(s) in the follow-up)'
+                             % len(ignored)) if ignored else '',
+                        )
+                        result = second
+
             # Durable per-turn session trace (prompt in → tool calls → Cat-ABC
             # governance verdicts → reply out) for post-session review +
             # red-team / governance verification.  Best-effort; never perturbs

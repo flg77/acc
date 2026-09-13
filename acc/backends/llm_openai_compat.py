@@ -72,6 +72,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
@@ -82,6 +83,48 @@ logger = logging.getLogger(__name__)
 
 # HTTP status codes that warrant a retry with exponential back-off.
 _RETRYABLE_STATUS: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+
+_CONTROL_TOKEN_RE = re.compile(r"<\|[a-z_]{1,24}\|>")
+"""Model control tokens (`20260913-the-marker-channel`, MC-04).
+
+gpt-oss speaks the harmony format, which structures a reply as
+``<|start|>{role}<|channel|>{channel}<|message|>{content}<|end|>``.  Some of
+that arrives in the ``content`` field verbatim, and ACC handed it to the
+channel unchanged -- cosmetic on a benchmark, not cosmetic in front of an
+operator.  Seen on lighthouse as ``<|channel|>commentary<|message|>[MCP: ...]``.
+"""
+
+
+def strip_control_tokens(text: "str | None") -> str:
+    """Return *text* without a model's control-token scaffolding.
+
+    Keeps the text before the first control token plus each segment that follows
+    a ``<|message|>``, and drops the rest -- so the channel *names*
+    (``commentary``, ``analysis``) go with the delimiters rather than being
+    left behind as stray words.  A no-op for any model that emits none, which
+    is every other model ACC talks to.
+
+    ``None`` becomes ``""``: a provider may answer with a null content (gpt-oss
+    does when it replies on a tool-call channel), and that used to reach
+    ``json.loads`` and raise ``TypeError`` out of the backend, ending the task
+    as blocked.
+    """
+    if not text:
+        return ""
+    if "<|" not in text:
+        return text
+    kept: list[str] = []
+    last_end = 0
+    keep_next = True   # the text before any control token is content
+    for match in _CONTROL_TOKEN_RE.finditer(text):
+        if keep_next:
+            kept.append(text[last_end:match.start()])
+        last_end = match.end()
+        keep_next = match.group(0) == "<|message|>"
+    if keep_next:
+        kept.append(text[last_end:])
+    return "".join(kept).strip()
 
 
 class OpenAICompatBackend:
@@ -216,7 +259,12 @@ class OpenAICompatBackend:
                     )
 
                 data = resp.json()
-                content = data["choices"][0]["message"]["content"]
+                # MC-04: strip the model's control-token scaffolding, and
+                # treat a null content as empty rather than letting it reach
+                # json.loads() and raise out of the backend.
+                content = strip_control_tokens(
+                    data["choices"][0]["message"].get("content")
+                )
                 usage = data.get("usage", {})
                 try:
                     parsed = json.loads(content)

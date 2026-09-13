@@ -34,6 +34,32 @@ additionally enqueues the call into the human oversight queue.
 """
 
 
+class MCPToolSpec(BaseModel):
+    """One tool a manifest chooses to describe (`20260912-mcp-tools-in-the-prompt`).
+
+    The agent is told the marker syntax and the server id; without this it is
+    never told the tool *names*, so it guesses them and A-018 refuses the guess
+    (measured against midojo, AS-04: `get_current` for a server whose tool is
+    `get_weather`).  Declaring a tool here is documentation the operator owns —
+    it never widens what may be called, because the validator requires every
+    declared tool to be permitted by ``allowed_tools`` / ``denied_tools``.
+
+    Attributes:
+        name: The tool name as the server exposes it.
+        summary: One line, rendered after the signature.  Keep it short —
+            this text sits in every prompt for every role that gets the server.
+        args: Argument names, in the order the server documents them.  Names
+            only: the manifest is not a schema, and a wrong type is a failure
+            the model can see, while a wrong name is one it cannot.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    summary: str = ""
+    args: list[str] = Field(default_factory=list)
+
+
 class MCPManifest(BaseModel):
     """Validated representation of one ``mcp.yaml``.
 
@@ -116,6 +142,13 @@ class MCPManifest(BaseModel):
     allowed_tools: list[str] = Field(default_factory=list)
     denied_tools: list[str] = Field(default_factory=list)
 
+    # `20260912-mcp-tools-in-the-prompt` (MC-02) -- the tools this server
+    # offers, as the agent should be told about them.  Optional: with no
+    # entries the prompt falls back to the names in ``allowed_tools``, and with
+    # neither it says only that the server exists, which is what every manifest
+    # did before.
+    tools: list[MCPToolSpec] = Field(default_factory=list)
+
     # Governance
     requires_actions: list[str] = Field(default_factory=list)
     domain_id: str = ""
@@ -155,6 +188,29 @@ class MCPManifest(BaseModel):
         return value
 
     @model_validator(mode="after")
+    def _tools_are_permitted(self) -> "MCPManifest":
+        """A manifest may not advertise a tool its own lists refuse.
+
+        Advertising what A-018 would block teaches the model a call that always
+        fails -- the exact failure this field exists to end, arriving from the
+        other side.
+        """
+        seen: set[str] = set()
+        for spec in self.tools:
+            if spec.name in seen:
+                raise ValueError(
+                    f"server_id={self.server_id!r}: tool {spec.name!r} declared twice"
+                )
+            seen.add(spec.name)
+            if not self.is_tool_allowed(spec.name):
+                raise ValueError(
+                    f"server_id={self.server_id!r}: tool {spec.name!r} is declared "
+                    f"in 'tools' but refused by allowed_tools/denied_tools -- "
+                    f"advertising it would teach a call that A-018 blocks"
+                )
+        return self
+
+    @model_validator(mode="after")
     def _transport_consistency(self) -> "MCPManifest":
         """Each transport requires a different field set; fail fast on
         inconsistencies rather than at first-call time."""
@@ -187,3 +243,48 @@ class MCPManifest(BaseModel):
         if self.allowed_tools and tool_name not in self.allowed_tools:
             return False
         return True
+MAX_ADVERTISED_TOOLS: int = 12
+"""How many of a server's tools the prompt names before it stops.
+
+Every line here sits in the prompt of every role that gets the server, on
+every turn.  Ten real names beat guessing forty, and a server with more tools
+than this should be saying which ones matter by ordering its ``tools`` list.
+"""
+
+
+def advertised_tool_lines(
+    manifest: "MCPManifest",
+    limit: int = MAX_ADVERTISED_TOOLS,
+) -> list[str]:
+    """Render what the agent should be told about *manifest*'s tools.
+
+    Three sources, best first:
+
+    * the manifest's ``tools`` -- name, argument names and a one-line summary;
+    * failing that, the names in ``allowed_tools``, which is what A-018
+      enforces anyway and is already written down in most manifests;
+    * failing both, nothing: the server exists and the agent is told only that,
+      which is exactly what every manifest conveyed before MC-02.
+
+    Returns bare lines without indentation; the caller places them.
+    """
+    lines: list[str] = []
+    if manifest.tools:
+        shown = manifest.tools[:limit]
+        for spec in shown:
+            args = ", ".join(f'"{a}": ...' for a in spec.args)
+            signature = f"{spec.name} {{{args}}}"
+            lines.append(
+                f"{signature} -- {spec.summary}" if spec.summary else signature
+            )
+        remaining = len(manifest.tools) - len(shown)
+    elif manifest.allowed_tools:
+        shown_names = manifest.allowed_tools[:limit]
+        lines.extend(shown_names)
+        remaining = len(manifest.allowed_tools) - len(shown_names)
+    else:
+        return []
+    if remaining > 0:
+        lines.append(f"... and {remaining} more")
+    return lines
+

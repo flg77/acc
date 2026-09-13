@@ -126,6 +126,13 @@ argv (never `shell=True`, never string interpolation of LLM output).
    write-shape tools you don't want roles to call.
 5. Set `requires_actions` if HIGH risk; the role's `allowed_actions`
    must include the matching label.
+5b. **Write the server's tools down** in `tools:` — `name`, a one-line
+   `summary`, and the argument names (`mcps/echo_server/mcp.yaml` is the
+   shape). The agent is told the marker syntax and the server id; if the
+   tool names are not here it invents them and A-018 refuses the
+   invention, so an undeclared server is usually an unusable one. A tool
+   listed here must be permitted by `allowed_tools`/`denied_tools`; with
+   no `tools:` block the prompt falls back to the `allowed_tools` names.
 6. Open `roles/<role>/role.yaml` and add the `server_id` to
    `allowed_mcps`. The role must also raise `max_mcp_risk_level` to
    match the manifest if it exceeds the default MEDIUM.
