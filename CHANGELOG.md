@@ -11,6 +11,40 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.8] — 2026-09-14
+
+### Fixed
+
+- **The last red gating acc1's image builds** — `tests/test_tui_profiles.py`,
+  carried for weeks as "an order-dependent flake, green on its own". It was not
+  a flake. `ACCTUIApp.on_mount` pushes the start screen and then, when
+  `tour_wanted()`, pushes the IN-09 first-run tour **on top of it**; these two
+  tests assert which screen a *profile* opens on, so a tour covering that screen
+  makes them assert the wrong thing. Run after the other TUI suites the process
+  looks like an installed layout, the tour fires, and both fail. The tour has
+  its own documented switch and its own tests, so an autouse fixture pins it off
+  for this file — isolating the profile tests without weakening either feature's
+  coverage. With 0.17.7 this closes the pytest gate the `acc-build` pipeline
+  stops at, and component images are produced again.
+
+## [0.17.7] — 2026-09-14
+
+### Fixed
+
+- **acc1's image-build pipeline builds again** — two red tests that were not
+  regressions. The `acc-build` pipeline clones the repo, runs pytest, then
+  builds and pushes the component images; its last five runs all failed at the
+  pytest gate, so no images were produced for days. Seven failures were
+  `tests/test_verify_keyless_bundle.py` on a host without `cosign`: those tests
+  patch `subprocess.run` and assert the *argv* ACC builds, but `verify()`
+  resolves the binary before building it, so the suite died at the lookup and
+  asserted nothing — an autouse fixture now points the lookup at a real
+  executable so the assertions run everywhere, including the build host. The
+  eighth was a **stale test**: column 4 of the MODEL REGISTRY table became the
+  roles that default to a model (as its docstring has said ever since) and the
+  test still expected the model's label, failing on every host while being
+  carried as an environmental red.
+
 ## [0.17.6] — 2026-09-13
 
 ### Added

@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from acc.tui import registry
+from acc.tui.screens.tour import TOUR_ENV
 from acc.tui.registry import (
     PROFILE_ENV,
     PROFILE_OPERATOR,
@@ -19,6 +20,25 @@ from acc.tui.registry import (
     start_screen,
     strip_specs,
 )
+
+@pytest.fixture(autouse=True)
+def _no_first_run_tour(monkeypatch):
+    """Pin the first-run tour off for the profile tests.
+
+    ``ACCTUIApp.on_mount`` pushes the start screen and then, when
+    ``tour_wanted()``, pushes the IN-09 tour ON TOP of it.  These tests are
+    about which screen a PROFILE opens on, so a tour covering it makes them
+    assert the wrong thing.
+
+    It is not hypothetical: run after the other TUI suites, something leaves
+    the process looking like an installed layout, the tour fires, and both
+    tests fail on `app.screen` being the tour.  That was carried as an
+    order-dependent flake for weeks while it red-gated acc1's image-build
+    pipeline.  The tour has its own documented switch and its own tests;
+    using the switch here isolates these tests without weakening either.
+    """
+    monkeypatch.setenv(TOUR_ENV, "0")
+
 
 
 # ---------------------------------------------------------------------------

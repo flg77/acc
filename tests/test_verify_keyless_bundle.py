@@ -29,18 +29,37 @@ These tests pin the argv so the flag cannot be dropped again.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from acc.pkg.catalog import RequiredSigner
-from acc.pkg.verify import SignatureMissing, verify
+from acc.pkg.verify import COSIGN_BIN_ENV, SignatureMissing, verify
 
 KEYLESS = RequiredSigner(
     issuer="https://token.actions.githubusercontent.com",
     subject_pattern=r"^https://github\.com/flg77/acc-ecosystem/",
 )
+
+
+@pytest.fixture(autouse=True)
+def _cosign_on_path(monkeypatch):
+    """Make the cosign LOOKUP succeed without cosign being installed.
+
+    Every test here patches ``subprocess.run``: what is under test is the
+    argv ACC builds, never cosign's behaviour.  But ``verify()`` resolves the
+    binary before it builds that argv, so on a host without cosign the suite
+    failed at the lookup and asserted nothing.
+
+    That is not a hypothetical: it is why seven of these failed on acc1's
+    build pipeline for days (the pytest image carries no cosign), red-gating
+    every image build.  Skipping them there would have lost the coverage on
+    the one host that most needs it; pointing the lookup at any real
+    executable keeps every assertion running everywhere.
+    """
+    monkeypatch.setenv(COSIGN_BIN_ENV, sys.executable)
 
 
 @pytest.fixture

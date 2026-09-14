@@ -22,6 +22,14 @@ def test_empty_registry_yields_one_explanatory_row():
 
 
 def test_registry_rows_render_entries():
+    """The last column is the ROLES that default to each model.
+
+    It used to be the model's label.  The column changed to the reverse
+    ``role_models`` map -- which is what the function's docstring has
+    described ever since -- and this test was not updated, so it asserted the
+    label against a roles cell and failed on every host it ran on, red-gating
+    acc1's image-build pipeline.
+    """
     entries = [
         ModelEntry(
             model_id="claude-sonnet", backend="anthropic",
@@ -32,13 +40,16 @@ def test_registry_rows_render_entries():
             model="llama3.2:3b", base_url="http://host:11434",
         ),
     ]
-    rows = ConfigurationScreen._model_registry_rows(entries)
+    rows = ConfigurationScreen._model_registry_rows(
+        entries, {"reviewer": "claude-sonnet", "analyst": "claude-sonnet"},
+    )
     assert len(rows) == 2
     assert rows[0][:3] == ("claude-sonnet", "anthropic", "claude-sonnet-4-6")
-    assert rows[0][4] == "Claude Sonnet (reviewer)"
+    # Both roles that default to this model, sorted.
+    assert rows[0][4] == "analyst, reviewer"
     assert rows[1][0] == "ollama-llama32"
     assert rows[1][3] == "http://host:11434"
-    # A missing label falls back to an em-dash, never a blank cell.
+    # A model no role defaults to falls back to an em-dash, never a blank cell.
     assert rows[1][4] == "—"
 
 
