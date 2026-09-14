@@ -52,6 +52,7 @@ SCHEMA_VERSION = 1
 _ACCPKG_SUFFIX = ".accpkg"
 _SIG_SUFFIX = ".accpkg.sig"
 _PEM_SUFFIX = ".accpkg.pem"
+_BUNDLE_SUFFIX = ".accpkg.bundle"
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +90,7 @@ class PublishedPackage:
     tarball_sha256: str     # sha256 of the .accpkg file bytes (64-hex)
     tarball_rel: str        # served path, e.g. /packages/<scope>/<file>
     signature_rel: str
+    bundle_rel: str = ""    # sigstore bundle -- the artefact keyless needs
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +114,7 @@ def _safe_artefact_name(filename: str) -> str:
         filename.endswith(_ACCPKG_SUFFIX)
         or filename.endswith(_SIG_SUFFIX)
         or filename.endswith(_PEM_SUFFIX)
+        or filename.endswith(_BUNDLE_SUFFIX)
     ):
         raise RejectedUpload(
             f"unsupported artefact {filename!r} — expected "
@@ -122,8 +125,9 @@ def _safe_artefact_name(filename: str) -> str:
 
 def _base_accpkg(filename: str) -> str:
     """Map any artefact filename to its ``.accpkg`` base name."""
-    if filename.endswith(_SIG_SUFFIX) or filename.endswith(_PEM_SUFFIX):
-        return filename[:-4]  # strip ".sig" / ".pem"
+    for suffix in (".sig", ".pem", ".bundle"):
+        if filename.endswith(_ACCPKG_SUFFIX + suffix):
+            return filename[: -len(suffix)]
     return filename
 
 
@@ -208,7 +212,9 @@ class CatalogStore:
 
         # A late-arriving .pem when the package is already promoted: attach it
         # next to the served tarball and we're done.
-        if safe.endswith(_PEM_SUFFIX) and not (self.staging_dir / base).exists():
+        if (
+            safe.endswith(_PEM_SUFFIX) or safe.endswith(_BUNDLE_SUFFIX)
+        ) and not (self.staging_dir / base).exists():
             attached = self._attach_late_artefact(base, safe)
             return {"staged": safe, "promoted": False, "attached": attached}
 
@@ -232,7 +238,24 @@ class CatalogStore:
         if not (acc.is_file() and sig.is_file()):
             return None
         pem = self.staging_dir / (base + ".pem")
-        staged = [p for p in (acc, sig, pem) if p.is_file()]
+        bundle = self.staging_dir / (base + ".bundle")
+
+        # KEYLESS CANNOT VERIFY FROM A DETACHED .sig.  The signature bytes
+        # carry no certificate, so cosign has nothing to check them against and
+        # refuses -- the same trap acc/pkg/verify.py documents (acc-spearhead
+        # #92) and solves by passing --bundle.  Without this wait, the first
+        # upload of a keyless triplet promotes on (.accpkg + .sig), fails, and
+        # _unlink_all DELETES the staged files, so the .bundle arriving a
+        # moment later has nothing left to complete.  A keyless catalog would
+        # reject every correctly signed package.
+        if self.required_signer.mode == "keyless" and not bundle.is_file():
+            logger.info(
+                "%s: keyless signer, awaiting %s before promotion",
+                base, bundle.name,
+            )
+            return None
+
+        staged = [p for p in (acc, sig, pem, bundle) if p.is_file()]
 
         # Read the manifest BEFORE verifying so a corrupt tarball is reported
         # as a rejected upload rather than a stack trace.
@@ -247,6 +270,7 @@ class CatalogStore:
         try:
             _verify(
                 acc, sig, self.required_signer,
+                bundle_path=bundle if bundle.is_file() else None,
                 ec_policy_path=self.ec_policy_path,
             )
         except VerifyError as exc:
@@ -268,6 +292,8 @@ class CatalogStore:
         shutil.move(str(sig), str(dest_sig))
         if pem.is_file():
             shutil.move(str(pem), str(dest_dir / (base + ".pem")))
+        if bundle.is_file():
+            shutil.move(str(bundle), str(dest_dir / (base + ".bundle")))
 
         # .sha256 sidecar — matches the file-mode catalog convention
         # (acc/pkg/catalog.py:_fetch_index_file) so the same tree can be served
@@ -291,6 +317,11 @@ class CatalogStore:
             tarball_sha256=sha,
             tarball_rel=f"/packages/{scope}/{base}",
             signature_rel=f"/packages/{scope}/{base}.sig",
+            bundle_rel=(
+                f"/packages/{scope}/{base}.bundle"
+                if (dest_dir / (base + ".bundle")).is_file()
+                else ""
+            ),
         )
 
     def _attach_late_artefact(self, base: str, artefact: str) -> bool:
@@ -362,6 +393,7 @@ class CatalogStore:
             logger.warning("index: skipping unreadable %s (%s)", accpkg.name, exc)
             return None
         sig = accpkg.with_suffix(".accpkg.sig")
+        bundle = accpkg.with_suffix(".accpkg.bundle")
         return {
             "name": name,
             "version": version,
@@ -369,6 +401,11 @@ class CatalogStore:
             "tarball_url": f"/packages/{scope}/{accpkg.name}",
             "signature_url": (
                 f"/packages/{scope}/{sig.name}" if sig.is_file() else ""
+            ),
+            # acc/pkg/fetch.py downloads entry.bundle_url when present; without
+            # it a keyless install fetches a .sig it can never verify.
+            "bundle_url": (
+                f"/packages/{scope}/{bundle.name}" if bundle.is_file() else ""
             ),
         }
 

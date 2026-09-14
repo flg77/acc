@@ -11,6 +11,31 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.9] — 2026-09-14
+
+### Fixed
+
+- **A keyless-signed package could never be published to a catalog.** Two
+  reasons, both biting before any signature was checked. `.accpkg.bundle` was
+  not an accepted upload name — only `.accpkg`, `.sig` and `.pem` — so the one
+  artefact keyless verification needs could not be uploaded at all. And
+  `_try_promote` called `verify()` **without** `bundle_path`, which is the case
+  `acc/pkg/verify.py` documents as impossible: a detached `.sig` carries no
+  certificate, cosign has nothing to check it against, and refuses. The
+  rejection path then `_unlink_all`s the staged files, so a bundle arriving in
+  the next request had nothing left to complete — a keyless catalog rejected
+  every correctly signed package, permanently. The store now **waits** for the
+  bundle when the signer is keyless, exactly as it already waits for the `.sig`,
+  and passes it to `verify()`. Keypair mode is untouched: it has the public key,
+  needs no bundle, and must not be made to wait for one. Alongside,
+  `_base_accpkg` mapped an artefact to its package with `filename[:-4]` —
+  correct for `.sig` and `.pem`, wrong for `.bundle` — and the index never
+  emitted `bundle_url` though `acc/pkg/fetch.py` has always downloaded it when
+  present, so without that the fix would have stopped at the catalog's front
+  door. Found by publishing `@acc/mortgage-roles@1.0.0`, signed keyless by its
+  release workflow and accepted by `acc-pkg verify` on the same host, to an
+  in-cluster catalog.
+
 ## [0.17.8] — 2026-09-14
 
 ### Fixed
