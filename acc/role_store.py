@@ -48,6 +48,21 @@ class RoleUpdateRejectedError(Exception):
 # ---------------------------------------------------------------------------
 
 
+def _is_placeholder(role: RoleDefinitionConfig) -> bool:
+    """True when a role definition says nothing about the role.
+
+    Empty purpose, no task types and no allowed actions is the generic
+    default wearing a name -- indistinguishable from "this role has not been
+    delivered yet", which is what a pack role looks like before its package
+    is installed.
+    """
+    return not (
+        (role.purpose or "").strip()
+        or list(role.task_types or [])
+        or list(role.allowed_actions or [])
+    )
+
+
 class RoleStore:
     """Manages role definition lifecycle for one agent.
 
@@ -186,13 +201,28 @@ class RoleStore:
         try:
             with open(path) as fh:
                 data = yaml.safe_load(fh) or {}
-            return RoleDefinitionConfig.model_validate(data)
+            role = RoleDefinitionConfig.model_validate(data)
         except FileNotFoundError:
             return None
         except Exception as exc:
             logger.warning("role_store: file load failed (%s): %s", path, exc)
             return None
-
+        if _is_placeholder(role):
+            # A file that says nothing about the role is NOT a source.  The
+            # operator mounts such a placeholder (`persona: concise`, empty
+            # purpose) next to every agent, and a pack role is installed into
+            # the pod AFTER it boots -- so accepting this would make the agent
+            # masquerade as the role with default behaviour, exactly what the
+            # pack-role boot-and-wait exists to prevent.  Seen on bb3
+            # 2026-09-15: the mortgage agents answered a governed persona turn
+            # with "no system is connected to this session" because the
+            # placeholder won the race against their own pack.
+            logger.info(
+                "role_store: ignoring placeholder role file (%s) -- it carries no "
+                "purpose, task types or allowed actions", path,
+            )
+            return None
+        return role
     def _try_load_from_redis(self) -> Optional[RoleDefinitionConfig]:
         if self._redis is None:
             return None

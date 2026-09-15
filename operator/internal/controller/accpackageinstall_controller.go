@@ -225,18 +225,19 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 // findAccPod returns a ready ACC pod in ``ns``.  When ``corpusName``
 // is non-empty, restricts to pods owned by that corpus via label
-// selector ``acc.redhat.io/corpus=<name>``.
+// selector ``acc.redhat.io/corpus-name=<name>`` -- the label every
+// pod-producing reconciler actually sets (LabelCorpusName).
 func (r *AccPackageInstallReconciler) findAccPod(ctx context.Context, ns, corpusName string) (*corev1.Pod, error) {
 	labels := map[string]string{}
 	if corpusName != "" {
-		labels["acc.redhat.io/corpus"] = corpusName
+		labels[accv1alpha1.LabelCorpusName] = corpusName
 	}
 	var pods corev1.PodList
 	if err := r.Client.List(ctx, &pods,
 		client.InNamespace(ns),
 		client.MatchingLabels(labels),
 		// Restrict to AGENT pods. Every ACC pod (NATS, Redis, OTel, OPA, TUI,
-		// WebGUI, agents) carries acc.redhat.io/corpus, but only agent pods
+		// WebGUI, agents) carries acc.redhat.io/corpus-name, but only agent pods
 		// (acc-agent-core) have the acc source at /app/acc + the venv interpreter
 		// the pkg-install exec needs. Without this filter the exec lands on a
 		// random pod and fails with exit 127 ("/opt/app-root/bin/python3: No such

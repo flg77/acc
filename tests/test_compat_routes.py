@@ -121,6 +121,48 @@ class TestGatedRequestNeverDispatches:
         assert result.body["usage"]["total_tokens"] == 5
 
 
+class TestWorkThatOutlivesTheWindow:
+    """A dispatcher may hand back a handle instead of failing.
+
+    The reason this exists: capability_dispatch submits a destructive tool
+    call to the oversight queue and holds execution until a human decides,
+    so the task outlives the caller's window. On bb3 (2026-09-15) that
+    surfaced to the demo app as "our chat assistant is temporarily
+    unavailable" while the underwriter's condition sat waiting for approval.
+    """
+
+    def test_a_pending_dispatch_is_a_handle_not_a_failure(self, keyed_env):
+        async def gate(req, caller):
+            return ""
+
+        async def dispatch(req, caller, attribution):
+            raise compat.DispatchPending("task-abc")
+
+        result = asyncio.run(compat.handle_async(
+            _body(), KEY, environ=keyed_env, gate=gate, dispatch=dispatch,
+        ))
+        assert result.status == 202
+        assert result.body["status"] == "running"
+        assert result.body["task_id"] == "task-abc"
+        assert "still running" in result.body["detail"]
+
+    def test_a_pending_dispatch_keeps_the_gate_distinction(self, keyed_env):
+        """A gate-produced 202 still says awaiting_approval -- the two are
+        different facts and a client may act on them differently."""
+
+        async def gate(req, caller):
+            return "oversight-9"
+
+        async def dispatch(req, caller, attribution):
+            raise AssertionError("gated request must not dispatch")
+
+        result = asyncio.run(compat.handle_async(
+            _body(), KEY, environ=keyed_env, gate=gate, dispatch=dispatch,
+        ))
+        assert result.status == 202
+        assert result.body["status"] == "awaiting_approval"
+        assert result.body["oversight_id"] == "oversight-9"
+
 class TestAuthOnTheAsyncPath:
     def test_unauthenticated_is_refused_before_parsing(self, keyed_env):
         """A bad key must not even reveal whether the body was valid."""
@@ -309,3 +351,16 @@ class TestSessionDecidesWhichTurnsTravel:
             gate=gate, dispatch=dispatch,
         ))
         assert seen["session_id"] == ""
+
+
+class TestCollectiveId:
+    def test_reads_the_hub_the_way_the_hub_is_written(self, monkeypatch):
+        """ObserverHub.collective_ids is a METHOD (every other route calls it);
+        the compat route read it as an attribute and every completion 500'd
+        with "'method' object is not iterable" -- seen live on bb3 (WS-02 §10)."""
+        from acc.webgui.observers import ObserverHub
+
+        hub = ObserverHub(nats_url="nats://unused:4222", collective_ids=["sol-01"])
+        monkeypatch.setattr(rc, "get_hub", lambda request: hub)
+        assert rc._collective_id(object()) == "sol-01"
+

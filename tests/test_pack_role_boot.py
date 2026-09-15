@@ -85,6 +85,32 @@ def test_pending_pack_self_promotes_when_package_lands() -> None:
     assert agent.state == "ACTIVE"
 
 
+def test_promotion_rediscovers_the_packs_skills_and_mcps() -> None:
+    """The registries are built in __init__ -- before a pack-role agent's
+    package exists -- so the package that supplies the role must also get its
+    skills and MCP servers discovered at promotion. Without this the agent
+    knows its role advertises an MCP and answers "that server is not found in
+    the registry" (bb3, 2026-09-15).
+    """
+    agent = _make_agent_stub()
+    agent.config.agent.role = "financial_analyst"
+    agent._dormant_pending_pack = True
+    agent._cognitive_core = None
+    agent._skill_registry = "stale-skills"
+    agent._mcp_registry = "stale-mcps"
+    agent._role_store = MagicMock()
+    agent._role_store.try_resolve_real_role.return_value = (
+        RoleDefinitionConfig.model_validate(_role_dict())
+    )
+
+    fresh_skills = patch.object(type(agent), "_build_skill_registry", return_value="fresh-skills")
+    fresh_mcps = patch.object(type(agent), "_build_mcp_registry", return_value="fresh-mcps")
+    with fresh_skills, fresh_mcps:
+        assert agent._maybe_promote_pending_pack() is True
+
+    assert agent._skill_registry == "fresh-skills"
+    assert agent._mcp_registry == "fresh-mcps"
+
 def test_pending_pack_stays_dormant_until_package_arrives() -> None:
     agent = _make_agent_stub()
     agent.config.agent.role = "financial_analyst"

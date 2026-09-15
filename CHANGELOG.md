@@ -11,6 +11,58 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.10] — 2026-09-15
+
+Everything here was found by one exercise: handing a third-party
+application's five agent personas to a governed ACC agentset on a real
+cluster (bb3, RHOAI). Each defect was invisible from the outside — pods
+healthy, endpoint answering — and each hid the next.
+
+### Fixed
+
+- **A pack-role agent masqueraded as the generic default instead of waiting
+  for its package.** An agent whose role is served by a package boots *before*
+  the package is installed into its pod, and `role_store` has a boot-and-wait
+  for exactly that: with no real source the agent boots DORMANT and
+  self-promotes when the pack lands, "rather than masquerade as the role with
+  default behaviour". It had never armed on a cluster. The operator mounts a
+  placeholder `acc-role.yaml` (`persona: concise`, empty purpose) next to every
+  agent, and that counted as a real file source, so `loaded_from_default` stayed
+  False. On bb3 five mortgage agents therefore ran with no purpose, no MCP
+  servers and no tool-result turn, while their pack sat installed on disk — and
+  answered a governed persona turn with "no system is connected to this
+  session". A role definition with no purpose, no task types and no allowed
+  actions says nothing about the role and is no longer a source.
+
+- **A promoted agent had its role but not its package's capabilities.** The
+  skill and MCP registries are built in `Agent.__init__` — for a pack-role
+  agent, before the package exists — and the deferred CognitiveCore was then
+  built with those empty registries. The promoted underwriter knew its role
+  advertised `mortgage_ai_underwriter` (the `role.yaml` came from the same pack)
+  and answered "that MCP server is not found in the registry". The package that
+  supplies the role supplies its capabilities too, so both registries are
+  re-discovered at promotion, before the core that will use them is built.
+
+- **Every OpenAI-compatible completion answered 500.** `routes_compat`
+  read `ObserverHub.collective_ids` as an attribute; it is a method, as
+  `routes_read` and `routes_trace` both call it. No test exercised the route
+  with a real hub; one does now.
+
+### Added
+
+- **Work that outlives the caller's window gets a handle, not a 504.**
+  `capability_dispatch` submits a destructive tool call to the oversight queue
+  and holds execution until a human decides — the behaviour the compatible
+  endpoint exists to put in front of a client. The client saw a 504 after 120 s
+  while the task was alive and waiting, so the one moment a governed demo exists
+  to show reached the user as an outage. A dispatcher may now raise
+  `DispatchPending`, which becomes the 202 handle the poll route already
+  understands (`status: "running"`, deliberately distinct from a pre-flight
+  gate's `"awaiting_approval"`), and the route keeps waiting on the same receive
+  in the background so the poll answers with the real completion once the
+  operator decides. This is the second half of the HG-24 pair; the pre-flight
+  gate is unchanged and still refuses a HIGH-risk role at admission.
+
 ## [0.17.9] — 2026-09-14
 
 ### Fixed

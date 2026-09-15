@@ -2873,6 +2873,16 @@ class Agent:
 
         # 3. build CognitiveCore if not present (dormant boot path).
         if self._cognitive_core is None:
+            # The registries were built in __init__ -- for a pack-role agent
+            # that is BEFORE its package exists, so they hold none of the
+            # skills and MCP servers the pack ships. The package that just
+            # supplied the role supplies those too, so re-discover them here,
+            # while the core that will use them is still being built. Without
+            # this the promoted agent knows its role advertises
+            # `mortgage_ai_underwriter` and answers "that MCP server is not
+            # found in the registry" (bb3, 2026-09-15).
+            self._skill_registry = self._build_skill_registry()
+            self._mcp_registry = self._build_mcp_registry()
             peer_collectives = list(self.config.agent.peer_collectives)
             hub_cid = self.config.agent.hub_collective_id
             if hub_cid and hub_cid not in peer_collectives:

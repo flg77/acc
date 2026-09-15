@@ -278,6 +278,41 @@ def completion_response(
     }
 
 
+class DispatchPending(Exception):
+    """The work is running and did not finish inside the caller's window.
+
+    Raised by a dispatcher instead of failing the request. The commonest
+    reason is the one this endpoint exists to govern: ``capability_dispatch``
+    submitted a destructive tool call to the oversight queue and is holding
+    execution until a human decides. A timeout there is not an error -- the
+    task is alive and its id is the handle -- so the caller gets the same 202
+    shape a pre-flight gate produces.
+    """
+
+    def __init__(self, task_id: str, oversight_id: str = "") -> None:
+        super().__init__(task_id)
+        self.task_id = task_id
+        self.oversight_id = oversight_id
+
+
+def running_response(request: ChatRequest, task_id: str, oversight_id: str = "") -> dict[str, Any]:
+    """202: the work is still running, here is how to find out how it ended."""
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
+        "object": "chat.completion.pending",
+        "created": int(time.time()),
+        "model": request.raw_model,
+        "status": "running",
+        "oversight_id": oversight_id,
+        "task_id": task_id,
+        "detail": (
+            "This request is still running -- it has not been dropped and it "
+            "did not fail. An action that needs human approval waits here. "
+            "Poll with the task_id."
+        ),
+    }
+
+
 def pending_response(request: ChatRequest, oversight_id: str, task_id: str) -> dict[str, Any]:
     """202: the work exists, a human is deciding, here is how to find out.
 
@@ -417,7 +452,19 @@ async def handle_async(
             "no dispatcher configured", status=503, error_type="server_error"
         )
 
-    reply, usage = await dispatch(request, caller, attribution)
+    try:
+        reply, usage = await dispatch(request, caller, attribution)
+    except DispatchPending as pending:
+        logger.info(
+            "compat: %s -> role %s still running (%s)",
+            caller.subject, request.role, pending.task_id,
+        )
+        return Handled(
+            status=202,
+            body=running_response(request, pending.task_id, pending.oversight_id),
+            attribution=attribution,
+            dispatched=True,
+        )
     return Handled(
         status=200,
         body=completion_response(request, reply, usage=usage),

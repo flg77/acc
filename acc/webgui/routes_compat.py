@@ -51,6 +51,10 @@ PENDING_TTL_S = 24 * 3600
 #: Long-poll ceiling for a dispatched request. Beyond this the client gets a
 #: task_id to poll rather than a held socket.
 DISPATCH_TIMEOUT_S = 120
+#: How long a task handed back as a 202 keeps being waited on. Long enough for
+#: a person to find the oversight queue and decide; bounded so a channel is
+#: never held forever.
+BACKGROUND_TIMEOUT_S = 3600
 
 
 class PendingStore:
@@ -98,7 +102,7 @@ def _presented_key(authorization: str | None, api_key: str | None) -> str:
 
 def _collective_id(request: Request) -> str:
     hub = get_hub(request)
-    ids = list(hub.collective_ids)
+    ids = list(hub.collective_ids())
     if not ids:
         raise HTTPException(status_code=503, detail="no collective is attached")
     return ids[0]
@@ -147,6 +151,39 @@ async def _make_gate(collective_id: str, hub: Any):
     return gate
 
 
+async def _finish_in_background(receiving, channel: Any, task_id: str, request: Any) -> None:
+    """Keep waiting on a task whose caller already has its handle.
+
+    Resolves the pending record the 202 pointed at, so the poll route can
+    answer with the real completion once the operator decides -- the reason a
+    handle beats a timeout at all.
+    """
+    try:
+        reply = await receiving
+    except asyncio.TimeoutError:
+        _pending.resolve(task_id, status="expired")
+        return
+    except Exception:  # noqa: BLE001 -- a background waiter must not escape
+        logger.exception("compat: background wait failed (task_id=%s)", task_id)
+        _pending.resolve(task_id, status="failed")
+        return
+    finally:
+        await channel.close()
+
+    if getattr(reply, "blocked", False):
+        _pending.resolve(
+            task_id,
+            status="refused",
+            result={"detail": f"the collective refused this request: {reply.block_reason}"},
+        )
+        return
+    _pending.resolve(
+        task_id,
+        status="completed",
+        result=compat.completion_response(request, reply.output),
+    )
+
+
 async def _make_dispatch(collective_id: str, hub: Any):
     """Submit to the collective and wait for the reply."""
     from acc.channels.webgui import WebPromptChannel  # noqa: PLC0415
@@ -179,16 +216,33 @@ async def _make_dispatch(collective_id: str, hub: Any):
             # therefore the pre-existing one-turn behaviour.
             session_id=request.session_id or None,
         )
+        # One receive, waited on twice: for the caller's window, then (if it
+        # outlives it) in the background. A task that takes longer than
+        # DISPATCH_TIMEOUT_S is usually the one this endpoint exists to
+        # govern -- capability_dispatch holding a destructive tool call on the
+        # oversight queue -- so the caller gets a handle rather than a 504,
+        # and the answer is waiting on the poll route once a human decides.
+        receiving = asyncio.ensure_future(
+            channel.receive(task_id, timeout=BACKGROUND_TIMEOUT_S)
+        )
+        done, _ = await asyncio.wait({receiving}, timeout=DISPATCH_TIMEOUT_S)
+        if not done:
+            asyncio.ensure_future(
+                _finish_in_background(receiving, channel, task_id, request)
+            )
+            raise compat.DispatchPending(task_id)
         try:
-            reply = await channel.receive(task_id, timeout=DISPATCH_TIMEOUT_S)
+            reply = receiving.result()
         except asyncio.TimeoutError:
+            await channel.close()
             raise compat.CompatError(
-                f"no reply within {DISPATCH_TIMEOUT_S}s; the task is still "
-                f"running as {task_id}",
+                f"no reply within {BACKGROUND_TIMEOUT_S}s; the task did not finish",
                 status=504, error_type="server_error",
             )
-        finally:
+        except BaseException:
             await channel.close()
+            raise
+        await channel.close()
 
         if reply.blocked:
             # Blocked during execution rather than at the gate — a compliance
@@ -253,7 +307,10 @@ async def chat_completions(
         _pending.put(
             result.body["task_id"],
             {
-                "status": "awaiting_approval",
+                # "awaiting_approval" (a pre-flight gate said so) or "running"
+                # (the work outlived the caller's window, which is what a tool
+                # call held on the oversight queue looks like from here).
+                "status": result.body.get("status", "awaiting_approval"),
                 "oversight_id": result.body.get("oversight_id", ""),
                 "subject": result.attribution.get("requested_by", ""),
                 "model": result.body.get("model", ""),

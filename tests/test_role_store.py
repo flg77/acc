@@ -101,6 +101,39 @@ class TestLoadPrecedence:
         assert role.purpose == "from-file"
         assert role.version == "1.0.0"
 
+    def test_a_placeholder_file_is_not_a_source(self, tmp_path):
+        """The operator mounts `persona: concise` + an empty purpose next to
+        every agent, and a pack role reaches the pod only AFTER it boots.
+        Accepting that file makes the agent masquerade as the role with default
+        behaviour -- on bb3 (2026-09-15) the mortgage agents answered a governed
+        persona turn with "no system is connected to this session".
+        """
+        role_file = tmp_path / "acc-role.yaml"
+        role_file.write_text(chr(10).join([
+            "persona: concise", "purpose: ''", "version: '0.1.0'", "",
+        ]))
+        store = _make_store()
+
+        with patch.dict(os.environ, {"ACC_ROLE_CONFIG_PATH": str(role_file)}):
+            store.load_at_startup()
+            # nothing real resolved: the agent boots DORMANT and self-promotes
+            # once its package lands
+            assert store.loaded_from_default is True
+            assert store.try_resolve_real_role() is None
+
+    def test_a_file_that_says_something_still_counts(self, tmp_path):
+        role_file = tmp_path / "acc-role.yaml"
+        role_file.write_text(chr(10).join([
+            "purpose: ''", "task_types: [REVIEW]", "version: '1.0.0'", "",
+        ]))
+        store = _make_store()
+
+        with patch.dict(os.environ, {"ACC_ROLE_CONFIG_PATH": str(role_file)}):
+            role = store.load_at_startup()
+
+        assert role.version == "1.0.0"
+        assert store.loaded_from_default is False
+
     def test_redis_wins_over_lancedb_when_no_file(self, tmp_path):
         redis = _mock_redis(role_json=json.dumps({"purpose": "from-redis", "version": "2.0.0"}))
         vector = _mock_vector()
