@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
+	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/ui"
 )
 
 var pkgInstallLog = logf.Log.WithName("accpackageinstall-controller")
@@ -56,12 +58,16 @@ const accVenvPython = "/opt/app-root/bin/python3"
 //
 //  1. Resolve the target AgentCorpus (Spec.TargetCorpus or all in
 //     namespace).
-//  2. Find a ready ACC pod backing the corpus (label selector).
+//  2. Find a ready ACC agent pod backing the corpus (label selector), plus
+//     every running TUI/WebGUI pod of the corpus that carries the
+//     pkg-installer sidecar (ui.PkgInstallerContainerName).
 //  3. Render a synthetic collective.yaml fragment carrying just this
 //     install's `required_packages:` entry.
 //  4. kubectl exec equivalent: `acc-cli collective pkg-install
-//     --json <spec> [--allow-unsigned]`.
-//  5. Parse the JSON result; patch status.
+//     --json <spec> [--allow-unsigned]` — into the agent pod first, then
+//     into each UI pod's pkg-installer sidecar.
+//  5. Parse the JSON result; patch status. Installed only when every
+//     target pod reported the pack on disk.
 //
 // Idempotent: Stage 0's `acc-pkg install` re-install on matching
 // content_sha256 is a no-op, so re-reconciling a satisfied install
@@ -84,6 +90,9 @@ type AccPackageInstallReconciler struct {
 	// PollInterval controls re-reconcile cadence for installed
 	// resources (idempotent refresh).  Default: 5 min when zero.
 	PollInterval time.Duration
+
+	// exec replaces execInPod in unit tests (nil in production).
+	exec func(ctx context.Context, pod *corev1.Pod, container string, args []string) (string, string, error)
 }
 
 // SetupWithManager registers the reconciler.
@@ -106,8 +115,14 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, fmt.Errorf("fetch AccPackageInstall: %w", err)
 	}
 
-	// Pick a target ACC pod.
+	// Pick a target ACC agent pod, plus the corpus's UI pods (TUI, WebGUI)
+	// so an installed pack is visible where operators look for it.
 	pod, err := r.findAccPod(ctx, cr.Namespace, cr.Spec.TargetCorpus)
+	if err != nil {
+		r.markFailed(ctx, cr, "PodNotFound", err.Error())
+		return r.requeue(), nil
+	}
+	uiPods, err := r.findUIPods(ctx, cr.Namespace, cr.Spec.TargetCorpus)
 	if err != nil {
 		r.markFailed(ctx, cr, "PodNotFound", err.Error())
 		return r.requeue(), nil
@@ -157,40 +172,20 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		args = append(args, "--catalog", cr.Spec.CatalogRef)
 	}
 
-	stdout, stderr, execErr := r.execInPod(ctx, pod, args)
-	if execErr != nil {
-		r.markFailed(ctx, cr, "ExecFailed",
-			fmt.Sprintf("acc-cli exec failed: %v; stderr=%s", execErr, truncate(stderr, 500)))
+	result, reason, msg := r.installInto(ctx, pod, agentContainer(pod), args)
+	if reason != "" {
+		r.markFailed(ctx, cr, reason, msg)
 		return r.requeue(), nil
 	}
-
-	// Parse the result JSON — acc-cli collective pkg-install --json
-	// returns either {"already_satisfied": true, ...} or
-	// {"installed": [{"installed": "@scope/name@ver", "install_path": ..., "was_already_installed": ...}], ...}
-	var result struct {
-		AlreadySatisfied bool `json:"already_satisfied,omitempty"`
-		Installed        []struct {
-			Spec                 string `json:"spec"`
-			InstalledRef         string `json:"installed"`
-			InstallPath          string `json:"install_path"`
-			WasAlreadyInstalled  bool   `json:"was_already_installed"`
-		} `json:"installed,omitempty"`
-		Failed []struct {
-			Spec  string `json:"spec"`
-			Error string `json:"error"`
-		} `json:"failed,omitempty"`
-	}
-	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
-		r.markFailed(ctx, cr, "ParseFailed",
-			fmt.Sprintf("could not parse pkg-install output: %v; stdout=%s",
-				err, truncate(stdout, 500)))
-		return r.requeue(), nil
-	}
-
-	if len(result.Failed) > 0 {
-		f := result.Failed[0]
-		r.markFailed(ctx, cr, "InstallFailed", fmt.Sprintf("%s: %s", f.Spec, f.Error))
-		return r.requeue(), nil
+	// The UI pods must hold the pack too: Installed means every target pod
+	// has it on disk, not just the agent.
+	uiNames := make([]string, 0, len(uiPods))
+	for _, p := range uiPods {
+		if _, reason, msg := r.installInto(ctx, p, ui.PkgInstallerContainerName, args); reason != "" {
+			r.markFailed(ctx, cr, reason, fmt.Sprintf("pod %s/%s: %s", p.Name, ui.PkgInstallerContainerName, msg))
+			return r.requeue(), nil
+		}
+		uiNames = append(uiNames, p.Name)
 	}
 
 	// Success path: extract name/version/install_path from either
@@ -207,11 +202,15 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 		cr.Status.InstallPath = entry.InstallPath
 	}
+	message := fmt.Sprintf("installed via pod %s", pod.Name)
+	if len(uiNames) > 0 {
+		message += fmt.Sprintf("; on disk in UI pods %s", strings.Join(uiNames, ", "))
+	}
 	setCondition(&cr.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Installed",
-		Message:            fmt.Sprintf("installed via pod %s", pod.Name),
+		Message:            message,
 		LastTransitionTime: now,
 	})
 	if err := r.Client.Status().Update(ctx, cr); err != nil {
@@ -263,15 +262,98 @@ func (r *AccPackageInstallReconciler) findAccPod(ctx context.Context, ns, corpus
 	return nil, fmt.Errorf("no ready ACC agent pod in namespace %q (corpus=%q)", ns, corpusName)
 }
 
-// execInPod runs ``args`` inside the first container of ``pod`` and
-// returns stdout/stderr.  Modelled on kubectl exec.
-func (r *AccPackageInstallReconciler) execInPod(ctx context.Context, pod *corev1.Pod, args []string) (string, string, error) {
+// pkgInstallResult is the JSON `acc-cli collective pkg-install --json`
+// prints: either {"already_satisfied": true, ...} or
+// {"installed": [{"installed": "@scope/name@ver", "install_path": ..., "was_already_installed": ...}], ...}
+type pkgInstallResult struct {
+	AlreadySatisfied bool `json:"already_satisfied,omitempty"`
+	Installed        []struct {
+		Spec                string `json:"spec"`
+		InstalledRef        string `json:"installed"`
+		InstallPath         string `json:"install_path"`
+		WasAlreadyInstalled bool   `json:"was_already_installed"`
+	} `json:"installed,omitempty"`
+	Failed []struct {
+		Spec  string `json:"spec"`
+		Error string `json:"error"`
+	} `json:"failed,omitempty"`
+}
+
+// installInto execs the install in one pod/container and parses the result.
+// A non-empty reason is a failure (reason + message for markFailed).
+func (r *AccPackageInstallReconciler) installInto(ctx context.Context, pod *corev1.Pod, container string, args []string) (pkgInstallResult, string, string) {
+	var result pkgInstallResult
+	run := r.execInPod
+	if r.exec != nil {
+		run = r.exec
+	}
+	stdout, stderr, execErr := run(ctx, pod, container, args)
+	if execErr != nil {
+		return result, "ExecFailed",
+			fmt.Sprintf("acc-cli exec failed: %v; stderr=%s", execErr, truncate(stderr, 500))
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		return result, "ParseFailed",
+			fmt.Sprintf("could not parse pkg-install output: %v; stdout=%s",
+				err, truncate(stdout, 500))
+	}
+	if len(result.Failed) > 0 {
+		f := result.Failed[0]
+		return result, "InstallFailed", fmt.Sprintf("%s: %s", f.Spec, f.Error)
+	}
+	return result, "", ""
+}
+
+// agentContainer is the container the install runs in on an agent pod: the
+// first one (the agent itself; sidecars are appended after it).
+func agentContainer(pod *corev1.Pod) string {
+	if len(pod.Spec.Containers) > 0 {
+		return pod.Spec.Containers[0].Name
+	}
+	return ""
+}
+
+// findUIPods returns the corpus's TUI and WebGUI pods that can take an
+// install: Running, not being deleted, with a Ready pkg-installer sidecar
+// (ui.PkgInstallerContainerName). Readiness is the sidecar's, not the pod's:
+// a WebGUI whose own container is crash-looping still gets the pack, so it is
+// there when the WebGUI comes up. Pods from before the sidecar existed are
+// not targets. Sorted by name for a stable status message. Same corpus scope
+// as findAccPod (the acc.redhat.io/corpus-name label; all of ns when empty).
+func (r *AccPackageInstallReconciler) findUIPods(ctx context.Context, ns, corpusName string) ([]*corev1.Pod, error) {
+	labels := map[string]string{}
+	if corpusName != "" {
+		labels[accv1alpha1.LabelCorpusName] = corpusName
+	}
+	var pods corev1.PodList
+	if err := r.Client.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels(labels)); err != nil {
+		return nil, fmt.Errorf("listing pods: %w", err)
+	}
+	var out []*corev1.Pod
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if _, isAgent := p.Labels[accv1alpha1.LabelAgentRole]; isAgent {
+			continue
+		}
+		if p.DeletionTimestamp != nil || p.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		for _, cs := range p.Status.ContainerStatuses {
+			if cs.Name == ui.PkgInstallerContainerName && cs.Ready {
+				out = append(out, p)
+				break
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// execInPod runs ``args`` inside ``container`` of ``pod`` and returns
+// stdout/stderr.  Modelled on kubectl exec.
+func (r *AccPackageInstallReconciler) execInPod(ctx context.Context, pod *corev1.Pod, container string, args []string) (string, string, error) {
 	if r.Kubernetes == nil || r.Config == nil {
 		return "", "", fmt.Errorf("reconciler missing rest.Config or kubernetes.Interface — wire from main.go")
-	}
-	container := ""
-	if len(pod.Spec.Containers) > 0 {
-		container = pod.Spec.Containers[0].Name
 	}
 	req := r.Kubernetes.CoreV1().RESTClient().Post().
 		Resource("pods").

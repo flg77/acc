@@ -131,6 +131,62 @@ def list_all_role_names(base_dir: str | Path = "roles") -> list[str]:
     return sorted(names)
 
 
+class RoleSource:
+    """Where a role's files live, as :class:`RoleLoader` resolves them.
+
+    ``package`` is ``"@scope/name@version"`` when an installed package serves
+    the role, ``""`` when the in-tree ``roles/`` directory does.  Surfaces that
+    show or edit ``role.yaml`` / ``role.md`` use this so they open the same
+    file the agent runtime loads.
+    """
+
+    __slots__ = ("role_dir", "package")
+
+    def __init__(self, role_dir: Path, package: str = "") -> None:
+        self.role_dir = role_dir
+        self.package = package
+
+    def file(self, filename: str) -> Path:
+        return self.role_dir / filename
+
+    def write_block_reason(self, filename: str) -> str:
+        """Why *filename* may not be written or created here ("" when it may).
+
+        Installed packs are signed content (edit the source and roll a
+        release instead); a read-only mount (the operator's roles ConfigMap)
+        or a directory this process cannot write is not an authoring target.
+        """
+        if self.package:
+            return (
+                f"served by the installed package {self.package} "
+                f"({self.role_dir}) — packages are read-only"
+            )
+        target = self.file(filename)
+        probe = target if target.exists() else self.role_dir
+        if not probe.exists():
+            return f"{self.role_dir} does not exist"
+        if not os.access(probe, os.W_OK):
+            return f"{probe} is read-only for this process"
+        return ""
+
+
+def role_source(roles_root: str | Path, role_name: str) -> RoleSource:
+    """Resolve *role_name* the way :class:`RoleLoader` does: an installed
+    package providing ``roles/<name>/role.yaml`` wins, else the in-tree
+    ``<roles_root>/<name>`` directory (whether or not it exists)."""
+    try:
+        from acc.pkg.role_resolution import resolve_role_source  # noqa: PLC0415
+        resolved = resolve_role_source(role_name)
+    except Exception:  # pragma: no cover - acc.pkg optional / registry unreadable
+        resolved = None
+    if resolved is not None:
+        return RoleSource(
+            resolved.role_yaml_path.parent,
+            f"{resolved.package.name}@{resolved.package.version}",
+        )
+    return RoleSource(Path(roles_root) / role_name)
+
+
 def _compute_rubric_hash(rubric_path: Path) -> str:
     """Compute the SHA-256 hash of a canonical eval_rubric.yaml file.
 

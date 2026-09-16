@@ -165,6 +165,17 @@ Screen {
     padding: 0 0 0 1;
 }
 
+/* The inline role.yaml editor sits inside #role-detail-container (a scroll
+   container).  TextArea's default `height: 1fr` resolves against that
+   container's leftover space, which is ~2 rows once role.md is shown — a
+   46-line role.yaml looked like only its first comment line.  Size it to
+   the container's full viewport instead: scrolling the detail pane brings
+   the whole editor into view, and the TextArea scrolls its own content. */
+#role-yaml-editor {
+    height: 100%;
+    min-height: 12;
+}
+
 /* ── Compliance layout ─────────────────────────────────────────────────────── */
 
 #compliance-left {

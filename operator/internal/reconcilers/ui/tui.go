@@ -155,6 +155,12 @@ func (r *TUIReconciler) reconcileIdlePod(ctx context.Context, corpus *accv1alpha
 		},
 	}
 
+	// The corpus's roles/skills/MCPs, catalogs and installed packs — what an
+	// agent pod gets — so the TUI does not show only its image's defaults.
+	if err := withCorpusDelivery(ctx, r.Client, corpus, &deploy.Spec.Template.Spec, "tui"); err != nil {
+		return reconcilers.SubResult{}, fmt.Errorf("tui corpus delivery: %w", err)
+	}
+
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {
 		ed := existing.(*appsv1.Deployment)
 		ed.Spec.Replicas = deploy.Spec.Replicas
@@ -198,6 +204,9 @@ func (r *TUIReconciler) reconcileWebTerminal(ctx context.Context, corpus *accv1a
 	}
 
 	deploy := r.buildWebTerminalDeployment(ctx, corpus, name, labels, replicas, kc)
+	if err := withCorpusDelivery(ctx, r.Client, corpus, &deploy.Spec.Template.Spec, "tui"); err != nil {
+		return reconcilers.SubResult{}, fmt.Errorf("tui corpus delivery: %w", err)
+	}
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {
 		ed := existing.(*appsv1.Deployment)
 		ed.Spec.Replicas = deploy.Spec.Replicas

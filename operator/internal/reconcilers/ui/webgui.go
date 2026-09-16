@@ -110,6 +110,11 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 	// "Application startup failed. Exiting." crash-loop.)
 	collectiveIDs := r.collectiveIDs(ctx, corpus)
 	deploy := r.buildDeployment(corpus, name, labels, collectiveIDs)
+	// The corpus's roles/skills/MCPs, catalogs and installed packs — what an
+	// agent pod gets — so the WebGUI does not show only its image's defaults.
+	if err := withCorpusDelivery(ctx, r.Client, corpus, &deploy.Spec.Template.Spec, "webgui"); err != nil {
+		return reconcilers.SubResult{}, fmt.Errorf("webgui corpus delivery: %w", err)
+	}
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {
 		ed := existing.(*appsv1.Deployment)
 		ed.Spec.Replicas = deploy.Spec.Replicas

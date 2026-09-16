@@ -354,6 +354,11 @@ export type CatalogRow = {
   path: string;
   required_signer: { issuer: string; subject_pattern: string; key_path: string };
   priority: number;
+  // "default" | "system" | "user" | "workspace" — only workspace is mutable.
+  layer: string;
+  read_only: boolean;
+  shadowed_by: string;
+  source: string;
 };
 
 export const fetchCatalogs = () => getJSON<CatalogRow[]>("/api/catalogs");
@@ -386,7 +391,8 @@ export const setCatalogPriority = (catalogId: string, priority: number) =>
 
 // --- role authoring (WS-C1/C2) ---------------------------------------------
 
-export type RoleRow = { role_id: string; has_md: boolean };
+// source: "in-tree" or the installed pack "@scope/name@version".
+export type RoleRow = { role_id: string; has_md: boolean; source: string; writable: boolean };
 
 export const listRoles = () => getJSON<RoleRow[]>("/api/roles");
 

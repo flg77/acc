@@ -896,24 +896,31 @@ export function Catalogs() {
       <Card title="Configured catalogs">
         {cats.length === 0 && <Empty what="catalogs" />}
         {cats.map((c) => (
-          <div key={c.id} className="oversight-row">
+          <div key={`${c.layer}:${c.id}`} className="oversight-row">
             <span>
-              <strong>{c.id}</strong> · {c.tier} · {c.mode}
+              <strong>{c.id}</strong> · {c.layer} · {c.tier} · {c.mode}
+              {c.shadowed_by ? ` · shadowed by ${c.shadowed_by}` : ""}
             </span>
             <span>{c.url || c.path}</span>
             <span>
               signer: {c.required_signer.issuer || "—"} /{" "}
               {c.required_signer.subject_pattern || "—"}
             </span>
-            <input
-              type="number"
-              value={c.priority}
-              style={{ width: "5rem" }}
-              onChange={(e) =>
-                reprioritise(c.id, parseInt(e.target.value, 10) || c.priority)
-              }
-            />
-            <button onClick={() => remove(c.id)}>Remove</button>
+            {c.read_only ? (
+              <span>priority {c.priority} · read-only</span>
+            ) : (
+              <>
+                <input
+                  type="number"
+                  value={c.priority}
+                  style={{ width: "5rem" }}
+                  onChange={(e) =>
+                    reprioritise(c.id, parseInt(e.target.value, 10) || c.priority)
+                  }
+                />
+                <button onClick={() => remove(c.id)}>Remove</button>
+              </>
+            )}
           </div>
         ))}
       </Card>
@@ -1064,6 +1071,7 @@ export function RoleEditor() {
               <option key={r.role_id} value={r.role_id}>
                 {r.role_id}
                 {r.has_md ? " ✎" : ""}
+                {r.writable ? "" : ` (read-only · ${r.source})`}
               </option>
             ))}
           </select>

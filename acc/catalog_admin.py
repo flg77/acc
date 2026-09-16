@@ -2,6 +2,8 @@
 
 Read + mutate the per-collective ``<workspace>/.acc/catalogs.yaml``
 file with validation against :class:`acc.pkg.catalog.Catalog`.
+:func:`load_layers` reads every layer (default / system / user /
+workspace) for display; mutations only ever touch the workspace layer.
 Used by the Catalog admin TUI pane + WebGUI route + the
 ``acc-podman-desktop`` first-run wizard.
 
@@ -64,6 +66,96 @@ def load(workspace: Optional[Path] = None) -> list[Catalog]:
         raise ValueError(f"malformed YAML in {path}: {exc}") from exc
     parsed = CatalogFile.model_validate(raw)
     return list(parsed.catalogs)
+
+
+#: The layers :func:`load_layers` reports, broad to narrow — the same order
+#: :func:`acc.pkg.catalog.load_catalogs` resolves in (narrowest wins).
+LAYERS: tuple[str, ...] = ("default", "system", "user", "workspace")
+
+#: The only layer this module mutates.  The others are owned elsewhere: the
+#: default is compiled in, ``system`` is ``/etc/acc/catalogs.yaml`` (rendered
+#: by the operator from AccCatalog resources in-cluster), ``user`` is
+#: ``~/.acc/catalogs.yaml`` (``/catalog add``).
+EDITABLE_LAYER = "workspace"
+
+
+@dataclass(frozen=True)
+class LayeredCatalog:
+    """One catalog as a layered view shows it.
+
+    ``shadowed_by`` names the narrower layer whose catalog with the same id
+    wins at resolve time (empty when this entry is the one that resolves).
+    """
+
+    catalog: Catalog
+    layer: str
+    source: Optional[Path]   # the file it came from; None for the default layer
+    shadowed_by: str = ""
+
+    @property
+    def read_only(self) -> bool:
+        return self.layer != EDITABLE_LAYER
+
+
+@dataclass(frozen=True)
+class LayerError:
+    """A layer file that exists but could not be read (shown, not raised)."""
+
+    layer: str
+    path: Path
+    error: str
+
+
+def load_layers(
+    workspace: Optional[Path] = None,
+) -> tuple[list[LayeredCatalog], list[LayerError]]:
+    """Every catalog across the default / system / user / workspace layers.
+
+    The same files, in the same order, that
+    :func:`acc.pkg.catalog.load_catalogs` resolves against — so an admin view
+    built on this shows what the Marketplace and ``acc-pkg install`` actually
+    use.  Unlike the resolver, one malformed layer does not hide the others:
+    its error is returned alongside the rows from the readable layers.
+
+    Rows are ordered layer broad→narrow, then priority desc, id asc.  A row
+    whose id is redefined by a narrower layer carries ``shadowed_by``.
+    """
+    from acc.pkg import catalog as _pkg_catalog  # noqa: PLC0415
+
+    sources: list[tuple[str, Optional[Path]]] = [
+        ("default", None),
+        ("system", _pkg_catalog.system_catalog_path()),
+        ("user", _pkg_catalog.user_catalog_path()),
+        ("workspace", workspace_catalogs_path(workspace)),
+    ]
+    per_layer: list[tuple[str, Optional[Path], list[Catalog]]] = []
+    errors: list[LayerError] = []
+    for layer, path in sources:
+        if path is None:
+            cats = _pkg_catalog.builtin_catalogs()
+        else:
+            try:
+                cats = list(_pkg_catalog._load_one(path))
+            except (ValueError, ValidationError, OSError) as exc:
+                errors.append(LayerError(layer=layer, path=path, error=str(exc)))
+                cats = []
+        per_layer.append((layer, path, cats))
+
+    # The narrowest layer that defines an id is the one that resolves.
+    winner: dict[str, str] = {}
+    for layer, _path, cats in per_layer:
+        for c in cats:
+            winner[c.id] = layer
+
+    rows: list[LayeredCatalog] = []
+    for layer, path, cats in per_layer:
+        for c in sorted(cats, key=lambda c: (-c.priority, c.id)):
+            won = winner.get(c.id, layer)
+            rows.append(LayeredCatalog(
+                catalog=c, layer=layer, source=path,
+                shadowed_by="" if won == layer else won,
+            ))
+    return rows, errors
 
 
 def save(catalogs: list[Catalog], workspace: Optional[Path] = None) -> Path:

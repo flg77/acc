@@ -11,6 +11,81 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.11] — 2026-09-16
+
+A person opening the workshop's TUI and WebGUI on bb3 found them disconnected
+from the agentset they front: only the roles baked into the image, every skill
+marked not installed, one catalog with a link that 404'd, a role.yaml that looked
+empty, and an `$EDITOR` button that could not work. The agents themselves were
+fine. The surfaces had simply never been given what the agents get.
+
+Ships with **acc-operator 0.2.15**, which supplies the mounts and installs packs
+into the UI pods. The runtime changes below make the TUI and WebGUI read them;
+without 0.2.15 they degrade to what they showed before, with a note naming where
+they looked.
+
+### Fixed
+
+- **The TUI and WebGUI saw none of the corpus's roles, skills, MCPs, catalogs or
+  installed packs** (operator 0.2.15, #427). Their Deployments set four env vars
+  and mounted nothing, and `AccPackageInstall` skipped UI pods on purpose. UI pods
+  now get the manifest ConfigMaps with `ACC_ROLES_ROOT` / `ACC_SKILLS_ROOT` /
+  `ACC_MCPS_ROOT`, the `acc-catalogs` system catalog at `/etc/acc/catalogs.yaml`,
+  and a `/var/lib/acc` packages root. A `pkg-installer` sidecar on the agent-core
+  image (the UI images carry no cosign) receives the same signed install as the
+  agents; `Installed` now means every target pod has the pack.
+
+- **The Catalogs pane claimed "system → user → workspace" and showed only the
+  workspace layer** (#428). It now lists every layer with a `layer` column and
+  marks shadowed rows; only workspace rows can be edited. A URL cut at 32
+  characters had turned into a clickable link that 404'd — cells now drop the
+  scheme and end in `…`, and the full URL is in a detail pane that scrolls
+  instead of clipping after "Roles:".
+
+- **The inline role.yaml editor collapsed to two rows**, so a 46-line role looked
+  like its first comment line. It fills the detail pane (at least 12 rows).
+
+- **"Open in $EDITOR" could not work under a web terminal.** It fell back to `vi`,
+  which the TUI image does not have, and spawned the editor detached with its
+  output discarded — under ttyd there is one terminal, so no editor could ever
+  appear. The editor is now resolved for real (`$EDITOR`, `$VISUAL`, nano, vi),
+  runs in the foreground while the TUI is suspended, and the role reloads when it
+  exits; with no editor the inline editor takes focus. The TUI image installs nano
+  and sets `EDITOR=nano`, as the agent image does. A stub `role.md` is created
+  only in a writable roles directory and removed if left untouched.
+
+- **Every skill and MCP showed ✗.** The loaders were right; the pod had nothing to
+  load. Registries rebuild after a pack install, an empty result names the roots
+  it searched, and role files resolve pack-first exactly as the agent does, so a
+  pack role shows its role.yaml instead of "not found".
+
+- **The WebGUI looked for roles in `/app/roles`, which its image does not have.**
+  `/api/roles` now honours `ACC_ROLES_ROOT` and includes installed-pack roles with
+  `source` and `writable`; `/api/catalogs` returns every layer. Writing to a pack
+  role, a read-only root or a non-workspace catalog answers 409 instead of writing
+  a copy the loader ignores.
+
+### Changed
+
+- Pack roles and read-only role roots are **read-only** in the TUI and WebGUI.
+  Saving one used to write a copy into the roles folder that nothing loaded.
+
+### Operator (0.2.15)
+
+- UI pods get corpus delivery and pack installs (above).
+- The CSV icon was an empty operator-sdk placeholder and rendered broken on every
+  AgentCorpus and AgentCollective in the console (#426).
+- `AccPackageInstall` selects pods by `acc.redhat.io/corpus-name` (#420).
+- The 0.2.13/0.2.14 OpenShell Model-2 line (headless mTLS+OIDC init container,
+  real-directory Landlock policy, idempotent sandbox create,
+  `spec.sandbox.landlockCompatibility`) is now in main's history.
+- CSV `replaces: acc-operator.v0.2.14`.
+
+### Known
+
+- Packs are still installed into only one agent pod per corpus by the operator;
+  the other agents rely on their own boot-time install. Unchanged here.
+
 ## [0.17.10] — 2026-09-15
 
 Everything here was found by one exercise: handing a third-party

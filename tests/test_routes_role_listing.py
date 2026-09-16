@@ -56,6 +56,11 @@ def env(monkeypatch, tmp_path):
     (roles_root / "scratch").mkdir()
     (roles_root / "scratch" / "notes.txt").write_text("x", encoding="utf-8")
     monkeypatch.setenv("ACC_ROLES_ROOT", str(roles_root))
+    # The listing layers installed packs over ACC_ROLES_ROOT (as RoleLoader
+    # does); an empty package root keeps these tests about the in-tree half.
+    packages_root = tmp_path / "packages"
+    packages_root.mkdir()
+    monkeypatch.setenv("ACC_PACKAGES_ROOT", str(packages_root))
     return {"roles_root": roles_root}
 
 
@@ -86,9 +91,22 @@ def test_roles_list_flags_role_md_presence(client):
     assert rows["reviewer"]["has_md"] is False
 
 
-def test_roles_list_empty_when_root_absent(client, monkeypatch, tmp_path):
+def test_roles_list_follows_resolved_root_when_env_path_absent(
+    client, monkeypatch, tmp_path,
+):
+    """A missing ACC_ROLES_ROOT resolves like the agent runtime does (repo /
+    package anchor) instead of pinning the listing to a dir that does not
+    exist — the webgui image has no /app/roles."""
+    from acc.role_loader import list_roles
+    from acc.tui.path_resolution import resolve_manifest_root
+
     monkeypatch.setenv("ACC_ROLES_ROOT", str(tmp_path / "does-not-exist"))
-    assert client.get("/api/roles").json() == []
+    expected = {
+        n for n in list_roles(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
+        if n == n.lower()
+    }
+    ids = {row["role_id"] for row in client.get("/api/roles").json()}
+    assert ids == expected
 
 
 # ---------------------------------------------------------------------------

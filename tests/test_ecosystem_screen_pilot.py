@@ -1086,8 +1086,19 @@ def test_subrole_siblings_falls_back_to_glob_when_none_declared(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def _only_on_path(monkeypatch, *available: str) -> None:
+    """Make ``shutil.which`` (as the ecosystem module sees it) find exactly
+    *available* — keeps the editor-resolution tests independent of the host."""
+    from acc.tui.screens import ecosystem as eco
+    monkeypatch.setattr(
+        eco.shutil, "which",
+        lambda name: f"/usr/bin/{name}" if name in available else None,
+    )
+
+
 def test_resolve_editor_command_respects_EDITOR(monkeypatch):
     from acc.tui.screens.ecosystem import _resolve_editor_command
+    _only_on_path(monkeypatch, "vim", "nano")
     monkeypatch.setenv("EDITOR", "vim")
     monkeypatch.delenv("VISUAL", raising=False)
     cmd = _resolve_editor_command("/tmp/x.yaml")
@@ -1097,6 +1108,7 @@ def test_resolve_editor_command_respects_EDITOR(monkeypatch):
 def test_resolve_editor_command_splits_args(monkeypatch):
     """``$EDITOR='code --wait'`` produces ['code','--wait',path]."""
     from acc.tui.screens.ecosystem import _resolve_editor_command
+    _only_on_path(monkeypatch, "code")
     monkeypatch.setenv("EDITOR", "code --wait")
     monkeypatch.delenv("VISUAL", raising=False)
     cmd = _resolve_editor_command("/tmp/x.yaml")
@@ -1105,6 +1117,7 @@ def test_resolve_editor_command_splits_args(monkeypatch):
 
 def test_resolve_editor_command_falls_back_to_VISUAL(monkeypatch):
     from acc.tui.screens.ecosystem import _resolve_editor_command
+    _only_on_path(monkeypatch, "nano")
     monkeypatch.delenv("EDITOR", raising=False)
     monkeypatch.setenv("VISUAL", "nano")
     cmd = _resolve_editor_command("/tmp/x.yaml")
@@ -1114,11 +1127,33 @@ def test_resolve_editor_command_falls_back_to_VISUAL(monkeypatch):
 def test_resolve_editor_command_platform_fallback(monkeypatch):
     import os
     from acc.tui.screens.ecosystem import _resolve_editor_command
+    expected = "notepad" if os.name == "nt" else "nano"
+    _only_on_path(monkeypatch, expected)
     monkeypatch.delenv("EDITOR", raising=False)
     monkeypatch.delenv("VISUAL", raising=False)
     cmd = _resolve_editor_command("/tmp/x.yaml")
-    expected = "notepad" if os.name == "nt" else "vi"
     assert cmd == [expected, "/tmp/x.yaml"]
+
+
+def test_resolve_editor_command_skips_missing_EDITOR(monkeypatch):
+    """An $EDITOR that is not installed falls through to one that is."""
+    import os
+    from acc.tui.screens.ecosystem import _resolve_editor_command
+    fallback = "notepad" if os.name == "nt" else "nano"
+    _only_on_path(monkeypatch, fallback)
+    monkeypatch.setenv("EDITOR", "emacs -nw")
+    monkeypatch.delenv("VISUAL", raising=False)
+    assert _resolve_editor_command("/tmp/x.yaml") == [fallback, "/tmp/x.yaml"]
+
+
+def test_resolve_editor_command_none_when_no_editor_installed(monkeypatch):
+    """The TUI image had no editor and EDITOR was unset: resolution returned
+    ['vi', path] anyway and the launch failed with [Errno 2].  Now: None."""
+    from acc.tui.screens.ecosystem import _resolve_editor_command
+    _only_on_path(monkeypatch)
+    monkeypatch.delenv("EDITOR", raising=False)
+    monkeypatch.delenv("VISUAL", raising=False)
+    assert _resolve_editor_command("/tmp/x.yaml") is None
 
 
 @pytest.mark.asyncio
@@ -1198,96 +1233,251 @@ async def test_first_row_auto_renders_detail_on_mount(isolated_manifests):
         assert screen._selected_role != ""
 
 
+class _FakeTerminal:
+    """Stands in for ``App.suspend`` + the editor process.
+
+    The headless test driver cannot suspend, so the pilot tests swap in a
+    context manager that records whether the editor ran *inside* it — the
+    property that makes an editor visible under a single web terminal.
+    """
+
+    def __init__(self, on_edit=None) -> None:
+        self.suspended = False
+        self.calls: list[tuple[list[str], bool]] = []
+        self._on_edit = on_edit
+
+    def suspend(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def _cm():
+            self.suspended = True
+            try:
+                yield
+            finally:
+                self.suspended = False
+
+        return _cm()
+
+    def run_editor(self, cmd: list[str]) -> int:
+        self.calls.append((cmd, self.suspended))
+        if self._on_edit is not None:
+            self._on_edit(Path(cmd[-1]))
+        return 0
+
+
+def _install_fake_terminal(monkeypatch, app, fake: _FakeTerminal) -> None:
+    from acc.tui.screens import ecosystem as eco
+    monkeypatch.setattr(eco, "_run_editor", fake.run_editor)
+    monkeypatch.setattr(app, "suspend", fake.suspend)
+
+
+async def _commit_first_row(pilot, screen) -> None:
+    role_table = screen.query_one("#role-table", DataTable)
+    first_row_key = list(role_table.rows.keys())[0]
+    screen.on_data_table_row_selected(
+        DataTable.RowSelected(
+            data_table=role_table, cursor_row=0, row_key=first_row_key,
+        )
+    )
+    await pilot.pause()
+
+
 @pytest.mark.asyncio
-async def test_edit_yaml_button_spawns_editor(
+async def test_edit_yaml_button_runs_editor_suspended_and_reloads(
     isolated_manifests, monkeypatch,
 ):
-    """Pressing the Edit role.yaml button invokes the spawn helper
-    with the expected argv."""
-    from acc.tui.screens import ecosystem as eco
+    """Edit role.yaml runs $EDITOR in the foreground while the app is
+    suspended (so it owns the terminal), then re-reads the file."""
+    from textual.widgets import TextArea
 
-    captured: list[list[str]] = []
-
-    def fake_spawn(cmd):
-        captured.append(cmd)
-
-    monkeypatch.setattr(eco, "_spawn_editor", fake_spawn)
-    monkeypatch.setenv("EDITOR", "echo")
+    _only_on_path(monkeypatch, "nano")
+    monkeypatch.setenv("EDITOR", "nano")
+    edited = (
+        "role_definition:\n"
+        "  purpose: 'edited in nano'\n"
+        "  persona: 'concise'\n"
+        "  task_types: ['pilot_test']\n"
+        "  version: '0.1.0'\n"
+    )
+    fake = _FakeTerminal(on_edit=lambda p: p.write_text(edited, encoding="utf-8"))
 
     app = _Harness()
     async with app.run_test() as pilot:
         await pilot.pause()
+        _install_fake_terminal(monkeypatch, app, fake)
         screen = app.screen
+        await _commit_first_row(pilot, screen)
 
-        role_table = screen.query_one("#role-table", DataTable)
-        first_row_key = list(role_table.rows.keys())[0]
-        # Commit-4: lock acquisition moved from highlight (preview) to
-        # select (commit/Enter).  Use the select handler to exercise
-        # the same code path.
-        screen.on_data_table_row_selected(
-            DataTable.RowSelected(
-                data_table=role_table,
-                cursor_row=0,
-                row_key=first_row_key,
-            )
-        )
+        screen.query_one("#btn-edit-yaml", Button).press()
         await pilot.pause()
 
-        btn = screen.query_one("#btn-edit-yaml", Button)
-        btn.press()
-        await pilot.pause()
-
-        assert len(captured) == 1
-        cmd = captured[0]
-        assert cmd[0] == "echo"
-        assert cmd[-1].endswith("role.yaml")
-        assert "test_role" in cmd[-1]
+        assert len(fake.calls) == 1
+        cmd, ran_suspended = fake.calls[0]
+        assert cmd[0] == "nano"
+        assert cmd[-1].endswith("role.yaml") and "test_role" in cmd[-1]
+        assert ran_suspended, "editor must run inside App.suspend()"
+        editor = screen.query_one("#role-yaml-editor", TextArea)
+        assert "edited in nano" in editor.text
 
 
 @pytest.mark.asyncio
-async def test_edit_md_button_creates_missing_role_md_and_spawns(
+async def test_edit_md_button_keeps_role_md_the_operator_wrote(
     isolated_manifests, monkeypatch,
 ):
-    """If role.md is missing, pressing Edit role.md auto-creates a
-    stub before spawning the editor so the file isn't empty on
-    open."""
-    from acc.tui.screens import ecosystem as eco
-    captured: list[list[str]] = []
-    monkeypatch.setattr(eco, "_spawn_editor", lambda cmd: captured.append(cmd))
-    monkeypatch.setenv("EDITOR", "echo")
-
+    """A missing role.md gets a stub for the editor; what the operator
+    writes stays on disk."""
+    _only_on_path(monkeypatch, "nano")
+    monkeypatch.setenv("EDITOR", "nano")
     roles_root = isolated_manifests["roles_root"]
     md_path = roles_root / "test_role" / "role.md"
     assert not md_path.exists()
 
+    seen_stub: list[str] = []
+
+    def _write(p: Path) -> None:
+        seen_stub.append(p.read_text(encoding="utf-8"))
+        p.write_text("# test_role\n\nWhen to pick this role.\n", encoding="utf-8")
+
+    fake = _FakeTerminal(on_edit=_write)
     app = _Harness()
     async with app.run_test() as pilot:
         await pilot.pause()
+        _install_fake_terminal(monkeypatch, app, fake)
         screen = app.screen
-        role_table = screen.query_one("#role-table", DataTable)
-        first_row_key = list(role_table.rows.keys())[0]
-        # Commit-4: lock acquisition moved from highlight (preview) to
-        # select (commit/Enter).  Use the select handler to exercise
-        # the same code path.
-        screen.on_data_table_row_selected(
-            DataTable.RowSelected(
-                data_table=role_table,
-                cursor_row=0,
-                row_key=first_row_key,
-            )
-        )
-        await pilot.pause()
+        await _commit_first_row(pilot, screen)
 
         screen.query_one("#btn-edit-md", Button).press()
         await pilot.pause()
 
-        # role.md now exists with a placeholder body.
-        assert md_path.exists()
-        body = md_path.read_text(encoding="utf-8")
-        assert "test_role" in body
-        # And spawn was invoked with that path.
-        assert captured
-        assert captured[0][-1].endswith("role.md")
+        assert fake.calls and fake.calls[0][0][-1].endswith("role.md")
+        assert seen_stub and "test_role" in seen_stub[0]
+        assert "When to pick this role." in md_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_edit_md_untouched_stub_is_removed(isolated_manifests, monkeypatch):
+    """Closing the editor without writing leaves no stub role.md behind."""
+    _only_on_path(monkeypatch, "nano")
+    monkeypatch.setenv("EDITOR", "nano")
+    md_path = isolated_manifests["roles_root"] / "test_role" / "role.md"
+
+    fake = _FakeTerminal()
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _install_fake_terminal(monkeypatch, app, fake)
+        screen = app.screen
+        await _commit_first_row(pilot, screen)
+        screen.query_one("#btn-edit-md", Button).press()
+        await pilot.pause()
+
+        assert fake.calls, "editor never ran"
+        assert not md_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_edit_without_editor_falls_back_to_inline_editor(
+    isolated_manifests, monkeypatch,
+):
+    """No editor installed: say so, run nothing, and put the operator in the
+    inline role.yaml editor instead of failing with [Errno 2]."""
+    from textual.widgets import TextArea
+
+    _only_on_path(monkeypatch)
+    monkeypatch.delenv("EDITOR", raising=False)
+    monkeypatch.delenv("VISUAL", raising=False)
+    fake = _FakeTerminal()
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _install_fake_terminal(monkeypatch, app, fake)
+        screen = app.screen
+        await _commit_first_row(pilot, screen)
+        notes: list[str] = []
+        monkeypatch.setattr(
+            screen, "notify", lambda message, **kw: notes.append(str(message)),
+        )
+
+        screen.query_one("#btn-edit-yaml", Button).press()
+        await pilot.pause()
+
+        assert fake.calls == []
+        assert any("no editor found" in n for n in notes), notes
+        editor = screen.query_one("#role-yaml-editor", TextArea)
+        assert editor.read_only is False
+        assert editor.has_focus
+
+
+@pytest.mark.asyncio
+async def test_edit_when_terminal_cannot_suspend_falls_back_and_cleans_stub(
+    isolated_manifests, monkeypatch,
+):
+    """The headless driver cannot suspend (like Textual Web): no stub role.md
+    is left behind and the operator is told why."""
+    _only_on_path(monkeypatch, "nano")
+    monkeypatch.setenv("EDITOR", "nano")
+    from acc.tui.screens import ecosystem as eco
+    ran: list[list[str]] = []
+    monkeypatch.setattr(eco, "_run_editor", lambda cmd: ran.append(cmd) or 0)
+    md_path = isolated_manifests["roles_root"] / "test_role" / "role.md"
+
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        await _commit_first_row(pilot, screen)
+        notes: list[str] = []
+        monkeypatch.setattr(
+            screen, "notify", lambda message, **kw: notes.append(str(message)),
+        )
+        screen.query_one("#btn-edit-md", Button).press()
+        await pilot.pause()
+
+        assert ran == []
+        assert not md_path.exists()
+        assert any("cannot hand over" in n for n in notes), notes
+
+
+@pytest.mark.asyncio
+async def test_edit_md_in_read_only_roles_root_creates_nothing(
+    isolated_manifests, monkeypatch,
+):
+    """A read-only roles root (the operator's ConfigMap mount) is not an
+    authoring target: no stub file, no editor, a clear notice."""
+    import os as _os
+
+    _only_on_path(monkeypatch, "nano")
+    monkeypatch.setenv("EDITOR", "nano")
+    roles_root = isolated_manifests["roles_root"]
+    real_access = _os.access
+
+    def _access(path, mode, *a, **kw):
+        if mode & _os.W_OK and str(roles_root) in str(path):
+            return False
+        return real_access(path, mode, *a, **kw)
+
+    fake = _FakeTerminal()
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        _install_fake_terminal(monkeypatch, app, fake)
+        screen = app.screen
+        await _commit_first_row(pilot, screen)
+        notes: list[str] = []
+        monkeypatch.setattr(
+            screen, "notify", lambda message, **kw: notes.append(str(message)),
+        )
+        monkeypatch.setattr(_os, "access", _access)
+
+        screen.query_one("#btn-edit-md", Button).press()
+        await pilot.pause()
+        monkeypatch.setattr(_os, "access", real_access)
+
+        assert fake.calls == []
+        assert not (roles_root / "test_role" / "role.md").exists()
+        assert any("read-only" in n for n in notes), notes
 
 
 @pytest.mark.asyncio

@@ -251,6 +251,106 @@ async def test_caps_subview_called_from_show_role_detail(caps_manifests):
         assert {"fs_read", "code_search", "arxiv", "web_fetch"} <= names, names
 
 
+def _install_pack(packages_root: Path) -> Path:
+    """Register an installed pack carrying a role, a skill and an MCP — the
+    layout the operator's acc-packages volume holds at /var/lib/acc/packages."""
+    from acc.pkg.registry import Registry
+
+    install = packages_root / "acme" / "caps-pack" / "1.0.0"
+    skill_dir = install / "skills" / "pack_only_skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.yaml").write_text(
+        "purpose: 'pack skill'\nversion: '0.1.0'\nadapter_module: 'adapter'\n"
+        "adapter_class: 'PackOnlySkill'\ninput_schema: {}\noutput_schema: {}\n"
+        "risk_level: 'LOW'\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "adapter.py").write_text(
+        "from acc.skills import Skill\nclass PackOnlySkill(Skill):\n"
+        "    async def invoke(self, args):\n        return {}\n",
+        encoding="utf-8",
+    )
+    mcp_dir = install / "mcps" / "pack_only_mcp"
+    mcp_dir.mkdir(parents=True)
+    (mcp_dir / "mcp.yaml").write_text(
+        "purpose: 'pack mcp'\nversion: '0.1.0'\ntransport: 'http'\n"
+        "url: 'http://pack-mcp:8080/rpc'\nallowed_tools: ['x']\nrisk_level: 'LOW'\n",
+        encoding="utf-8",
+    )
+    _write_role_with_caps(
+        install / "roles", "pack_caps_role",
+        allowed_skills=["pack_only_skill", "code_search"],
+        allowed_mcps=["pack_only_mcp", "web_fetch", "never_installed_mcp"],
+    )
+    reg = Registry(root=packages_root)
+    reg.add(reg.make_entry(
+        name="@acme/caps-pack", version="1.0.0",
+        content_sha256="0" * 64, install_path=install,
+    ))
+    return install
+
+
+@pytest.mark.asyncio
+async def test_caps_subview_sees_installed_pack_and_manifest_roots(caps_manifests):
+    """The TUI pod's registries were EMPTY, so every cap showed ✗.  They use
+    the agent runtime's loaders: ACC_SKILLS_ROOT / ACC_MCPS_ROOT plus every
+    pack under ACC_PACKAGES_ROOT — a role served by an installed pack lists
+    its caps with ✓ for both sources, ✗ only for what is truly absent."""
+    install = _install_pack(caps_manifests["packages_root"])
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        assert "pack_caps_role" in screen._role_names
+        screen._show_role_detail("pack_caps_role")
+        await pilot.pause()
+
+        caps = {r[0]: r for r in _caps_rows(
+            screen.query_one("#role-caps-table", DataTable))}
+        assert caps["pack_only_skill"][2] == "✓", caps
+        assert caps["code_search"][2] == "✓", caps
+        assert caps["pack_only_mcp"][2] == "✓", caps
+        assert caps["web_fetch"][2] == "✓", caps
+        assert caps["never_installed_mcp"][2] == "✗", caps
+
+        # The detail pane shows the pack's role.yaml (what the runtime loads),
+        # not "role.yaml not found" from the in-tree root.
+        from textual.widgets import TextArea
+        text = screen.query_one("#role-yaml-editor", TextArea).text
+        assert "caps fixture for pack_caps_role" in text
+
+        # ...and Save refuses to write into the signed pack.
+        before = (install / "roles" / "pack_caps_role" / "role.yaml").read_text(
+            encoding="utf-8")
+        screen._selected_role = "pack_caps_role"
+        screen._handle_save_yaml()
+        await pilot.pause()
+        status = str(screen.query_one("#yaml-save-status", Static).render())
+        assert "not saved" in status and "@acme/caps-pack@1.0.0" in status
+        assert (install / "roles" / "pack_caps_role" / "role.yaml").read_text(
+            encoding="utf-8") == before
+
+
+@pytest.mark.asyncio
+async def test_caps_subview_explains_empty_registries(caps_manifests, tmp_path,
+                                                      monkeypatch):
+    """With nothing discovered, the table says where discovery looked instead
+    of a silent column of ✗."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("ACC_SKILLS_ROOT", str(empty))
+    monkeypatch.setenv("ACC_MCPS_ROOT", str(empty))
+    app = _Harness()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        screen._caps_registries = None
+        screen._load_role_capabilities("test_caps_role")
+        await pilot.pause()
+        rows = _caps_rows(screen.query_one("#role-caps-table", DataTable))
+        assert any("ACC_SKILLS_ROOT" in r[0] for r in rows), rows
+
+
 # ---------------------------------------------------------------------------
 # Part 2 — roll-a-release
 # ---------------------------------------------------------------------------

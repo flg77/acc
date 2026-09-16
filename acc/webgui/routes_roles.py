@@ -20,7 +20,6 @@ acc/webgui/auth.py role gating).
 from __future__ import annotations
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Optional
@@ -30,6 +29,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from acc import catalog_admin, marketplace
 from acc.pkg.catalog import Catalog
+from acc.role_loader import list_all_role_names, role_source
+from acc.tui.path_resolution import resolve_manifest_root
 from acc.webgui.auth import require_operator, require_viewer
 
 logger = logging.getLogger("acc.webgui.routes_roles")
@@ -42,13 +43,29 @@ _ROLE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_]*$")
 
 
 def _roles_root() -> Path:
-    """Resolve the writable in-tree roles/ directory.
+    """Resolve the in-tree roles/ directory exactly as the agent runtime does.
 
-    Mirrors the CapabilityIndex / acc-tui ``ACC_ROLES_ROOT`` contract;
-    the WebGUI container mounts this writable (agent pods mount it
-    read-only).  Defaults to the in-image ``/app/roles`` layout.
+    ``ACC_ROLES_ROOT`` when it exists (the operator mounts the roles manifest
+    ConfigMap there), else the repo/package-anchored ``roles/`` — the old
+    hard default ``/app/roles`` does not exist in the webgui image.  Roles
+    served by installed packs are layered on top via :func:`_role_source`.
     """
-    return Path(os.environ.get("ACC_ROLES_ROOT", "/app/roles"))
+    return resolve_manifest_root("ACC_ROLES_ROOT", "roles")
+
+
+def _role_source(role_id: str):
+    """The role's files as :class:`acc.role_loader.RoleLoader` resolves them
+    (installed pack under ``ACC_PACKAGES_ROOT`` first, then in-tree)."""
+    return role_source(_roles_root(), role_id)
+
+
+def _refuse_write(role_id: str, filename: str) -> None:
+    blocked = _role_source(role_id).write_block_reason(filename)
+    if blocked:
+        raise HTTPException(
+            status_code=409,
+            detail=f"role {role_id!r} {filename} is not writable here: {blocked}",
+        )
 
 
 def _safe_role_id(role_id: str) -> str:
@@ -210,36 +227,38 @@ class _RoleCreateIn(BaseModel):
 
 
 def _role_yaml_path(role_id: str) -> Path:
-    return _roles_root() / role_id / "role.yaml"
+    return _role_source(role_id).file("role.yaml")
 
 
 def _role_md_path(role_id: str) -> Path:
-    return _roles_root() / role_id / "role.md"
+    return _role_source(role_id).file("role.md")
 
 
 @router.get(
     "/roles",
-    summary="List authorable in-tree roles (role-editor picker source)",
+    summary="List roles (in-tree + installed packs) for the role editor",
 )
 def roles_list(_: bool = Depends(require_viewer)) -> list[dict]:
-    """Enumerate role dirs under ``ACC_ROLES_ROOT`` that carry a role.yaml.
+    """Enumerate every role the runtime can load: the in-tree roles under
+    ``ACC_ROLES_ROOT`` plus the roles served by installed packs.
 
-    Distinct from ``/roles/available`` (catalog *packages*): this lists the
-    locally-authorable roles the editor can open + edit + publish.
+    Distinct from ``/roles/available`` (catalog *packages*).  ``source`` is
+    ``in-tree`` or ``@scope/pack@version``; ``writable`` says whether PUT
+    will accept a change (installed packs and read-only mounts refuse).
     """
-    root = _roles_root()
-    if not root.is_dir():
-        return []
     out: list[dict] = []
-    for child in sorted(root.iterdir()):
-        if not child.is_dir() or not _ROLE_ID_RE.match(child.name):
+    for name in list_all_role_names(_roles_root()):
+        if not _ROLE_ID_RE.match(name):
             continue
-        if not (child / "role.yaml").is_file():
+        src = _role_source(name)
+        if not src.file("role.yaml").is_file():
             continue
         out.append(
             {
-                "role_id": child.name,
-                "has_md": (child / "role.md").is_file(),
+                "role_id": name,
+                "has_md": src.file("role.md").is_file(),
+                "source": src.package or "in-tree",
+                "writable": not src.write_block_reason("role.yaml"),
             }
         )
     return out
@@ -292,6 +311,7 @@ def role_yaml_put(
             status_code=404,
             detail=f"role {role_id!r} does not exist; POST /api/roles to create it",
         )
+    _refuse_write(role_id, "role.yaml")
     from acc.tui.role_writeback import RoleValidationError, upsert_role_yaml  # noqa: PLC0415
     try:
         upsert_role_yaml(path, body.yaml_text, role_name=role_id,
@@ -318,6 +338,7 @@ def role_md_put(
     path = _role_md_path(role_id)
     if not path.parent.is_dir():
         raise HTTPException(status_code=404, detail=f"role {role_id!r} does not exist")
+    _refuse_write(role_id, "role.md")
     from acc.tui.role_writeback import upsert_role_md  # noqa: PLC0415
     upsert_role_md(path, body.md_text)
     return {"role_id": role_id, "action": "updated"}
@@ -333,7 +354,7 @@ def role_create(
 ) -> dict:
     role_id = _safe_role_id(body.role_id)
     role_dir = _roles_root() / role_id
-    if (role_dir / "role.yaml").is_file():
+    if (role_dir / "role.yaml").is_file() or role_id in list_all_role_names(_roles_root()):
         raise HTTPException(status_code=409, detail=f"role {role_id!r} already exists")
     from acc.tui.role_writeback import (  # noqa: PLC0415
         RoleValidationError, upsert_role_md, upsert_role_yaml,
@@ -368,11 +389,43 @@ def role_create(
 
 @router.get(
     "/catalogs",
-    summary="List configured catalogs (workspace layer)",
+    summary="List catalogs across every layer (default/system/user/workspace)",
 )
 def catalogs_list(_: bool = Depends(require_viewer)) -> list[dict]:
-    cats = catalog_admin.load()
-    return [_catalog_to_json(c) for c in cats]
+    """Every catalog the Marketplace resolves against, one row per layer entry.
+
+    ``layer`` is ``default`` | ``system`` | ``user`` | ``workspace``; only
+    ``workspace`` rows are mutable through this API (``read_only`` says so).
+    An unreadable layer file is logged and skipped, not a 500.
+    """
+    rows, errors = catalog_admin.load_layers()
+    for err in errors:
+        logger.warning("catalogs_list: %s layer %s unreadable: %s",
+                       err.layer, err.path, err.error)
+    return [
+        {
+            **_catalog_to_json(r.catalog),
+            "layer": r.layer,
+            "read_only": r.read_only,
+            "shadowed_by": r.shadowed_by,
+            "source": str(r.source) if r.source else "",
+        }
+        for r in rows
+    ]
+
+
+def _refuse_read_only_catalog(catalog_id: str) -> None:
+    """409 when *catalog_id* exists only in a layer this API cannot change."""
+    rows, _errors = catalog_admin.load_layers()
+    layers = {r.layer for r in rows if r.catalog.id == catalog_id}
+    if layers and catalog_admin.EDITABLE_LAYER not in layers:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"catalog {catalog_id!r} is in the {', '.join(sorted(layers))} "
+                "layer — read-only here; only workspace catalogs can be changed"
+            ),
+        )
 
 
 @router.post(
@@ -416,6 +469,7 @@ def catalogs_remove(
     catalog_id: str = PathParam(..., min_length=1),
     _: bool = Depends(require_operator),
 ) -> dict:
+    _refuse_read_only_catalog(catalog_id)
     try:
         result = catalog_admin.remove(catalog_id)
     except ValueError as exc:
@@ -440,6 +494,7 @@ def catalogs_set_priority(
         raise HTTPException(
             status_code=400, detail="priority must be 1-1000",
         )
+    _refuse_read_only_catalog(catalog_id)
     try:
         result = catalog_admin.set_priority(catalog_id, body.priority)
     except ValueError as exc:

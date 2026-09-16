@@ -102,7 +102,7 @@ metadata:
     # "enable plugin" box). The named ConsolePlugin object is delivered as a
     # standalone bundle object (acc-console-plugin.consoleplugin.yaml).
     console.openshift.io/plugins: '["acc-console-plugin"]'
-    containerImage: quay.io/flg77/acc_images:acc-operator-0.2.12
+    containerImage: quay.io/flg77/acc_images:acc-operator-0.2.15
     createdAt: "2026-04-15T00:00:00Z"
     operatorframework.io/suggested-namespace: acc-system
     description: >-
@@ -115,7 +115,7 @@ metadata:
     operators.operatorframework.io/builder: operator-sdk-v1.34.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     support: Community (best-effort; no SLA) — NOT supported by Red Hat
-  name: acc-operator.v0.2.12
+  name: acc-operator.v0.2.15
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -204,7 +204,7 @@ spec:
 
   displayName: Agentic Cell Corpus Operator
   icon:
-  - base64data: ""
+  - base64data: PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij4KICA8dGl0bGU+QWdlbnRpYyBDZWxsIENvcnB1czwvdGl0bGU+CiAgPCEtLSBBIGNlbGw6IGFuIG91dGVyIG1lbWJyYW5lICh0aGUgZ292ZXJuYW5jZSBib3VuZGFyeSkgYXJvdW5kIGEgc21hbGwKICAgICAgIGNvbGxlY3RpdmUgb2YgY29ubmVjdGVkIGFnZW50cy4gT3JpZ2luYWwgYXJ0d29yayBmb3IgdGhlIG9wZXJhdG9yJ3MKICAgICAgIE9MTSBpY29uOyB0aGUgQ1NWIGNhcnJpZXMgdGhpcyBmaWxlIGJhc2U2NC1lbmNvZGVkLiAtLT4KICA8cG9seWdvbiBwb2ludHM9IjMyLDMgNTcsMTcuNSA1Nyw0Ni41IDMyLDYxIDcsNDYuNSA3LDE3LjUiCiAgICAgICAgICAgZmlsbD0iIzFmMmE0NCIgc3Ryb2tlPSIjNGZhM2UwIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KICA8ZyBzdHJva2U9IiM5YWQwZjUiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIj4KICAgIDxsaW5lIHgxPSIzMiIgeTE9IjIwIiB4Mj0iMjEiIHkyPSIzOCIvPgogICAgPGxpbmUgeDE9IjMyIiB5MT0iMjAiIHgyPSI0MyIgeTI9IjM4Ii8+CiAgICA8bGluZSB4MT0iMjEiIHkxPSIzOCIgeDI9IjQzIiB5Mj0iMzgiLz4KICAgIDxsaW5lIHgxPSIzMiIgeTE9IjIwIiB4Mj0iMzIiIHkyPSIzMiIvPgogICAgPGxpbmUgeDE9IjIxIiB5MT0iMzgiIHgyPSIzMiIgeTI9IjMyIi8+CiAgICA8bGluZSB4MT0iNDMiIHkxPSIzOCIgeDI9IjMyIiB5Mj0iMzIiLz4KICA8L2c+CiAgPGNpcmNsZSBjeD0iMzIiIGN5PSIyMCIgcj0iNSIgZmlsbD0iI2Y1Yjk0MiIvPgogIDxjaXJjbGUgY3g9IjIxIiBjeT0iMzgiIHI9IjUiIGZpbGw9IiM0ZmEzZTAiLz4KICA8Y2lyY2xlIGN4PSI0MyIgY3k9IjM4IiByPSI1IiBmaWxsPSIjNGZhM2UwIi8+CiAgPGNpcmNsZSBjeD0iMzIiIGN5PSIzMiIgcj0iMy41IiBmaWxsPSIjZmZmZmZmIi8+Cjwvc3ZnPgo=
     mediatype: image/svg+xml
   install:
     spec:
@@ -304,7 +304,7 @@ spec:
                 - --metrics-bind-address=:8080
                 command:
                 - /manager
-                image: quay.io/flg77/acc_images:acc-operator-0.2.12
+                image: quay.io/flg77/acc_images:acc-operator-0.2.15
                 imagePullPolicy: Always
                 livenessProbe:
                   httpGet:
@@ -371,7 +371,7 @@ spec:
             spec:
               containers:
               - name: acc-console-plugin
-                image: quay.io/flg77/acc_images:acc-console-plugin-0.2.12
+                image: quay.io/flg77/acc_images:acc-console-plugin-0.2.15
                 imagePullPolicy: Always
                 ports:
                 - name: tls
@@ -453,12 +453,12 @@ spec:
     name: Agentic Cell Corpus (Community)
     url: https://github.com/flg77/acc
   relatedImages:
-  - image: quay.io/flg77/acc_images:acc-operator-0.2.12
+  - image: quay.io/flg77/acc_images:acc-operator-0.2.15
     name: manager
-  - image: quay.io/flg77/acc_images:acc-console-plugin-0.2.12
+  - image: quay.io/flg77/acc_images:acc-console-plugin-0.2.15
     name: console-plugin
-  version: 0.2.12
-  replaces: acc-operator.v0.2.11
+  version: 0.2.15
+  replaces: acc-operator.v0.2.14
   webhookdefinitions:
   - admissionReviewVersions:
     - v1

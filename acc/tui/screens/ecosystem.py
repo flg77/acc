@@ -22,6 +22,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.reactive import reactive
@@ -40,7 +41,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from acc.role_loader import RoleLoader, list_roles
+from acc.role_loader import RoleLoader, list_all_role_names, role_source
 from acc.tui.messages import RolePreloadMessage, RolesChangedMessage
 from acc.tui.path_resolution import resolve_manifest_root
 # FilePickerModal import removed in proposal 009 (upload flow moved
@@ -157,45 +158,57 @@ _EXCLUDED_NAMES = frozenset({"_base", "TEMPLATE"})
 
 import os  # noqa: PLC0415,E402
 import shlex  # noqa: PLC0415,E402
+import shutil  # noqa: PLC0415,E402
 import subprocess  # noqa: PLC0415,E402
 
+#: Tried after $EDITOR / $VISUAL, in order.  The TUI image installs nano.
+_DEFAULT_EDITORS: tuple[str, ...] = (
+    ("notepad",) if os.name == "nt" else ("nano", "vi")
+)
 
-def _resolve_editor_command(file_path: str) -> list[str]:
-    """Return the argv list to spawn an editor on ``file_path``.
 
-    Resolution order:
+def _resolve_editor_command(file_path: str) -> list[str] | None:
+    """Return the argv list to run an editor on ``file_path``, or ``None``.
 
-    1. ``$EDITOR`` from the environment, split via :func:`shlex.split`
-       so values like ``"code --wait"`` work.
-    2. ``$VISUAL`` (POSIX convention) as a fallback.
-    3. Platform default — ``notepad`` on Windows, ``vi`` otherwise.
+    Candidates, first one whose executable is on ``PATH`` wins:
 
-    The file path is appended as the final argument.
+    1. ``$EDITOR``, split via :func:`shlex.split` so ``"code --wait"`` works.
+    2. ``$VISUAL`` (POSIX convention).
+    3. Platform defaults — ``notepad`` on Windows, ``nano`` then ``vi``
+       otherwise.
+
+    ``None`` means no editor exists in this environment.  Before this check
+    the TUI fell back to ``vi`` blindly and an image without it failed with
+    ``[Errno 2] No such file or directory: 'vi'``.
     """
-    editor = os.environ.get("EDITOR", "").strip()
-    if not editor:
-        editor = os.environ.get("VISUAL", "").strip()
-    if not editor:
-        editor = "notepad" if os.name == "nt" else "vi"
-    cmd = shlex.split(editor)
-    cmd.append(file_path)
-    return cmd
+    candidates = [
+        os.environ.get("EDITOR", "").strip(),
+        os.environ.get("VISUAL", "").strip(),
+        *_DEFAULT_EDITORS,
+    ]
+    for raw in candidates:
+        if not raw:
+            continue
+        try:
+            argv = shlex.split(raw)
+        except ValueError:
+            logger.warning("ecosystem: cannot parse editor command %r", raw)
+            continue
+        if argv and shutil.which(argv[0]):
+            return [*argv, file_path]
+        logger.info("ecosystem: editor %r not found on PATH", raw)
+    return None
 
 
-def _spawn_editor(cmd: list[str]) -> None:
-    """Spawn the editor without blocking the TUI.
+def _run_editor(cmd: list[str]) -> int:
+    """Run the editor in the foreground and wait for it to exit.
 
-    Uses ``Popen`` with detached I/O so the editor process is fully
-    independent — the operator can switch terminals / close the
-    editor without the TUI being aware.
+    Called while the app is suspended, so the editor owns the terminal.  It
+    used to be spawned detached with its stdio discarded, which can never
+    show up when the TUI is the only thing in the terminal (ttyd web
+    terminal, ``oc rsh``).
     """
-    subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
-    )
+    return subprocess.call(cmd)
 
 
 def _read_role_md(md_path: Path, role_name: str) -> str:
@@ -466,6 +479,9 @@ class EcosystemScreen(NavScreen):
         installed = f"{res.install.entry.name}@{res.install.entry.version}"
         self.notify(f"Installed {installed} — roles added to the genome browser.",
                     severity="information", timeout=8.0)
+        # The pack may bring skills/MCPs: rebuild the registries behind the
+        # per-role Installed column on the next render.
+        self._caps_registries = None
         # Surface the new roles immediately.
         try:
             self._load_roles()
@@ -1138,57 +1154,133 @@ class EcosystemScreen(NavScreen):
         # the Configuration pane (pane 8).
 
     def _handle_edit_in_editor(self, filename: str) -> None:
-        """Spawn $EDITOR on the selected role's ``filename``.
+        """Open the selected role's ``filename`` in $EDITOR, in this terminal.
 
-        Proposal 007.  Non-blocking ``Popen`` — the operator's
-        editor opens in a sibling terminal / window; PR-3's
-        file-watcher refreshes the detail pane when they save.
+        Proposal 007.  The app is suspended while the editor runs in the
+        foreground, then the file is re-read into the detail pane.  When no
+        editor exists (or the terminal cannot hand over), the operator is
+        told so and — for role.yaml — dropped into the inline editor.
         """
-        if not self._selected_role:
+        role = self._selected_role
+        if not role:
             self.notify(
                 "Highlight or click a role row first",
                 severity="warning",
                 timeout=4.0,
             )
             return
-        path = _roles_root() / self._selected_role / filename
-        if not path.exists() and filename == "role.md":
-            # Create an empty role.md on demand so the editor opens
-            # a non-empty buffer rather than silently failing on
-            # some editors.
-            try:
-                path.write_text(
-                    f"# {self._selected_role}\n\n"
-                    "<!-- Authored per docs/role-authoring.md -->\n",
-                    encoding="utf-8",
-                )
-            except OSError:
-                logger.exception("ecosystem: could not create %s", path)
-                self.notify(
-                    f"Could not create {path}",
-                    severity="error", timeout=4.0,
-                )
-                return
-        if not path.exists():
+        src = role_source(_roles_root(), role)
+        path = src.file(filename)
+        blocked = src.write_block_reason(filename)
+        if blocked:
             self.notify(
-                f"{filename} not found for {self._selected_role}",
+                f"Cannot edit {role}/{filename}: {blocked}",
+                severity="warning", timeout=8.0,
+            )
+            return
+        if not path.exists() and filename != "role.md":
+            self.notify(
+                f"{filename} not found for {role}",
                 severity="error", timeout=4.0,
             )
             return
+
+        cmd = _resolve_editor_command(str(path))
+        if cmd is None:
+            self._editor_unavailable(
+                filename,
+                "no editor found — set $EDITOR to an installed terminal "
+                "editor (e.g. nano)",
+            )
+            return
+
+        # A missing role.md gets a stub so the editor opens a real buffer.
+        # It is removed again if the operator leaves it untouched, so an
+        # abandoned edit never litters the roles tree.
+        stub = ""
+        if not path.exists():
+            stub = (
+                f"# {role}\n\n<!-- Authored per docs/role-authoring.md -->\n"
+            )
+            try:
+                path.write_text(stub, encoding="utf-8")
+            except OSError as exc:
+                logger.exception("ecosystem: could not create %s", path)
+                self.notify(
+                    f"Could not create {path}: {exc}",
+                    severity="error", timeout=6.0,
+                )
+                return
+
+        from textual.app import SuspendNotSupported  # noqa: PLC0415
+        failure = ""
         try:
-            cmd = _resolve_editor_command(str(path))
-            _spawn_editor(cmd)
+            with self.app.suspend():
+                _run_editor(cmd)
+        except SuspendNotSupported:
+            failure = "this terminal cannot hand over to an external editor"
+        except OSError as exc:
+            logger.exception("ecosystem: editor %r failed", cmd)
+            failure = f"could not launch {cmd[0]}: {exc}"
+        finally:
+            self._drop_untouched_stub(path, stub)
+
+        if failure:
+            self._editor_unavailable(filename, failure)
+            return
+        self._reload_after_external_edit(role, filename)
+
+    @staticmethod
+    def _drop_untouched_stub(path: Path, stub: str) -> None:
+        if not stub:
+            return
+        try:
+            if path.read_text(encoding="utf-8") == stub:
+                path.unlink()
+        except OSError:
+            logger.debug("ecosystem: stub cleanup skipped for %s", path)
+
+    def _editor_unavailable(self, filename: str, reason: str) -> None:
+        """Say why $EDITOR did not open; fall back to the inline editor."""
+        if filename != "role.yaml":
             self.notify(
-                f"Opened {filename} for {self._selected_role} in "
-                + " ".join(cmd[:-1]),
-                severity="information", timeout=3.0,
+                f"Cannot open {filename}: {reason}.  {filename} has no inline "
+                "editor; role.yaml can be edited inline (e).",
+                severity="warning", timeout=10.0,
             )
-        except Exception as exc:
-            logger.exception("ecosystem: spawn editor failed")
-            self.notify(
-                f"Could not launch editor: {exc}",
-                severity="error", timeout=4.0,
-            )
+            return
+        self.notify(
+            f"Cannot open role.yaml in $EDITOR: {reason}.  "
+            "Editing inline instead — press s to save.",
+            severity="warning", timeout=10.0,
+        )
+        try:
+            editor = self.query_one("#role-yaml-editor", TextArea)
+        except Exception:
+            return
+        if editor.read_only:
+            self._handle_toggle_edit_yaml()
+        editor.focus()
+
+    def _reload_after_external_edit(self, role: str, filename: str) -> None:
+        """Re-read the role's files after the external editor exits."""
+        if role != self._selected_role:
+            return
+        if self._yaml_dirty:
+            # Re-rendering the detail pane would overwrite the inline edits.
+            try:
+                self.query_one("#yaml-save-status", Static).update(
+                    f"[yellow]⚠ {filename} was edited externally but the inline "
+                    "role.yaml editor has unsaved changes — not reloaded.  "
+                    "Re-select the row to discard them.[/yellow]"
+                )
+            except Exception:
+                pass
+            return
+        self._show_role_detail(role)
+        self.notify(
+            f"Reloaded {role}/{filename}", severity="information", timeout=3.0,
+        )
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Track inline-editor dirty-state by comparing against the
@@ -1266,7 +1358,14 @@ class EcosystemScreen(NavScreen):
             logger.exception("ecosystem: save handler — widgets missing")
             return
 
-        path = _roles_root() / self._selected_role / "role.yaml"
+        src = role_source(_roles_root(), self._selected_role)
+        blocked = src.write_block_reason("role.yaml")
+        if blocked:
+            status.update(
+                f"[yellow]⚠ not saved — {escape(blocked)}[/yellow]"
+            )
+            return
+        path = src.file("role.yaml")
         text = editor.text
         try:
             from acc.tui.role_writeback import (  # noqa: PLC0415
@@ -1889,18 +1988,13 @@ class EcosystemScreen(NavScreen):
         empty pane.
         """
         root = _roles_root()
-        # Dual-source roster: in-tree roles/ + roles served by installed family
-        # packs (under ACC_PACKAGES_ROOT).  Without the installed half, a pack
-        # loaded via `acc-deploy.sh pkg add` / the catalog-install action would
-        # not appear here to be infused.  RoleLoader.load() resolves either
-        # source transparently.
-        names = set(list_roles(root))
-        try:
-            from acc.pkg.role_resolution import list_installed_roles  # noqa: PLC0415
-            names |= set(list_installed_roles().keys())
-        except Exception:  # pragma: no cover - acc.pkg optional at import time
-            logger.debug("ecosystem: installed-roles enumeration unavailable")
-        self._role_names = sorted(names)
+        # Dual-source roster: in-tree roles/ (ACC_ROLES_ROOT) + roles served by
+        # installed packs (ACC_PACKAGES_ROOT, default /var/lib/acc/packages) —
+        # the same union every other role surface uses.  Without the installed
+        # half, a pack loaded via `acc-deploy.sh pkg add` / the catalog-install
+        # action would not appear here to be infused.  RoleLoader.load()
+        # resolves either source transparently.
+        self._role_names = list_all_role_names(root)
         self._all_role_rows = []
 
         for role_name in self._role_names:
@@ -2262,6 +2356,14 @@ class EcosystemScreen(NavScreen):
             rows += 1
         if rows == 0:
             table.add_row("(no allowed caps)", "—", "—", "—")
+        elif not len(skill_reg or ()) and not len(mcp_reg or ()):
+            # Every ✗ above has one cause — nothing was discovered.  Say where
+            # this process looked (the same roots the agent runtime scans).
+            table.add_row(
+                "(no skills/MCPs discovered — see ACC_SKILLS_ROOT, "
+                "ACC_MCPS_ROOT, ACC_PACKAGES_ROOT)",
+                "—", "—", "—",
+            )
 
     def _show_role_detail(self, role_name: str) -> None:
         """Render the role's narrative + raw definition in the detail
@@ -2279,8 +2381,11 @@ class EcosystemScreen(NavScreen):
         a role is selected.
         """
         root = _roles_root()
-        yaml_path = Path(root) / role_name / "role.yaml"
-        md_path = Path(root) / role_name / "role.md"
+        # The files the runtime loads: an installed pack's copy wins over
+        # the in-tree one (RoleLoader's resolution order).
+        src = role_source(root, role_name)
+        yaml_path = src.file("role.yaml")
+        md_path = src.file("role.md")
 
         # Hide the "select a role" placeholder.
         try:

@@ -76,7 +76,9 @@ async def test_catalogs_shows_builtin_with_roles_detail():
         await pilot.pause()
         table = app.screen.query_one("#catalogs-table", DataTable)
         labels = [str(c.label) for c in table.columns.values()]
-        assert labels == ["id", "name", "roles", "description", "url", "oidc issuer"]
+        assert labels == [
+            "id", "layer", "name", "roles", "description", "url", "oidc issuer",
+        ]
         assert table.row_count >= 1
         assert str(table.get_row_at(0)[0]) == "acc-builtin"
         # the detail panel lists the roles one-per-line

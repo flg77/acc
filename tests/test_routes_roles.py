@@ -154,10 +154,36 @@ def test_roles_install_404_when_no_catalog_advertises(client):
 # ---------------------------------------------------------------------------
 
 
+def _workspace_rows(client) -> list[dict]:
+    return [c for c in client.get("/api/catalogs").json() if c["layer"] == "workspace"]
+
+
 def test_catalogs_list_empty_initially(client, env):
     r = client.get("/api/catalogs")
     assert r.status_code == 200
-    assert r.json() == []
+    assert [c for c in r.json() if c["layer"] == "workspace"] == []
+
+
+def test_catalogs_list_shows_every_layer(client, env):
+    """The system layer (/etc/acc/catalogs.yaml — the in-cluster workshop
+    catalog) was invisible to the WebGUI although the Marketplace resolved
+    against it.  Every layer is listed now, non-workspace rows read-only."""
+    rows = client.get("/api/catalogs").json()
+    by_layer = {(c["layer"], c["id"]) for c in rows}
+    assert ("system", "acc-canonical") in by_layer
+    system = next(c for c in rows if c["layer"] == "system")
+    assert system["read_only"] is True
+    assert system["source"].endswith("system.yaml")
+    # The system catalog reuses the default's id, so the compiled-in default
+    # is marked shadowed rather than shown as a second live catalog.
+    default = next(c for c in rows if c["layer"] == "default")
+    assert default["shadowed_by"] == "system"
+
+
+def test_catalogs_delete_read_only_layer_409(client, env):
+    r = client.delete("/api/catalogs/acc-canonical")
+    assert r.status_code == 409
+    assert "read-only" in r.json()["detail"]
 
 
 def test_catalogs_add_persists_and_listable(client):
@@ -213,7 +239,7 @@ def test_catalogs_delete_existing(client):
     r = client.delete("/api/catalogs/rm-me")
     assert r.status_code == 200
     assert r.json()["action"] == "removed"
-    assert client.get("/api/catalogs").json() == []
+    assert _workspace_rows(client) == []
 
 
 def test_catalogs_delete_404_when_missing(client):

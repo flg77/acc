@@ -45,7 +45,7 @@ func manyKeyData() map[string]string {
 // is what makes the pod template byte-stable across reconciles.
 func TestProjectManifestItems_Sorted(t *testing.T) {
 	data := manyKeyData()
-	items := collective.ProjectManifestItems(data)
+	items := manifests.ProjectManifestItems(data)
 
 	if len(items) != len(data) {
 		t.Fatalf("projected %d items, want %d", len(items), len(data))
@@ -117,9 +117,9 @@ func TestAgentContainerSecurityContext_OpenShiftSCCSafe(t *testing.T) {
 // failed because map iteration order is randomized per range loop.
 func TestProjectManifestItems_Deterministic(t *testing.T) {
 	data := manyKeyData()
-	first := collective.ProjectManifestItems(data)
+	first := manifests.ProjectManifestItems(data)
 	for i := 0; i < 50; i++ {
-		got := collective.ProjectManifestItems(data)
+		got := manifests.ProjectManifestItems(data)
 		if !reflect.DeepEqual(first, got) {
 			t.Fatalf("projection #%d differs from first — pod template would churn:\n first=%v\n got=  %v",
 				i, first, got)

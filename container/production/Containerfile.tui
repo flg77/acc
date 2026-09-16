@@ -60,6 +60,16 @@ RUN microdnf install -y --nodocs \
     && microdnf clean all \
     && rm -rf /var/cache/dnf
 
+# nano — a terminal editor for Ecosystem "Open role.yaml/role.md in $EDITOR".
+# The TUI suspends itself and runs the editor in the same terminal (works
+# under the ttyd web terminal and `oc rsh`).  Without an editor in the image
+# the button failed with [Errno 2] No such file or directory: 'vi'.  Same
+# package + EDITOR as Containerfile.agent-core; operators can override EDITOR.
+RUN microdnf install -y --nodocs nano \
+    && microdnf clean all \
+    && rm -rf /var/cache/dnf
+ENV EDITOR=nano
+
 # ── ttyd — browser web-terminal for the TUI (operator spec.tui.webTerminal,
 # proposal 023 §8 Q1).  Pinned static binary fetched via python's urllib
 # (no curl dependency on the minimal base; urllib follows the GitHub
