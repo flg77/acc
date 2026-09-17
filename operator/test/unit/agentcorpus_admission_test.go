@@ -79,9 +79,12 @@ func TestValidate_MilvusBackendRequiresURI(t *testing.T) {
 	}
 }
 
-// G1: a present-but-empty otelCollector block (the OpenShift form's submission)
-// gets its endpoint backfilled by the defaulter to the in-cluster Collector.
-func TestDefault_BackfillsEmptyOTelEndpoint(t *testing.T) {
+// G1 (0.2.17 semantics): a present-but-empty otelCollector block (the
+// OpenShift form's submission) is left alone — endpoint is the collector's
+// REMOTE target and empty means "no remote". Pre-0.2.17 the defaulter
+// backfilled it with the corpus's own collector Service, which made the
+// collector forward to itself.
+func TestDefault_LeavesEmptyOTelEndpoint(t *testing.T) {
 	d := &accv1alpha1.AgentCorpusCustomDefaulter{Client: kserveClient(t)}
 	c := &accv1alpha1.AgentCorpus{
 		ObjectMeta: metav1.ObjectMeta{Name: "corpus", Namespace: "acc-system"},
@@ -96,13 +99,14 @@ func TestDefault_BackfillsEmptyOTelEndpoint(t *testing.T) {
 	if err := d.Default(context.Background(), c); err != nil {
 		t.Fatalf("Default: %v", err)
 	}
-	if got := c.Spec.Observability.OTelCollector.Endpoint; got != "corpus-otel-collector:4317" {
-		t.Errorf("expected backfilled endpoint corpus-otel-collector:4317, got %q", got)
+	if got := c.Spec.Observability.OTelCollector.Endpoint; got != "" {
+		t.Errorf("expected endpoint left empty (no remote), got %q", got)
 	}
 }
 
-// G1 regression: a nil otelCollector block is still materialized + filled.
-func TestDefault_BackfillsNilOTelBlock(t *testing.T) {
+// G1 regression: a nil otelCollector block is still materialized (the
+// collector reconciler skips a nil block) — with an empty endpoint.
+func TestDefault_MaterializesNilOTelBlock(t *testing.T) {
 	d := &accv1alpha1.AgentCorpusCustomDefaulter{Client: kserveClient(t)}
 	c := &accv1alpha1.AgentCorpus{
 		ObjectMeta: metav1.ObjectMeta{Name: "corpus", Namespace: "acc-system"},
@@ -119,7 +123,20 @@ func TestDefault_BackfillsNilOTelBlock(t *testing.T) {
 	if c.Spec.Observability.OTelCollector == nil {
 		t.Fatal("expected OTelCollector materialized")
 	}
-	if got := c.Spec.Observability.OTelCollector.Endpoint; got != "corpus-otel-collector:4317" {
-		t.Errorf("expected endpoint corpus-otel-collector:4317, got %q", got)
+	if got := c.Spec.Observability.OTelCollector.Endpoint; got != "" {
+		t.Errorf("expected endpoint left empty (no remote), got %q", got)
+	}
+}
+
+// An otel corpus without a remote endpoint validates: agents export to the
+// in-cluster collector regardless.
+func TestValidate_OTelWithoutRemoteEndpoint(t *testing.T) {
+	c := validBaseCorpus("corpus")
+	c.Spec.Observability = accv1alpha1.ObservabilitySpec{
+		Backend:       accv1alpha1.MetricsBackendOTel,
+		OTelCollector: &accv1alpha1.OTelCollectorSpec{},
+	}
+	if _, err := c.ValidateCreate(); err != nil {
+		t.Fatalf("otel backend without a remote endpoint must validate, got: %v", err)
 	}
 }

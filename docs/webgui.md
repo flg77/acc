@@ -76,7 +76,8 @@ parameter (browsers cannot set headers on a WebSocket).
 | `ACC_WEBGUI_MTLS_HEADER` | `x-client-cert-subject` | mtls mode: header carrying the verified client identity |
 | `ACC_WEBGUI_MTLS_VERIFY_HEADER` | `x-client-cert-verify` | mtls mode: header that must equal `SUCCESS` |
 | `ACC_NKEY_ENABLED` / `ACC_NKEY_SEED_PATH` | — | NKey auth for the NATS connection (proposal 013) |
-| `ACC_REGULATORY_ROOT` | `<repo>/regulatory_layer` | governance root — Cat A/B/C layers + bundled framework catalogs (Compliance screen) |
+| `ACC_REGULATORY_ROOT` | `<repo>/regulatory_layer`, else `/etc/acc/regulatory_layer` | governance root — Cat A/B/C layers + bundled framework catalogs (Compliance screen). In a cluster pod the operator mounts the runtime's `regulatory_layer/` at `/etc/acc/regulatory_layer`; when no root exists the Compliance screen says so (`error` + `hint` on `/api/governance/layers`) rather than listing zero rules |
+| `ACC_DEPLOY_MODE` / `ACC_CORPUS_NAME` | — | set by the operator; `k8s` / `rhoai` / `operator`, or any corpus name, marks a **cluster pod** (`GET /api/deploy`): role authoring, package install and workspace catalogs are then the operator's (`AgentCorpus` roles, `AccPackageInstall`, `AccCatalog`) and the screens say so instead of offering them |
 | `ACC_FRAMEWORKS_IMPORT_ROOT` | — | writable store for imported / runtime frameworks (Compliance screen) |
 | `ACC_COMPLIANCE_REPORTS_ROOT` | — | where gap-scan reports + rule proposals are written/read (shared with `acc-tui`) |
 | `ACC_MODELS_PATH` | `<repo>/models.yaml` | central model registry (Ecosystem screen "Model registry" card) |

@@ -35,8 +35,9 @@ spec:
   governance:
     categoryA:
       wasmConfigMapRef: acc-cat-a-wasm
-  # observability omitted — webhook defaults backend=otel + grafanaDashboard,
-  # and auto-sets otelCollector.endpoint to acc-e2e-otel-collector:4317.
+  # observability omitted — webhook defaults backend=otel + grafanaDashboard
+  # and materializes otelCollector; agents export to acc-e2e-otel-collector:4317.
+  # Set otelCollector.endpoint only to forward to a remote backend (Tempo …).
 ---
 apiVersion: acc.redhat.io/v1alpha1
 kind: AgentCollective

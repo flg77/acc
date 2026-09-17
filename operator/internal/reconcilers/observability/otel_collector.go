@@ -69,7 +69,7 @@ func (r *OTelCollectorReconciler) Reconcile(ctx context.Context, corpus *accv1al
 
 	ns := corpus.Namespace
 	labels := util.CommonLabels(corpus.Name, otelComponentName, corpus.Spec.Version)
-	name := fmt.Sprintf("%s-otel-collector", corpus.Name)
+	name := util.OTelCollectorServiceName(corpus.Name)
 
 	// -----------------------------------------------------------------------
 	// ConfigMap — otel-collector.yaml

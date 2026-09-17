@@ -66,20 +66,51 @@ class GovernanceLayer:
         return len(self.rules)
 
 
+#: Where the operator mounts the runtime's ``regulatory_layer/`` into a UI
+#: pod (proposal 056 §4.2 option 1).  Tried after the checkout, before the
+#: legacy ``/app`` path.
+CLUSTER_MOUNT = Path("/etc/acc/regulatory_layer")
+
+
+def regulatory_root_candidates() -> list[Path]:
+    """The roots :func:`regulatory_root` considers, in precedence order.
+
+    ``ACC_REGULATORY_ROOT`` when set is the only candidate — an explicit
+    path that does not exist is a configuration error to report, not one to
+    paper over with a fallback.  Otherwise ``<repo>/regulatory_layer``, the
+    operator's :data:`CLUSTER_MOUNT`, then ``/app/regulatory_layer``.
+    """
+    raw = os.environ.get("ACC_REGULATORY_ROOT", "").strip()
+    if raw:
+        return [Path(raw)]
+    repo_root = Path(__file__).resolve().parent.parent
+    return [repo_root / "regulatory_layer", CLUSTER_MOUNT, Path("/app/regulatory_layer")]
+
+
+def find_regulatory_root() -> tuple[Path | None, list[Path]]:
+    """The first candidate that is a directory, plus every path tried.
+
+    ``(None, tried)`` when there is no regulatory layer on this host — the
+    caller says so; it never pretends the corpus has no rules.
+    """
+    tried = regulatory_root_candidates()
+    for candidate in tried:
+        if candidate.is_dir():
+            return candidate, tried
+    return None, tried
+
+
 def regulatory_root() -> Path:
     """Resolve the ``regulatory_layer`` root.
 
     Precedence: ``ACC_REGULATORY_ROOT`` env > ``<repo>/regulatory_layer``
-    > ``/app/regulatory_layer`` (the in-container mount).
+    > ``/etc/acc/regulatory_layer`` (the operator's mount) >
+    ``/app/regulatory_layer`` (the legacy in-container path).  Always
+    returns a path; use :func:`find_regulatory_root` to learn whether any
+    of them exists.
     """
-    raw = os.environ.get("ACC_REGULATORY_ROOT", "").strip()
-    if raw:
-        return Path(raw)
-    repo_root = Path(__file__).resolve().parent.parent
-    candidate = repo_root / "regulatory_layer"
-    if candidate.is_dir():
-        return candidate
-    return Path("/app/regulatory_layer")
+    found, tried = find_regulatory_root()
+    return found if found is not None else tried[-1]
 
 
 def _clean_summary(text: str) -> str:

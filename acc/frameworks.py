@@ -72,17 +72,13 @@ class Framework(BaseModel):
 def builtin_frameworks_root() -> Path:
     """Shipped catalogs under ``regulatory_layer/frameworks``.
 
-    Honours ``ACC_REGULATORY_ROOT`` (the governance root) so it tracks
-    the same mount the inventory loader uses.
+    Resolved through :func:`acc.governance_inventory.regulatory_root` so
+    it tracks the same mount the inventory loader uses (``ACC_REGULATORY_ROOT``,
+    the checkout, the operator's ``/etc/acc/regulatory_layer``).
     """
-    raw = os.environ.get("ACC_REGULATORY_ROOT", "").strip()
-    if raw:
-        return Path(raw) / "frameworks"
-    repo_root = Path(__file__).resolve().parent.parent
-    candidate = repo_root / "regulatory_layer" / "frameworks"
-    if candidate.is_dir():
-        return candidate
-    return Path("/app/regulatory_layer/frameworks")
+    from acc.governance_inventory import regulatory_root  # noqa: PLC0415
+
+    return regulatory_root() / "frameworks"
 
 
 def imported_frameworks_root() -> Path:

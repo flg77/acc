@@ -24,7 +24,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from acc.pkg.catalog import Catalog, CatalogIndexEntry, list_available
+from acc.pkg.catalog import (
+    Catalog,
+    CatalogFetchError,
+    CatalogIndexEntry,
+    list_available,
+    list_available_with_errors,
+)
 
 logger = logging.getLogger("acc.marketplace")
 
@@ -79,6 +85,26 @@ def _format_install_marker(name: str, constraint: str) -> str:
     return f"[PROPOSE_INFUSE:{name}@{constraint}:operator-marketplace-action]"
 
 
+def render_rows_and_errors(
+    *,
+    name_filter: Optional[str] = None,
+    workspace: Optional[Path] = None,
+) -> tuple[list[MarketplaceRow], list[CatalogFetchError]]:
+    """:func:`render_rows` plus the catalogs whose index could not be
+    fetched — the WebGUI shows those as their own rows (proposal 056)."""
+    rows: list[MarketplaceRow] = []
+    available, errors = list_available_with_errors(name=None, workspace=workspace)
+    for catalog, entry in available:
+        if name_filter and not entry.name.startswith(name_filter):
+            continue
+        rows.append(_row_for(catalog, entry))
+    # Stable ordering: name asc, then version desc.  Matches what
+    # operators expect when scrolling — group by package, latest
+    # version at the top.
+    rows.sort(key=lambda r: (r.name, _version_sort_key(r.version)))
+    return rows, errors
+
+
 def render_rows(
     *,
     name_filter: Optional[str] = None,
@@ -90,15 +116,7 @@ def render_rows(
     ``name`` starts with the substring — supports the search box the
     TUI/WebGUI presentation layer wires.
     """
-    rows: list[MarketplaceRow] = []
-    for catalog, entry in list_available(name=None, workspace=workspace):
-        if name_filter and not entry.name.startswith(name_filter):
-            continue
-        rows.append(_row_for(catalog, entry))
-    # Stable ordering: name asc, then version desc.  Matches what
-    # operators expect when scrolling — group by package, latest
-    # version at the top.
-    rows.sort(key=lambda r: (r.name, _version_sort_key(r.version)))
+    rows, _errors = render_rows_and_errors(name_filter=name_filter, workspace=workspace)
     return rows
 
 

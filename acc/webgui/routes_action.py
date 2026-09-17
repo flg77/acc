@@ -111,6 +111,17 @@ def _require_observer(hub: ObserverHub, collective_id: str):
     return obs
 
 
+def _running_roles(hub: ObserverHub, collective_id: str) -> set[str]:
+    """Roles with an agent in the latest snapshot (heartbeat-fed)."""
+    snap = hub.latest(collective_id) or {}
+    agents = snap.get("agents") or {}
+    return {
+        str(a.get("role", ""))
+        for a in agents.values()
+        if isinstance(a, dict) and a.get("role")
+    }
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -122,10 +133,27 @@ async def infuse_role(
     hub: ObserverHub = Depends(get_hub),
     principal: Principal = Depends(require_operator),
 ) -> dict:
-    """Publish a ROLE_UPDATE — the Nucleus/Infuse screen's Apply action."""
+    """Publish a ROLE_UPDATE — the Nucleus/Infuse screen's Apply action.
+
+    In a cluster pod a ROLE_UPDATE reaches only agents that exist; the TUI's
+    Infuse would also write ``collective.yaml`` + an apply request to spawn
+    one, which a pod cannot do.  So when the role is not running in the
+    observed collective the reply says so (``status: not_running``) instead
+    of publishing a signal nothing will receive (proposal 056 §4.4).
+    """
+    from acc.deploy import is_cluster  # noqa: PLC0415
     from acc.signals import subject_role_update  # noqa: PLC0415
 
     obs = _require_observer(hub, req.collective_id)
+    role = str(req.role_definition.get("id", "") or "")
+    if is_cluster() and role and role not in _running_roles(hub, req.collective_id):
+        return {
+            "status": "not_running",
+            "note": (
+                f"{role} is not running in this collective; the operator spawns "
+                "agents from the AgentCollective — add the role there, then infuse it"
+            ),
+        }
     payload = {
         "signal_type": "ROLE_UPDATE",
         "agent_id": "",

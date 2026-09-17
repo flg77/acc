@@ -34,9 +34,24 @@ import {
   putRoleYaml,
   putRoleMd,
   createRole,
+  fetchDeployInfo,
+  fetchRoleAuthoring,
 } from "./api/client";
-import type { MarketRow, CatalogRow, RoleRow, GoldenRun, BoardColumn, BoardItem } from "./api/client";
+import type {
+  MarketRow, CatalogRow, CatalogError, RoleRow, RoleAuthoring, GoldenRun, BoardColumn, BoardItem,
+} from "./api/client";
 import { fetchBoard, boardControl } from "./api/client";
+
+// Where the WebGUI runs (proposal 056 §4.1). `null` until the answer arrives;
+// screens treat that as "checkout" so nothing is hidden on a slow first paint
+// that would not be hidden anyway.
+function useCluster(): boolean | null {
+  const [cluster, setCluster] = useState<boolean | null>(null);
+  useEffect(() => {
+    fetchDeployInfo().then((d) => setCluster(d.cluster)).catch(() => setCluster(false));
+  }, []);
+  return cluster;
+}
 
 const obj = (v: unknown): Record<string, any> =>
   v && typeof v === "object" ? (v as Record<string, any>) : {};
@@ -77,18 +92,36 @@ export function Dashboard() {
 }
 
 // 2 ── Nucleus / Infuse — role-composition form (interactive) ─────────────
+//      The role is picked, not typed (proposal 056 §4.4): the installed
+//      roles (in-tree ∪ packs, GET /api/roles) are selectable; catalog
+//      packages (GET /api/roles/available) are listed but not selectable —
+//      they are not installed here.
 export function Infuse() {
-  const { collectiveId } = useSnapshot();
+  const { collectiveId, snapshot } = useSnapshot();
   const [roleId, setRoleId] = useState("");
   const [purpose, setPurpose] = useState("");
   const [persona, setPersona] = useState("concise");
   const [status, setStatus] = useState("");
+  const [installed, setInstalled] = useState<RoleRow[]>([]);
+  const [catalog, setCatalog] = useState<MarketRow[]>([]);
+
+  useEffect(() => {
+    listRoles().then(setInstalled).catch((e) => setStatus(`error: ${e}`));
+    fetchAvailableRoles().then((r) => setCatalog(r.rows)).catch(() => {});
+  }, []);
+  const running = new Set(
+    Object.values(obj(snapshot?.agents)).map((a) => String(obj(a).role ?? "")).filter(Boolean),
+  );
 
   const apply = async () => {
     setStatus("publishing…");
     try {
-      await infuseRole(collectiveId, { id: roleId, purpose, persona });
-      setStatus("ROLE_UPDATE published — awaiting arbiter approval");
+      const r = await infuseRole(collectiveId, { id: roleId, purpose, persona });
+      setStatus(
+        r.status === "published"
+          ? "ROLE_UPDATE published — awaiting arbiter approval"
+          : r.note || r.status,
+      );
     } catch (e) {
       setStatus(`error: ${e}`);
     }
@@ -96,8 +129,28 @@ export function Infuse() {
   return (
     <Card title="Infuse a role">
       <label>
-        Role id
-        <input value={roleId} onChange={(e) => setRoleId(e.target.value)} />
+        Role
+        <select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
+          <option value="">— pick a role —</option>
+          <optgroup label="installed (in-tree + packs)">
+            {installed.map((r) => (
+              <option key={r.role_id} value={r.role_id}>
+                {r.role_id}
+                {running.has(r.role_id) ? " · running" : ""}
+                {r.source !== "in-tree" ? ` · ${r.source}` : ""}
+              </option>
+            ))}
+          </optgroup>
+          {catalog.length > 0 && (
+            <optgroup label="catalog — not installed">
+              {catalog.map((r, i) => (
+                <option key={`${r.name}@${r.version}-${i}`} value="" disabled>
+                  {r.name}@{r.version} ({r.catalog_id})
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </select>
       </label>
       <label>
         Purpose
@@ -223,12 +276,18 @@ export function Compliance() {
   const { collectiveId, snapshot } = useSnapshot();
   const [msg, setMsg] = useState("");
   const [layers, setLayers] = useState<any[]>([]);
+  const [layersErr, setLayersErr] = useState<{ error: string; hint: string } | null>(null);
   const [frameworks, setFrameworks] = useState<any[]>([]);
   const [proposals, setProposals] = useState<any[]>([]);
   const [scanMsg, setScanMsg] = useState("");
 
   const loadGovernance = () => {
-    fetchGovernanceLayers().then((r) => setLayers(r.layers)).catch(() => {});
+    fetchGovernanceLayers()
+      .then((r) => {
+        setLayers(r.layers);
+        setLayersErr(r.error ? { error: r.error, hint: r.hint ?? "" } : null);
+      })
+      .catch((e) => setLayersErr({ error: `governance layers: ${e}`, hint: "" }));
     fetchFrameworks().then((r) => setFrameworks(r.frameworks)).catch(() => {});
     fetchProposals().then((r) => setProposals(r.proposals)).catch(() => {});
   };
@@ -271,7 +330,14 @@ export function Compliance() {
         <KV data={{ score: snapshot?.compliance_health_score }} />
       </Card>
 
-      {/* Governance layers — Cat A/B/C (PR-Z1) */}
+      {/* Governance layers — Cat A/B/C (PR-Z1). No regulatory_layer/ on this
+          host is said in one sentence, not shown as three empty tables. */}
+      {layersErr && (
+        <Card title="Governance layers">
+          <div className="board-msg error">{layersErr.error}</div>
+          {layersErr.hint && <p className="hint">{layersErr.hint}</p>}
+        </Card>
+      )}
       {layers.map((l: any) => (
         <Card
           key={l.category}
@@ -764,17 +830,27 @@ export function Diagnostics() {
 }
 
 // 11 ── Marketplace — browse catalog packages + stage install (WS-C1) ──────
-//      Mirrors the acc-tui MarketplaceScreen. Read = viewer; install stages
-//      a PROPOSE_INFUSE marker for the Compliance pane (operator-gated).
+//      Mirrors the acc-tui MarketplaceScreen. Read = viewer. In a checkout,
+//      Install returns a PROPOSE_INFUSE marker text (operator-gated) — it is
+//      not persisted anywhere, and the toast says so. In a cluster pod there
+//      is no Install: packages are the operator's AccPackageInstall objects
+//      (proposal 056 §4.5; Phase 3 makes the request real).
 export function Marketplace() {
   const [rows, setRows] = useState<MarketRow[]>([]);
+  const [catalogErrors, setCatalogErrors] = useState<CatalogError[]>([]);
+  const [cluster, setCluster] = useState(false);
   const [filter, setFilter] = useState("");
   const [err, setErr] = useState("");
   const [status, setStatus] = useState("");
 
   const load = (f = filter) => {
     fetchAvailableRoles(f)
-      .then(setRows)
+      .then((r) => {
+        setRows(r.rows);
+        setCatalogErrors(r.catalog_errors);
+        setCluster(r.cluster);
+        setErr("");
+      })
       .catch((e) => setErr(String(e)));
   };
   useEffect(() => load(""), []);
@@ -784,7 +860,9 @@ export function Marketplace() {
     try {
       const r = await installRole(name);
       setStatus(
-        `staged ${r.target_name}@${r.target_constraint} — approve it in Compliance`,
+        `staged a PROPOSE_INFUSE marker for ${r.target_name}@${r.target_constraint} — ` +
+          "nothing is installed until an operator dispatches it: " +
+          r.install_marker,
       );
     } catch (e) {
       setStatus(`error: ${e}`);
@@ -802,8 +880,19 @@ export function Marketplace() {
         />
         <button onClick={() => load()}>Search</button>
       </div>
+      {cluster && (
+        <p className="hint">
+          packages are installed by the operator: create an <code>AccPackageInstall</code>{" "}
+          for the package — this pod has no package installer of its own.
+        </p>
+      )}
       {err && <p className="status">{err}</p>}
-      {rows.length === 0 && !err && <Empty what="packages" />}
+      {catalogErrors.map((c) => (
+        <div key={c.id} className="board-msg error">
+          {c.id}: unreachable — its packages are hidden ({c.url}: {c.error})
+        </div>
+      ))}
+      {rows.length === 0 && !err && catalogErrors.length === 0 && <Empty what="packages" />}
       <table className="data">
         <thead>
           <tr>
@@ -812,7 +901,7 @@ export function Marketplace() {
             <th>tier</th>
             <th>catalog</th>
             <th>signer</th>
-            <th></th>
+            {!cluster && <th></th>}
           </tr>
         </thead>
         <tbody>
@@ -827,9 +916,11 @@ export function Marketplace() {
                 {r.catalog_id} ({r.catalog_mode})
               </td>
               <td>{r.signer}</td>
-              <td>
-                <button onClick={() => install(r.name)}>Install</button>
-              </td>
+              {!cluster && (
+                <td>
+                  <button onClick={() => install(r.name)}>Install</button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -841,8 +932,11 @@ export function Marketplace() {
 
 // 12 ── Catalogs — layered catalog CRUD (WS-C1) ────────────────────────────
 //      Mirrors the acc-tui CatalogsScreen. Add / remove / re-prioritise the
-//      workspace-layer catalogs the Marketplace resolves against.
+//      workspace-layer catalogs the Marketplace resolves against. In a
+//      cluster pod there is no workspace layer to edit — the catalogs are
+//      the operator's AccCatalog objects (proposal 056 §4.6).
 export function Catalogs() {
+  const cluster = useCluster();
   const [cats, setCats] = useState<CatalogRow[]>([]);
   const [msg, setMsg] = useState("");
   const [form, setForm] = useState({
@@ -894,6 +988,12 @@ export function Catalogs() {
   return (
     <>
       <Card title="Configured catalogs">
+        {cluster && (
+          <p className="hint">
+            catalogs come from the corpus's <code>AccCatalog</code> objects (the system
+            layer, <code>/etc/acc/catalogs.yaml</code>); there is no workspace layer in a pod.
+          </p>
+        )}
         {cats.length === 0 && <Empty what="catalogs" />}
         {cats.map((c) => (
           <div key={`${c.layer}:${c.id}`} className="oversight-row">
@@ -924,6 +1024,7 @@ export function Catalogs() {
           </div>
         ))}
       </Card>
+      {!cluster && (
       <Card title="Add a catalog">
         <label>
           Catalog id
@@ -983,6 +1084,7 @@ export function Catalogs() {
         </button>
         <p className="status">{msg}</p>
       </Card>
+      )}
     </>
   );
 }
@@ -990,9 +1092,13 @@ export function Catalogs() {
 // 13 ── Role editor — author/edit in-tree roles (WS-C1 over WS-C2) ─────────
 //      Mirrors acc-tui role_writeback authoring. Open an existing role to
 //      edit its role.yaml + role.md, or create a new one. role.yaml is
-//      validated server-side; validation errors surface inline.
+//      validated server-side; validation errors surface inline. A role that
+//      cannot be written here (an installed pack, the operator's read-only
+//      roles mount) says why, and Save / New role are disabled with that
+//      reason rather than failing on click (proposal 056 §4.3).
 export function RoleEditor() {
   const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [authoring, setAuthoring] = useState<RoleAuthoring | null>(null);
   const [selected, setSelected] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [newId, setNewId] = useState("");
@@ -1001,10 +1107,18 @@ export function RoleEditor() {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const loadList = () => listRoles().then(setRoles).catch((e) => setStatus(String(e)));
+  const loadList = () => {
+    listRoles().then(setRoles).catch((e) => setStatus(String(e)));
+    fetchRoleAuthoring().then(setAuthoring).catch(() => {});
+  };
   useEffect(() => {
     loadList();
   }, []);
+  const selectedRow = roles.find((r) => r.role_id === selected);
+  // Why the current target cannot be written ("" when it can).
+  const blockReason = creating
+    ? authoring?.write_block_reason ?? ""
+    : selectedRow?.write_block_reason ?? "";
 
   const open = async (roleId: string) => {
     setCreating(false);
@@ -1056,7 +1170,9 @@ export function RoleEditor() {
   };
 
   const canSave =
-    !busy && yamlText.trim().length > 0 && (creating ? newId.trim().length > 0 : !!selected);
+    !busy && !blockReason && yamlText.trim().length > 0 &&
+    (creating ? newId.trim().length > 0 : !!selected);
+  const canCreate = !!authoring?.writable;
 
   return (
     <>
@@ -1075,12 +1191,26 @@ export function RoleEditor() {
               </option>
             ))}
           </select>
-          <button onClick={startNew}>New role</button>
+          <button
+            onClick={startNew}
+            disabled={!canCreate}
+            title={canCreate ? "" : authoring?.write_block_reason}
+          >
+            New role
+          </button>
         </div>
+        {authoring && !authoring.writable && (
+          <p className="hint">new roles cannot be created here: {authoring.write_block_reason}</p>
+        )}
       </Card>
 
       {(creating || selected) && (
         <Card title={creating ? "Create role" : `Edit role: ${selected}`}>
+          {blockReason && (
+            <p className="hint">
+              read-only{selectedRow ? ` · ${selectedRow.source}` : ""} — {blockReason}
+            </p>
+          )}
           {creating && (
             <label>
               New role id (lowercase + underscore)
@@ -1105,7 +1235,7 @@ export function RoleEditor() {
               onChange={(e) => setMdText(e.target.value)}
             />
           </label>
-          <button onClick={save} disabled={!canSave}>
+          <button onClick={save} disabled={!canSave} title={blockReason}>
             {creating ? "Create" : "Save"}
           </button>
           <p className="status">{status}</p>

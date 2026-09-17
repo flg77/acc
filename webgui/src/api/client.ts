@@ -103,8 +103,20 @@ export const searchEpisodes = (cid: string, q: string) =>
 
 // --- actions ---------------------------------------------------------------
 
+// status "published" when the ROLE_UPDATE went out; "not_running" (with a
+// note) when, in a cluster pod, no agent of that role exists to receive it —
+// the operator spawns agents from the AgentCollective (proposal 056 §4.4).
 export const infuseRole = (cid: string, roleDefinition: unknown) =>
-  postJSON("/api/infuse", { collective_id: cid, role_definition: roleDefinition });
+  postJSON<{ status: string; note: string }>("/api/infuse", {
+    collective_id: cid,
+    role_definition: roleDefinition,
+  });
+
+// Where this WebGUI runs (proposal 056 §4.1): `cluster` is true in a pod the
+// operator made, where roles/catalogs/packages are the operator's objects.
+export type DeployInfo = { cluster: boolean; deploy_mode: string; corpus_name: string };
+
+export const fetchDeployInfo = () => getJSON<DeployInfo>("/api/deploy");
 
 // `sessionId` names the conversation this prompt continues (RP-02). Only the
 // id travels — prior turns are replayed server-side from the durable tracelog,
@@ -210,8 +222,12 @@ export const testLLM = (baseUrl: string) =>
 
 // --- governance / compliance / diagnostics / models (PR-W parity) ---------
 
+// `error` + `hint` are set (and `layers` is empty) when this host has no
+// regulatory_layer/ — the screen shows the reason, never three empty tables.
 export const fetchGovernanceLayers = () =>
-  getJSON<{ layers: any[] }>("/api/governance/layers");
+  getJSON<{ layers: any[]; root?: string; error?: string; hint?: string }>(
+    "/api/governance/layers",
+  );
 
 export const fetchFrameworks = () =>
   getJSON<{ frameworks: any[] }>("/api/governance/frameworks");
@@ -334,8 +350,19 @@ export type MarketRow = {
   install_marker: string;
 };
 
+// A catalog whose index could not be fetched — its packages are hidden from
+// `rows`, so the Marketplace lists it as its own row (proposal 056 §4.5).
+export type CatalogError = { id: string; url: string; error: string };
+
+export type AvailableRoles = {
+  rows: MarketRow[];
+  catalog_errors: CatalogError[];
+  // true in a cluster pod: Install is the operator's (AccPackageInstall).
+  cluster: boolean;
+};
+
 export const fetchAvailableRoles = (filter = "") =>
-  getJSON<MarketRow[]>(
+  getJSON<AvailableRoles>(
     `/api/roles/available${filter ? `?filter=${encodeURIComponent(filter)}` : ""}`,
   );
 
@@ -392,9 +419,26 @@ export const setCatalogPriority = (catalogId: string, priority: number) =>
 // --- role authoring (WS-C1/C2) ---------------------------------------------
 
 // source: "in-tree" or the installed pack "@scope/name@version".
-export type RoleRow = { role_id: string; has_md: boolean; source: string; writable: boolean };
+// write_block_reason says why `writable` is false ("" when it is true).
+export type RoleRow = {
+  role_id: string;
+  has_md: boolean;
+  source: string;
+  writable: boolean;
+  write_block_reason: string;
+};
 
 export const listRoles = () => getJSON<RoleRow[]>("/api/roles");
+
+// The New-role gate: can a role be created under the in-tree root here?
+export type RoleAuthoring = {
+  roles_root: string;
+  writable: boolean;
+  write_block_reason: string;
+  cluster: boolean;
+};
+
+export const fetchRoleAuthoring = () => getJSON<RoleAuthoring>("/api/roles/authoring");
 
 export const getRoleYaml = (roleId: string) =>
   getJSON<{ role_id: string; yaml_text: string }>(

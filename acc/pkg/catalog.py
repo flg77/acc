@@ -40,6 +40,7 @@ import os
 import re
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Literal
 
@@ -582,6 +583,47 @@ def resolve_constraint(
     return ResolvedPackage(catalog=cat, entry=entry, alternates=alternates)
 
 
+@dataclass(frozen=True)
+class CatalogFetchError:
+    """One catalog whose index could not be fetched (proposal 056 §4.5).
+
+    Surfaces where the resolver used to ``continue`` silently: the Marketplace
+    shows the row *"<id>: unreachable — its packages are hidden"* instead of
+    a shorter list nobody can tell apart from a complete one.
+    """
+
+    id: str
+    url: str      # the https url, or the file path
+    error: str
+
+
+def list_available_with_errors(
+    name: str | None = None,
+    *,
+    workspace: Path | None = None,
+) -> tuple[list[tuple[Catalog, CatalogIndexEntry]], list[CatalogFetchError]]:
+    """:func:`list_available`, plus every catalog that could not be fetched.
+
+    Uses :func:`fetch_index_strict` so an unreachable https catalog is an
+    error row rather than an empty index.
+    """
+    out: list[tuple[Catalog, CatalogIndexEntry]] = []
+    errors: list[CatalogFetchError] = []
+    for catalog in _iter_layered(workspace):
+        try:
+            index = fetch_index_strict(catalog)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog %s: index fetch failed (%s)", catalog.id, exc)
+            errors.append(CatalogFetchError(
+                id=catalog.id, url=catalog.url or catalog.path, error=str(exc),
+            ))
+            continue
+        for entry in index:
+            if name is None or entry.name == name:
+                out.append((catalog, entry))
+    return out, errors
+
+
 def list_available(
     name: str | None = None,
     *,
@@ -591,17 +633,10 @@ def list_available(
 
     With ``name`` set, filter to that scoped name.  Useful for the
     Marketplace TUI pane (Stage 2) and ``acc-pkg list --available``.
+    An unreachable catalog is logged and skipped; callers that must show
+    the miss use :func:`list_available_with_errors`.
     """
-    out: list[tuple[Catalog, CatalogIndexEntry]] = []
-    for catalog in _iter_layered(workspace):
-        try:
-            index = fetch_index(catalog)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("catalog %s: index fetch failed (%s)", catalog.id, exc)
-            continue
-        for entry in index:
-            if name is None or entry.name == name:
-                out.append((catalog, entry))
+    out, _errors = list_available_with_errors(name, workspace=workspace)
     return out
 
 

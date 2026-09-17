@@ -28,8 +28,13 @@ from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
 from pydantic import BaseModel, Field, ValidationError
 
 from acc import catalog_admin, marketplace
+from acc.deploy import is_cluster
 from acc.pkg.catalog import Catalog
-from acc.role_loader import list_all_role_names, role_source
+from acc.role_loader import (
+    list_all_role_names,
+    role_source,
+    roles_root_write_block_reason,
+)
 from acc.tui.path_resolution import resolve_manifest_root
 from acc.webgui.auth import require_operator, require_viewer
 
@@ -59,13 +64,34 @@ def _role_source(role_id: str):
     return role_source(_roles_root(), role_id)
 
 
+def _explain_block(reason: str) -> str:
+    """Say *why* a read-only path is read-only where that is known: in a
+    cluster pod the in-tree roles are the operator's ConfigMap mount
+    (proposal 056 §4.3)."""
+    if reason and is_cluster() and reason.endswith("is read-only for this process"):
+        return reason + " — the operator's roles ConfigMap; edit the corpus's roles there"
+    return reason
+
+
 def _refuse_write(role_id: str, filename: str) -> None:
-    blocked = _role_source(role_id).write_block_reason(filename)
+    blocked = _explain_block(_role_source(role_id).write_block_reason(filename))
     if blocked:
         raise HTTPException(
             status_code=409,
             detail=f"role {role_id!r} {filename} is not writable here: {blocked}",
         )
+
+
+def _authoring_state() -> dict:
+    """Whether a new role can be created under the in-tree root, and why not."""
+    root = _roles_root()
+    reason = _explain_block(roles_root_write_block_reason(root))
+    return {
+        "roles_root": str(root),
+        "writable": not reason,
+        "write_block_reason": reason,
+        "cluster": is_cluster(),
+    }
 
 
 def _safe_role_id(role_id: str) -> str:
@@ -91,6 +117,23 @@ class _RowOut(BaseModel):
     catalog_mode: str
     signer: str
     install_marker: str
+
+
+class _CatalogErrorOut(BaseModel):
+    id: str
+    url: str
+    error: str
+
+
+class _AvailableOut(BaseModel):
+    """Packages across the layered catalogs, plus the catalogs that could
+    not be fetched (their packages are hidden — say so, proposal 056 §4.5).
+    ``cluster`` tells the Marketplace whether Install is the operator's
+    (``AccPackageInstall``) rather than this API's."""
+
+    rows: list[_RowOut]
+    catalog_errors: list[_CatalogErrorOut]
+    cluster: bool
 
 
 class _InstallRequest(BaseModel):
@@ -148,27 +191,33 @@ def _catalog_to_json(c: Catalog) -> dict:
 
 @router.get(
     "/roles/available",
-    response_model=list[_RowOut],
+    response_model=_AvailableOut,
     summary="List packages advertised across layered catalogs",
 )
 def roles_available(
     filter: str = "",
     _: bool = Depends(require_viewer),
-) -> list[dict]:
-    rows = marketplace.render_rows(name_filter=filter or None)
-    return [
-        {
-            "name": r.name,
-            "version": r.version,
-            "tier": r.tier,
-            "tier_badge": r.tier_badge,
-            "catalog_id": r.catalog_id,
-            "catalog_mode": r.catalog_mode,
-            "signer": r.signer,
-            "install_marker": r.install_marker,
-        }
-        for r in rows
-    ]
+) -> dict:
+    rows, errors = marketplace.render_rows_and_errors(name_filter=filter or None)
+    return {
+        "rows": [
+            {
+                "name": r.name,
+                "version": r.version,
+                "tier": r.tier,
+                "tier_badge": r.tier_badge,
+                "catalog_id": r.catalog_id,
+                "catalog_mode": r.catalog_mode,
+                "signer": r.signer,
+                "install_marker": r.install_marker,
+            }
+            for r in rows
+        ],
+        "catalog_errors": [
+            {"id": e.id, "url": e.url, "error": e.error} for e in errors
+        ],
+        "cluster": is_cluster(),
+    }
 
 
 @router.post(
@@ -180,6 +229,18 @@ def roles_install(
     body: _InstallRequest,
     _: bool = Depends(require_operator),
 ) -> _InstallResponse:
+    if is_cluster():
+        # Phase 3 of proposal 056 turns this into an AccPackageInstall
+        # request; until then a pod has no acc-pkg, no cosign and no
+        # proposal store, so the marker would go nowhere.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "in a cluster pod packages are installed by the operator "
+                "(create an AccPackageInstall for the package); this API only "
+                "stages a marker in a checkout"
+            ),
+        )
     versions = marketplace.list_versions(body.name)
     if not versions:
         raise HTTPException(
@@ -244,7 +305,8 @@ def roles_list(_: bool = Depends(require_viewer)) -> list[dict]:
 
     Distinct from ``/roles/available`` (catalog *packages*).  ``source`` is
     ``in-tree`` or ``@scope/pack@version``; ``writable`` says whether PUT
-    will accept a change (installed packs and read-only mounts refuse).
+    will accept a change (installed packs and read-only mounts refuse) and
+    ``write_block_reason`` says why not (proposal 056 §4.3).
     """
     out: list[dict] = []
     for name in list_all_role_names(_roles_root()):
@@ -253,15 +315,28 @@ def roles_list(_: bool = Depends(require_viewer)) -> list[dict]:
         src = _role_source(name)
         if not src.file("role.yaml").is_file():
             continue
+        reason = _explain_block(src.write_block_reason("role.yaml"))
         out.append(
             {
                 "role_id": name,
                 "has_md": src.file("role.md").is_file(),
                 "source": src.package or "in-tree",
-                "writable": not src.write_block_reason("role.yaml"),
+                "writable": not reason,
+                "write_block_reason": reason,
             }
         )
     return out
+
+
+@router.get(
+    "/roles/authoring",
+    summary="Whether a new in-tree role can be created here, and why not",
+)
+def roles_authoring(_: bool = Depends(require_viewer)) -> dict:
+    """The role editor's *New role* gate: ``writable`` is false with a
+    ``write_block_reason`` when the in-tree roles root is a read-only mount
+    (the operator's ConfigMap) or does not exist."""
+    return _authoring_state()
 
 
 @router.get(
@@ -356,11 +431,27 @@ def role_create(
     role_dir = _roles_root() / role_id
     if (role_dir / "role.yaml").is_file() or role_id in list_all_role_names(_roles_root()):
         raise HTTPException(status_code=409, detail=f"role {role_id!r} already exists")
+    authoring = _authoring_state()
+    if not authoring["writable"]:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"cannot create role {role_id!r} here: "
+                f"{authoring['write_block_reason']}"
+            ),
+        )
     from acc.tui.role_writeback import (  # noqa: PLC0415
         RoleValidationError, upsert_role_md, upsert_role_yaml,
     )
     try:
         role_dir.mkdir(parents=True, exist_ok=True)
+    except PermissionError as exc:
+        # The probe said writable but the filesystem disagreed (a read-only
+        # mount the access bits do not show) — still "not here", not a 500.
+        raise HTTPException(
+            status_code=409,
+            detail=f"cannot create role {role_id!r} here: {role_dir} is read-only ({exc})",
+        ) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"cannot create role dir: {exc}") from exc
     try:
@@ -397,25 +488,45 @@ def catalogs_list(_: bool = Depends(require_viewer)) -> list[dict]:
     ``layer`` is ``default`` | ``system`` | ``user`` | ``workspace``; only
     ``workspace`` rows are mutable through this API (``read_only`` says so).
     An unreadable layer file is logged and skipped, not a 500.
+
+    In a cluster pod the workspace layer is an emptyDir nobody sees and the
+    catalogs come from ``AccCatalog`` objects (the system layer), so the
+    workspace rows are not listed and every row is read-only (proposal
+    056 §4.6).
     """
     rows, errors = catalog_admin.load_layers()
     for err in errors:
         logger.warning("catalogs_list: %s layer %s unreadable: %s",
                        err.layer, err.path, err.error)
+    cluster = is_cluster()
     return [
         {
             **_catalog_to_json(r.catalog),
             "layer": r.layer,
-            "read_only": r.read_only,
+            "read_only": r.read_only or cluster,
             "shadowed_by": r.shadowed_by,
             "source": str(r.source) if r.source else "",
         }
         for r in rows
+        if not (cluster and r.layer == catalog_admin.EDITABLE_LAYER)
     ]
+
+
+def _refuse_catalog_change_in_cluster() -> None:
+    """409 in a cluster pod: the workspace layer is not a thing there."""
+    if is_cluster():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "in a cluster pod catalogs come from AccCatalog objects; "
+                "there is no workspace layer to change here"
+            ),
+        )
 
 
 def _refuse_read_only_catalog(catalog_id: str) -> None:
     """409 when *catalog_id* exists only in a layer this API cannot change."""
+    _refuse_catalog_change_in_cluster()
     rows, _errors = catalog_admin.load_layers()
     layers = {r.layer for r in rows if r.catalog.id == catalog_id}
     if layers and catalog_admin.EDITABLE_LAYER not in layers:
@@ -436,6 +547,7 @@ def catalogs_add(
     body: _CatalogIn,
     _: bool = Depends(require_operator),
 ) -> dict:
+    _refuse_catalog_change_in_cluster()
     try:
         cat = catalog_admin.parse_form(
             catalog_id=body.catalog_id,

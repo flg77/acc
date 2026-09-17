@@ -11,6 +11,48 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.14] — 2026-09-17
+
+The WebGUI stops pretending it runs in a checkout. Found by the operator on
+bb3: Compliance showed *0 rules* on a corpus whose whole point is Cat-A, every
+role was read-only with no reason given, Infuse offered no roles, Marketplace's
+*Install* did nothing while its toast promised an approval, and catalog rows
+vanished silently when a catalog was unreachable. Proposal 056, Phase 1.
+
+### Added
+
+- **`acc.deploy.is_cluster()`** — one answer to "checkout or cluster pod"
+  (`ACC_DEPLOY_MODE` in `k8s`/`rhoai`/`operator`, or the operator's
+  `ACC_CORPUS_NAME`), cached, exposed as `GET /api/deploy` for the SPA (#439).
+
+### Fixed
+
+- **Compliance** no longer turns a missing regulatory root into three empty
+  tables: the bare `except` is gone, the root is resolved through
+  `ACC_REGULATORY_ROOT` → the repo → **`/etc/acc/regulatory_layer`** (new,
+  what the operator mounts) → `/app/regulatory_layer`, and a miss is reported
+  as *"no regulatory layer at …"* with a hint (#439).
+- **Roles**: every row carries `write_block_reason`; the editor shows it next
+  to the read-only badge and disables *Save* / *New role* with it; creating a
+  role on a read-only root answers 409, never 500 (#439).
+- **Infuse**: the role id is a picker fed by the installed roles (in-tree and
+  packs, running ones marked) and the catalog's (disabled, *not installed*);
+  in a pod, *Apply* on a role that is not running says so instead of publishing
+  nothing (#439).
+- **Marketplace**: per-catalog fetch failures are returned
+  (`catalog_errors`) and shown as an *unreachable* row instead of dropping the
+  catalog silently; in a pod *Install* is hidden and `POST …/install` answers
+  409 with the `AccPackageInstall` note; in a checkout the toast says a
+  `PROPOSE_INFUSE` marker was staged, not that an approval awaits (#439).
+- **Catalogs** in a pod: no workspace layer, no *Add catalog* form; every row
+  read-only, mutations answer 409 (#439).
+
+### Operator
+
+- Ships with acc-operator 0.2.18 (the MLflow experiment header on the OTLP
+  fan-out, #438) and 0.2.17 (agents actually export OTLP, #437); 0.2.19 adds
+  the `regulatory_layer` mount the Compliance screen reads.
+
 ## [0.17.13] — 2026-09-17
 
 A build-only release. The runtime, TUI and WebGUI are what 0.17.12 shipped; this

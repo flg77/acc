@@ -110,22 +110,16 @@ func (d *AgentCorpusCustomDefaulter) Default(ctx context.Context, obj runtime.Ob
 	if r.Spec.Observability.Backend == "" {
 		r.Spec.Observability.Backend = MetricsBackendOTel
 	}
-	// When OTel is selected but no collector endpoint is given, point agents at
-	// the in-cluster Collector the operator deploys (<name>-otel-collector:4317),
-	// so observability.backend=otel works out of the box (and the validator,
-	// which requires otelCollector.endpoint for otel, passes).
-	// Backfill the endpoint whenever it is empty — not only when the whole
-	// OTelCollector block is nil. The OpenShift "Create AgentCorpus" form (and
-	// any partial manifest that sets, e.g., only mlflowEndpoint) submits the
-	// block present with endpoint:"", which the old `== nil` guard skipped,
-	// leaving endpoint:"" to be rejected by the CRD minLength:1 (G1).
-	if r.Spec.Observability.Backend == MetricsBackendOTel {
-		if r.Spec.Observability.OTelCollector == nil {
-			r.Spec.Observability.OTelCollector = &OTelCollectorSpec{}
-		}
-		if r.Spec.Observability.OTelCollector.Endpoint == "" {
-			r.Spec.Observability.OTelCollector.Endpoint = fmt.Sprintf("%s-otel-collector:4317", r.Name)
-		}
+	// When OTel is selected, materialize the otelCollector block so the operator
+	// deploys the in-cluster Collector (the reconciler skips a nil block) and
+	// observability.backend=otel works out of the box. Agents always export to
+	// that Collector's Service; otelCollector.endpoint is ONLY the Collector's
+	// remote target and stays empty unless the user sets one. Pre-0.2.17 the
+	// defaulter backfilled it with the Collector's own Service, which made the
+	// Collector forward to itself.
+	if r.Spec.Observability.Backend == MetricsBackendOTel &&
+		r.Spec.Observability.OTelCollector == nil {
+		r.Spec.Observability.OTelCollector = &OTelCollectorSpec{}
 	}
 	if r.Spec.UpgradePolicy.Mode == "" {
 		r.Spec.UpgradePolicy.Mode = UpgradeModeAuto
@@ -213,16 +207,6 @@ func (r *AgentCorpus) validateAgentCorpus() error {
 			field.NewPath("spec", "governance", "categoryA", "wasmConfigMapRef"),
 			"wasmConfigMapRef must reference a ConfigMap containing the category_a.wasm blob",
 		))
-	}
-
-	// otel backend requires collector endpoint
-	if r.Spec.Observability.Backend == MetricsBackendOTel {
-		if r.Spec.Observability.OTelCollector == nil || r.Spec.Observability.OTelCollector.Endpoint == "" {
-			allErrs = append(allErrs, field.Required(
-				field.NewPath("spec", "observability", "otelCollector", "endpoint"),
-				"otelCollector.endpoint is required when observability.backend=otel",
-			))
-		}
 	}
 
 	// at least one collective required

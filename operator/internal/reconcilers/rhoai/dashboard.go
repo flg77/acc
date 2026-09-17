@@ -219,7 +219,7 @@ func quickStarts() []*unstructured.Unstructured {
 			"The corpus ships an OpenTelemetry collector. Give it a backend (a PVC-backed TempoMonolithic works on any cluster) and traces appear per agent task.",
 			[]map[string]interface{}{
 				{"title": "Install a trace backend", "description": "Install the Tempo operator and create a TempoMonolithic (no object storage needed). Note its OTLP gRPC service, e.g. tempo-acc-tempo.acc-observability.svc.cluster.local:4317."},
-				{"title": "Point the corpus at it", "description": "In the AgentCorpus form set observability.backend = otel and otelCollector.endpoint = the Tempo service (tlsInsecure: true for in-cluster plaintext)."},
+				{"title": "Point the corpus at it", "description": "In the AgentCorpus form set observability.backend = otel and otelCollector.endpoint = the Tempo service (tlsInsecure: true for in-cluster plaintext). Agents always export to the corpus's own collector; endpoint is where that collector forwards — leave it empty to keep telemetry in-cluster."},
 				{"title": "Explore traces", "description": "Open the Tempo/Jaeger route and search service acc-agent after prompting the agentset."},
 			},
 			"Traces correlate per task across agents. MLflow fan-out is available via otelCollector.mlflowEndpoint."),

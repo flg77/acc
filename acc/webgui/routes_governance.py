@@ -7,8 +7,10 @@ Web parity for the latest TUI work:
   * Multimodel — the central model registry (PR-MM1).
 
 Reads are **host-local** (``regulatory_layer/``, ``models.yaml``, the
-writable stores mounted into acc-webgui) — no NATS.  Best-effort: a
-missing dir yields an empty list, never a 500.  Reads need the viewer
+writable stores mounted into acc-webgui) — no NATS.  Best-effort for
+frameworks / proposals: a missing dir yields an empty list, never a 500.
+The governance layers are the exception: a missing ``regulatory_layer/``
+is reported with the paths tried (proposal 056).  Reads need the viewer
 role; the gap-scan + proposal-decision actions need operator.
 """
 
@@ -33,12 +35,35 @@ router = APIRouter(prefix="/api", tags=["governance"])
 
 @router.get("/governance/layers", dependencies=[Depends(require_viewer)])
 def governance_layers() -> dict:
-    """Loaded Cat-A/B/C governance layers + their rules."""
-    from acc.governance_inventory import load_all_layers  # noqa: PLC0415
-    try:
-        layers = load_all_layers()
-    except Exception:
-        layers = []
+    """Loaded Cat-A/B/C governance layers + their rules.
+
+    When no ``regulatory_layer/`` exists on this host the answer is
+    ``layers: []`` **with an ``error``** naming every path tried and a
+    ``hint`` — never a bare ``[]`` that reads as "this corpus has no rules"
+    (proposal 056 §4.2).  A parse failure inside an existing root is a 500
+    with its reason, not an empty list.
+    """
+    from acc.deploy import is_cluster  # noqa: PLC0415
+    from acc.governance_inventory import find_regulatory_root, load_all_layers  # noqa: PLC0415
+
+    root, tried = find_regulatory_root()
+    if root is None:
+        if is_cluster():
+            hint = (
+                "mount the runtime's regulatory_layer/ at /etc/acc/regulatory_layer "
+                "(or set ACC_REGULATORY_ROOT) in the webgui pod — the operator does "
+                "this for the corpus; until then the Cat-A/B/C rules the agents run "
+                "on cannot be listed here"
+            )
+        else:
+            hint = "set ACC_REGULATORY_ROOT to the checkout's regulatory_layer/ directory"
+        return {
+            "layers": [],
+            "root": "",
+            "error": "no regulatory layer at " + ", ".join(str(p) for p in tried),
+            "hint": hint,
+        }
+    layers = load_all_layers(root)
     return {"layers": [
         {
             "category": l.category, "title": l.title, "version": l.version,
@@ -47,7 +72,7 @@ def governance_layers() -> dict:
             "rules": [asdict(r) for r in l.rules],
         }
         for l in layers
-    ]}
+    ], "root": str(root)}
 
 
 @router.get("/governance/frameworks", dependencies=[Depends(require_viewer)])

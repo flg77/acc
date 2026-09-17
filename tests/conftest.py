@@ -67,6 +67,17 @@ def isolated_tracelog(tmp_path, monkeypatch):
     monkeypatch.setenv("ACC_TRACELOG_DIR", str(tmp_path / "tracelog"))
 
 
+@pytest.fixture(autouse=True)
+def forget_deploy_mode():
+    """``acc.deploy.is_cluster()`` caches its answer for the process; a test
+    that sets ``ACC_DEPLOY_MODE`` / ``ACC_CORPUS_NAME`` must not leak a
+    cluster verdict into the next one (proposal 056)."""
+    from acc import deploy
+    deploy._reset()
+    yield
+    deploy._reset()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def installed_family_packs(tmp_path_factory):
     """Install the committed @acc/* family-pack fixtures into a

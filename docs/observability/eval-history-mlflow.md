@@ -80,6 +80,7 @@ spec:
     otelCollector:
       endpoint: http://otel-collector.<ns>.svc:4317        # primary (Tempo etc.)
       mlflowEndpoint: http://mlflow.<ns>.svc:5000           # → MLflow /v1/traces (G)
+      mlflowExperimentID: "123456789"                       # experiment ID (not name); MLflow >= 3.x 422s without it
 ```
 
 (`operator/internal/templates/otel_config.go` renders the `otlphttp/mlflow`

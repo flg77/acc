@@ -44,6 +44,25 @@ def list_collectives(hub: ObserverHub = Depends(get_hub)) -> dict:
     return {"collectives": hub.collective_ids()}
 
 
+@router.get("/api/deploy", tags=["read"], dependencies=[Depends(require_viewer)])
+def deploy_info() -> dict:
+    """Where this WebGUI runs (proposal 056 §4.1).
+
+    ``cluster`` is true in a pod the operator made — the screens use it to
+    hide or explain the checkout-only affordances (authoring roles on disk,
+    staging a package install, adding a workspace catalog).
+    """
+    import os  # noqa: PLC0415
+
+    from acc.deploy import is_cluster  # noqa: PLC0415
+
+    return {
+        "cluster": is_cluster(),
+        "deploy_mode": os.environ.get("ACC_DEPLOY_MODE", ""),
+        "corpus_name": os.environ.get("ACC_CORPUS_NAME", ""),
+    }
+
+
 @router.get("/api/board/{collective_id}", tags=["read"],
             dependencies=[Depends(require_viewer)])
 def board(collective_id: str, hub: ObserverHub = Depends(get_hub),

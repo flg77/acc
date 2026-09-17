@@ -134,11 +134,30 @@ func TestRenderACCConfig_OTelBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderACCConfig error: %v", err)
 	}
-	if !strings.Contains(yaml, "backend: otel") {
-		t.Error("expected backend: otel")
+	// The runtime schema is acc/config.py ObservabilityConfig under the
+	// top-level `observability:` key (backend + otel_service_name). The old
+	// `metrics:` block was silently ignored (Pydantic extra=ignore), so agents
+	// ran the log backend although the corpus said otel (0.2.17).
+	if !strings.Contains(yaml, "observability:\n  backend: otel\n  otel_service_name: acc-test\n") {
+		t.Errorf("expected observability block with backend otel + service name\n\n%s", yaml)
 	}
-	if !strings.Contains(yaml, "otel_endpoint: https://otel:4317") {
-		t.Error("expected otel_endpoint field")
+	if strings.Contains(yaml, "metrics:") || strings.Contains(yaml, "otel_endpoint") {
+		t.Errorf("legacy metrics:/otel_endpoint keys must not be rendered — the runtime never read them\n\n%s", yaml)
+	}
+}
+
+// Log backend: the observability block is still rendered (the runtime
+// defaults to log, but the key must be the one it reads) with no OTel fields.
+func TestRenderACCConfig_LogBackendObservabilityKey(t *testing.T) {
+	yaml, err := templates.RenderACCConfig(makeTestCorpus(), makeTestCollective())
+	if err != nil {
+		t.Fatalf("RenderACCConfig error: %v", err)
+	}
+	if !strings.Contains(yaml, "observability:\n  backend: log\n") {
+		t.Errorf("expected observability: backend log\n\n%s", yaml)
+	}
+	if strings.Contains(yaml, "otel_service_name") {
+		t.Error("otel_service_name must not be rendered for the log backend")
 	}
 }
 
@@ -494,6 +513,41 @@ func TestRenderOTelConfig_MLflowFanOut(t *testing.T) {
 	if !strings.Contains(conf, "exporters: [otlp, otlphttp/mlflow, debug]") {
 		t.Errorf("expected traces pipeline to include both otlp + otlphttp/mlflow\n\n%s", conf)
 	}
+	// No experiment id → no headers block (behaviour unchanged from 0.2.17).
+	// Match the YAML key, not the bare token: the template's NOTE comment
+	// names the header too.
+	if strings.Contains(conf, "headers:") || strings.Contains(conf, "x-mlflow-experiment-id:") {
+		t.Errorf("MLflowExperimentID unset — no x-mlflow-experiment-id header must be rendered\n\n%s", conf)
+	}
+}
+
+// MLflow's /v1/traces requires the x-mlflow-experiment-id header (MLflow
+// >= 3.x answers 422 and stores nothing without it — verified on bb3 with
+// MLflow 3.6.0). When MLflowExperimentID is set the otlphttp/mlflow
+// exporter carries it as a header (0.2.18).
+func TestRenderOTelConfig_MLflowExperimentIDHeader(t *testing.T) {
+	corpus := makeTestCorpus()
+	corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{
+		Backend: accv1alpha1.MetricsBackendOTel,
+		OTelCollector: &accv1alpha1.OTelCollectorSpec{
+			MLflowEndpoint:     "https://mlflow.example.com",
+			MLflowExperimentID: "123456789",
+		},
+	}
+
+	conf, err := templates.RenderOTelConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderOTelConfig error: %v", err)
+	}
+	want := "  otlphttp/mlflow:\n" +
+		"    endpoint: https://mlflow.example.com\n" +
+		"    tls:\n" +
+		"      insecure: false\n" +
+		"    headers:\n" +
+		"      x-mlflow-experiment-id: \"123456789\"\n"
+	if !strings.Contains(conf, want) {
+		t.Errorf("expected otlphttp/mlflow exporter with x-mlflow-experiment-id header\n\nwant:\n%s\ngot:\n%s", want, conf)
+	}
 }
 
 // The removed-upstream `logging` exporter must never reappear — modern
@@ -517,5 +571,119 @@ func TestRenderOTelConfig_NoRemovedLoggingExporter(t *testing.T) {
 	}
 	if !strings.Contains(conf, "debug:") {
 		t.Errorf("expected the `debug` exporter\n\n%s", conf)
+	}
+}
+
+// 0.2.17: otelCollector.endpoint is the collector's REMOTE target. When it
+// names the corpus's own collector Service (the pre-0.2.17 webhook default)
+// or is empty, no `otlp` exporter is rendered — the collector must not
+// forward to itself. MLflow fan-out is independent and stays.
+func TestRenderOTelConfig_NoSelfLoop(t *testing.T) {
+	for _, endpoint := range []string{
+		"",
+		"test-corpus-otel-collector:4317",
+		"test-corpus-otel-collector",
+		"http://test-corpus-otel-collector.test-ns.svc:4318",
+		"https://test-corpus-otel-collector.test-ns.svc.cluster.local:4317/",
+	} {
+		corpus := makeTestCorpus()
+		corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{
+			Backend: accv1alpha1.MetricsBackendOTel,
+			OTelCollector: &accv1alpha1.OTelCollectorSpec{
+				Endpoint:       endpoint,
+				MLflowEndpoint: "http://mlflow.test-ns.svc:8080",
+			},
+		}
+		conf, err := templates.RenderOTelConfig(corpus)
+		if err != nil {
+			t.Fatalf("RenderOTelConfig(%q) error: %v", endpoint, err)
+		}
+		// The `otlp` receiver stays; the `otlp` exporter (the one with an
+		// `endpoint:` directly beneath it) must be gone from both pipelines.
+		if strings.Contains(conf, "  otlp:\n    endpoint:") ||
+			strings.Contains(conf, "exporters: [otlp,") || strings.Contains(conf, "exporters: [otlp]") {
+			t.Errorf("endpoint %q must not render a remote otlp exporter\n\n%s", endpoint, conf)
+		}
+		if !strings.Contains(conf, "exporters: [otlphttp/mlflow, debug]") {
+			t.Errorf("endpoint %q: MLflow fan-out must be unaffected\n\n%s", endpoint, conf)
+		}
+		if !strings.Contains(conf, "exporters: [prometheus, debug]") {
+			t.Errorf("endpoint %q: metrics pipeline must keep prometheus + debug\n\n%s", endpoint, conf)
+		}
+	}
+}
+
+// A real remote (not the own Service, even a look-alike host) still gets the
+// otlp exporter on both pipelines.
+func TestRenderOTelConfig_RemoteEndpointExported(t *testing.T) {
+	for _, endpoint := range []string{
+		"tempo-acc-tempo.acc-observability.svc.cluster.local:4317",
+		"https://otel-collector.observability.svc.cluster.local:4317",
+		"other-corpus-otel-collector:4317",
+	} {
+		corpus := makeTestCorpus()
+		corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{
+			Backend:       accv1alpha1.MetricsBackendOTel,
+			OTelCollector: &accv1alpha1.OTelCollectorSpec{Endpoint: endpoint, TLSInsecure: true},
+		}
+		conf, err := templates.RenderOTelConfig(corpus)
+		if err != nil {
+			t.Fatalf("RenderOTelConfig(%q) error: %v", endpoint, err)
+		}
+		if !strings.Contains(conf, "  otlp:\n    endpoint: "+endpoint+"\n    tls:\n      insecure: true") {
+			t.Errorf("endpoint %q: expected remote otlp exporter\n\n%s", endpoint, conf)
+		}
+		if !strings.Contains(conf, "exporters: [otlp, debug]") || !strings.Contains(conf, "exporters: [otlp, prometheus, debug]") {
+			t.Errorf("endpoint %q: expected otlp on both pipelines\n\n%s", endpoint, conf)
+		}
+	}
+}
+
+// Agents always export to the corpus's own collector Service via the
+// upstream env vars the runtime reads (acc/backends/metrics_otel.py) —
+// regardless of otelCollector.endpoint, which is the collector's remote.
+func TestOTelAgentExporterEnv(t *testing.T) {
+	corpus := makeTestCorpus()
+	corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{
+		Backend:       accv1alpha1.MetricsBackendOTel,
+		OTelCollector: &accv1alpha1.OTelCollectorSpec{Endpoint: "tempo.acc-observability.svc:4317"},
+	}
+	env := templates.OTelAgentExporterEnv(corpus)
+	want := map[string]string{
+		"OTEL_EXPORTER_OTLP_ENDPOINT": "test-corpus-otel-collector:4317",
+		"OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+	}
+	got := map[string]string{}
+	for _, e := range env {
+		got[e.Name] = e.Value
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q (env=%v)", k, got[k], v, env)
+		}
+	}
+
+	corpus.Spec.Observability.OTelCollector.Protocol = "http/protobuf"
+	env = templates.OTelAgentExporterEnv(corpus)
+	if len(env) != 2 || env[0].Value != "http://test-corpus-otel-collector:4318" || env[1].Value != "http/protobuf" {
+		t.Errorf("http/protobuf: expected the collector's :4318 HTTP receiver, got %v", env)
+	}
+
+	// No collector deployed → no exporter target (runtime would default to
+	// localhost, but the backend is log/absent anyway).
+	corpus.Spec.Observability.OTelCollector = nil
+	if env := templates.OTelAgentExporterEnv(corpus); env != nil {
+		t.Errorf("nil otelCollector: expected no env, got %v", env)
+	}
+	if env := templates.OTelAgentExporterEnv(makeTestCorpus()); env != nil {
+		t.Errorf("log backend: expected no env, got %v", env)
+	}
+	edge := makeTestCorpus()
+	edge.Spec.DeployMode = accv1alpha1.DeployModeEdge
+	edge.Spec.Observability = accv1alpha1.ObservabilitySpec{
+		Backend: accv1alpha1.MetricsBackendOTel, OTelCollector: &accv1alpha1.OTelCollectorSpec{},
+	}
+	if env := templates.OTelAgentExporterEnv(edge); env != nil {
+		t.Errorf("edge mode: expected no env, got %v", env)
 	}
 }

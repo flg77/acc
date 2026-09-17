@@ -545,6 +545,14 @@ func buildExtraEnv(
 		)
 	}
 
+	// OTLP export target (0.2.17). The runtime's OTel backend reads
+	// OTEL_EXPORTER_OTLP_ENDPOINT — not an acc-config.yaml key — and defaults
+	// to localhost, so an otel corpus exported nothing until this was set.
+	// Agents always target the corpus's own collector Service; the collector
+	// forwards to spec.observability.otelCollector.endpoint. Agent pods only:
+	// the TUI/WebGUI reconcilers do not run the OTel backend.
+	envs = append(envs, templates.OTelAgentExporterEnv(corpus)...)
+
 	// Role-specific extra env.
 	envs = append(envs, roleSpec.ExtraEnv...)
 	return envs

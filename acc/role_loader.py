@@ -170,6 +170,18 @@ class RoleSource:
         return ""
 
 
+def roles_root_write_block_reason(roles_root: str | Path) -> str:
+    """Why a *new* role directory cannot be created under *roles_root*
+    ("" when it can) — the same probe :meth:`RoleSource.write_block_reason`
+    applies to an existing role, for the root itself (proposal 056 §4.3)."""
+    root = Path(roles_root)
+    if not root.is_dir():
+        return f"{root} does not exist"
+    if not os.access(root, os.W_OK):
+        return f"{root} is read-only for this process"
+    return ""
+
+
 def role_source(roles_root: str | Path, role_name: str) -> RoleSource:
     """Resolve *role_name* the way :class:`RoleLoader` does: an installed
     package providing ``roles/<name>/role.yaml`` wins, else the in-tree

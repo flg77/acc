@@ -123,6 +123,7 @@ spec:
     otelCollector:
       endpoint: http://otel-collector.<ns>.svc:4317
       mlflowEndpoint: http://mlflow.acc-demo.svc:8080      # G: trace fan-out
+      mlflowExperimentID: "123456789"                      # required by MLflow >= 3.x (x-mlflow-experiment-id)
 ```
 and inject `ACC_MLFLOW_TRACKING_URI=http://mlflow.acc-demo.svc:8080` into the agents
 (alongside the model keys). Without these the eval-history still works; only the

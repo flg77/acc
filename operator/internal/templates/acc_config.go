@@ -90,10 +90,9 @@ governance:
     confidence_threshold: {{ .ConfidenceThreshold }}
 {{- end }}
 
-metrics:
+observability:
   backend: {{ .MetricsBackend }}
-{{- if .OTelEndpoint }}
-  otel_endpoint: {{ .OTelEndpoint }}
+{{- if .OTelServiceName }}
   otel_service_name: {{ .OTelServiceName }}
 {{- end }}
 `))
@@ -137,9 +136,11 @@ type ACCConfigData struct {
 	BundlePollInterval   int32
 	ConfidenceThreshold  string
 
-	// Metrics
+	// Observability (acc/config.py ObservabilityConfig). The OTLP exporter
+	// endpoint is NOT a config key — the runtime reads it from the upstream
+	// OTEL_EXPORTER_OTLP_ENDPOINT env var, which the agent Deployment sets
+	// (see OTelAgentExporterEnv).
 	MetricsBackend  string
-	OTelEndpoint    string
 	OTelServiceName string
 }
 
@@ -181,15 +182,13 @@ func RenderACCConfig(corpus *accv1alpha1.AgentCorpus, collective *accv1alpha1.Ag
 		data.ConfidenceThreshold = catC.ConfidenceThreshold
 	}
 
-	// OTel endpoint — use data.MetricsBackend (already adjusted for edge) rather
-	// than corpus.Spec.Observability.Backend so edge mode correctly skips this block.
+	// OTel service name — use data.MetricsBackend (already adjusted for edge)
+	// rather than corpus.Spec.Observability.Backend so edge mode correctly
+	// skips this block.
 	if data.MetricsBackend == string(accv1alpha1.MetricsBackendOTel) {
-		if otel := corpus.Spec.Observability.OTelCollector; otel != nil {
-			data.OTelEndpoint = otel.Endpoint
+		data.OTelServiceName = "acc-agent"
+		if otel := corpus.Spec.Observability.OTelCollector; otel != nil && otel.ServiceName != "" {
 			data.OTelServiceName = otel.ServiceName
-			if data.OTelServiceName == "" {
-				data.OTelServiceName = "acc-agent"
-			}
 		}
 	}
 

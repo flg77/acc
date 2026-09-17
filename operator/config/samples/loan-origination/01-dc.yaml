@@ -74,6 +74,9 @@ spec:
       protocol: grpc
       # Optional: also fan TRACES to MLflow's /v1/traces (needs protocol http/protobuf).
       # mlflowEndpoint: "http://acc-demo-mlflow.acc-demo.svc.cluster.local:8080"
+      # MLflow >= 3.x drops /v1/traces without the x-mlflow-experiment-id header —
+      # the experiment ID (not name): GET /api/2.0/mlflow/experiments/get-by-name?experiment_name=…
+      # mlflowExperimentID: "123456789"
     # MLflow run/experiment logging (#154, v0.7.2) — injected as
     # ACC_MLFLOW_TRACKING_URI / ACC_MLFLOW_EXPERIMENT into the TUI + WebGUI pods.
     mlflowTrackingUri: "http://acc-demo-mlflow.acc-demo.svc.cluster.local:8080"

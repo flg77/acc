@@ -164,6 +164,50 @@ def test_regulatory_root_env_override(tmp_path, monkeypatch):
     assert regulatory_root() == tmp_path
 
 
+def test_regulatory_root_candidates_env_is_the_only_candidate(tmp_path, monkeypatch):
+    """An explicit ACC_REGULATORY_ROOT that does not exist is reported, not
+    papered over with a fallback (proposal 056 §4.2)."""
+    from acc.governance_inventory import find_regulatory_root, regulatory_root_candidates
+
+    missing = tmp_path / "nope"
+    monkeypatch.setenv("ACC_REGULATORY_ROOT", str(missing))
+    assert regulatory_root_candidates() == [missing]
+    assert find_regulatory_root() == (None, [missing])
+
+
+def test_regulatory_root_falls_back_to_the_operator_mount(tmp_path, monkeypatch):
+    """Without the env and without a checkout, /etc/acc/regulatory_layer (the
+    operator's mount) is found before the legacy /app path."""
+    import acc.governance_inventory as gi
+
+    monkeypatch.delenv("ACC_REGULATORY_ROOT", raising=False)
+    mount = tmp_path / "etc-acc" / "regulatory_layer"
+    (mount / "category_a").mkdir(parents=True)
+    (mount / "category_a" / "a.rego").write_text(
+        "# Version: 9.9.9\n# A-001: mounted rule\n", encoding="utf-8")
+    monkeypatch.setattr(gi, "CLUSTER_MOUNT", mount)
+    # no checkout: the module's own <repo>/regulatory_layer must not be found
+    monkeypatch.setattr(gi, "__file__", str(tmp_path / "fake" / "acc" / "governance_inventory.py"))
+
+    root, tried = gi.find_regulatory_root()
+    assert root == mount
+    assert tried[0] == tmp_path / "fake" / "regulatory_layer"
+    assert tried[1] == mount
+    assert gi.regulatory_root() == mount
+    assert gi.load_layer("A").rules[0].rule_id == "A-001"
+
+
+def test_find_regulatory_root_none_when_nothing_exists(tmp_path, monkeypatch):
+    import acc.governance_inventory as gi
+
+    monkeypatch.delenv("ACC_REGULATORY_ROOT", raising=False)
+    monkeypatch.setattr(gi, "CLUSTER_MOUNT", tmp_path / "no-mount")
+    monkeypatch.setattr(gi, "__file__", str(tmp_path / "fake" / "acc" / "governance_inventory.py"))
+    root, tried = gi.find_regulatory_root()
+    assert root is None
+    assert len(tried) == 3
+
+
 def test_shipped_layers_load():
     """The repo's real regulatory_layer must parse into non-empty A/B/C
     layers — guards a reformat that breaks the parser."""

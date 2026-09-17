@@ -100,21 +100,24 @@ def client(env):
 def test_roles_available_lists_catalog_entries(client):
     r = client.get("/api/roles/available")
     assert r.status_code == 200
-    rows = r.json()
-    names = {row["name"] for row in rows}
+    body = r.json()
+    names = {row["name"] for row in body["rows"]}
     assert names == {"@acc/coding-roles", "@acc/research-roles"}
+    # a checkout with reachable catalogs: nothing hidden, Install is real
+    assert body["catalog_errors"] == []
+    assert body["cluster"] is False
 
 
 def test_roles_available_filter(client):
     r = client.get("/api/roles/available?filter=@acc/coding")
     assert r.status_code == 200
-    rows = r.json()
+    rows = r.json()["rows"]
     assert {row["name"] for row in rows} == {"@acc/coding-roles"}
 
 
 def test_roles_available_carries_tier_badge(client):
     r = client.get("/api/roles/available")
-    for row in r.json():
+    for row in r.json()["rows"]:
         assert row["tier"] == "trusted"
         assert row["tier_badge"] == "[TRUSTED]"
 

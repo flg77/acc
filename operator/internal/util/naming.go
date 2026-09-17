@@ -26,3 +26,11 @@ import (
 func AgentDeploymentName(collectiveName, role string) string {
 	return fmt.Sprintf("%s-%s", collectiveName, strings.ReplaceAll(role, "_", "-"))
 }
+
+// OTelCollectorServiceName returns the Service name of the OpenTelemetry
+// Collector the operator deploys for a corpus (observability.backend=otel).
+// The collector reconciler creates it and the agent Deployment points
+// OTEL_EXPORTER_OTLP_ENDPOINT at it — both MUST resolve it through here.
+func OTelCollectorServiceName(corpusName string) string {
+	return fmt.Sprintf("%s-otel-collector", corpusName)
+}

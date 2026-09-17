@@ -102,7 +102,7 @@ metadata:
     # "enable plugin" box). The named ConsolePlugin object is delivered as a
     # standalone bundle object (acc-console-plugin.consoleplugin.yaml).
     console.openshift.io/plugins: '["acc-console-plugin"]'
-    containerImage: quay.io/flg77/acc_images:acc-operator-0.2.15
+    containerImage: quay.io/flg77/acc_images:acc-operator-0.2.18
     createdAt: "2026-04-15T00:00:00Z"
     operatorframework.io/suggested-namespace: acc-system
     description: >-
@@ -115,7 +115,7 @@ metadata:
     operators.operatorframework.io/builder: operator-sdk-v1.34.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     support: Community (best-effort; no SLA) — NOT supported by Red Hat
-  name: acc-operator.v0.2.15
+  name: acc-operator.v0.2.18
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -304,7 +304,7 @@ spec:
                 - --metrics-bind-address=:8080
                 command:
                 - /manager
-                image: quay.io/flg77/acc_images:acc-operator-0.2.15
+                image: quay.io/flg77/acc_images:acc-operator-0.2.18
                 imagePullPolicy: Always
                 livenessProbe:
                   httpGet:
@@ -371,7 +371,7 @@ spec:
             spec:
               containers:
               - name: acc-console-plugin
-                image: quay.io/flg77/acc_images:acc-console-plugin-0.2.15
+                image: quay.io/flg77/acc_images:acc-console-plugin-0.2.18
                 imagePullPolicy: Always
                 ports:
                 - name: tls
@@ -408,11 +408,19 @@ spec:
                 - name: serving-cert
                   mountPath: /var/serving-cert
                   readOnly: true
+                # nginx runs on a read-only root FS (readOnlyRootFilesystem:
+                # true); nginx.conf already routes pid + all *_temp paths under
+                # /tmp, so mount a writable emptyDir there or nginx aborts with
+                # `mkdir() "/tmp/client_temp" failed (Read-only file system)`.
+                - name: tmp
+                  mountPath: /tmp
               volumes:
               - name: serving-cert
                 secret:
                   secretName: acc-console-plugin-serving-cert
                   defaultMode: 420
+              - name: tmp
+                emptyDir: {}
               securityContext:
                 runAsNonRoot: true
               imagePullSecrets:
@@ -453,12 +461,12 @@ spec:
     name: Agentic Cell Corpus (Community)
     url: https://github.com/flg77/acc
   relatedImages:
-  - image: quay.io/flg77/acc_images:acc-operator-0.2.15
+  - image: quay.io/flg77/acc_images:acc-operator-0.2.18
     name: manager
-  - image: quay.io/flg77/acc_images:acc-console-plugin-0.2.15
+  - image: quay.io/flg77/acc_images:acc-console-plugin-0.2.18
     name: console-plugin
-  version: 0.2.15
-  replaces: acc-operator.v0.2.14
+  version: 0.2.18
+  replaces: acc-operator.v0.2.17
   webhookdefinitions:
   - admissionReviewVersions:
     - v1

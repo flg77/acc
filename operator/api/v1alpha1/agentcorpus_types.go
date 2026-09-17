@@ -924,14 +924,19 @@ type ObservabilitySpec struct {
 
 // OTelCollectorSpec configures the OTel collector deployment.
 type OTelCollectorSpec struct {
-	// Endpoint is the OTLP gRPC/HTTP endpoint to export telemetry to.
-	// PREREQUISITE: an OTLP backend must be reachable at this address —
-	// nothing on a fresh cluster provides one. Sandbox-friendly option:
-	// the Tempo operator + a TempoMonolithic instance (PVC-backed, no S3),
-	// e.g. tempo-acc-tempo.acc-observability.svc.cluster.local:4317.
-	// If you do not need traces, set observability.backend to "log" instead.
-	// +kubebuilder:validation:MinLength=1
-	Endpoint string `json:"endpoint"`
+	// Endpoint is the REMOTE OTLP gRPC/HTTP endpoint the corpus's collector
+	// forwards telemetry to (Tempo, Jaeger, a central collector …). Agents
+	// never use it: they always export to the collector Service the operator
+	// deploys (<corpus>-otel-collector:4317). Leave empty to keep telemetry
+	// in-cluster (the collector still serves Prometheus metrics on :8889 and
+	// the debug exporter). Setting it to the corpus's own collector Service
+	// is ignored — it would make the collector forward to itself.
+	// Sandbox-friendly remote: the Tempo operator + a TempoMonolithic
+	// instance (PVC-backed, no S3), e.g.
+	// tempo-acc-tempo.acc-observability.svc.cluster.local:4317 (tlsInsecure
+	// for in-cluster plaintext).
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
 
 	// Image overrides the OpenTelemetry Collector container image. Leave
 	// empty for the operator's pinned default (mirrored into the ACC image
@@ -940,11 +945,11 @@ type OTelCollectorSpec struct {
 	// +optional
 	Image string `json:"image,omitempty"`
 
-	// Protocol selects the OTLP transport agents use to reach Endpoint.
-	// Matches the upstream OTel spec env var OTEL_EXPORTER_OTLP_PROTOCOL.
-	// Default "grpc" preserves pre-Phase-3 behaviour (port :4317);
-	// "http/protobuf" targets HTTP collectors / MLflow /v1/traces on
-	// :4318 — see docs/observability/mlflow.md.
+	// Protocol selects the OTLP transport agents use to reach the corpus's
+	// collector Service. Matches the upstream OTel spec env var
+	// OTEL_EXPORTER_OTLP_PROTOCOL. Default "grpc" preserves pre-Phase-3
+	// behaviour (port :4317); "http/protobuf" uses the collector's HTTP
+	// receiver on :4318 — see docs/observability/mlflow.md.
 	// +kubebuilder:validation:Enum=grpc;http/protobuf
 	// +kubebuilder:default=grpc
 	// +optional
@@ -968,6 +973,15 @@ type OTelCollectorSpec struct {
 	// (operators who run a standalone Collector configure MLflow there).
 	// +optional
 	MLflowEndpoint string `json:"mlflowEndpoint,omitempty"`
+
+	// MLflowExperimentID is the MLflow experiment id (not name) the
+	// collector's OTLP fan-out writes traces into. MLflow's /v1/traces
+	// requires the x-mlflow-experiment-id header — MLflow >= 3.x answers
+	// 422 and stores nothing without it — so set this whenever
+	// MLflowEndpoint is set. Look the id up with
+	// `GET /api/2.0/mlflow/experiments/get-by-name?experiment_name=…`.
+	// +optional
+	MLflowExperimentID string `json:"mlflowExperimentID,omitempty"`
 }
 
 // UpgradePolicySpec controls how the operator handles version upgrades.
