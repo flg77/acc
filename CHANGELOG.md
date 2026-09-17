@@ -11,6 +11,26 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.12] — 2026-09-17
+
+A test-only release. The runtime, the TUI, the WebGUI and the operator are
+byte-for-byte what 0.17.11 shipped; what changes is that the release gate stops
+failing releases at random.
+
+### Fixed
+
+- **A TUI pilot test failed the build gate on a tag that had already passed it**
+  (#431). `test_begin_activity_paints_continuous_line` ticked the Prompt screen's
+  activity spinner by hand, then awaited a pause before asserting it had advanced
+  by exactly one. The screen's own one-second activity timer is live during that
+  pause and could tick it a second time. On acc1 it failed the `acc-build` pytest
+  gate — 1 of 5886 — on the v0.17.11 operator release run, a day after the same
+  tag passed, and cost a 40-minute rebuild. The manual tick is now asserted
+  before anything yields to the event loop, and the test proves more than before:
+  exactly one new line is painted, it starts with the next spinner frame, and it
+  still reads "processing" after the pause. Under CPU load the old test failed
+  16 times in 100; the new one passed 100 of 100.
+
 ## [0.17.11] — 2026-09-16
 
 A person opening the workshop's TUI and WebGUI on bb3 found them disconnected

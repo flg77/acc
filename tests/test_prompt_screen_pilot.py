@@ -757,10 +757,21 @@ async def test_begin_activity_paints_continuous_line():
         assert screen._active_progress is not None
 
         # The ticker advances the spinner without an agent event.
+        # The screen's own 1 s activity interval is live too and can fire
+        # during any await, so the manual tick is checked synchronously:
+        # nothing between reading `before` and the asserts yields to the
+        # event loop, so the live timer cannot add a second tick.
+        from acc.tui.screens.prompt import _SPINNER
         before = screen._spinner_i
+        painted = len(captured)
         screen._tick_activity()
-        await pilot.pause()
         assert screen._spinner_i == before + 1
+        assert len(captured) == painted + 1
+        assert captured[-1].startswith(
+            f"[blue]{_SPINNER[(before + 1) % len(_SPINNER)]}[/blue]"
+        )
+        assert "processing" in captured[-1]
+        await pilot.pause()
         assert "processing" in captured[-1]
 
 
