@@ -6,7 +6,9 @@
 #   name, vendor, version, summary, description
 
 # ── Build stage ─────────────────────────────────────────────────────────────
-FROM registry.access.redhat.com/ubi10/go-toolset:10.0 AS builder
+# go.mod requires go >= 1.25.0; go-toolset:10.0 ships 1.24.6 with GOTOOLCHAIN=local,
+# so `go mod download` refuses before building anything. 10.1 ships 1.25.x.
+FROM registry.access.redhat.com/ubi10/go-toolset:10.1 AS builder
 
 USER root
 WORKDIR /workspace

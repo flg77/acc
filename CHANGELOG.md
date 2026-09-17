@@ -11,6 +11,23 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.13] — 2026-09-17
+
+A build-only release. The runtime, TUI and WebGUI are what 0.17.12 shipped; this
+is the release the operator 0.2.15 image can be built from.
+
+### Fixed
+
+- **The operator image had stopped building** (#433). `operator/go.mod` requires
+  Go >= 1.25.0 — the `golang.org/x` modules have needed it since the dependabot
+  bumps — but the Containerfile's builder stage was `ubi10/go-toolset:10.0`,
+  which ships Go 1.24.6 with `GOTOOLCHAIN=local`, so `go mod download` refused
+  before compiling anything. Nobody noticed because operators 0.2.12–0.2.14 were
+  built by hand outside that Containerfile; the first pipeline build of 0.2.15 on
+  acc1 hit it. The builder is now `go-toolset:10.1` (Go 1.25.9), pinned rather
+  than `:latest` (already Go 1.26). Verified on acc1: the embedded manifests sync,
+  the image builds and the manager binary runs.
+
 ## [0.17.12] — 2026-09-17
 
 A test-only release. The runtime, the TUI, the WebGUI and the operator are
