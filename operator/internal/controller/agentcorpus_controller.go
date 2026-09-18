@@ -24,7 +24,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers"
@@ -107,8 +109,35 @@ func (r *AgentCorpusReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&accv1alpha1.AgentCorpus{}).
-		Owns(&accv1alpha1.AgentCollective{}).
+		// An AgentCollective is user-created and referenced BY NAME from
+		// spec.collectives — the operator never sets an owner reference on it,
+		// so the former Owns(&AgentCollective{}) (an owner-ref watch) never
+		// fired: an edit to a collective (extraEnv, replicas, resources) only
+		// reached the agent StatefulSet on the next unrelated corpus reconcile,
+		// and a Ready corpus does not requeue on its own (workshop-gaps G-10).
+		// Map every collective event to the corpora that reference it instead.
+		Watches(&accv1alpha1.AgentCollective{}, handler.EnqueueRequestsFromMapFunc(r.MapCollectiveToCorpora)).
 		Complete(r)
+}
+
+// MapCollectiveToCorpora enqueues every AgentCorpus in the collective's
+// namespace whose spec.collectives references it by name.
+func (r *AgentCorpusReconciler) MapCollectiveToCorpora(ctx context.Context, obj client.Object) []reconcile.Request {
+	var corpora accv1alpha1.AgentCorpusList
+	if err := r.Client.List(ctx, &corpora, client.InNamespace(obj.GetNamespace())); err != nil {
+		corpusLog.Error(err, "list AgentCorpora for collective event", "collective", obj.GetName())
+		return nil
+	}
+	var reqs []reconcile.Request
+	for i := range corpora.Items {
+		for _, ref := range corpora.Items[i].Spec.Collectives {
+			if ref.Name == obj.GetName() {
+				reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&corpora.Items[i])})
+				break
+			}
+		}
+	}
+	return reqs
 }
 
 // Reconcile is the main reconciliation loop.

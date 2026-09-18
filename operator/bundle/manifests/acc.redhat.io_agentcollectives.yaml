@@ -66,8 +66,28 @@ spec:
                     for one agent role.
                   properties:
                     extraEnv:
-                      description: ExtraEnv injects additional environment variables
-                        into agent pods.
+                      description: |-
+                        ExtraEnv injects additional environment variables into this role's agent
+                        container. Both value and valueFrom (secretKeyRef, configMapKeyRef,
+                        fieldRef) are honoured. The variables are appended AFTER the operator's
+                        own env, so for any key the runtime's env overlay reads (ACC_LLM_BACKEND,
+                        ACC_LLM_BASE_URL, ACC_LLM_MODEL, ACC_LLM_API_KEY_ENV, ...) a value set here
+                        overrides the rendered acc-config.yaml — the way to point one role at a
+                        different model or gateway than spec.llm.
+
+                        Names the operator sets on every agent container are RESERVED: the
+                        webhook refuses them and the reconciler skips them. Reserved:
+                        ACC_AGENT_ROLE, ACC_COLLECTIVE_ID, ACC_CORPUS_NAME, ACC_CONFIG_PATH,
+                        ACC_POD_NAME, ACC_POD_UID, ACC_ROLES_ROOT, ACC_SKILLS_ROOT, ACC_MCPS_ROOT,
+                        ACC_ANTHROPIC_API_KEY, ACC_VLLM_INFERENCE_URL, ACC_KAFKA_SASL_USERNAME,
+                        ACC_KAFKA_SASL_PASSWORD, ACC_RUNTIME_EVIDENCE_ENABLED, ACC_RUNTIME_ENFORCE,
+                        OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_PROTOCOL, ACC_NKEY_ENABLED,
+                        ACC_NKEY_ROLE, ACC_NKEY_SEED_PATH, ACC_SPIFFE_SVID_MOUNT_PATH,
+                        ACC_SVID_X509_PATH, ACC_SVID_JWT_PATH, ACC_SANDBOX_NAME, OPENSHELL_GATEWAY,
+                        OPENSHELL_NO_BROWSER, OPENSHELL_LOCAL_TLS_DIR, OPENSHELL_OIDC_CLIENT_SECRET,
+                        OPENSHELL_OIDC_CLIENT_ID, OPENSHELL_OIDC_ISSUER, OPENSHELL_OIDC_AUDIENCE,
+                        XDG_CONFIG_HOME, SSL_CERT_FILE, ACC_DEPLOY_MODE, ACC_OPERATOR_MODE,
+                        ACC_NATS_URL, ACC_NATS_HUB_URL, ACC_REDIS_URL, ACC_REDIS_PASSWORD.
                       items:
                         description: EnvVar represents an environment variable present
                           in a Container.

@@ -66,6 +66,10 @@ exporters:
   # otelCollector.mlflowExperimentID or the spans are silently dropped.
   otlphttp/mlflow:
     endpoint: {{ .MLflowEndpoint }}
+    # The exporter gzips by default and MLflow (3.6 verified) does not
+    # decompress: every batch came back 400 "Invalid OpenTelemetry protobuf
+    # format" while the identical body uncompressed was stored.
+    compression: none
     tls:
       insecure: {{ .TLSInsecure }}
     {{- if .MLflowExperimentID }}

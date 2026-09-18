@@ -1353,13 +1353,19 @@ class ACCConfig(BaseModel):
             # that renders ``llm.backend: anthropic`` — the supported cloud
             # backend on OpenShift — fails config validation at agent startup.)
             _URLLESS_LLM_BACKENDS = ("anthropic",)
+            # ``llm.base_url`` is the universal endpoint field (openai_compat,
+            # and vllm prefers it over the legacy vllm_inference_url), so it
+            # satisfies the rule too — an openai_compat agent configured
+            # through ACC_LLM_BASE_URL alone must start.
             if (
                 self.llm.backend not in _URLLESS_LLM_BACKENDS
+                and not self.llm.base_url
                 and not self.llm.vllm_inference_url
                 and not self.llm.llama_stack_url
             ):
                 raise ValueError(
-                    "llm.vllm_inference_url or llm.llama_stack_url is required in rhoai deploy_mode"
+                    "llm.base_url, llm.vllm_inference_url or llm.llama_stack_url "
+                    "is required in rhoai deploy_mode"
                 )
         # edge: no required fields — hub_url and peer_collectives are optional
         # (agent operates locally when disconnected from hub).

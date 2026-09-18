@@ -135,6 +135,23 @@ func (r *AgentCollective) validateAgentCollective() (admission.Warnings, error) 
 			i, role))
 	}
 
+	// spec.agents[].extraEnv may not shadow a variable the operator sets on the
+	// agent container (identity, corpus wiring, projected credentials,
+	// telemetry) — those names are reserved. Refusing here gives the user the
+	// message at apply time instead of a silently ignored entry.
+	for i, a := range r.Spec.Agents {
+		for j, e := range a.ExtraEnv {
+			if IsReservedAgentEnv(e.Name) {
+				allErrs = append(allErrs, field.Forbidden(
+					field.NewPath("spec", "agents").Index(i).Child("extraEnv").Index(j).Child("name"),
+					fmt.Sprintf("%s is reserved: the operator sets it on every agent container and "+
+						"extraEnv may not override it (see the AgentCollective extraEnv field "+
+						"documentation for the full reserved list)", e.Name),
+				))
+			}
+		}
+	}
+
 	// A scaling override must target a role declared in spec.agents. The
 	// role's catalogue membership is already handled in the agents loop above,
 	// so don't re-check it here — that would re-reject package-provided roles.

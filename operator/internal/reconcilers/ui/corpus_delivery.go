@@ -44,6 +44,18 @@ const (
 	// packagesMountPath is the writable packages root; acc.pkg.registry
 	// defaults to /var/lib/acc/packages underneath it.
 	packagesMountPath = "/var/lib/acc"
+
+	// RegulatoryInitContainerName copies the runtime's Rego rule inventory
+	// (regulatory_layer/) out of the agent-core image into the pod: the UI
+	// images do not ship it, and the Compliance screen (acc-spearhead #439,
+	// runtime 0.17.14) reads it from RegulatoryMountPath when present —
+	// ACC_REGULATORY_ROOT stays unset, the runtime tries the path by default.
+	RegulatoryInitContainerName = "regulatory-layer"
+	// RegulatoryMountPath is where the runtime looks for the inventory.
+	RegulatoryMountPath = "/etc/acc/regulatory_layer"
+	// regulatoryImagePath is where the agent-core image carries it.
+	regulatoryImagePath  = "/app/regulatory_layer"
+	regulatoryVolumeName = "acc-regulatory"
 )
 
 // withCorpusDelivery gives a UI pod what an agent pod gets, so the TUI and
@@ -58,11 +70,15 @@ const (
 //     /etc/acc/catalogs.yaml (optional: an empty dir until an AccCatalog
 //     exists, and kubelet fills it in when one appears);
 //   - an acc-packages emptyDir at /var/lib/acc;
-//   - the pkg-installer sidecar that AccPackageInstall execs into.
+//   - the pkg-installer sidecar that AccPackageInstall execs into;
+//   - the Rego rule inventory (regulatory_layer/) at /etc/acc/regulatory_layer,
+//     read-only, copied out of the agent-core image by an init container into
+//     an acc-regulatory emptyDir — independent of spec.manifestDelivery, since
+//     it comes from the image, not a ConfigMap.
 //
 // It mutates the container named uiContainer in place and appends the
-// sidecar and volumes to the pod spec. The UI container's own security
-// context is left untouched.
+// sidecar, the init container and the volumes to the pod spec. The UI
+// container's own security context is left untouched.
 func withCorpusDelivery(
 	ctx context.Context,
 	c client.Reader,
@@ -87,15 +103,17 @@ func withCorpusDelivery(
 		}
 		found = true
 		pod.Containers[i].Env = append(pod.Containers[i].Env, manifestEnv...)
-		pod.Containers[i].VolumeMounts = append(pod.Containers[i].VolumeMounts, mounts...)
+		pod.Containers[i].VolumeMounts = append(append(pod.Containers[i].VolumeMounts, mounts...),
+			corev1.VolumeMount{Name: regulatoryVolumeName, MountPath: RegulatoryMountPath, ReadOnly: true})
 	}
 	if !found {
 		return fmt.Errorf("pod spec has no %q container", uiContainer)
 	}
 
+	agentCoreImage := util.ComponentImage(corpus, "acc-agent-core", corpus.Spec.Version)
 	pod.Containers = append(pod.Containers, corev1.Container{
 		Name:  PkgInstallerContainerName,
-		Image: util.ComponentImage(corpus, "acc-agent-core", corpus.Spec.Version),
+		Image: agentCoreImage,
 		// Idle: AccPackageInstall execs the installer on demand.
 		Command:         []string{"sleep", "infinity"},
 		Env:             append([]corev1.EnvVar(nil), manifestEnv...),
@@ -103,7 +121,23 @@ func withCorpusDelivery(
 		SecurityContext: collective.AgentContainerSecurityContext(),
 	})
 
+	// The directory is guarded so a corpus pinned to an agent-core image that
+	// predates regulatory_layer/ still gets its UI pod (the runtime then sees
+	// an empty inventory, as it would without the mount).
+	pod.InitContainers = append(pod.InitContainers, corev1.Container{
+		Name:  RegulatoryInitContainerName,
+		Image: agentCoreImage,
+		Command: []string{"sh", "-c",
+			"if [ -d " + regulatoryImagePath + " ]; then cp -a " + regulatoryImagePath + "/. " + RegulatoryMountPath + "/; fi"},
+		VolumeMounts:    []corev1.VolumeMount{{Name: regulatoryVolumeName, MountPath: RegulatoryMountPath}},
+		SecurityContext: collective.AgentContainerSecurityContext(),
+	})
+
 	pod.Volumes = append(append(pod.Volumes,
+		corev1.Volume{
+			Name:         regulatoryVolumeName,
+			VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+		},
 		corev1.Volume{
 			Name: "acc-catalogs",
 			VolumeSource: corev1.VolumeSource{

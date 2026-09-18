@@ -17,6 +17,7 @@ package unit_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -140,6 +141,61 @@ func assertInstallerSidecar(t *testing.T, d *appsv1.Deployment, wantManifests bo
 	}
 }
 
+// assertRegulatoryLayer checks the UI container reads the Rego rule inventory
+// at /etc/acc/regulatory_layer from an emptyDir an init container on the
+// agent-core image filled (0.2.19: the UI images do not ship
+// regulatory_layer/, the Compliance screen reads it from that path when
+// present). ACC_REGULATORY_ROOT must stay unset.
+func assertRegulatoryLayer(t *testing.T, d *appsv1.Deployment, ctr corev1.Container) {
+	t.Helper()
+	var mount *corev1.VolumeMount
+	for i := range ctr.VolumeMounts {
+		if ctr.VolumeMounts[i].MountPath == ui.RegulatoryMountPath {
+			mount = &ctr.VolumeMounts[i]
+		}
+	}
+	if mount == nil || mount.Name != "acc-regulatory" || !mount.ReadOnly {
+		t.Errorf("%s/%s: want read-only acc-regulatory at %s, got %v", d.Name, ctr.Name, ui.RegulatoryMountPath, ctr.VolumeMounts)
+	}
+	for _, e := range ctr.Env {
+		if e.Name == "ACC_REGULATORY_ROOT" {
+			t.Errorf("%s/%s: ACC_REGULATORY_ROOT must not be set (the runtime tries the path by default)", d.Name, ctr.Name)
+		}
+	}
+	var vol *corev1.Volume
+	for i := range d.Spec.Template.Spec.Volumes {
+		if d.Spec.Template.Spec.Volumes[i].Name == "acc-regulatory" {
+			vol = &d.Spec.Template.Spec.Volumes[i]
+		}
+	}
+	if vol == nil || vol.EmptyDir == nil {
+		t.Errorf("%s: acc-regulatory must be an emptyDir, got %+v", d.Name, vol)
+	}
+
+	var init *corev1.Container
+	for i := range d.Spec.Template.Spec.InitContainers {
+		if d.Spec.Template.Spec.InitContainers[i].Name == ui.RegulatoryInitContainerName {
+			init = &d.Spec.Template.Spec.InitContainers[i]
+		}
+	}
+	if init == nil {
+		t.Fatalf("%s: no %s init container, got %v", d.Name, ui.RegulatoryInitContainerName, d.Spec.Template.Spec.InitContainers)
+	}
+	if init.Image != "quay.io/flg77/acc_images:acc-agent-core-0.2.0" {
+		t.Errorf("%s: the init container must run the agent-core image (ships regulatory_layer/), got %q", d.Name, init.Image)
+	}
+	if cmd := strings.Join(init.Command, " "); !strings.Contains(cmd, "cp -a /app/regulatory_layer/. "+ui.RegulatoryMountPath+"/") {
+		t.Errorf("%s: init container must copy /app/regulatory_layer into the mount, got %q", d.Name, cmd)
+	}
+	if len(init.VolumeMounts) != 1 || init.VolumeMounts[0].Name != "acc-regulatory" ||
+		init.VolumeMounts[0].MountPath != ui.RegulatoryMountPath || init.VolumeMounts[0].ReadOnly {
+		t.Errorf("%s: init container must mount acc-regulatory writable at %s, got %v", d.Name, ui.RegulatoryMountPath, init.VolumeMounts)
+	}
+	if sc := init.SecurityContext; sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+		t.Errorf("%s: init container must use the restricted agent container security context, got %+v", d.Name, sc)
+	}
+}
+
 func TestTUIIdlePodGetsTheCorpusDelivery(t *testing.T) {
 	c, _ := webguiClient(t, manifestCMs()...)
 	r := &ui.TUIReconciler{Client: c, Scheme: newScheme(t)}
@@ -151,6 +207,7 @@ func TestTUIIdlePodGetsTheCorpusDelivery(t *testing.T) {
 	tui := containerNamed(t, d, "tui")
 	assertCorpusDelivery(t, d, tui, true)
 	assertInstallerSidecar(t, d, true)
+	assertRegulatoryLayer(t, d, tui)
 	if tui.SecurityContext != nil {
 		t.Errorf("tui container security context must stay as it was (unset), got %+v", tui.SecurityContext)
 	}
@@ -171,6 +228,7 @@ func TestTUIWebTerminalGetsTheCorpusDelivery(t *testing.T) {
 	}
 	assertCorpusDelivery(t, d, tui, true)
 	assertInstallerSidecar(t, d, true)
+	assertRegulatoryLayer(t, d, tui)
 	// The auth proxy gets none of it.
 	if proxy := containerNamed(t, d, "oauth2-proxy"); len(proxy.VolumeMounts) != 0 {
 		t.Errorf("oauth2-proxy must not mount corpus data, got %v", proxy.VolumeMounts)
@@ -189,10 +247,12 @@ func TestWebGUIGetsTheCorpusDelivery(t *testing.T) {
 	d := uiDeployment(t, c, "rhoai-corpus-webgui")
 	assertCorpusDelivery(t, d, containerNamed(t, d, "webgui"), true)
 	assertInstallerSidecar(t, d, true)
+	assertRegulatoryLayer(t, d, containerNamed(t, d, "webgui"))
 }
 
 // manifestDelivery=none: the image's baked roles stay in use (no ACC_*_ROOT
-// override), exactly as agents get nothing; catalogs + packages still arrive.
+// override), exactly as agents get nothing; catalogs + packages still arrive,
+// and so does the regulatory layer (image-sourced, not a manifest ConfigMap).
 func TestUIManifestDeliveryNoneKeepsImageRoles(t *testing.T) {
 	c, _ := webguiClient(t, manifestCMs()...)
 	r := &ui.TUIReconciler{Client: c, Scheme: newScheme(t)}
@@ -204,6 +264,7 @@ func TestUIManifestDeliveryNoneKeepsImageRoles(t *testing.T) {
 	d := uiDeployment(t, c, "rhoai-corpus-tui")
 	assertCorpusDelivery(t, d, containerNamed(t, d, "tui"), false)
 	assertInstallerSidecar(t, d, false)
+	assertRegulatoryLayer(t, d, containerNamed(t, d, "tui"))
 }
 
 // A corpus with the UIs disabled gets no UI Deployment, hence no installer

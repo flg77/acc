@@ -85,6 +85,17 @@ class TestACCConfigValidation:
                 "llm": {"vllm_inference_url": "", "llama_stack_url": ""},
             })
 
+    def test_rhoai_openai_compat_base_url_suffices(self):
+        # openai_compat is configured through llm.base_url (ACC_LLM_BASE_URL);
+        # the legacy vllm/llama_stack URL fields stay empty. bb3 2026-09-18:
+        # every agent on the MaaS gateway crashed at startup on this rule.
+        config = ACCConfig.model_validate({
+            "deploy_mode": "rhoai",
+            "vector_db": {"backend": "turbovec"},
+            "llm": {"backend": "openai_compat", "base_url": "https://maas.example/v1", "model": "gpt-oss-120b"},
+        })
+        assert config.llm.base_url == "https://maas.example/v1"
+
     def test_rhoai_valid(self):
         config = ACCConfig.model_validate({
             "deploy_mode": "rhoai",

@@ -30,7 +30,7 @@ func TestBuildExtraEnv_OTelExporterTargetsOwnCollector(t *testing.T) {
 	roleSpec := accv1alpha1.AgentRoleSpec{Role: "coding"}
 
 	got := map[string]string{}
-	for _, e := range buildExtraEnv(corpus, coll, roleSpec, "") {
+	for _, e := range BuildExtraEnv(corpus, coll, roleSpec, "") {
 		got[e.Name] = e.Value
 	}
 	if got["OTEL_EXPORTER_OTLP_ENDPOINT"] != "demo-otel-collector:4317" {
@@ -42,7 +42,7 @@ func TestBuildExtraEnv_OTelExporterTargetsOwnCollector(t *testing.T) {
 
 	// Log backend: no exporter env at all.
 	corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{Backend: accv1alpha1.MetricsBackendLog}
-	for _, e := range buildExtraEnv(corpus, coll, roleSpec, "") {
+	for _, e := range BuildExtraEnv(corpus, coll, roleSpec, "") {
 		if e.Name == "OTEL_EXPORTER_OTLP_ENDPOINT" || e.Name == "OTEL_EXPORTER_OTLP_PROTOCOL" {
 			t.Errorf("log backend must not set %s", e.Name)
 		}

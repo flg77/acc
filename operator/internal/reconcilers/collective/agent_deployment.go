@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/reconcilers/manifests"
@@ -27,6 +28,8 @@ import (
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/templates"
 	"github.com/redhat-ai-dev/agentic-cell-corpus/operator/internal/util"
 )
+
+var agentLog = logf.Log.WithName("agent-deployment")
 
 // Proposal 024 — agent StatefulSet persistence.
 const (
@@ -252,7 +255,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	deployName := util.AgentDeploymentName(collective.Name, string(role))
 
 	// Resolve Anthropic API key env var if needed.
-	extraEnv := buildExtraEnv(corpus, collective, roleSpec, inferenceURL)
+	extraEnv := BuildExtraEnv(corpus, collective, roleSpec, inferenceURL)
 
 	// Manifest delivery (PR-51): build the three roles/skills/mcps volumes
 	// and items[] projections from the corpus-scoped ConfigMaps emitted by
@@ -477,12 +480,12 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 	return readyReplicas, desiredReplicas, isProgressing, nil
 }
 
-// buildExtraEnv appends the role-specific ExtraEnv and injects the Anthropic
+// BuildExtraEnv appends the role-specific ExtraEnv and injects the Anthropic
 // API key reference when the LLM backend is anthropic. inferenceURL is the
 // vLLM model endpoint resolved from the referenced InferenceService status;
 // the rendered acc-config.yaml carries the ${ACC_VLLM_INFERENCE_URL}
 // placeholder that this env var satisfies.
-func buildExtraEnv(
+func BuildExtraEnv(
 	corpus *accv1alpha1.AgentCorpus,
 	collective *accv1alpha1.AgentCollective,
 	roleSpec accv1alpha1.AgentRoleSpec,
@@ -553,9 +556,30 @@ func buildExtraEnv(
 	// the TUI/WebGUI reconcilers do not run the OTel backend.
 	envs = append(envs, templates.OTelAgentExporterEnv(corpus)...)
 
-	// Role-specific extra env.
-	envs = append(envs, roleSpec.ExtraEnv...)
+	// Role-specific extra env (spec.agents[].extraEnv) goes LAST so a user
+	// value wins over the rendered acc-config.yaml for any key the runtime's
+	// env overlay honours (ACC_LLM_BACKEND, ACC_LLM_BASE_URL, ACC_LLM_MODEL,
+	// ...) — the workshop-gaps G-10 use case: point one role at another
+	// gateway. Names the operator owns are refused at admission; skip them
+	// here too so a cluster without the webhook cannot smuggle one past.
+	envs = append(envs, UserExtraEnv(roleSpec)...)
 	return envs
+}
+
+// UserExtraEnv returns roleSpec.ExtraEnv minus any reserved name
+// (accv1alpha1.ReservedAgentEnvNames), logging each one it drops. value and
+// valueFrom entries pass through untouched.
+func UserExtraEnv(roleSpec accv1alpha1.AgentRoleSpec) []corev1.EnvVar {
+	var out []corev1.EnvVar
+	for _, e := range roleSpec.ExtraEnv {
+		if accv1alpha1.IsReservedAgentEnv(e.Name) {
+			agentLog.Info("skipping reserved name in spec.agents[].extraEnv — the operator sets it on every agent container",
+				"role", roleSpec.Role, "name", e.Name)
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func derefResources(r *corev1.ResourceRequirements) corev1.ResourceRequirements {

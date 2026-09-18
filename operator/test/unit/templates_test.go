@@ -506,6 +506,11 @@ func TestRenderOTelConfig_MLflowFanOut(t *testing.T) {
 	if !strings.Contains(conf, "otlphttp/mlflow:") {
 		t.Errorf("expected otlphttp/mlflow exporter when MLflowEndpoint set\n\n%s", conf)
 	}
+	// MLflow rejects gzip-encoded OTLP bodies (HTTP 400); the exporter must
+	// send them uncompressed.
+	if !strings.Contains(conf, "compression: none") {
+		t.Errorf("expected the MLflow exporter to disable compression\n\n%s", conf)
+	}
 	if !strings.Contains(conf, "endpoint: https://mlflow.example.com") {
 		t.Error("expected MLflow endpoint string in rendered config")
 	}
@@ -539,8 +544,8 @@ func TestRenderOTelConfig_MLflowExperimentIDHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenderOTelConfig error: %v", err)
 	}
-	want := "  otlphttp/mlflow:\n" +
-		"    endpoint: https://mlflow.example.com\n" +
+	// The exporter block from compression: on (the comment lines above it are not asserted).
+	want := "    compression: none\n" +
 		"    tls:\n" +
 		"      insecure: false\n" +
 		"    headers:\n" +

@@ -11,6 +11,17 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.15] — 2026-09-18
+
+An agent on an OpenAI-compatible gateway starts in rhoai deploy_mode. Found on
+bb3 when the workshop moved its five roles to the MaaS gateway: every agent
+crashed at config load, on a rule that never looked at the field the backend
+uses.
+
+### Fixed
+
+- **rhoai deploy_mode accepts `llm.base_url`** — the validator demanded `vllm_inference_url` or `llama_stack_url` for every backend but `anthropic` and never looked at `base_url`, the field `openai_compat` uses; an agent configured through `ACC_LLM_BASE_URL` alone crashed at startup (bb3, 2026-09-18, every agent on the MaaS gateway).
+
 ## [0.17.14] — 2026-09-17
 
 The WebGUI stops pretending it runs in a checkout. Found by the operator on
