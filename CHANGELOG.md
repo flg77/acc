@@ -11,6 +11,15 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.17] — 2026-09-19
+
+The first 0.17.16 trace on bb3, read closely: everything the lab's trace
+walk-through needs was there, and the token total was exactly twice the turn's.
+
+### Fixed
+
+- **A turn's tokens are counted once on its trace** — the post-gate marker and the pipeline pass's span still carried `gen_ai.usage.*` next to the model call's span, and MLflow sums usage over every span: a turn of two calls (560/145 and 1230/146) showed 3580/582 (bb3, 0.17.16). The gate's counts are now `acc.gate.*`, the agent's running total `acc.prompt_input_tokens_total`; `gen_ai.usage.*` is on `acc.pipeline.llm_invoke` alone.
+
 ## [0.17.16] — 2026-09-19
 
 The conversation is on the trace. Found on bb3 when the mortgage workshop put

@@ -140,6 +140,11 @@ of a trace of its own, so one question arrived as three to five traces.
 | `acc.pipeline.llm_invoke` | `chat` → CHAT_MODEL | the system and user messages sent, the assistant message returned, `gen_ai.request.model`, `gen_ai.response.model`, finish reason, `gen_ai.usage.*`; the span now lasts as long as the call (it was a zero-length marker) |
 | `acc.tool.invoke` | `execute_tool` → TOOL | `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` (JSON) |
 
+**Usage is counted once.** `gen_ai.usage.*` is on the `acc.pipeline.llm_invoke`
+span alone — a trace backend sums those keys over every span. The post-gate
+marker keeps the counts it judged as `acc.gate.input_tokens` /
+`acc.gate.output_tokens` (0.17.17; on 0.17.16 a turn showed twice its tokens).
+
 **User and session.** MLflow promotes `user.id` and `session.id` from the
 spans to the trace (the *Sessions* view, the user filter). The session is
 the thread a client named (`X-ACC-Session` on the compat endpoint, the

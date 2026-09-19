@@ -234,6 +234,20 @@ async def test_the_llm_span_carries_the_call(tracer):
 
 
 @pytest.mark.asyncio
+async def test_usage_is_on_the_model_call_and_nowhere_else(tracer):
+    """MLflow sums ``gen_ai.usage.*`` over every span of a trace.  With the
+    post-gate marker carrying the same keys a turn showed exactly twice its
+    tokens (bb3, 0.17.16: 3580/582 for two calls of 560/145 and 1230/146)."""
+    await _core().process_task({"task_id": "t1", "content": "Queue?"}, _role())
+    carriers = [s.name for s in tracer.spans
+                if any(k.startswith("gen_ai.usage.") for k in s.attributes)]
+    assert carriers == ["acc.pipeline.llm_invoke"]
+    (gate,) = tracer.named("acc.pipeline.gate_post")
+    assert (gate.attributes["acc.gate.input_tokens"],
+            gate.attributes["acc.gate.output_tokens"]) == (120, 30)
+
+
+@pytest.mark.asyncio
 async def test_the_root_span_carries_the_turn_and_the_identity(tracer):
     await _core().process_task({
         "task_id": "t1", "content": "Which applications wait for me?",

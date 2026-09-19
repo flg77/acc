@@ -1005,7 +1005,12 @@ class CognitiveCore:
                     "compliance_health_score": float(
                         result.stress.compliance_health_score,
                     ),
-                    "input_tokens": int(result.stress.prompt_input_tokens),
+                    # The agent's running totals, not this call's usage: kept
+                    # out of ``gen_ai.usage.*`` so a backend that sums usage
+                    # over spans counts each model call once (its own span).
+                    "acc.prompt_input_tokens_total": int(
+                        result.stress.prompt_input_tokens,
+                    ),
                     "cache_read_tokens": int(result.stress.cache_read_tokens),
                 })
                 # Phase 4 — reasoning trace as a span event so MLflow's
@@ -1512,12 +1517,16 @@ class CognitiveCore:
         post_gate_confidence = max(
             0.40, min(0.85, 0.85 - 0.225 * deviation_score),
         )
+        # The counts the gate judged — under ``acc.*``, NOT ``gen_ai.usage.*``:
+        # a trace backend sums the GenAI usage keys over every span, and the
+        # model call's span carries them already.  With both, MLflow showed
+        # exactly twice the tokens of a turn (bb3, 0.17.16).
         emit_stage("acc.pipeline.gate_post", {
             "cat_b_deviation_score": float(deviation_score),
-            "input_tokens": int(
+            "acc.gate.input_tokens": int(
                 response.get("usage", {}).get("prompt_tokens", 0) or 0,
             ),
-            "output_tokens": int(
+            "acc.gate.output_tokens": int(
                 response.get("usage", {}).get("completion_tokens", 0) or 0,
             ),
         })
