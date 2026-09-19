@@ -38,7 +38,16 @@ from acc.config import build_backends, build_llm_backend, load_config
 from acc.llm_failover import wrap_for_role
 from acc.hooks import Dispatcher as _HookDispatcher
 from acc.secret_scope import scrub
-from acc.cognitive_core import CognitiveCore, CognitiveResult, StressIndicators
+from acc.backends.genai_semconv import messages_json, trace_messages_enabled
+from acc.backends.pipeline_tracing import TurnScope, set_span_attributes
+from acc.cognitive_core import (
+    CognitiveCore,
+    CognitiveResult,
+    StressIndicators,
+    _redacts_messages,
+    _task_request_text,
+    _trace_identity,
+)
 from acc.role_assign import RoleAssignRejectedError, verify_role_assign
 from acc.role_store import RoleStore, RoleUpdateRejectedError
 from acc.signals import (
@@ -1782,7 +1791,7 @@ class Agent:
         """
         collective_id = self.config.agent.collective_id
 
-        async def _handle_task(msg: object) -> None:
+        async def _handle_task_body(msg: object, turn: "TurnScope") -> None:
             if self._cognitive_core is None:
                 # Dormant / observer — drop the task silently.  A
                 # subsequent ROLE_ASSIGN that promotes us will let
@@ -1969,6 +1978,26 @@ class Agent:
                     except Exception:
                         pass
 
+            # OpenSpec ``20260918-mlflow-shaped-spans`` — the turn's root span.
+            # Everything below (first pass, tool calls, tool-result pass) nests
+            # under it, so one question is one trace.  Opened here, after the
+            # routing filters, and closed by the wrapper on every path.
+            _redact_turn = _redacts_messages(self._active_role)
+            _turn_attrs = {
+                "task_id": str(data.get("task_id", "") or ""),
+                "role": self.config.agent.role,
+                "collective_id": collective_id,
+                "agent_id": self.agent_id,
+                "operation_name": "invoke_agent",
+                "agent_name": self.config.agent.role,
+                **_trace_identity(data),
+            }
+            if trace_messages_enabled():
+                _turn_attrs["input_messages"] = messages_json(
+                    [("user", _task_request_text(data))], redact=_redact_turn,
+                )
+            turn.open("acc.turn", _turn_attrs)
+
             # Durable trace — log the incoming prompt BEFORE the LLM call so the
             # turn is captured even when process_task raises (e.g. an LLM /
             # backend error, an out-of-credits 400).  See acc.tracelog.
@@ -2110,6 +2139,17 @@ class Agent:
                              % len(ignored)) if ignored else '',
                         )
                         result = second
+
+            # The turn's answer, on its root span (the final one: the
+            # tool-result pass when there was one).
+            if trace_messages_enabled():
+                set_span_attributes(turn.span, {
+                    "output_messages": messages_json(
+                        [("assistant", getattr(result, "output", "") or "")],
+                        redact=_redact_turn,
+                    ),
+                    "blocked": bool(getattr(result, "blocked", False)),
+                })
 
             # Durable per-turn session trace (prompt in → tool calls → Cat-ABC
             # governance verdicts → reply out) for post-session review +
@@ -2280,6 +2320,15 @@ class Agent:
                 await self.backends.signaling.publish(
                     subject_alert(collective_id), alert_payload
                 )
+
+        async def _handle_task(msg: object) -> None:
+            # The turn scope is closed here so every exit of the body — a
+            # dozen early returns, an exception — ends the root span.
+            turn = TurnScope()
+            try:
+                await _handle_task_body(msg, turn)
+            finally:
+                turn.close()
 
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
         # Assistant subscribes to its sleep/wake control subject so the

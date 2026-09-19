@@ -162,6 +162,10 @@ def authenticate(
 # ---------------------------------------------------------------------------
 
 
+#: A label for a trace, not a document: clipped so a client cannot park text in it.
+_END_USER_MAX_CHARS = 128
+
+
 @dataclass
 class ChatRequest:
     """A parsed standard chat-completions request."""
@@ -172,6 +176,11 @@ class ChatRequest:
     stream: bool = False
     raw_model: str = ""
     session_id: str = ""
+    #: The application's own end user — the standard ``user`` field.  It names
+    #: who the application was serving, for the trace (``user.id``); it is NOT
+    #: the requester.  The requester is the key's principal, and nothing a
+    #: client writes in a body changes who is accountable or what it may do.
+    end_user: str = ""
 
 
 def parse_request(body: dict[str, Any], *, session_id: str = "") -> ChatRequest:
@@ -245,6 +254,7 @@ def parse_request(body: dict[str, Any], *, session_id: str = "") -> ChatRequest:
         stream=bool(body.get("stream")),
         raw_model=model,
         session_id=session_id,
+        end_user=str(body.get("user") or "").strip()[:_END_USER_MAX_CHARS],
     )
 
 

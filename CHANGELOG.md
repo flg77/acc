@@ -11,6 +11,24 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.17.16] — 2026-09-19
+
+The conversation is on the trace. Found on bb3 when the mortgage workshop put
+an ACC agentset behind the application the AgentOps lab traces with MLflow: an
+ACC turn reached the platform's MLflow as three to five separate traces of
+empty spans — governance on them, no request, no answer, no tool payload, no
+user, no session — so the lab's trace walk-through had nothing to show.
+OpenSpec `20260918-mlflow-shaped-spans`.
+
+### Added
+
+- **One turn, one trace** — `acc.turn` is the root span of an operator turn; the first pipeline pass, every tool call and the tool-result pass nest under it. They were each the root of their own trace.
+- **The LLM span carries the call** — `acc.pipeline.llm_invoke` wraps the model call (it was a zero-length marker emitted before it) and carries `gen_ai.input.messages`, `gen_ai.output.messages`, request and response model, finish reason and `gen_ai.usage.*`. Always emitted; `ACC_TELEMETRY_SAMPLING` thins markers only.
+- **The tool span carries the call** — `gen_ai.operation.name=execute_tool`, `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`.
+- **The root spans carry the turn and the identity** — `invoke_agent`, the request and the answer as GenAI messages (MLflow derives the trace's Inputs/Outputs from them), `user.id` and `session.id`. The compat endpoint reads the standard `user` field as the application's end user — a label for the trace, never the requester.
+- **Policy** — `ACC_TRACE_MESSAGES` (`on`), `ACC_TRACE_MESSAGES_MAX_CHARS` (`8192`, per text, `…[n more]`), and a role's `telemetry.redact_messages` (the spans keep their shape and read `<redacted>`).
+- The `openai_compat` backend records the served model and finish reason beside the response (`last_response_meta`).
+
 ## [0.17.15] — 2026-09-18
 
 An agent on an OpenAI-compatible gateway starts in rhoai deploy_mode. Found on

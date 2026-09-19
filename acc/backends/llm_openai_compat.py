@@ -259,6 +259,21 @@ class OpenAICompatBackend:
                     )
 
                 data = resp.json()
+                # OpenSpec ``20260918-mlflow-shaped-spans`` — what the gateway
+                # says it served, for the LLM span (``gen_ai.response.model``,
+                # finish reason).  Kept beside the response rather than in it:
+                # the returned dict may be the model's own JSON object.  The
+                # backend is shared with the reflection loop, so this is
+                # telemetry-grade (last writer wins), never control flow.
+                try:
+                    _choice = (data.get("choices") or [{}])[0]
+                    self.last_response_meta = {
+                        "request_model": self._model,
+                        "response_model": str(data.get("model") or ""),
+                        "finish_reason": str(_choice.get("finish_reason") or ""),
+                    }
+                except Exception:  # pragma: no cover — defensive
+                    self.last_response_meta = {}
                 # MC-04: strip the model's control-token scaffolding, and
                 # treat a null content as empty rather than letting it reach
                 # json.loads() and raise out of the backend.

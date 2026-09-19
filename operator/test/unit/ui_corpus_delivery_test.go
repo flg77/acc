@@ -184,7 +184,7 @@ func assertRegulatoryLayer(t *testing.T, d *appsv1.Deployment, ctr corev1.Contai
 	if init.Image != "quay.io/flg77/acc_images:acc-agent-core-0.2.0" {
 		t.Errorf("%s: the init container must run the agent-core image (ships regulatory_layer/), got %q", d.Name, init.Image)
 	}
-	if cmd := strings.Join(init.Command, " "); !strings.Contains(cmd, "cp -a /app/regulatory_layer/. "+ui.RegulatoryMountPath+"/") {
+	if cmd := strings.Join(init.Command, " "); !strings.Contains(cmd, "cp -R /app/regulatory_layer/. "+ui.RegulatoryMountPath+"/") {
 		t.Errorf("%s: init container must copy /app/regulatory_layer into the mount, got %q", d.Name, cmd)
 	}
 	if len(init.VolumeMounts) != 1 || init.VolumeMounts[0].Name != "acc-regulatory" ||

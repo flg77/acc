@@ -394,8 +394,8 @@ func TestRenderACCConfig_EdgeMode(t *testing.T) {
 		"hub_url: nats-leaf://hub.example.com:7422",
 		"hub_collective_id: sol-dc-01",
 		"bridge_enabled: true",
-		"backend: lancedb",   // LanceDB, not Milvus
-		"backend: log",       // log metrics, not otel
+		"backend: lancedb", // LanceDB, not Milvus
+		"backend: log",     // log metrics, not otel
 	}
 	for _, check := range checks {
 		if !strings.Contains(yaml, check) {
@@ -511,6 +511,11 @@ func TestRenderOTelConfig_MLflowFanOut(t *testing.T) {
 	if !strings.Contains(conf, "compression: none") {
 		t.Errorf("expected the MLflow exporter to disable compression\n\n%s", conf)
 	}
+	// MLflow answers a stored batch with a JSON body under a protobuf
+	// content-type; without this the exporter re-sends every batch.
+	if !strings.Contains(conf, "retry_on_failure:\n      enabled: false") {
+		t.Errorf("expected the MLflow exporter to disable retry_on_failure\n\n%s", conf)
+	}
 	if !strings.Contains(conf, "endpoint: https://mlflow.example.com") {
 		t.Error("expected MLflow endpoint string in rendered config")
 	}
@@ -552,6 +557,58 @@ func TestRenderOTelConfig_MLflowExperimentIDHeader(t *testing.T) {
 		"      x-mlflow-experiment-id: \"123456789\"\n"
 	if !strings.Contains(conf, want) {
 		t.Errorf("expected otlphttp/mlflow exporter with x-mlflow-experiment-id header\n\nwant:\n%s\ngot:\n%s", want, conf)
+	}
+}
+
+// RHOAI's MLflow: the collector authenticates with its ServiceAccount token,
+// verifies the endpoint against the injected service CA and names the
+// workspace — and the plain-MLflow shape is untouched when mlflowAuth is "".
+func TestRenderOTelConfig_MLflowKubernetesAuthAndWorkspace(t *testing.T) {
+	corpus := &accv1alpha1.AgentCorpus{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-corpus", Namespace: "wksp-user2"},
+		Spec: accv1alpha1.AgentCorpusSpec{
+			Observability: accv1alpha1.ObservabilitySpec{
+				Backend: accv1alpha1.MetricsBackendOTel,
+				OTelCollector: &accv1alpha1.OTelCollectorSpec{
+					MLflowEndpoint:     "https://mlflow.redhat-ods-applications.svc:8443",
+					MLflowExperimentID: "1",
+					MLflowWorkspace:    "wksp-user2",
+					MLflowAuth:         accv1alpha1.MLflowAuthKubernetes,
+				},
+			},
+		},
+	}
+	conf, err := templates.RenderOTelConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderOTelConfig: %v", err)
+	}
+	for _, want := range []string{
+		"\nextensions:\n",
+		"  bearertokenauth/mlflow:\n    filename: /var/run/secrets/kubernetes.io/serviceaccount/token",
+		"    auth:\n      authenticator: bearertokenauth/mlflow",
+		"      ca_file: /etc/acc/service-ca/service-ca.crt",
+		"      x-mlflow-experiment-id: \"1\"",
+		"      X-MLFLOW-WORKSPACE: \"wksp-user2\"",
+		"  extensions: [bearertokenauth/mlflow]",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("expected %q in the rendered config\n\n%s", want, conf)
+		}
+	}
+	if strings.Contains(conf, "insecure: false") {
+		t.Errorf("kubernetes auth must not render tls.insecure\n\n%s", conf)
+	}
+
+	corpus.Spec.Observability.OTelCollector.MLflowAuth = ""
+	corpus.Spec.Observability.OTelCollector.MLflowWorkspace = ""
+	conf, err = templates.RenderOTelConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderOTelConfig: %v", err)
+	}
+	for _, absent := range []string{"bearertokenauth", "ca_file", "X-MLFLOW-WORKSPACE"} {
+		if strings.Contains(conf, absent) {
+			t.Errorf("did not expect %q without mlflowAuth\n\n%s", absent, conf)
+		}
 	}
 }
 

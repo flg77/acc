@@ -26,10 +26,10 @@ import (
 )
 
 const (
-	otelComponentName  = "otel-collector"
-	otelGRPCPort       = 4317
-	otelHTTPPort       = 4318
-	otelMetricsPort    = 8889 // 8889: the collector's OWN telemetry binds :8888 since ~v0.118
+	otelComponentName = "otel-collector"
+	otelGRPCPort      = 4317
+	otelHTTPPort      = 4318
+	otelMetricsPort   = 8889 // 8889: the collector's OWN telemetry binds :8888 since ~v0.118
 
 	// defaultOTelCollectorImage is a pinned contrib build mirrored into the
 	// ACC image repository (build chain: skopeo copy from
@@ -119,6 +119,35 @@ func (r *OTelCollectorReconciler) Reconcile(ctx context.Context, corpus *accv1al
 	}
 
 	// -----------------------------------------------------------------------
+	// Service CA — for mlflowAuth: kubernetes (RHOAI's MLflow answers on
+	// https with a certificate from the OpenShift service CA). An empty
+	// ConfigMap with the inject-cabundle annotation; the service-ca
+	// operator fills service-ca.crt and keeps it current. The upsert never
+	// writes data, so the injected bundle survives reconciles.
+	// -----------------------------------------------------------------------
+	kubeAuth := corpus.Spec.Observability.OTelCollector.MLflowAuth == accv1alpha1.MLflowAuthKubernetes
+	if kubeAuth {
+		caCM := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        name + "-service-ca",
+				Namespace:   ns,
+				Labels:      labels,
+				Annotations: map[string]string{"service.beta.openshift.io/inject-cabundle": "true"},
+			},
+		}
+		if _, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, caCM, func(existing client.Object) error {
+			cm := existing.(*corev1.ConfigMap)
+			if cm.Annotations == nil {
+				cm.Annotations = map[string]string{}
+			}
+			cm.Annotations["service.beta.openshift.io/inject-cabundle"] = "true"
+			return nil
+		}); err != nil {
+			return reconcilers.SubResult{}, fmt.Errorf("upsert otel service-ca ConfigMap: %w", err)
+		}
+	}
+
+	// -----------------------------------------------------------------------
 	// Deployment
 	// -----------------------------------------------------------------------
 	// Pinned by default: ":latest" contrib builds reject the rendered config
@@ -173,6 +202,19 @@ func (r *OTelCollectorReconciler) Reconcile(ctx context.Context, corpus *accv1al
 				},
 			},
 		},
+	}
+
+	if kubeAuth {
+		c := &deploy.Spec.Template.Spec.Containers[0]
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: "service-ca", MountPath: "/etc/acc/service-ca", ReadOnly: true})
+		deploy.Spec.Template.Spec.Volumes = append(deploy.Spec.Template.Spec.Volumes, corev1.Volume{
+			Name: "service-ca",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{Name: name + "-service-ca"},
+				},
+			},
+		})
 	}
 
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {

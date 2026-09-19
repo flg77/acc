@@ -28,6 +28,8 @@ Why a helper instead of editing every emit site:
 
 from __future__ import annotations
 
+import json
+import os
 from typing import Any
 
 
@@ -58,6 +60,20 @@ _GENAI_KEY_MAP: dict[str, str] = {
     "temperature": "gen_ai.request.temperature",
     "max_tokens": "gen_ai.request.max_tokens",
     "finish_reason": "gen_ai.response.finish_reasons",
+    # OpenSpec ``20260918-mlflow-shaped-spans`` — the conversation on the
+    # trace.  MLflow's OTLP ingest derives a span's Inputs/Outputs from these
+    # (``mlflow/tracing/otel/translation/genai_semconv.py``), the model column
+    # from the response/request model, and the trace's user and session from
+    # ``user.id`` / ``session.id`` on any span.
+    "input_messages": "gen_ai.input.messages",
+    "output_messages": "gen_ai.output.messages",
+    "response_model": "gen_ai.response.model",
+    "provider": "gen_ai.provider.name",
+    "tool_arguments": "gen_ai.tool.call.arguments",
+    "tool_result": "gen_ai.tool.call.result",
+    "agent_name": "gen_ai.agent.name",
+    "user_id": "user.id",
+    "session": "session.id",
 }
 
 
@@ -120,7 +136,105 @@ def build_genai_attributes(
     return out
 
 
+# ---------------------------------------------------------------------------
+# Message payloads (OpenSpec ``20260918-mlflow-shaped-spans``)
+# ---------------------------------------------------------------------------
+
+#: What a redacting role's payloads read as.  The shape (roles, one part per
+#: message, a JSON value for a tool payload) is kept so the trace still shows
+#: THAT a system prompt, a user turn and an answer existed.
+REDACTED = "<redacted>"
+
+_DEFAULT_MESSAGES_MAX_CHARS = 8192
+
+
+def trace_messages_enabled() -> bool:
+    """``ACC_TRACE_MESSAGES`` — ``on`` (default) puts message and tool payload
+    text on the spans, ``off`` restores the pre-0.17.16 shape."""
+    raw = os.environ.get("ACC_TRACE_MESSAGES", "on").strip().lower()
+    return raw not in ("off", "0", "false", "no")
+
+
+def messages_max_chars() -> int:
+    """``ACC_TRACE_MESSAGES_MAX_CHARS`` — the cap per text, default 8192."""
+    try:
+        value = int(os.environ.get(
+            "ACC_TRACE_MESSAGES_MAX_CHARS", str(_DEFAULT_MESSAGES_MAX_CHARS),
+        ))
+    except (TypeError, ValueError):
+        return _DEFAULT_MESSAGES_MAX_CHARS
+    return value if value > 0 else _DEFAULT_MESSAGES_MAX_CHARS
+
+
+def clip_text(text: str, max_chars: int | None = None) -> str:
+    """Clip *text* at the cap and say how much was cut.
+
+    The marker counts characters, so a reader knows whether a prompt was cut
+    by a line or by a hundred kilobytes.
+    """
+    cap = messages_max_chars() if max_chars is None else max_chars
+    if len(text) <= cap:
+        return text
+    return f"{text[:cap]}…[{len(text) - cap} more]"
+
+
+def messages_json(
+    messages: list[tuple[str, str]],
+    *,
+    redact: bool = False,
+    max_chars: int | None = None,
+) -> str:
+    """Serialise ``(role, text)`` pairs as the OTel GenAI message list.
+
+    ``[{"role": "user", "parts": [{"type": "text", "content": "…"}]}, …]`` —
+    the value of ``gen_ai.input.messages`` / ``gen_ai.output.messages``.  Each
+    text is clipped on its own, so a long system prompt cannot push the user's
+    turn off the span.  Messages with no text are dropped.  *redact* keeps the
+    roles and replaces every text with :data:`REDACTED`.
+    """
+    out: list[dict[str, Any]] = []
+    for role, text in messages:
+        if not text:
+            continue
+        content = REDACTED if redact else clip_text(str(text), max_chars)
+        out.append({
+            "role": str(role),
+            "parts": [{"type": "text", "content": content}],
+        })
+    return json.dumps(out, ensure_ascii=False)
+
+
+def payload_json(
+    value: Any,
+    *,
+    redact: bool = False,
+    max_chars: int | None = None,
+) -> str:
+    """Serialise a tool's arguments or result for a span attribute.
+
+    Always a JSON document: MLflow reads ``gen_ai.tool.call.arguments`` and
+    ``.result`` as JSON, and a bare string would not parse.  Oversized payloads
+    are clipped as text and carried as a JSON string, marker included.
+    """
+    if redact:
+        return json.dumps(REDACTED)
+    try:
+        text = json.dumps(value, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        text = json.dumps(str(value), ensure_ascii=False)
+    cap = messages_max_chars() if max_chars is None else max_chars
+    if len(text) <= cap:
+        return text
+    return json.dumps(clip_text(text, cap), ensure_ascii=False)
+
+
 __all__ = [
     "GENAI_SEMCONV_VERSION",
+    "REDACTED",
     "build_genai_attributes",
+    "clip_text",
+    "messages_json",
+    "messages_max_chars",
+    "payload_json",
+    "trace_messages_enabled",
 ]

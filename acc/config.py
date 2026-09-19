@@ -81,6 +81,16 @@ VectorBackendChoice = Literal["lancedb", "milvus", "turbovec"]
 SignalingBackendChoice = Literal["nats"]
 
 
+class RoleTelemetryConfig(BaseModel):
+    """Per-role telemetry policy (OpenSpec ``20260918-mlflow-shaped-spans``)."""
+
+    # When True this role's spans keep their shape — a system prompt, a user
+    # turn, an answer, a tool call with arguments and a result — but every
+    # text reads ``<redacted>``.  For roles that handle data the trace backend
+    # must not hold.  ``ACC_TRACE_MESSAGES=off`` is the deployment-wide switch.
+    redact_messages: bool = False
+
+
 class RoleDefinitionConfig(BaseModel):
     """Role definition injected into the agent's CognitiveCore system prompt.
 
@@ -172,6 +182,10 @@ class RoleDefinitionConfig(BaseModel):
     # text is mirrored in acc-dev-harness/tools/trace_eval/reasoning_prompt.py
     # so bench scores match live-agent output.
     reasoning_trace: bool = False
+
+    # OpenSpec ``20260918-mlflow-shaped-spans`` — what this role lets onto
+    # its trace spans.  See :class:`RoleTelemetryConfig`.
+    telemetry: RoleTelemetryConfig = Field(default_factory=RoleTelemetryConfig)
 
     # RP-02 Phase 1 (``20260825-conversational-turn-continuity``) —
     # conversational continuity.  When True the role's user message carries

@@ -128,7 +128,11 @@ func withCorpusDelivery(
 		Name:  RegulatoryInitContainerName,
 		Image: agentCoreImage,
 		Command: []string{"sh", "-c",
-			"if [ -d " + regulatoryImagePath + " ]; then cp -a " + regulatoryImagePath + "/. " + RegulatoryMountPath + "/; fi"},
+			// -R, not -a: -a preserves timestamps on the emptyDir's root too,
+			// which the arbitrary OpenShift UID may not set ("preserving
+			// times for '.': Operation not permitted", exit 1, and the UI
+			// pod never leaves Init — bb3, 0.2.21).
+			"if [ -d " + regulatoryImagePath + " ]; then cp -R " + regulatoryImagePath + "/. " + RegulatoryMountPath + "/; fi"},
 		VolumeMounts:    []corev1.VolumeMount{{Name: regulatoryVolumeName, MountPath: RegulatoryMountPath}},
 		SecurityContext: collective.AgentContainerSecurityContext(),
 	})

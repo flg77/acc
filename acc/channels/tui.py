@@ -95,6 +95,7 @@ class TUIPromptChannel:
         operating_mode: str = "AUTO",
         workspace: str | None = None,
         session_id: str | None = None,
+        end_user: str | None = None,
     ) -> str:
         """Build + publish a TASK_ASSIGN derived from *prompt*.
 
@@ -169,6 +170,11 @@ class TUIPromptChannel:
         # paths under.  Omitted when no directory was selected.
         if workspace:
             payload["workspace"] = str(workspace)
+        # OpenSpec ``20260918-mlflow-shaped-spans`` — the end user an
+        # application was serving (the compat endpoint's ``user`` field).  A
+        # label for the trace; attribution and ceilings never read it.
+        if end_user:
+            payload["end_user"] = str(end_user)
         # RP-02 Phase 1 — the conversation this prompt continues.  Only the
         # id travels: prior turns are replayed server-side from the durable
         # tracelog, so naming a thread is all a client can do.  Omitted when

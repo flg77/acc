@@ -48,7 +48,11 @@ import os
 import random
 from typing import Any, Iterator
 
-from acc.backends.genai_semconv import build_genai_attributes
+from acc.backends.genai_semconv import (
+    build_genai_attributes,
+    payload_json,
+    trace_messages_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +196,49 @@ def stage_span(
         yield span
 
 
+class TurnScope:
+    """The root span of one operator turn, opened and closed by hand.
+
+    OpenSpec ``20260918-mlflow-shaped-spans``.  A turn is more than one
+    ``process_task``: the first pass, the capability dispatch (each tool call
+    its own span) and the tool-result pass run one after another in the agent's
+    task loop.  Without a common parent each of them was the root of its own
+    trace, so one question reached MLflow as three to five traces.  The task
+    loop opens this scope once it knows the task is its own, and every span
+    below nests under it through OTel's current-span context.
+
+    Opened and closed explicitly rather than with ``with``: the handler has a
+    dozen early returns, and the scope has to open after the routing filters
+    (a dropped broadcast must not leave a trace) and close on every path —
+    the handler's wrapper closes it in a ``finally``.  Both calls are
+    idempotent and no-ops without the SDK.
+    """
+
+    def __init__(self) -> None:
+        self._cm: Any = None
+        self.span: Any = None
+
+    def open(self, name: str, attributes: dict[str, Any] | None = None) -> Any:
+        if self._cm is None:
+            self._cm = task_span(name, attributes)
+            try:
+                self.span = self._cm.__enter__()
+            except Exception:  # pragma: no cover — defensive
+                logger.debug("pipeline_tracing: turn open failed", exc_info=True)
+                self._cm = None
+                self.span = None
+        return self.span
+
+    def close(self) -> None:
+        cm, self._cm, self.span = self._cm, None, None
+        if cm is None:
+            return
+        try:
+            cm.__exit__(None, None, None)
+        except Exception:  # pragma: no cover — defensive
+            logger.debug("pipeline_tracing: turn close failed", exc_info=True)
+
+
 def emit_stage(
     name: str,
     attributes: dict[str, Any] | None = None,
@@ -236,16 +283,25 @@ def tool_span(
     server_id: str = "",
     skill_id: str = "",
     attributes: dict[str, Any] | None = None,
+    arguments: Any = None,
+    redact: bool = False,
 ) -> Iterator[Any]:
     """Open a child span for a tool / skill invocation.
 
     Phase 4 mapping for MCP tool calls and ACC Skill invocations onto
     the OTel GenAI ``gen_ai.tool.*`` semconv keys::
 
+        gen_ai.operation.name   = "execute_tool"
         gen_ai.tool.name        = tool_name
         gen_ai.tool.type        = "mcp" | "skill"
+        gen_ai.tool.call.arguments = arguments as JSON (when given)
         acc.mcp.server_id       = server_id   (when given)
         acc.skill.id            = skill_id    (when given)
+
+    The result is not known until the call returns: the caller records it on
+    the yielded span with :func:`set_tool_result`.  Both payloads follow
+    ``ACC_TRACE_MESSAGES`` and the role's ``telemetry.redact_messages``
+    (*redact*) — OpenSpec ``20260918-mlflow-shaped-spans``.
 
     The span name is ``acc.tool.invoke``; the tool name itself lives
     on the attribute (MLflow's Trace UI surfaces it in the right
@@ -260,9 +316,12 @@ def tool_span(
         yield None
         return
     base: dict[str, Any] = {
+        "gen_ai.operation.name": "execute_tool",
         "gen_ai.tool.name": tool_name,
         "gen_ai.tool.type": "mcp" if server_id else "skill",
     }
+    if arguments is not None and trace_messages_enabled():
+        base["gen_ai.tool.call.arguments"] = payload_json(arguments, redact=redact)
     if server_id:
         base["acc.mcp.server_id"] = server_id
     if skill_id:
@@ -277,6 +336,22 @@ def tool_span(
             except Exception:
                 pass
         yield span
+
+
+def set_tool_result(span: Any, result: Any, *, redact: bool = False) -> None:
+    """Record a tool call's result on its open span (no-op on ``None``).
+
+    ``gen_ai.tool.call.result`` is what MLflow shows as the tool span's
+    Outputs.  Honours ``ACC_TRACE_MESSAGES`` and *redact* like the arguments.
+    """
+    if span is None or not trace_messages_enabled():
+        return
+    try:
+        span.set_attribute(
+            "gen_ai.tool.call.result", payload_json(result, redact=redact),
+        )
+    except Exception:  # pragma: no cover — defensive
+        logger.debug("pipeline_tracing: set_tool_result failed", exc_info=True)
 
 
 def add_event(
@@ -330,10 +405,12 @@ def set_span_attributes(span: Any, attributes: dict[str, Any]) -> None:
 
 __all__ = [
     "TRACER_NAME",
+    "TurnScope",
     "task_span",
     "stage_span",
     "emit_stage",
     "tool_span",
+    "set_tool_result",
     "add_event",
     "set_span_attributes",
 ]

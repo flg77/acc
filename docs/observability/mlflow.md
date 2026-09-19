@@ -121,6 +121,41 @@ until that lands, set the env via a corpus-level pod template
 override or stick to gRPC (the default; works against the
 operator-rendered Collector unchanged).
 
+## The conversation on the trace (0.17.16)
+
+OpenSpec [`20260918-mlflow-shaped-spans`](../../openspec/changes/20260918-mlflow-shaped-spans/proposal.md).
+MLflow's OTLP ingest reads the OpenTelemetry GenAI conventions; from
+0.17.16 an ACC turn carries what its trace views look for.
+
+**One turn, one trace.** `acc.turn` is the root span, opened by the
+agent's task loop once the task is its own. The first pipeline pass
+(`acc.task.process`), every tool call (`acc.tool.invoke`) and the
+tool-result pass nest under it. Until 0.17.15 each of them was the root
+of a trace of its own, so one question arrived as three to five traces.
+
+| span | `gen_ai.operation.name` → MLflow type | what it carries |
+|---|---|---|
+| `acc.turn` | `invoke_agent` → AGENT | the request and the final answer (`gen_ai.input.messages` / `gen_ai.output.messages` → the trace's Inputs / Outputs and previews), `user.id`, `session.id`, `gen_ai.agent.name` |
+| `acc.task.process` | `invoke_agent` → AGENT | one pipeline pass: its request, its answer, the governance scores |
+| `acc.pipeline.llm_invoke` | `chat` → CHAT_MODEL | the system and user messages sent, the assistant message returned, `gen_ai.request.model`, `gen_ai.response.model`, finish reason, `gen_ai.usage.*`; the span now lasts as long as the call (it was a zero-length marker) |
+| `acc.tool.invoke` | `execute_tool` → TOOL | `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` (JSON) |
+
+**User and session.** MLflow promotes `user.id` and `session.id` from the
+spans to the trace (the *Sessions* view, the user filter). The session is
+the thread a client named (`X-ACC-Session` on the compat endpoint, the
+TUI/WebGUI thread); a one-turn task gets none. The user is the
+application's end user when the compat request carried the standard
+`user` field, else the admitted requester. `user` is a label for the
+trace: attribution and ceilings never read it.
+
+**Policy.**
+
+| knob | default | effect |
+|---|---|---|
+| `ACC_TRACE_MESSAGES` | `on` | `off` keeps message and tool payload text off the spans (model, usage, identity stay) |
+| `ACC_TRACE_MESSAGES_MAX_CHARS` | `8192` | cap per text; a longer one ends in `…[n more]`. Each message is clipped on its own |
+| role `telemetry.redact_messages` | `false` | that role's spans keep their shape and read `<redacted>` |
+
 ## Cardinality + sampling
 
 Phase 2 stage markers are tiny.  Phase 4 added two more high-value
@@ -141,10 +176,11 @@ surfaces:
   `acc.skill.id` for the respective paths.
 
 `ACC_TELEMETRY_SAMPLING` (env, 0.0–1.0) gates **stage markers only** —
-`acc.pipeline.*` children may be dropped at high agent volume.  The
-root `acc.task.process` span and the `acc.tool.invoke` children are
-always emitted so the trace tree never has orphans.  Default 0.0
-keeps everything.
+the thin `acc.pipeline.*` markers may be dropped at high agent volume.
+The `acc.turn` and `acc.task.process` spans, the `acc.pipeline.llm_invoke`
+span (the model call is evidence, not a marker — from 0.17.16) and the
+`acc.tool.invoke` children are always emitted so the trace tree never has
+orphans.  Default 0.0 keeps everything.
 
 ## Related
 

@@ -21,17 +21,20 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from acc.backends.genai_semconv import messages_json, trace_messages_enabled
 from acc.backends.pipeline_tracing import (
     add_event,
     emit_stage,
     set_span_attributes,
+    set_tool_result,
+    stage_span,
     task_span,
     tool_span,
 )
 from acc.config import ComplianceConfig, RoleDefinitionConfig
 from acc.governance_capabilities import CapabilityDecision, CapabilityGuard
 from acc.progress import ProgressContext
-from acc.attribution import requester_of
+from acc.attribution import is_attributed, requester_of
 from acc.memory_scope import LOCAL_SCOPE, row_scope, scope_key
 from acc.signals import redis_centroid_key, redis_stress_key
 
@@ -358,6 +361,43 @@ def _split_reasoning(text: str) -> tuple[str, str]:
     reasoning = m.group(1).strip()
     answer = (text[: m.start()] + text[m.end():]).strip()
     return reasoning, answer
+
+
+def _redacts_messages(role: Any) -> bool:
+    """True when the role's ``telemetry.redact_messages`` is set."""
+    return bool(getattr(getattr(role, "telemetry", None), "redact_messages", False))
+
+
+def _task_request_text(task_payload: dict) -> str:
+    """The request a task carries, as the channel stamped it."""
+    return str(
+        task_payload.get("content")
+        or task_payload.get("task_description")
+        or ""
+    )
+
+
+def _trace_identity(task_payload: dict) -> dict[str, str]:
+    """``user.id`` and ``session.id`` for the root span.
+
+    MLflow promotes them to the trace (the *Sessions* view, the user filter).
+    The user is the application's end user when the channel carried one
+    (``end_user`` — the compat endpoint's ``user`` field), else the admitted
+    requester.  The session is only what the client named: a one-turn task
+    gets none, rather than a session per task.
+    """
+    out: dict[str, str] = {}
+    end_user = str(task_payload.get("end_user", "") or "").strip()
+    if end_user:
+        out["user_id"] = end_user
+    else:
+        requester = requester_of(task_payload)
+        if is_attributed(requester):
+            out["user_id"] = requester
+    session = str(task_payload.get("session_id", "") or "").strip()
+    if session:
+        out["session"] = session
+    return out
 
 
 def _extract_output_text(response: dict) -> str:
@@ -924,13 +964,33 @@ class CognitiveCore:
             "agent_id": self._agent_id,
             "operating_mode": task_payload.get("operating_mode", "") or "",
             "model": getattr(role, "llm_model", "") or "",
-            "operation_name": "chat",
+            # OpenSpec ``20260918-mlflow-shaped-spans`` — the root span is the
+            # agent's turn (MLflow span type AGENT); the chat call is the
+            # ``acc.pipeline.llm_invoke`` child.
+            "operation_name": "invoke_agent",
+            "agent_name": self._role_label,
+            **_trace_identity(task_payload),
         }
         with task_span("acc.task.process", root_attrs) as root_span:
             result = await self._process_task_body(
                 task_payload, role, progress_callback=progress_callback,
             )
             try:
+                # The turn itself: what was asked and what came back.  MLflow
+                # derives the trace's Inputs/Outputs (and its request/response
+                # previews) from the root span's GenAI message attributes.
+                if trace_messages_enabled():
+                    _redact = _redacts_messages(role)
+                    set_span_attributes(root_span, {
+                        "input_messages": messages_json(
+                            [("user", _task_request_text(task_payload))],
+                            redact=_redact,
+                        ),
+                        "output_messages": messages_json(
+                            [("assistant", getattr(result, "output", "") or "")],
+                            redact=_redact,
+                        ),
+                    })
                 set_span_attributes(root_span, {
                     "drift_score": float(result.stress.drift_score),
                     "cat_b_deviation_score": float(
@@ -1344,12 +1404,8 @@ class CognitiveCore:
         # Confidence bumps slightly as we leave the gates and start
         # actual reasoning — captures "we got past the guards".
         _emit(3, "Calling LLM", confidence=0.55)
-        emit_stage("acc.pipeline.llm_invoke", {
-            "model": getattr(role, "llm_model", "") or "",
-            "operation_name": "chat",
-        })
-        response, latency_ms, token_count = await self._call_llm(
-            system_prompt, llm_user_content,
+        response, latency_ms, token_count = await self._traced_llm_call(
+            system_prompt, llm_user_content, role,
         )
         # PR-CA3 — accumulate best-effort prompt-cache telemetry.
         _usage = response.get("usage", {}) if isinstance(response, dict) else {}
@@ -1396,7 +1452,9 @@ class CognitiveCore:
                 retry_user = llm_user_content + _marker_retry_directive(
                     self._perception,
                 )
-                r2, l2, t2 = await self._call_llm(system_prompt, retry_user)
+                r2, l2, t2 = await self._traced_llm_call(
+                    system_prompt, retry_user, role,
+                )
                 latency_ms += l2
                 token_count += t2
                 out2 = _extract_output_text(r2)
@@ -1812,8 +1870,13 @@ class CognitiveCore:
         # Phase 4 — gen_ai.tool.* child span around the actual
         # invocation.  Parented under acc.task.process when this method
         # is called from inside the pipeline (the normal case).
-        with tool_span(skill_id, skill_id=skill_id):
-            return await self._skill_registry.invoke(skill_id, args)
+        _redact = _redacts_messages(role)
+        with tool_span(
+            skill_id, skill_id=skill_id, arguments=args, redact=_redact,
+        ) as _span:
+            _result = await self._skill_registry.invoke(skill_id, args)
+            set_tool_result(_span, _result, redact=_redact)
+            return _result
 
     async def invoke_mcp_tool(
         self,
@@ -1875,8 +1938,14 @@ class CognitiveCore:
 
         client = await self._mcp_registry.client(server_id)
         # Phase 4 — gen_ai.tool.* child span around the MCP call.
-        with tool_span(tool_name, server_id=server_id):
-            return await client.call_tool(tool_name, arguments or {})
+        _redact = _redacts_messages(role)
+        with tool_span(
+            tool_name, server_id=server_id, arguments=arguments or {},
+            redact=_redact,
+        ) as _span:
+            _result = await client.call_tool(tool_name, arguments or {})
+            set_tool_result(_span, _result, redact=_redact)
+            return _result
 
     # ------------------------------------------------------------------
     # ACC-12 Compliance helpers
@@ -2532,6 +2601,60 @@ class CognitiveCore:
                 f"rate_limit_rpm in Nucleus (2)."
             )
         return f"Blocked — {block_reason}"
+
+    async def _traced_llm_call(
+        self, system: str, user: str, role: RoleDefinitionConfig,
+    ) -> tuple[dict, float, int]:
+        """:meth:`_call_llm` inside the ``acc.pipeline.llm_invoke`` span.
+
+        OpenSpec ``20260918-mlflow-shaped-spans``.  Until 0.17.15 the stage was
+        a marker emitted before the call, so the span was zero-length and
+        empty.  The call now runs inside it: the span lasts as long as the
+        model took and carries what was sent, what came back, the model that
+        served it and the usage — what MLflow's trace views read.  Always
+        emitted (``ACC_TELEMETRY_SAMPLING`` thins markers, not evidence).
+        Message text follows ``ACC_TRACE_MESSAGES`` and the role's
+        ``telemetry.redact_messages``.
+        """
+        with stage_span("acc.pipeline.llm_invoke", {
+            "model": getattr(role, "llm_model", "") or "",
+            "operation_name": "chat",
+        }) as span:
+            response, latency_ms, token_count = await self._call_llm(system, user)
+            if span is not None:
+                try:
+                    usage = response.get("usage", {}) if isinstance(response, dict) else {}
+                    meta = getattr(self._llm, "last_response_meta", None) or {}
+                    attrs: dict[str, Any] = {
+                        "input_tokens": int(
+                            usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0
+                        ),
+                        "output_tokens": int(
+                            usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0
+                        ),
+                        "response_model": meta.get("response_model") or None,
+                        "latency_ms": float(latency_ms),
+                    }
+                    if not (getattr(role, "llm_model", "") or ""):
+                        attrs["model"] = meta.get("request_model") or None
+                    if meta.get("finish_reason"):
+                        attrs["finish_reason"] = [str(meta["finish_reason"])]
+                    if trace_messages_enabled():
+                        _redact = _redacts_messages(role)
+                        attrs["input_messages"] = messages_json(
+                            [("system", system), ("user", user)], redact=_redact,
+                        )
+                        attrs["output_messages"] = messages_json(
+                            [("assistant", _extract_output_text(response))],
+                            redact=_redact,
+                        )
+                    set_span_attributes(span, attrs)
+                except Exception:  # pragma: no cover — telemetry never breaks a task
+                    logger.debug(
+                        "cognitive_core: llm_invoke span attributes failed",
+                        exc_info=True,
+                    )
+            return response, latency_ms, token_count
 
     async def _call_llm(
         self, system: str, user: str

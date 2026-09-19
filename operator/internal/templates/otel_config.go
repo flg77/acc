@@ -51,6 +51,15 @@ processors:
         value: {{ .CorpusName }}
         action: insert
 
+{{ if .MLflowKubernetesAuth -}}
+extensions:
+  # RHOAI's MLflow authenticates by the caller's ServiceAccount token
+  # (SubjectAccessReview in the workspace namespace). The extension reads the
+  # mounted token file on every request, so a rotated token is picked up.
+  bearertokenauth/mlflow:
+    filename: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+{{ end -}}
 exporters:
   {{ if .RemoteEndpoint -}}
   otlp:
@@ -66,15 +75,36 @@ exporters:
   # otelCollector.mlflowExperimentID or the spans are silently dropped.
   otlphttp/mlflow:
     endpoint: {{ .MLflowEndpoint }}
+    # MLflow (3.6 verified) answers a stored batch with HTTP 200,
+    # Content-Type application/x-protobuf and the JSON body
+    # {"partialSuccess":null}: the exporter cannot parse the reply, treats
+    # the export as failed and re-sends the same batch for retry's
+    # max_elapsed_time although the spans are already stored. No retry:
+    # a batch is posted once, and the log stays quiet.
+    retry_on_failure:
+      enabled: false
     # The exporter gzips by default and MLflow (3.6 verified) does not
     # decompress: every batch came back 400 "Invalid OpenTelemetry protobuf
     # format" while the identical body uncompressed was stored.
     compression: none
+    {{- if .MLflowKubernetesAuth }}
+    auth:
+      authenticator: bearertokenauth/mlflow
+    tls:
+      # The OpenShift service CA, injected into <collector>-service-ca.
+      ca_file: /etc/acc/service-ca/service-ca.crt
+    {{- else }}
     tls:
       insecure: {{ .TLSInsecure }}
-    {{- if .MLflowExperimentID }}
+    {{- end }}
+    {{- if or .MLflowExperimentID .MLflowWorkspace }}
     headers:
+      {{- if .MLflowExperimentID }}
       x-mlflow-experiment-id: "{{ .MLflowExperimentID }}"
+      {{- end }}
+      {{- if .MLflowWorkspace }}
+      X-MLFLOW-WORKSPACE: "{{ .MLflowWorkspace }}"
+      {{- end }}
     {{- end }}
   {{- end }}
   prometheus:
@@ -85,6 +115,9 @@ exporters:
     verbosity: normal
 
 service:
+  {{- if .MLflowKubernetesAuth }}
+  extensions: [bearertokenauth/mlflow]
+  {{- end }}
   pipelines:
     traces:
       receivers: [otlp]
@@ -101,7 +134,10 @@ type otelConfigData struct {
 	RemoteEndpoint     string
 	MLflowEndpoint     string
 	MLflowExperimentID string
-	TLSInsecure        bool
+	MLflowWorkspace    string
+	// MLflowKubernetesAuth: otelCollector.mlflowAuth == "kubernetes".
+	MLflowKubernetesAuth bool
+	TLSInsecure          bool
 }
 
 // RenderOTelConfig produces an otel-collector.yaml from the corpus spec.
@@ -121,6 +157,8 @@ func RenderOTelConfig(corpus *accv1alpha1.AgentCorpus) (string, error) {
 		}
 		data.MLflowEndpoint = otel.MLflowEndpoint
 		data.MLflowExperimentID = otel.MLflowExperimentID
+		data.MLflowWorkspace = otel.MLflowWorkspace
+		data.MLflowKubernetesAuth = otel.MLflowAuth == accv1alpha1.MLflowAuthKubernetes
 		data.TLSInsecure = otel.TLSInsecure
 	}
 

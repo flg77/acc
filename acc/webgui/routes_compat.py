@@ -215,6 +215,8 @@ async def _make_dispatch(collective_id: str, hub: Any):
             # session header, which leaves the agent's task_id fallback and
             # therefore the pre-existing one-turn behaviour.
             session_id=request.session_id or None,
+            # The application's end user, for the trace only (``user.id``).
+            end_user=request.end_user or None,
         )
         # One receive, waited on twice: for the caller's window, then (if it
         # outlives it) in the background. A task that takes longer than

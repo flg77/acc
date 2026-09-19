@@ -1112,6 +1112,18 @@ spec:
                           exporter on the traces pipeline.  Leave empty to skip the fan-out
                           (operators who run a standalone Collector configure MLflow there).
                         type: string
+                      mlflowAuth:
+                        description: |-
+                          MLflowAuth selects how the collector authenticates to MLflowEndpoint.
+                          "" sends no credentials. "kubernetes" is RHOAI's MLflow: the pod's
+                          ServiceAccount token as a Bearer and the OpenShift service CA (injected
+                          into the <collector>-service-ca ConfigMap) verifying the endpoint. The
+                          ServiceAccount the collector runs as needs a RoleBinding to RHOAI's
+                          ClusterRole mlflow-operator-mlflow-integration in the workspace namespace.
+                        enum:
+                        - ""
+                        - kubernetes
+                        type: string
                       mlflowExperimentID:
                         description: |-
                           MLflowExperimentID is the MLflow experiment id (not name) the
@@ -1120,6 +1132,12 @@ spec:
                           422 and stores nothing without it — so set this whenever
                           MLflowEndpoint is set. Look the id up with
                           `GET /api/2.0/mlflow/experiments/get-by-name?experiment_name=…`.
+                        type: string
+                      mlflowWorkspace:
+                        description: |-
+                          MLflowWorkspace is the MLflow workspace the fan-out posts into, sent as
+                          the X-MLFLOW-WORKSPACE header (RHOAI's MLflow scopes by workspace =
+                          namespace). Leave empty for a workspace-less MLflow.
                         type: string
                       protocol:
                         default: grpc

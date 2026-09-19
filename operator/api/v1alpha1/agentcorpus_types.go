@@ -923,6 +923,10 @@ type ObservabilitySpec struct {
 }
 
 // OTelCollectorSpec configures the OTel collector deployment.
+// MLflowAuthKubernetes is OTelCollectorSpec.MLflowAuth for RHOAI's MLflow:
+// the collector's ServiceAccount token as a Bearer, the service CA for TLS.
+const MLflowAuthKubernetes = "kubernetes"
+
 type OTelCollectorSpec struct {
 	// Endpoint is the REMOTE OTLP gRPC/HTTP endpoint the corpus's collector
 	// forwards telemetry to (Tempo, Jaeger, a central collector …). Agents
@@ -982,6 +986,28 @@ type OTelCollectorSpec struct {
 	// `GET /api/2.0/mlflow/experiments/get-by-name?experiment_name=…`.
 	// +optional
 	MLflowExperimentID string `json:"mlflowExperimentID,omitempty"`
+
+	// MLflowWorkspace is the MLflow workspace the fan-out posts into, sent
+	// as the X-MLFLOW-WORKSPACE header. RHOAI's MLflow (the operator-managed
+	// instance, workspaces enabled) scopes experiments and traces by
+	// workspace = namespace; leave empty for a workspace-less MLflow.
+	// +optional
+	MLflowWorkspace string `json:"mlflowWorkspace,omitempty"`
+
+	// MLflowAuth selects how the collector authenticates to MLflowEndpoint.
+	// "" sends no credentials. "kubernetes" is RHOAI's MLflow: the pod's
+	// ServiceAccount token as a Bearer (the collector's bearertokenauth
+	// extension reads the mounted token file, so rotation is followed) and
+	// the OpenShift service CA (injected into the <collector>-service-ca
+	// ConfigMap) verifying the endpoint's certificate. The ServiceAccount
+	// the collector runs as must hold MLflow's rights in the workspace
+	// namespace: a RoleBinding to RHOAI's ClusterRole
+	// mlflow-operator-mlflow-integration (the plugin checks a
+	// SubjectAccessReview on the virtual group mlflow.kubeflow.org; the
+	// OTLP endpoint needs "update" on experiments).
+	// +kubebuilder:validation:Enum="";kubernetes
+	// +optional
+	MLflowAuth string `json:"mlflowAuth,omitempty"`
 }
 
 // UpgradePolicySpec controls how the operator handles version upgrades.
@@ -1251,8 +1277,8 @@ type RuntimeEvidenceStatus struct {
 
 // InfrastructureStatus reports the state of operator-managed components.
 type InfrastructureStatus struct {
-	NATSReady          bool   `json:"natsReady,omitempty"`
-	NATSVersion        string `json:"natsVersion,omitempty"`
+	NATSReady   bool   `json:"natsReady,omitempty"`
+	NATSVersion string `json:"natsVersion,omitempty"`
 	// NATSLeafConnected is true when the edge NATS leaf node has established
 	// a connection to the datacenter hub (deployMode=edge only).
 	NATSLeafConnected  bool   `json:"natsLeafConnected,omitempty"`
