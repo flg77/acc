@@ -11,6 +11,11 @@ declared?* — from the backend that environment selects:
   ``AccPackageInstall`` objects over the Kubernetes API with the pod's own
   ServiceAccount token.
 
+The same two backends answer *where do the traces of this deployment go, and
+what do they carry?* (:func:`tracing`, OpenSpec
+``20260920-surfaces-show-tracing``): a checkout reads ``acc-config.yaml`` and
+the environment, a cluster pod reads ``AgentCorpus.spec.observability``.
+
 Read-only by design of this phase.  The cluster half uses the standard
 library only: the UI images do not carry the ``kubernetes`` client, and four
 GETs do not justify one.  A refusal is an answer, not an empty list:
@@ -74,6 +79,56 @@ class Agentset:
         return any(p.phase != "Installed" for p in self.packages)
 
 
+@dataclass(frozen=True)
+class Tracing:
+    """Where this deployment's traces go, and what they carry."""
+
+    declared_in: str = ""
+    backend: str = ""                     # "otel" exports spans, "log" keeps them in the logs
+    collector: str = ""                   # where the agents send their spans
+    mlflow_endpoint: str = ""             # the collector's MLflow fan-out
+    mlflow_workspace: str = ""
+    mlflow_experiment_id: str = ""
+    tracking_uri: str = ""                # run logging + trace links of the surfaces
+    message_text: bool = True             # prompts, answers, tool payloads on the spans
+    message_text_off: tuple[str, ...] = ()  # roles declared without it
+    errors: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def exporting(self) -> bool:
+        return self.backend == "otel" and bool(self.collector)
+
+    def summary(self) -> str:
+        """One sentence a person can act on: are the turns recorded, and where."""
+        if not self.backend:
+            return "What this deployment does with its traces could not be read."
+        if not self.exporting:
+            return (f"Spans stay in the agents' logs (backend {self.backend}) — "
+                    "nothing is exported, no turn can be looked up.")
+        text = "with" if self.message_text else "WITHOUT"
+        if self.mlflow_endpoint:
+            where = "MLflow"
+            if self.mlflow_workspace:
+                where += f", workspace {self.mlflow_workspace}"
+            if self.mlflow_experiment_id:
+                where += f", experiment id {self.mlflow_experiment_id}"
+            return f"Every turn is exported to {where} — {text} its message text."
+        return (f"Every turn is exported to {self.collector} — {text} its message "
+                "text; where the collector forwards it is not declared here.")
+
+    def to_dict(self) -> dict:
+        return {
+            "declared_in": self.declared_in, "backend": self.backend,
+            "exporting": self.exporting, "collector": self.collector,
+            "mlflow_endpoint": self.mlflow_endpoint,
+            "mlflow_workspace": self.mlflow_workspace,
+            "mlflow_experiment_id": self.mlflow_experiment_id,
+            "tracking_uri": self.tracking_uri, "message_text": self.message_text,
+            "message_text_off": list(self.message_text_off),
+            "summary": self.summary(), "errors": list(self.errors),
+        }
+
+
 # ---------------------------------------------------------------------------
 # Checkout: collective.yaml
 # ---------------------------------------------------------------------------
@@ -106,6 +161,30 @@ def _from_checkout() -> Agentset:
             )
             for a in spec.agents
         ),
+    )
+
+
+def _tracing_from_checkout() -> Tracing:
+    from acc import paths  # noqa: PLC0415
+    from acc.backends.genai_semconv import trace_messages_on  # noqa: PLC0415
+    from acc.config import load_config  # noqa: PLC0415
+
+    errors: list[str] = []
+    try:
+        backend = str(load_config().observability.backend)
+    except Exception as exc:  # noqa: BLE001 — a broken or absent file is an answer too
+        backend = os.environ.get("ACC_METRICS_BACKEND", "").strip() or "log"
+        errors.append(f"acc-config.yaml could not be read ({exc}) — backend taken from the environment")
+    protocol = os.environ.get("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc").strip().lower()
+    default = "http://localhost:4318" if protocol.startswith("http") else "http://localhost:4317"
+    return Tracing(
+        # The agents of a compose deployment read the same two sources.
+        declared_in=f"{paths.path_of('config')} + the environment (.env)",
+        backend=backend,
+        collector=os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", default) if backend == "otel" else "",
+        tracking_uri=os.environ.get("ACC_MLFLOW_TRACKING_URI", "").strip(),
+        message_text=trace_messages_on(os.environ.get("ACC_TRACE_MESSAGES", "on")),
+        errors=tuple(errors),
     )
 
 
@@ -167,6 +246,16 @@ def _list(namespace: str, plural: str, timeout: float = 8.0) -> list[dict]:
         raise ClusterReadError(f"reading {plural}: {exc}") from exc
 
 
+def _of_corpus(env: Environment, collectives: list[dict]) -> list[dict]:
+    """A namespace may hold several corpora; this pod belongs to one."""
+    if not env.corpus:
+        return collectives
+    return [
+        c for c in collectives
+        if ((c.get("spec") or {}).get("corpusRef") or {}).get("name") in ("", None, env.corpus)
+    ]
+
+
 def _declared_model(collective_spec: dict, agent: dict) -> str:
     """The model an agent is declared to run: its own ``extraEnv`` wins over
     the collective's ``llm`` block — the same precedence the runtime applies."""
@@ -193,13 +282,7 @@ def _from_cluster(env: Environment) -> Agentset:
             errors.append(str(exc))
             return []
 
-    collectives = read("agentcollectives")
-    # A namespace may hold several corpora; this pod belongs to one.
-    if env.corpus:
-        collectives = [
-            c for c in collectives
-            if ((c.get("spec") or {}).get("corpusRef") or {}).get("name") in ("", None, env.corpus)
-        ]
+    collectives = _of_corpus(env, read("agentcollectives"))
     agents: list[AgentEntry] = []
     names: list[str] = []
     for item in collectives:
@@ -232,6 +315,64 @@ def _from_cluster(env: Environment) -> Agentset:
         declared_in=declared or f"no AgentCollective in {namespace}",
         agents=tuple(agents), packages=packages, version=version, errors=tuple(errors),
     )
+
+
+def _tracing_from_cluster(env: Environment) -> Tracing:
+    from acc.backends.genai_semconv import trace_messages_on  # noqa: PLC0415
+
+    namespace = env.namespace
+    if not namespace:
+        return Tracing(errors=(
+            "this pod does not know its namespace (no ServiceAccount mount) — "
+            "it cannot ask the cluster for its AgentCorpus",))
+    errors: list[str] = []
+
+    def read(plural: str) -> list[dict]:
+        try:
+            return _list(namespace, plural)
+        except ClusterReadError as exc:
+            errors.append(str(exc))
+            return []
+
+    corpus = next(
+        (i for i in read("agentcorpora")
+         if not env.corpus or (i.get("metadata") or {}).get("name") == env.corpus),
+        None,
+    )
+    if corpus is None:
+        if not errors:
+            errors.append(f"no AgentCorpus{' ' + env.corpus if env.corpus else ''} in {namespace}")
+        return Tracing(errors=tuple(errors))
+
+    # An agent's own ACC_TRACE_MESSAGES is the only place the CRs carry the
+    # switch; without one the runtime default (on) applies.
+    off: list[str] = []
+    for item in _of_corpus(env, read("agentcollectives")):
+        for agent in (item.get("spec") or {}).get("agents") or []:
+            for entry in agent.get("extraEnv") or []:
+                if entry.get("name") == "ACC_TRACE_MESSAGES" and not trace_messages_on(str(entry.get("value") or "on")):
+                    off.append(str(agent.get("role") or ""))
+
+    observability = (corpus.get("spec") or {}).get("observability") or {}
+    collector = observability.get("otelCollector") or {}
+    name = (corpus.get("metadata") or {}).get("name", "")
+    return Tracing(
+        declared_in=f"AgentCorpus {namespace}/{name} · spec.observability",
+        backend=str(observability.get("backend") or ""),
+        collector=str(collector.get("endpoint") or ""),
+        mlflow_endpoint=str(collector.get("mlflowEndpoint") or ""),
+        mlflow_workspace=str(collector.get("mlflowWorkspace") or ""),
+        mlflow_experiment_id=str(collector.get("mlflowExperimentID") or ""),
+        tracking_uri=str(observability.get("mlflowTrackingUri") or ""),
+        message_text_off=tuple(off),
+        errors=tuple(errors),
+    )
+
+
+def tracing(env: Environment | None = None) -> Tracing:
+    """Where this deployment's traces go, from the backend *env* selects."""
+    env = env or environment()
+    return _tracing_from_cluster(env) if env.cluster else _tracing_from_checkout()
 
 
 def agentset(env: Environment | None = None) -> Agentset:

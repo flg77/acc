@@ -42,8 +42,18 @@
       ./test/unit/` (golang:1.25 container) — `test/unit/ui_rbac_test.go`: the rules are read-only
       and ACC-only, the objects exist and are owned, RoleBinding → namespaced Role, both
       Deployments' `serviceAccountName`, a second pass is a no-op.
-- [ ] a cluster: operator 0.2.27 + a runtime carrying this on bb3 `wksp-user2` — the tab shows the
-      five personas, `gpt-oss-120b` declared and running, `@acc/mortgage-roles 1.2.1 -> Installed`.
+- [x] a cluster (bb3 `wksp-user2`, 2026-09-20: operator 0.2.27, runtime 0.19.0). Operator: CSV
+      `v0.2.27` Succeeded; `mortgage-agents-corpus-ui` ServiceAccount + Role + RoleBinding owned by
+      the corpus, TUI and WebGUI run as it; `oc auth can-i` as that ServiceAccount — get / list the
+      four ACC kinds yes; patch agentcollectives, create accpackageinstalls, get secrets, list pods,
+      get configmaps, and the ACC kinds of another namespace all no. Runtime: rendered headless
+      inside the live TUI pod — `declared in: AgentCollective wksp-user2/mortgage-agents-collective`,
+      corpus version 0.19.0, no read errors; five personas, declared model `gpt-oss-120b` (from
+      `extraEnv`, not the CRD's `ollama` stand-in), `@acc/mortgage-roles 1.2.1 -> Installed`; LLM
+      Endpoints order = live table, summary, form. The Running-model / live columns were not
+      exercised by that render (a headless harness has no bus) — they are covered by the pilot
+      test. Edge host on 0.19.0: `agentset()` reads `/app/collective.yaml` (which declares
+      `agents: []` there — its agents are compose services).
 
 ## Phase 2 (deferred)
 - [ ] WebGUI: `GET /api/agentset` + the Agentset page on the same backend (KW-03).

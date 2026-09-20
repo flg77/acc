@@ -233,6 +233,39 @@ def _resolve_acc_config_path() -> str:
     return "acc-config.yaml"
 
 
+def _describe_tracing(found) -> str:
+    """The Tracing tab's text for an :class:`acc.deployment.Tracing`."""
+    from rich.markup import escape  # noqa: PLC0415
+
+    def row(label: str, value: str) -> str:
+        return f"[bold]{label}:[/bold] {escape(value) if value else '[dim]—[/dim]'}"
+
+    colour = "green" if found.exporting else "yellow"
+    lines = [f"[{colour}]{escape(found.summary())}[/{colour}]", ""]
+    lines.append(row("Declared in", found.declared_in))
+    lines.append(row("Backend", found.backend))
+    if found.exporting:
+        lines.append(row("Agents send spans to", found.collector))
+        lines.append(row("MLflow endpoint", found.mlflow_endpoint))
+        lines.append(row("MLflow workspace", found.mlflow_workspace))
+        lines.append(row("MLflow experiment id", found.mlflow_experiment_id))
+        text = "recorded" if found.message_text else "NOT recorded (ACC_TRACE_MESSAGES=off)"
+        if found.message_text_off:
+            text += " — except: " + ", ".join(found.message_text_off)
+        lines.append(row("Message text", text))
+    lines.append(row("Tracking URI (run logging, trace links)", found.tracking_uri))
+    if found.exporting and found.mlflow_endpoint:
+        lines += ["", "[dim]Open MLflow, pick the workspace and the experiment above: one trace "
+                  "per turn — the question, the system prompt, every tool call with its "
+                  "result, the answer, tokens per model call.  A role may still redact its "
+                  "own text (telemetry.redact_messages).[/dim]"]
+    for error in found.errors:
+        lines += ["", f"[red]{escape(error)}[/red]"]
+    lines += ["", "[dim]Read-only here: the switch is a change to the deployment "
+              f"({escape(found.declared_in) or 'see above'}).[/dim]"]
+    return "\n".join(lines)
+
+
 def _load_acc_config_summary() -> dict[str, str]:
     """Return the configured LLM backend summary as a dict.
 
@@ -419,6 +452,10 @@ class ConfigurationScreen(NavScreen):
                 yield from self._compose_skills_tab()
             with TabPane("MCPs", id="tab-mcps"):
                 yield from self._compose_mcps_tab()
+            with TabPane("Tracing", id="tab-tracing"):
+                with ScrollableContainer():
+                    yield Label("WHERE THE TURNS GO", classes="panel-label")
+                    yield Static("[dim]Reading …[/dim]", id="tracing-panel")
 
         yield Footer()
 
@@ -628,8 +665,29 @@ class ConfigurationScreen(NavScreen):
         gate(self, "capability.upload", "#btn-upload-skill", "#btn-upload-mcp")
         self._load_skills()
         self._load_mcps()
+        self._read_tracing()
         # Nucleus Ctrl+A→e may have stashed a role before we composed.
         self._apply_pending_role()
+
+    # ------------------------------------------------------------------
+    # Tracing tab — read-only (OpenSpec 20260920-surfaces-show-tracing)
+    # ------------------------------------------------------------------
+
+    def _read_tracing(self) -> None:
+        """In a cluster the answer is an API call — keep it off the UI thread."""
+        from acc.deployment import tracing  # noqa: PLC0415
+
+        def _work() -> None:
+            found = tracing()
+            self.app.call_from_thread(self._show_tracing, found)
+
+        self.run_worker(_work, thread=True, exclusive=True, group="configuration-tracing")
+
+    def _show_tracing(self, found) -> None:
+        try:
+            self.query_one("#tracing-panel", Static).update(_describe_tracing(found))
+        except NoMatches:
+            pass
 
     # ------------------------------------------------------------------
     # Snapshot watcher (LLM live table)

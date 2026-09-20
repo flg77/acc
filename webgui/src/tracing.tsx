@@ -9,10 +9,86 @@
 import { useEffect, useState } from "react";
 import { useSnapshot } from "./state/snapshot";
 import { Card, DataTable, Empty } from "./common";
-import { fetchAuditTimeline, fetchPlanDag } from "./api/client";
+import { fetchAuditTimeline, fetchPlanDag, fetchTracing } from "./api/client";
+import type { Tracing } from "./api/client";
 
 const obj = (v: unknown): Record<string, any> =>
   v && typeof v === "object" ? (v as Record<string, any>) : {};
+
+// View 0 ── Where the turns go (from /api/tracing, read-only) ──────────────
+export function TraceDestination() {
+  const [found, setFound] = useState<Tracing | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    fetchTracing().then(setFound).catch((e) => setError(String(e)));
+  }, []);
+
+  if (error)
+    return (
+      <Card title="Where the turns go">
+        <p className="empty">could not be read: {error}</p>
+      </Card>
+    );
+  if (!found)
+    return (
+      <Card title="Where the turns go">
+        <p className="hint">Reading…</p>
+      </Card>
+    );
+  const text = found.message_text
+    ? "recorded"
+    : "NOT recorded (ACC_TRACE_MESSAGES=off)";
+  const rows: [string, string][] = [
+    ["Declared in", found.declared_in],
+    ["Backend", found.backend],
+  ];
+  if (found.exporting)
+    rows.push(
+      ["Agents send spans to", found.collector],
+      ["MLflow endpoint", found.mlflow_endpoint],
+      ["MLflow workspace", found.mlflow_workspace],
+      ["MLflow experiment id", found.mlflow_experiment_id],
+      [
+        "Message text",
+        found.message_text_off.length
+          ? `${text} — except: ${found.message_text_off.join(", ")}`
+          : text,
+      ],
+    );
+  rows.push(["Tracking URI (run logging, trace links)", found.tracking_uri]);
+  return (
+    <Card title="Where the turns go">
+      <p className={found.exporting ? "verified" : "hint"}>{found.summary}</p>
+      <table className="kv">
+        <tbody>
+          {rows.map(([k, v]) => (
+            <tr key={k}>
+              <th>{k}</th>
+              <td>{v || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {found.exporting && found.mlflow_endpoint && (
+        <p className="hint">
+          Open MLflow, pick the workspace and the experiment above: one trace
+          per turn — the question, the system prompt, every tool call with its
+          result, the answer, tokens per model call. A role may still redact
+          its own text (telemetry.redact_messages).
+        </p>
+      )}
+      {found.errors.map((e) => (
+        <p key={e} className="tampered">
+          {e}
+        </p>
+      ))}
+      <p className="hint">
+        Read-only here: the switch is a change to the deployment (
+        {found.declared_in || "see above"}).
+      </p>
+    </Card>
+  );
+}
 
 // View 1 ── Task-step trace waterfall (from the live snapshot) ────────────
 export function TraceWaterfall() {

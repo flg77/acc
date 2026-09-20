@@ -70,6 +70,18 @@ def environment_info() -> dict:
     return info
 
 
+@router.get("/api/tracing", tags=["read"], dependencies=[Depends(require_viewer)])
+def tracing_info() -> dict:
+    """Where this deployment's traces go and what they carry
+    (``acc.deployment.tracing``) — read-only.  In a cluster that is
+    ``AgentCorpus.spec.observability``, asked with the pod's ServiceAccount;
+    a refusal arrives as ``errors``, not as an empty answer.  A plain ``def``:
+    the read blocks, so it runs in the threadpool."""
+    from acc.deployment import tracing  # noqa: PLC0415
+
+    return tracing().to_dict()
+
+
 @router.get("/api/deploy", tags=["read"], dependencies=[Depends(require_viewer)])
 def deploy_info() -> dict:
     """Where this WebGUI runs (proposal 056 §4.1).

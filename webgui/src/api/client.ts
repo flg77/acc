@@ -136,6 +136,24 @@ export type Environment = {
 
 export const fetchEnvironment = () => getJSON<Environment>("/api/environment");
 
+// Where this deployment's traces go and what they carry (read-only).
+export type Tracing = {
+  declared_in: string;
+  backend: string;
+  exporting: boolean;
+  collector: string;
+  mlflow_endpoint: string;
+  mlflow_workspace: string;
+  mlflow_experiment_id: string;
+  tracking_uri: string;
+  message_text: boolean;
+  message_text_off: string[];
+  summary: string;
+  errors: string[];
+};
+
+export const fetchTracing = () => getJSON<Tracing>("/api/tracing");
+
 // `sessionId` names the conversation this prompt continues (RP-02). Only the
 // id travels — prior turns are replayed server-side from the durable tracelog,
 // so the browser cannot fabricate history. Omitting it yields a one-turn

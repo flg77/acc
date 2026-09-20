@@ -32,7 +32,7 @@ import {
   Help,
   Board,
 } from "./screens";
-import { TraceWaterfall, PlanDag, AuditTimeline } from "./tracing";
+import { TraceDestination, TraceWaterfall, PlanDag, AuditTimeline } from "./tracing";
 
 const SCREENS: Record<string, () => JSX.Element> = {
   Dashboard,
@@ -49,6 +49,7 @@ const SCREENS: Record<string, () => JSX.Element> = {
   Configuration,
   Diagnostics,
   Help,
+  "Trace · Where the turns go": TraceDestination,
   "Trace · Waterfall": TraceWaterfall,
   "Trace · PLAN DAG": PlanDag,
   "Trace · Audit chain": AuditTimeline,

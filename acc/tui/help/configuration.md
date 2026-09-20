@@ -23,6 +23,14 @@ The capability inventory available to roles (moved here from Ecosystem
 in proposal 003). Read-only browse of installed skills + MCP servers
 with their trust/signer columns.
 
+### TRACING (read-only)
+Where the turns of this deployment go and what they carry: the backend
+(`otel` exports, `log` keeps spans in the agents' logs), the collector the
+agents send to, the MLflow workspace + experiment the collector fans out to,
+and whether message text (prompts, answers, tool payloads) is recorded. In a
+cluster this is `AgentCorpus.spec.observability`; in a checkout it is
+`acc-config.yaml` + the environment. Nothing here is a switch.
+
 ## Notes
 - Secrets are **never** shown or written in plaintext beyond the local
   `.env`; keys come from the environment.

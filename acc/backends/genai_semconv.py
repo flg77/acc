@@ -148,11 +148,16 @@ REDACTED = "<redacted>"
 _DEFAULT_MESSAGES_MAX_CHARS = 8192
 
 
+def trace_messages_on(raw: str) -> bool:
+    """How a value of ``ACC_TRACE_MESSAGES`` reads — one rule for the agent
+    that obeys it and the surface that reports it."""
+    return raw.strip().lower() not in ("off", "0", "false", "no")
+
+
 def trace_messages_enabled() -> bool:
     """``ACC_TRACE_MESSAGES`` — ``on`` (default) puts message and tool payload
     text on the spans, ``off`` restores the pre-0.17.16 shape."""
-    raw = os.environ.get("ACC_TRACE_MESSAGES", "on").strip().lower()
-    return raw not in ("off", "0", "false", "no")
+    return trace_messages_on(os.environ.get("ACC_TRACE_MESSAGES", "on"))
 
 
 def messages_max_chars() -> int:

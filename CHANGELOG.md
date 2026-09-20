@@ -11,6 +11,18 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-09-20
+
+On bb3 every turn was in MLflow with its full text and neither surface said
+so: the UI pods carry no tracing setting, Diagnostics answered *MLflow not
+configured*, and the operator could not find the queries. OpenSpec
+`20260920-surfaces-show-tracing`, Phase 1 — say where the turns go, read-only.
+
+### Added
+
+- **`acc.deployment.tracing()`** — where this deployment's traces go and what they carry, from the backend the environment selects: `acc-config.yaml` + the environment in a checkout; `AgentCorpus.spec.observability` (plus any agent's own `ACC_TRACE_MESSAGES`) in a cluster pod, read with the UI ServiceAccount operator 0.2.27 grants. One sentence says it (`Every turn is exported to MLflow, workspace …, experiment id … — with its message text.`); a refused read is an error entry, not an empty answer.
+- **TUI: Configuration → Tracing** and **WebGUI: `GET /api/tracing` + *Trace · Where the turns go*** — that sentence, the collector, the MLflow endpoint / workspace / experiment id, message text on or off and the roles declared without it, where all of it is declared. Read-only: the switch is a change to the deployment.
+
 ## [0.19.0] — 2026-09-20
 
 In a cluster the TUI's Agentset tab said what the agentset is and showed
