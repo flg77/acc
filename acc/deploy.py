@@ -122,7 +122,9 @@ class Environment:
     def label(self) -> str:
         """One line for a header: ``cluster · <namespace> · <corpus>``."""
         parts = [self.kind, self.namespace, self.corpus]
-        if not self.cluster and self.deploy_mode:
+        # a checkout also says which profile it runs (edge) — unless that is
+        # the same word again ("standalone · standalone")
+        if not self.cluster and self.deploy_mode and self.deploy_mode != self.kind:
             parts.append(self.deploy_mode)
         return " · ".join(p for p in parts if p)
 

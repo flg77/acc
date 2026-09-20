@@ -115,3 +115,12 @@ def test_to_dict_is_what_a_surface_renders_from(monkeypatch):
     assert set(d["capabilities"]) == set(deploy.CAPABILITIES)
     assert d["capabilities"]["role.write"] == {
         "available": False, "reason": deploy.environment().unavailable("role.write")}
+
+
+@pytest.mark.parametrize("mode,label", [
+    ("", "standalone"), ("standalone", "standalone"), ("edge", "standalone · edge"),
+])
+def test_label_of_a_checkout_names_the_profile_once(monkeypatch, mode, label):
+    """v0.18.0 on the edge host read "standalone · standalone" on every screen."""
+    monkeypatch.setenv("ACC_DEPLOY_MODE", mode)
+    assert deploy.environment().label() == label

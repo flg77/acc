@@ -11,6 +11,15 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-09-20
+
+The first look at 0.18.0 on the edge host: the environment line the TUI now
+carries on every screen read `standalone · standalone`.
+
+### Fixed
+
+- **The environment label of a checkout names its profile once** — with `deploy_mode: standalone` the navigation bar read `standalone · standalone` on every screen (seen on the edge host right after 0.18.0); the profile is appended only when it says something the kind does not (`standalone · edge`).
+
 ## [0.18.0] — 2026-09-20
 
 The surfaces know where they run. Found on bb3, in the TUI of a corpus the
