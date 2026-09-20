@@ -115,13 +115,19 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, fmt.Errorf("fetch AccPackageInstall: %w", err)
 	}
 
-	// Pick a target ACC agent pod, plus the corpus's UI pods (TUI, WebGUI)
-	// so an installed pack is visible where operators look for it.
-	pod, err := r.findAccPod(ctx, cr.Namespace, cr.Spec.TargetCorpus)
+	// Every ready agent pod of the corpus, plus its UI pods (TUI, WebGUI) so an
+	// installed pack is visible where operators look for it. EVERY agent, not
+	// one: each keeps its own packages root (an emptyDir), and until 0.2.25 a
+	// pass installed into "the first Ready pod" of a cache listing whose order
+	// is not stable -- the other agents got their package by chance, one pass
+	// at a time (bb3, 2026-09-18: five agents took nine minutes, the last one
+	// four of them).
+	agentPods, err := r.findAccPods(ctx, cr.Namespace, cr.Spec.TargetCorpus)
 	if err != nil {
 		r.markFailed(ctx, cr, "PodNotFound", err.Error())
 		return r.requeue(), nil
 	}
+	pod := agentPods[0]
 	uiPods, err := r.findUIPods(ctx, cr.Namespace, cr.Spec.TargetCorpus)
 	if err != nil {
 		r.markFailed(ctx, cr, "PodNotFound", err.Error())
@@ -177,6 +183,14 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		r.markFailed(ctx, cr, reason, msg)
 		return r.requeue(), nil
 	}
+	agentNames := []string{pod.Name}
+	for _, p := range agentPods[1:] {
+		if _, reason, msg := r.installInto(ctx, p, agentContainer(p), args); reason != "" {
+			r.markFailed(ctx, cr, reason, fmt.Sprintf("pod %s: %s", p.Name, msg))
+			return r.requeue(), nil
+		}
+		agentNames = append(agentNames, p.Name)
+	}
 	// The UI pods must hold the pack too: Installed means every target pod
 	// has it on disk, not just the agent.
 	uiNames := make([]string, 0, len(uiPods))
@@ -198,11 +212,24 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		entry := result.Installed[0]
 		// Split "@scope/name@version" into version
 		if idx := strings.LastIndex(entry.InstalledRef, "@"); idx > 0 {
+			previous := cr.Status.InstalledVersion
 			cr.Status.InstalledVersion = entry.InstalledRef[idx+1:]
+			// An UPGRADE: the agents are running with the previous version's
+			// manifests in memory. Recording the version here is what rolls
+			// them (the agent StatefulSets carry it on their pod template).
+			// A first install (no previous version) rolls nothing.
+			if previous != "" && previous != cr.Status.InstalledVersion {
+				cr.Status.RolledForVersion = cr.Status.InstalledVersion
+				log.Info("package upgraded: the corpus' agents will be rolled",
+					"from", previous, "to", cr.Status.InstalledVersion)
+			}
 		}
 		cr.Status.InstallPath = entry.InstallPath
 	}
 	message := fmt.Sprintf("installed via pod %s", pod.Name)
+	if len(agentNames) > 1 {
+		message = fmt.Sprintf("installed via pods %s", strings.Join(agentNames, ", "))
+	}
 	if len(uiNames) > 0 {
 		message += fmt.Sprintf("; on disk in UI pods %s", strings.Join(uiNames, ", "))
 	}
@@ -222,11 +249,21 @@ func (r *AccPackageInstallReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	return r.requeue(), nil
 }
 
-// findAccPod returns a ready ACC pod in ``ns``.  When ``corpusName``
+// findAccPod returns the first of findAccPods (kept for callers that need one).
+func (r *AccPackageInstallReconciler) findAccPod(ctx context.Context, ns, corpusName string) (*corev1.Pod, error) {
+	pods, err := r.findAccPods(ctx, ns, corpusName)
+	if err != nil {
+		return nil, err
+	}
+	return pods[0], nil
+}
+
+// findAccPods returns every ready ACC agent pod in ns, sorted by name so a
+// pass is reproducible.  When corpusName
 // is non-empty, restricts to pods owned by that corpus via label
 // selector ``acc.redhat.io/corpus-name=<name>`` -- the label every
 // pod-producing reconciler actually sets (LabelCorpusName).
-func (r *AccPackageInstallReconciler) findAccPod(ctx context.Context, ns, corpusName string) (*corev1.Pod, error) {
+func (r *AccPackageInstallReconciler) findAccPods(ctx context.Context, ns, corpusName string) ([]*corev1.Pod, error) {
 	labels := map[string]string{}
 	if corpusName != "" {
 		labels[accv1alpha1.LabelCorpusName] = corpusName
@@ -247,19 +284,24 @@ func (r *AccPackageInstallReconciler) findAccPod(ctx context.Context, ns, corpus
 	); err != nil {
 		return nil, fmt.Errorf("listing pods: %w", err)
 	}
+	var ready []*corev1.Pod
 	for i := range pods.Items {
 		p := &pods.Items[i]
-		if p.Status.Phase != corev1.PodRunning {
+		if p.Status.Phase != corev1.PodRunning || p.DeletionTimestamp != nil {
 			continue
 		}
-		// Pick the first Ready pod.
 		for _, c := range p.Status.Conditions {
 			if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
-				return p, nil
+				ready = append(ready, p)
+				break
 			}
 		}
 	}
-	return nil, fmt.Errorf("no ready ACC agent pod in namespace %q (corpus=%q)", ns, corpusName)
+	if len(ready) == 0 {
+		return nil, fmt.Errorf("no ready ACC agent pod in namespace %q (corpus=%q)", ns, corpusName)
+	}
+	sort.Slice(ready, func(i, j int) bool { return ready[i].Name < ready[j].Name })
+	return ready, nil
 }
 
 // pkgInstallResult is the JSON `acc-cli collective pkg-install --json`

@@ -35,6 +35,7 @@ from textual.widgets import (
 )
 
 from acc.tui.actor import visible_rows
+from acc.tui.env_gate import caveat, gate
 from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 if TYPE_CHECKING:
@@ -334,6 +335,11 @@ class ComplianceScreen(NavScreen):
             "Agent", "Role", "Profile", "Enabled", "Local", "Dropped",
         )
         overlay_tbl.cursor_type = "row"
+
+        # Where this TUI runs decides what a decision here can reach.
+        gate(self, "governance.write", "#btn-proposal-approve", "#btn-proposal-reject")
+        gate(self, "package.install", "#btn-pkg-proposal-approve")
+        caveat(self, "state.local", "#btn-fw-add", "#btn-fw-scan")
 
     def _populate_governance(self) -> None:
         """Fill the Cat-A/B/C tables + titles from the inventory loader."""

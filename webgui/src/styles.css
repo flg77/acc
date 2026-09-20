@@ -31,6 +31,8 @@ header h1 { font-size: 1.1rem; margin: 0; color: var(--accent); }
 .badge { font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 0.7rem; }
 .badge.live { background: var(--ok); color: #04210f; }
 .badge.stale { background: var(--warn); color: #2a1c04; }
+.badge.env { margin-left: auto; background: var(--panel); color: var(--muted); border: 1px solid var(--muted); }
+.badge.env.cluster { color: var(--accent); border-color: var(--accent); }
 
 nav {
   display: flex;

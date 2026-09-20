@@ -67,8 +67,11 @@ def tour_wanted() -> bool:
 
 def mark_done() -> Path:
     p = marker_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(f"done_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n", encoding="utf-8")
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"done_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n", encoding="utf-8")
+    except OSError:
+        pass  # a read-only home (a pod): the tour shows again, nothing breaks
     return p
 
 

@@ -11,6 +11,40 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-09-20
+
+The surfaces know where they run. Found on bb3, in the TUI of a corpus the
+operator built: *Ecosystem → Agentset* answered *"collective.yaml not found —
+run `./acc-deploy.sh setup`"* inside a pod whose agentset is an
+`AgentCollective`, its *Apply* promised to reconcile podman, and LLM *Save*
+failed on a `.env` no agent reads — returning before the one thing that does
+work there, the reload broadcast. The WebGUI refused most such writes since
+proposal 056; the TUI never asked where it was. OpenSpec
+`20260920-surfaces-detect-environment` — this is its first phase: **detect, and
+stop lying.** Neither surface gains a power over the cluster yet.
+
+### Added
+
+- **`acc.deploy.environment()`** — one answer for every surface: `cluster` or `standalone`, the namespace, corpus and collectives, what it was detected by, and per capability (`agentset.write`, `role.write`, `package.install`, `package.build`, `catalog.write`, `config.write`, `models.write`, `capability.upload`, `governance.write`, `state.local`, `workspace.apply`, `trace.audit`, `trace.episodes`) either *available* or the sentence that says why not and what holds that truth instead. Detection: `ACC_ENVIRONMENT` (new, the explicit word) › a cluster `ACC_DEPLOY_MODE` › `ACC_CORPUS_NAME` › `KUBERNETES_SERVICE_HOST`. `is_cluster()` stays and delegates.
+- **TUI: the environment on every screen** — in the navigation bar's border line (`cluster · wksp-user2 · mortgage-agents-corpus` / `standalone`); it costs no row and hides no button.
+- **WebGUI: `GET /api/environment`**, shown in the top bar; a navigation entry whose capability is unavailable is not offered (*Trace · Audit chain* in a pod without an audit store).
+
+### Changed
+
+- **TUI: a control that cannot work here is disabled with the reason** as its tooltip, and refuses with the same sentence when reached by key: Agentset Save / Apply / Set model, role edit and save, *Roll a release*, *Get pack*, the catalog form and its delete / priority keys, the model registry, role → model, skill and MCP upload, rule-proposal and package-proposal approval, *→ Pack*, the workspace picker. Saves that still work but live only as long as the pod (golden prompts, frameworks, gap scans, ratings, a detached session) say so. `acc/tui/env_gate.py`.
+- **TUI: the Agentset tab in a cluster** says what the agentset is there — the `AgentCollective`, with the two `oc` commands that show it and where the live picture is — instead of how to scaffold a file; Infuse *Apply* says it reached the running agents and was not saved, and no longer drops a request for a host-side watcher; the hints that named `acc-deploy.sh`, `acc-pkg` or `./.env` have a cluster wording.
+- **WebGUI: `POST /api/config/set` and `/preview` answer 409 with the reason in a cluster** instead of writing `acc-config.yaml` into the container and answering *"restart to apply"*; `GET /api/config` reports `writable: false` and `write_block_reason`; the audit-chain and episode-search routes answer 409 with the reason where the store was never there (503 stays for a store that should be).
+- **A process inside any Kubernetes pod is `cluster`**, also without the operator's variables. `ACC_ENVIRONMENT=standalone` is the way back (a CI pod that builds packages).
+
+### Fixed
+
+- **LLM *Save* tells the agents even when the file cannot be written** — the failed `.env` write returned before `config.reload` was published, so in a read-only container nothing happened at all. The broadcast goes first and the result line reports the two halves separately.
+- **`POST /api/config/propose` files the proposal** — it built a dict and returned it; nothing reached the oversight queue. It now publishes `OVERSIGHT_SUBMIT` (HIGH) on the collective and returns the `oversight_id`; where no collective is observed it answers `filed: false` and says so.
+- **A `publisher` is no longer filtered as a viewer** — `identity.from_web` mapped everything but `operator` to the viewer tier, so a publisher could act on a board it was shown a viewer's slice of.
+- **Infuse resolved its roles root by itself** (`ACC_ROLES_ROOT` or a cwd-relative `roles`) and could write `./roles/<name>/role.yaml` where nothing reads it; without the variable it uses the shared resolver, and an explicit `ACC_ROLES_ROOT` is a write target taken at its word (the resolver's fall-back to the repo's `roles/` is for reads).
+- **`pytest tests/` can no longer take a live stack down** — `tests/container/integration/test_stack_health.py` ups and downs the production compose file, whose fixed container names replace and then remove a live stack's containers; its only gate was *podman-compose is installed*. It needs `ACC_RUN_STACK_INTEGRATION=1` now, and its fixture skips when such containers exist. Found the hard way on the edge host (no data lost — `down -v` only reaches the test project's own volumes).
+- **The TUI's log-directory fallback could crash a read-only pod at start** (an unguarded `mkdir` in the cwd); it falls back to the temp directory. The tour's done-marker no longer raises on a read-only home.
+
 ## [0.17.17] — 2026-09-19
 
 The first 0.17.16 trace on bb3, read closely: everything the lab's trace

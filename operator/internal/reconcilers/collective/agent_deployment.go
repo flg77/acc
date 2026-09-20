@@ -11,6 +11,8 @@ package collective
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -453,6 +455,17 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 		sandbox.ApplyOpenShellSandbox(&deploy.Spec.Template, corpus, sandbox.SandboxName(deployName), policyCMName, image)
 	}
 
+	// An agent loads its package manifests at boot. When a package was
+	// UPGRADED the install controller records the version on the
+	// AccPackageInstall; carrying it on the pod template is what rolls the
+	// agents onto it. No upgrade yet -> no annotation -> nothing rolls.
+	if rollout := r.packageRollout(ctx, collective.Namespace, corpus.Name); rollout != "" {
+		if deploy.Spec.Template.Annotations == nil {
+			deploy.Spec.Template.Annotations = map[string]string{}
+		}
+		deploy.Spec.Template.Annotations[PackageRolloutAnnotation] = rollout
+	}
+
 	// Upsert: Replicas + Template are mutable on a StatefulSet;
 	// VolumeClaimTemplates + ServiceName are immutable post-create, so the
 	// reconcile closure deliberately does NOT touch them (a forbidden-field
@@ -587,4 +600,40 @@ func derefResources(r *corev1.ResourceRequirements) corev1.ResourceRequirements 
 		return *r
 	}
 	return corev1.ResourceRequirements{}
+}
+
+// PackageRolloutAnnotation on an agent's pod template names the package
+// versions the agents were last rolled for (see PackageRollout).
+const PackageRolloutAnnotation = "acc.redhat.io/package-rollout"
+
+// PackageRollout is the value of PackageRolloutAnnotation for a corpus: the
+// sorted "name@rolledForVersion" of every AccPackageInstall that targets it
+// (an empty targetCorpus targets every corpus in the namespace) and has been
+// upgraded at least once. It changes exactly when a package is upgraded, so
+// it rolls the agents then and at no other time; it is empty until the first
+// upgrade, so a first install rolls nothing.
+func PackageRollout(installs []accv1alpha1.AccPackageInstall, corpusName string) string {
+	var parts []string
+	for i := range installs {
+		in := &installs[i]
+		if in.Status.RolledForVersion == "" {
+			continue
+		}
+		if in.Spec.TargetCorpus != "" && in.Spec.TargetCorpus != corpusName {
+			continue
+		}
+		parts = append(parts, in.Spec.Name+"@"+in.Status.RolledForVersion)
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ",")
+}
+
+// packageRollout lists the namespace's installs and renders PackageRollout.
+// A list failure renders "" -- telemetry-grade: it must not block the agents.
+func (r *AgentDeploymentReconciler) packageRollout(ctx context.Context, ns, corpusName string) string {
+	var installs accv1alpha1.AccPackageInstallList
+	if err := r.Client.List(ctx, &installs, client.InNamespace(ns)); err != nil {
+		return ""
+	}
+	return PackageRollout(installs.Items, corpusName)
 }

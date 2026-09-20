@@ -87,6 +87,8 @@ class NavigationBar(Widget):
         height: 3;
         background: $surface;
         border-bottom: solid $primary;
+        border-subtitle-align: right;
+        border-subtitle-color: $text-muted;
         layout: horizontal;
         align: left middle;
         padding: 0 1;
@@ -121,6 +123,13 @@ class NavigationBar(Widget):
     def __init__(self, active_screen: str = "soma", **kwargs) -> None:  # type: ignore[override]
         super().__init__(**kwargs)
         self._active_screen = active_screen
+
+    def on_mount(self) -> None:
+        # Where this TUI runs, on every screen — in the bar's own border line,
+        # so it costs no row and hides no button.
+        from acc.deploy import environment  # noqa: PLC0415
+
+        self.border_subtitle = environment().label()
 
     def compose(self) -> ComposeResult:
         # The 1..9 keyed panes first, then the overflow panes (Marketplace,

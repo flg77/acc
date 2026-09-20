@@ -699,9 +699,15 @@ def _configure_logging() -> None:
         probe.touch()
         probe.unlink()
     except (OSError, PermissionError):
-        # Fall back to a per-process tmp dir so logging never crashes startup
+        # Fall back so logging never crashes startup: the cwd, and when that
+        # is read-only too (a pod with a read-only root) the temp dir.
         log_dir = Path.cwd() / "acc-tui-logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            import tempfile  # noqa: PLC0415
+
+            log_dir = Path(tempfile.mkdtemp(prefix="acc-tui-logs-"))
 
     file_handler = logging.handlers.RotatingFileHandler(
         log_dir / "acc-tui.log",

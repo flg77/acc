@@ -118,6 +118,24 @@ export type DeployInfo = { cluster: boolean; deploy_mode: string; corpus_name: s
 
 export const fetchDeployInfo = () => getJSON<DeployInfo>("/api/deploy");
 
+// Where this WebGUI runs and what can be changed from here
+// (acc.deploy.environment): per capability either available, or the sentence
+// that says why not and what holds that truth instead.
+export type Capability = { available: boolean; reason: string };
+export type Environment = {
+  kind: "cluster" | "standalone";
+  cluster: boolean;
+  deploy_mode: string;
+  namespace: string;
+  corpus: string;
+  collectives: string[];
+  detected_by: string;
+  label: string;
+  capabilities: Record<string, Capability>;
+};
+
+export const fetchEnvironment = () => getJSON<Environment>("/api/environment");
+
 // `sessionId` names the conversation this prompt continues (RP-02). Only the
 // id travels — prior turns are replayed server-side from the durable tracelog,
 // so the browser cannot fabricate history. Omitting it yields a one-turn

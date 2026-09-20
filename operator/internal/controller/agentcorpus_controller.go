@@ -22,10 +22,13 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	accv1alpha1 "github.com/redhat-ai-dev/agentic-cell-corpus/operator/api/v1alpha1"
@@ -117,7 +120,45 @@ func (r *AgentCorpusReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// and a Ready corpus does not requeue on its own (workshop-gaps G-10).
 		// Map every collective event to the corpora that reference it instead.
 		Watches(&accv1alpha1.AgentCollective{}, handler.EnqueueRequestsFromMapFunc(r.MapCollectiveToCorpora)).
+		// A package UPGRADE rolls the agents: the install controller records
+		// status.rolledForVersion and the agent pod templates carry it. Only
+		// that field's change is an event here -- the install's status is
+		// refreshed on every poll and must not reconcile the corpus each time.
+		Watches(&accv1alpha1.AccPackageInstall{}, handler.EnqueueRequestsFromMapFunc(r.MapInstallToCorpora),
+			builder.WithPredicates(predicate.Funcs{
+				CreateFunc:  func(event.CreateEvent) bool { return false },
+				DeleteFunc:  func(event.DeleteEvent) bool { return false },
+				GenericFunc: func(event.GenericEvent) bool { return false },
+				UpdateFunc: func(e event.UpdateEvent) bool {
+					before, ok1 := e.ObjectOld.(*accv1alpha1.AccPackageInstall)
+					after, ok2 := e.ObjectNew.(*accv1alpha1.AccPackageInstall)
+					return ok1 && ok2 && before.Status.RolledForVersion != after.Status.RolledForVersion
+				},
+			})).
 		Complete(r)
+}
+
+// MapInstallToCorpora enqueues the corpus an AccPackageInstall targets, or
+// every corpus in its namespace when it names none.
+func (r *AgentCorpusReconciler) MapInstallToCorpora(ctx context.Context, obj client.Object) []reconcile.Request {
+	install, ok := obj.(*accv1alpha1.AccPackageInstall)
+	if !ok {
+		return nil
+	}
+	if install.Spec.TargetCorpus != "" {
+		return []reconcile.Request{{NamespacedName: client.ObjectKey{
+			Namespace: install.Namespace, Name: install.Spec.TargetCorpus}}}
+	}
+	var corpora accv1alpha1.AgentCorpusList
+	if err := r.Client.List(ctx, &corpora, client.InNamespace(install.Namespace)); err != nil {
+		corpusLog.Error(err, "list AgentCorpora for install event", "install", install.Name)
+		return nil
+	}
+	reqs := make([]reconcile.Request, 0, len(corpora.Items))
+	for i := range corpora.Items {
+		reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&corpora.Items[i])})
+	}
+	return reqs
 }
 
 // MapCollectiveToCorpora enqueues every AgentCorpus in the collective's

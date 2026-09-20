@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
+  fetchEnvironment,
   getAuthInfo,
   getToken,
   isAuthError,
@@ -13,6 +14,7 @@ import {
   login,
   setToken,
 } from "./api/client";
+import type { Environment } from "./api/client";
 import { SnapshotProvider, useSnapshot } from "./state/snapshot";
 import {
   Dashboard,
@@ -50,6 +52,12 @@ const SCREENS: Record<string, () => JSX.Element> = {
   "Trace · Waterfall": TraceWaterfall,
   "Trace · PLAN DAG": PlanDag,
   "Trace · Audit chain": AuditTimeline,
+};
+
+// A screen that needs a capability this environment lacks is not offered:
+// it could only answer with an error.
+const SCREEN_CAPABILITY: Record<string, string> = {
+  "Trace · Audit chain": "trace.audit",
 };
 
 function StatusBadge() {
@@ -197,6 +205,12 @@ export default function App() {
   const [boot, setBoot] = useState<Boot>({ state: "checking" });
   const [activeCid, setActiveCid] = useState<string>("");
   const [screen, setScreen] = useState<string>("Dashboard");
+  const [env, setEnv] = useState<Environment | null>(null);
+
+  useEffect(() => {
+    if (boot.state !== "ready") return;
+    fetchEnvironment().then(setEnv).catch(() => setEnv(null));
+  }, [boot.state]);
 
   // Probe the backend: discover the auth mode, then list collectives.
   // A 401/403 means we lack a valid credential → show the gate for the
@@ -303,9 +317,22 @@ export default function App() {
             ))}
           </select>
           <StatusBadge />
+          {env && (
+            <span
+              className={env.cluster ? "badge env cluster" : "badge env"}
+              title={`detected by ${env.detected_by}`}
+            >
+              {env.label}
+            </span>
+          )}
         </header>
         <nav>
-          {Object.keys(SCREENS).map((name) => (
+          {Object.keys(SCREENS)
+            .filter((name) => {
+              const cap = SCREEN_CAPABILITY[name];
+              return !cap || !env || env.capabilities[cap]?.available !== false;
+            })
+            .map((name) => (
             <button
               key={name}
               className={name === screen ? "active" : ""}

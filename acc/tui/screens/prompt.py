@@ -56,6 +56,7 @@ from textual.widgets import (
 )
 
 from acc.channels import TUIPromptChannel
+from acc.tui.env_gate import refuse, unavailable
 from acc.tui.widgets.cluster_panel import ClusterPanel
 from acc.tui.widgets.invocation_detail_modal import InvocationDetailModal
 from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
@@ -1135,6 +1136,8 @@ class PromptScreen(NavScreen):
         directory (which becomes ``/workspace``).  We surface the chosen
         host path with an "applying" hint — tasks then write to the
         ``/workspace`` root, so no per-task subpath is threaded."""
+        if refuse(self, "workspace.apply"):
+            return
         from acc.tui.widgets.workspace_select_modal import (  # noqa: PLC0415
             WorkspaceSelectModal,
             base_host_path,
@@ -2766,6 +2769,9 @@ class PromptScreen(NavScreen):
         try:
             self.app.exit(
                 message=(
+                    "Session kept in this pod only — it is lost when the pod "
+                    "restarts."
+                    if unavailable("state.local") else
                     "Session saved. Resume with:  "
                     f"acc-tui --resume {self._session_id}"
                 )

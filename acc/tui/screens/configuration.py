@@ -60,7 +60,9 @@ from acc.models import (
     set_role_model,
     upsert_model,
 )
+from acc.deploy import environment
 from acc.pkg.manifest import CORE_BASELINE_MCPS, CORE_BASELINE_SKILLS
+from acc.tui.env_gate import gate, unavailable
 from acc.tui.path_resolution import resolve_manifest_root
 from acc.tui.widgets.file_picker import FilePickerModal
 from acc.tui.widgets.model_editor_modal import ModelEditorModal
@@ -477,6 +479,10 @@ class ConfigurationScreen(NavScreen):
                         variant="success",
                     )
                     yield Static(
+                        "[dim] Tells the running agents (config.reload).  "
+                        "Not saved from this pod — the AgentCollective "
+                        "declares what an agent starts with.[/dim]"
+                        if environment().cluster else
                         "[dim] Writes to ./.env and broadcasts a "
                         "config.reload signal.[/dim]",
                         id="llm-save-result",
@@ -612,6 +618,11 @@ class ConfigurationScreen(NavScreen):
         self._render_llm_summary()
         self._render_model_registry()
         self._render_role_model()
+        # What cannot work where this TUI runs is disabled with its reason.
+        gate(self, "models.write", "#btn-model-add", "#btn-model-edit",
+             "#btn-model-delete", "#btn-registry-setrole")
+        gate(self, "agentset.write", "#btn-rolemodel-assign", "#btn-rolemodel-seed")
+        gate(self, "capability.upload", "#btn-upload-skill", "#btn-upload-mcp")
         self._load_skills()
         self._load_mcps()
         # Nucleus Ctrl+A→e may have stashed a role before we composed.
@@ -1042,10 +1053,16 @@ class ConfigurationScreen(NavScreen):
             "proposal 011)[/dim]\n"
             f"[bold]NATS NKey auth:[/bold] {summary['nkey_enabled']} "
             f"[dim](role={summary['nkey_role']}; proposal 013)[/dim]\n"
-            "\n[dim]Values reflect ACCConfig.llm + the documented "
-            "ACC_LLM_* env-var overrides.  Edit the four LLM knobs "
-            "below to update ./.env; deploy_mode / signing / NKey "
-            "stay file-edit + restart.[/dim]"
+            + (
+                "\n[dim]This pod carries no acc-config of its own: what each "
+                "agent really runs is LIVE BACKENDS below; what it starts "
+                "with is declared on the AgentCollective.[/dim]"
+                if environment().cluster else
+                "\n[dim]Values reflect ACCConfig.llm + the documented "
+                "ACC_LLM_* env-var overrides.  Edit the four LLM knobs "
+                "below to update ./.env; deploy_mode / signing / NKey "
+                "stay file-edit + restart.[/dim]"
+            )
         )
         try:
             self.query_one("#llm-config-summary", Static).update(content)
@@ -1134,17 +1151,25 @@ class ConfigurationScreen(NavScreen):
         }
         env_path = _resolve_env_writeback_path()
 
+        # Tell the agents first: the broadcast works wherever there is a bus,
+        # the file only where there is a checkout.  A failed write used to
+        # return before the broadcast — in a pod nothing ever happened.
+        publish_msg = self._publish_config_reload(updates)
+
+        not_here = unavailable("config.write")
+        if not_here:
+            result.update(
+                f"{publish_msg} · [yellow]not saved — {not_here}.  A restarted "
+                "agent returns to what is declared.[/yellow]"
+            )
+            return
         try:
             from acc.tui.env_writeback import upsert_env  # noqa: PLC0415
             upsert_env(env_path, updates)
         except Exception as exc:
             logger.exception("configuration: .env writeback failed")
-            result.update(f"[red]Save failed: {exc}[/red]")
+            result.update(f"[red]Not saved: {exc}[/red] · {publish_msg}")
             return
-
-        # Publish a best-effort reload signal.  Wraps any error so a
-        # NATS outage does NOT mask the successful file save.
-        publish_msg = self._publish_config_reload(updates)
 
         # Refresh the read panel from the new file/env state so the
         # operator sees the saved values immediately.

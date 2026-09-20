@@ -33,9 +33,11 @@ from textual.widgets import (
 )
 from textual.reactive import reactive
 
+from acc.deploy import environment
 from acc.role_loader import RoleLoader, list_roles, list_all_role_names
 from acc.signals import subject_role_update
 from acc.tui.config_helpers import load_operator_mode
+from acc.tui.env_gate import refuse, unavailable
 from acc.tui.mode_badge import operator_mode_hint, operator_mode_markup
 from acc.tui.widgets.caps_editor_modal import CapsEditorModal
 from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar, NavScreen
@@ -63,7 +65,18 @@ _FALLBACK_ROLES = [
 
 
 def _roles_root() -> str:
-    return os.environ.get("ACC_ROLES_ROOT", "roles")
+    # This is a WRITE target (Apply persists role.yaml here).  An explicit
+    # ACC_ROLES_ROOT is taken at its word — the shared resolver falls back to
+    # the repo's roles/ when the named directory does not exist yet, and a
+    # write must never land somewhere other than where the operator pointed.
+    # Without it, the resolver every other screen uses: the old bare
+    # cwd-relative "roles" wrote ./roles/<name>/role.yaml where nothing reads it.
+    explicit = os.environ.get("ACC_ROLES_ROOT", "").strip()
+    if explicit:
+        return explicit
+    from acc.tui.path_resolution import resolve_manifest_root  # noqa: PLC0415
+
+    return str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
 
 
 class _CapsShim:
@@ -825,7 +838,11 @@ class InfuseScreen(NavScreen):
         # ROLE_UPDATE signal alone only writes the Redis/LanceDB tiers, which
         # the tier-0 role.yaml shadows on the next load — that's why a Nucleus
         # budget bump was "not recognized at all".
-        persisted = self._persist_role_yaml(role_name, merged_role_def)
+        not_here = unavailable("role.write")
+        persisted = (
+            False if not_here
+            else self._persist_role_yaml(role_name, merged_role_def)
+        )
 
         payload = {
             "signal_type": "ROLE_UPDATE",
@@ -838,6 +855,13 @@ class InfuseScreen(NavScreen):
         }
 
         self.app.post_message(_PublishMessage(subject_role_update(collective_id), payload))
+        if not_here:
+            self.status_text = (
+                "Sent to the running agents (ROLE_UPDATE) — awaiting arbiter.  "
+                f"Not saved: {not_here}.  A role with no agent is started from "
+                "the AgentCollective, not from here."
+            )
+            return
         self.status_text = (
             f"✓ Saved to roles/{role_name}/role.yaml — awaiting arbiter…"
             if persisted else "Awaiting arbiter approval…"
@@ -1004,6 +1028,13 @@ class InfuseScreen(NavScreen):
                 "immutable, signed .accpkg (validate → build → cosign). "
                 f"Security floor [{floor}]: {operator_mode_hint(floor)}."
             )
+        elif environment().cluster:
+            hint = (
+                "Apply sends the role to the agents that run it (ROLE_UPDATE, "
+                "arbiter-approved) — it is not saved in this pod and does not "
+                "start an agent: roles come from packages, agents from the "
+                "AgentCollective."
+            )
         else:
             hint = (
                 "DEV stage — finetune the role; Apply writes roles/<name>/"
@@ -1023,6 +1054,8 @@ class InfuseScreen(NavScreen):
         → cosign sign) on a worker thread, then prints the exact
         ``acc-pkg publish`` command — the push itself stays operator-only.
         """
+        if refuse(self, "package.build"):
+            return
         stage = getattr(self, "_nucleus_stage", "dev")
         if stage != "prod":
             self.notify(

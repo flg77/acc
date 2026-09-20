@@ -44,6 +44,32 @@ def list_collectives(hub: ObserverHub = Depends(get_hub)) -> dict:
     return {"collectives": hub.collective_ids()}
 
 
+@router.get("/api/environment", tags=["read"], dependencies=[Depends(require_viewer)])
+def environment_info() -> dict:
+    """Where this WebGUI runs, and what can be changed from here.
+
+    One answer for every screen (``acc.deploy.environment``): the kind of
+    place, the deployment it belongs to, and per capability either
+    *available* or the sentence that says why not.  The SPA renders from it —
+    a control whose capability is unavailable is hidden or disabled with
+    that sentence, never offered and left to fail.
+    """
+    import os  # noqa: PLC0415
+
+    from acc.deploy import environment  # noqa: PLC0415
+
+    info = environment().to_dict()
+    # The two trace stores are files: where one IS mounted the screen works,
+    # whatever kind of place this is.
+    for cap, env_var, default in (
+        ("trace.audit", "ACC_AUDIT_FILE_PATH", "/app/data/audit"),
+        ("trace.episodes", "ACC_LANCEDB_PATH", "/app/data/lancedb"),
+    ):
+        if os.path.isdir(os.environ.get(env_var, default)):
+            info["capabilities"][cap] = {"available": True, "reason": ""}
+    return info
+
+
 @router.get("/api/deploy", tags=["read"], dependencies=[Depends(require_viewer)])
 def deploy_info() -> dict:
     """Where this WebGUI runs (proposal 056 §4.1).

@@ -28,9 +28,10 @@ import logging
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from acc.deploy import environment
 from acc.webgui.auth import Principal, require_operator, require_viewer
 
 logger = logging.getLogger("acc.webgui.config")
@@ -59,6 +60,15 @@ class ProposeRequest(BaseModel):
     key: str
     value: Any
     rationale: str = ""
+    collective_id: str = ""
+
+
+def _refuse_write_here() -> None:
+    """409 where a configuration file written by this process is read by no
+    agent (a cluster pod) — instead of writing it and promising a restart."""
+    reason = environment().unavailable("config.write")
+    if reason:
+        raise HTTPException(status_code=409, detail=f"not available here: {reason}")
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +83,7 @@ def get_configuration(principal: Principal = Depends(require_viewer)) -> dict[st
     from acc import configstore as store
 
     posture = _posture_keys()
+    not_here = environment().unavailable("config.write")
     entries: list[dict[str, Any]] = []
     for key in schema.schema():
         if key.dynamic or key.file == "env":
@@ -93,7 +104,8 @@ def get_configuration(principal: Principal = Depends(require_viewer)) -> dict[st
                 else resolved.value,
                 "set": resolved.present,
                 "posture": key.path in posture,
-                "writable": not key.secret and key.path not in posture,
+                "writable": not not_here and not key.secret and key.path not in posture,
+                "write_block_reason": not_here,
             }
         )
     return {
@@ -135,6 +147,7 @@ def preview(
     request: SetRequest, principal: Principal = Depends(require_operator)
 ) -> dict[str, Any]:
     """What this change would do, without doing it."""
+    _refuse_write_here()
     from acc import configstore as store
 
     try:
@@ -162,6 +175,7 @@ def set_value(
     security floor, deliberately: a governance control that can be edited from
     a browser session is not a control.
     """
+    _refuse_write_here()
     key = request.key
     if key in _posture_keys():
         raise HTTPException(
@@ -196,13 +210,19 @@ def set_value(
 
 
 @router.post("/propose")
-def propose(
-    request: ProposeRequest, principal: Principal = Depends(require_operator)
+async def propose(
+    request: ProposeRequest,
+    http: Request,
+    principal: Principal = Depends(require_operator),
 ) -> dict[str, Any]:
-    """Raise a posture change as an oversight proposal rather than writing it.
+    """Raise a posture change as an oversight item rather than writing it.
 
-    Returns the proposal for submission. Nothing is written here — the whole
-    point is that a human other than the browser session approves it.
+    The item is filed on the collective's oversight queue (``OVERSIGHT_SUBMIT``,
+    HIGH) so a human other than the browser session decides it.  Nothing is
+    written here, and an approval applies nothing by itself: it is the
+    recorded decision that whoever changes the deployment acts on.  Where no
+    collective is observed the proposal comes back with ``filed: false`` —
+    said, not assumed.
     """
     from acc import configschema as schema
     from acc import configstore as store
@@ -224,18 +244,42 @@ def propose(
         )
 
     current = store.get(key).value
+    summary = f"change {key} from {current!r} to {request.value!r}"
+
+    hub = getattr(http.app.state, "hub", None)
+    collective_id = request.collective_id or (
+        next(iter(hub.collective_ids()), "") if hub is not None else ""
+    )
+    obs = hub.observer(collective_id) if hub is not None and collective_id else None
+    oversight_id = ""
+    if obs is not None:
+        from acc.cli.oversight_cmd import build_submit_payload  # noqa: PLC0415
+
+        payload = build_submit_payload(
+            collective_id, f"config-posture:{key}", f"webgui:{principal.user}", "HIGH",
+            f"{summary} — {request.rationale or 'requested through the web interface'}",
+        )
+        await obs.publish(f"acc.{collective_id}.oversight.submit", payload)
+        oversight_id = payload["oversight_id"]
+
     return {
         "kind": "config_posture_change",
         "risk_level": "HIGH",
-        "summary": f"change {key} from {current!r} to {request.value!r}",
+        "filed": bool(oversight_id),
+        "oversight_id": oversight_id,
+        "collective_id": collective_id,
+        "summary": summary,
         "rationale": request.rationale
         or "posture change requested through the web interface",
         "params": {"key": key, "value": request.value, "current": current},
         "requested_by": principal.user,
         "at": time.time(),
         "note": (
-            "Not applied. This is a proposal for the oversight queue; a posture "
-            "change made from a browser session without approval would be a "
-            "governance regression."
+            "Not applied. Filed on the oversight queue; an approval records the "
+            "decision — a posture change made from a browser session without "
+            "one would be a governance regression."
+            if oversight_id else
+            "Not applied, and NOT filed: no collective is observed from here, "
+            "so there is no oversight queue to put it on."
         ),
     }

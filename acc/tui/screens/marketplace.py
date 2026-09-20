@@ -30,6 +30,7 @@ from acc.marketplace import (
 )
 from acc.pkg.builtin_catalog import load_builtin_catalog
 from acc.pkg.ratings import get_rating, set_rating, stars_glyph
+from acc.tui.env_gate import unavailable
 from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 logger = logging.getLogger("acc.tui.marketplace")
@@ -242,7 +243,9 @@ class MarketplaceScreen(NavScreen):
         self.refresh_rows()
         self._set_status(
             f"[green]rated {row.name}: {stars_glyph(new)}[/green] "
-            "[dim](local ~/.acc/ratings.yaml)[/dim]"
+            + ("[dim](kept in this pod only — lost when it restarts)[/dim]"
+               if unavailable("state.local") else
+               "[dim](local ~/.acc/ratings.yaml)[/dim]")
         )
 
     def action_rate_up(self) -> None:

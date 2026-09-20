@@ -36,6 +36,7 @@ from textual.widgets import (
 from acc import catalog_admin
 from acc.pkg.builtin_catalog import BuiltinCatalog, load_builtin_catalog
 from acc.pkg.catalog import Catalog
+from acc.tui.env_gate import gate, refuse
 from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 logger = logging.getLogger("acc.tui.catalogs")
@@ -179,6 +180,9 @@ class CatalogsScreen(NavScreen):
         )
         table.cursor_type = "row"
         self.refresh_rows()
+        reason = gate(self, "catalog.write", "#catalogs-form-collapsible")
+        if reason:
+            self._set_status(f"[dim]read-only here — {reason}[/dim]")
 
     # ------------------------------------------------------------------
     # Data + render
@@ -376,10 +380,14 @@ class CatalogsScreen(NavScreen):
         self.refresh_rows()
 
     def action_focus_new(self) -> None:
+        if refuse(self, "catalog.write"):
+            return
         self.query_one("#catalogs-form-collapsible", Collapsible).collapsed = False
         self.call_after_refresh(self.query_one("#form-catalog-id", Input).focus)
 
     def action_delete_highlighted(self) -> None:
+        if refuse(self, "catalog.write"):
+            return
         cid = self._editable_selection()
         if cid is None:
             return
@@ -398,6 +406,8 @@ class CatalogsScreen(NavScreen):
         self._bump_priority(-10)
 
     def _bump_priority(self, delta: int) -> None:
+        if refuse(self, "catalog.write"):
+            return
         cid = self._editable_selection()
         if cid is None:
             return

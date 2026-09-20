@@ -83,6 +83,9 @@ def pod(monkeypatch, tmp_path):
     monkeypatch.setenv("ACC_WEBGUI_AUTH_MODE", "none")
     monkeypatch.setenv("ACC_DEPLOY_MODE", "k8s")
     monkeypatch.setenv("ACC_CORPUS_NAME", "demo")
+    # no audit chain and no episode store — a pod has neither
+    monkeypatch.setenv("ACC_AUDIT_FILE_PATH", str(tmp_path / "no-audit"))
+    monkeypatch.setenv("ACC_LANCEDB_PATH", str(tmp_path / "no-lancedb"))
 
     roles_root = tmp_path / "etc-acc" / "roles"
     (roles_root / "assistant").mkdir(parents=True)
@@ -334,3 +337,79 @@ def test_infuse_in_a_checkout_still_publishes(client, monkeypatch):
     })
     assert r.status_code == 200
     assert r.json()["status"] == "published"
+
+
+# ---------------------------------------------------------------------------
+# /api/environment, and the routes that still lied in a pod
+# (OpenSpec 20260920-surfaces-detect-environment)
+# ---------------------------------------------------------------------------
+
+
+def test_environment_says_where_and_what_cannot_be_changed(client):
+    r = client.get("/api/environment")
+    assert r.status_code == 200
+    env = r.json()
+    assert env["kind"] == "cluster" and env["corpus"] == "demo"
+    assert env["label"].startswith("cluster")
+    assert env["collectives"] == ["mortgage-01"]
+    cap = env["capabilities"]["agentset.write"]
+    assert cap["available"] is False and "AgentCollective" in cap["reason"]
+    assert env["capabilities"]["trace.audit"]["available"] is False
+
+
+def test_environment_trace_store_that_is_mounted_is_available(client, pod, monkeypatch):
+    audit = pod["tmp"] / "audit"
+    audit.mkdir()
+    monkeypatch.setenv("ACC_AUDIT_FILE_PATH", str(audit))
+    assert client.get("/api/environment").json()["capabilities"]["trace.audit"] == {
+        "available": True, "reason": ""}
+
+
+def test_config_set_in_a_pod_is_409_and_writes_nothing(client, pod):
+    r = client.post("/api/config/set", json={"key": "llm.model", "value": "x"})
+    assert r.status_code == 409
+    assert "AgentCorpus" in r.json()["detail"]
+    assert not list(pod["workspace"].rglob("acc-config.yaml"))
+    assert client.post("/api/config/preview",
+                       json={"key": "llm.model", "value": "x"}).status_code == 409
+
+
+def test_config_list_is_not_writable_in_a_pod(client):
+    entries = client.get("/api/config").json()["entries"]
+    assert entries and not any(e["writable"] for e in entries)
+    assert all("AgentCorpus" in e["write_block_reason"] for e in entries)
+
+
+def test_audit_chain_in_a_pod_says_why(client):
+    r = client.get("/api/trace/audit")
+    assert r.status_code == 409
+    assert "this pod has no copy" in r.json()["detail"]
+
+
+def test_episode_search_in_a_pod_says_why(client):
+    r = client.get("/api/trace/episodes/search",
+                   params={"q": "rate", "collective_id": "mortgage-01"})
+    assert r.status_code == 409
+    assert "each agent's own store" in r.json()["detail"]
+
+
+def test_posture_proposal_is_filed_on_the_oversight_queue(client):
+    r = client.post("/api/config/propose", json={
+        "key": "operator_mode", "value": "dev", "rationale": "workshop"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["filed"] is True
+    assert body["collective_id"] == "mortgage-01" and body["oversight_id"]
+    obs = client.app.state.hub.observer("mortgage-01")
+    subject, payload = obs.published[-1]
+    assert subject == "acc.mortgage-01.oversight.submit"
+    assert payload["signal_type"] == "OVERSIGHT_SUBMIT"
+    assert payload["oversight_id"] == body["oversight_id"]
+    assert payload["risk_level"] == "HIGH" and "operator_mode" in payload["summary"]
+
+
+def test_publisher_is_not_filtered_as_a_viewer():
+    from acc import identity
+
+    assert identity.from_web("pat", "publisher").tier == identity.Tier.OPERATOR
+    assert identity.from_web("vic", "viewer").tier == identity.Tier.VIEWER

@@ -62,6 +62,9 @@ def isolated_collective(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("ACC_COLLECTIVE_PATH", str(spec_path))
     # cwd-relative reads (e.g. infuse's marker write) land in tmp_path
     monkeypatch.chdir(tmp_path)
+    # Apply persists role.yaml under the roles root — since it resolves that
+    # root like every other screen (not "./roles"), say where, or it is the repo's.
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(tmp_path / "roles"))
     return spec_path
 
 

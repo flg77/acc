@@ -519,15 +519,60 @@ func TestRenderOTelConfig_MLflowFanOut(t *testing.T) {
 	if !strings.Contains(conf, "endpoint: https://mlflow.example.com") {
 		t.Error("expected MLflow endpoint string in rendered config")
 	}
-	// Both exporters appear on the traces pipeline.
-	if !strings.Contains(conf, "exporters: [otlp, otlphttp/mlflow, debug]") {
-		t.Errorf("expected traces pipeline to include both otlp + otlphttp/mlflow\n\n%s", conf)
+	// The remote exporter stays on the general traces pipeline; MLflow has a
+	// pipeline of its own (0.2.24) so its filter touches nothing else.
+	if !strings.Contains(conf, "exporters: [otlp, debug]") {
+		t.Errorf("expected the general traces pipeline to keep otlp + debug\n\n%s", conf)
+	}
+	if !strings.Contains(conf, "    traces/mlflow:\n      receivers: [otlp]\n      processors: [memory_limiter, filter/mlflow, batch, resource]\n      exporters: [otlphttp/mlflow]") {
+		t.Errorf("expected a traces/mlflow pipeline with the filter before the batch\n\n%s", conf)
 	}
 	// No experiment id → no headers block (behaviour unchanged from 0.2.17).
 	// Match the YAML key, not the bare token: the template's NOTE comment
 	// names the header too.
 	if strings.Contains(conf, "headers:") || strings.Contains(conf, "x-mlflow-experiment-id:") {
 		t.Errorf("MLflowExperimentID unset — no x-mlflow-experiment-id header must be rendered\n\n%s", conf)
+	}
+}
+
+// MLflow lists every root span it receives as a trace. The runtime's
+// lifecycle span "agent.register" (one per agent per start) is not a turn: on
+// bb3 five zero-length traces appeared in the experiment at every rollout. The
+// MLflow pipeline drops it; nothing else loses it, and a corpus without MLflow
+// renders no filter at all.
+func TestRenderOTelConfig_MLflowPipelineDropsLifecycleSpans(t *testing.T) {
+	corpus := makeTestCorpus()
+	corpus.Spec.Observability = accv1alpha1.ObservabilitySpec{
+		Backend: accv1alpha1.MetricsBackendOTel,
+		OTelCollector: &accv1alpha1.OTelCollectorSpec{
+			MLflowEndpoint: "https://mlflow.example.com",
+		},
+	}
+	conf, err := templates.RenderOTelConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderOTelConfig error: %v", err)
+	}
+	for _, want := range []string{
+		"  filter/mlflow:\n    error_mode: ignore\n    traces:\n      span:\n        - 'name == \"agent.register\"'",
+		"processors: [memory_limiter, filter/mlflow, batch, resource]",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("expected %q in the rendered config\n\n%s", want, conf)
+		}
+	}
+	// The general pipeline is not filtered.
+	if !strings.Contains(conf, "    traces:\n      receivers: [otlp]\n      processors: [memory_limiter, batch, resource]\n      exporters: [debug]") {
+		t.Errorf("the general traces pipeline must stay unfiltered\n\n%s", conf)
+	}
+
+	// No MLflow endpoint: no filter, no second pipeline.
+	corpus.Spec.Observability.OTelCollector.MLflowEndpoint = ""
+	conf, err = templates.RenderOTelConfig(corpus)
+	if err != nil {
+		t.Fatalf("RenderOTelConfig error: %v", err)
+	}
+	if strings.Contains(conf, "filter/mlflow") || strings.Contains(conf, "traces/mlflow") {
+		t.Errorf("no MLflow endpoint -- neither the filter nor its pipeline may be rendered\n\n%s", conf)
 	}
 }
 
@@ -666,7 +711,7 @@ func TestRenderOTelConfig_NoSelfLoop(t *testing.T) {
 			strings.Contains(conf, "exporters: [otlp,") || strings.Contains(conf, "exporters: [otlp]") {
 			t.Errorf("endpoint %q must not render a remote otlp exporter\n\n%s", endpoint, conf)
 		}
-		if !strings.Contains(conf, "exporters: [otlphttp/mlflow, debug]") {
+		if !strings.Contains(conf, "exporters: [otlphttp/mlflow]") {
 			t.Errorf("endpoint %q: MLflow fan-out must be unaffected\n\n%s", endpoint, conf)
 		}
 		if !strings.Contains(conf, "exporters: [prometheus, debug]") {

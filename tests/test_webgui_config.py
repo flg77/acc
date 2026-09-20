@@ -127,6 +127,8 @@ class TestPostureIsNotWritableHere:
         assert body["risk_level"] == "HIGH"
         assert body["params"]["current"] == "prod"
         assert "Not applied" in body["note"]
+        # this app observes no collective: the proposal says it was not filed
+        assert body["filed"] is False and "NOT filed" in body["note"]
         assert store.get("operator_mode").value == "prod"
 
     def test_propose_refuses_a_non_posture_key(self, site):

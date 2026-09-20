@@ -3,6 +3,16 @@
 Requires:
   - podman-compose installed
   - All production images built (or will be built by compose up --build)
+  - ``ACC_RUN_STACK_INTEGRATION=1`` — and a host with NO ACC stack on it.
+
+These tests run ``up -d --build`` and ``down -v`` on the PRODUCTION compose
+file, whose services carry fixed container names (``acc-nats``, ``acc-redis``,
+``acc-agent-*``).  A different compose project name does not isolate them: on
+a host with a live stack the ``up`` kills and replaces the live containers and
+the ``down`` removes them.  Running ``pytest tests/`` on an edge host did
+exactly that (2026-09-20: six agents and Redis removed, NATS stopped; the
+volumes survived because ``down -v`` only reaches this project's own volume
+names).  So the module is opt-in, and refuses when it finds such containers.
 
 INTEGRATION-001  All required services start and reach healthy state within 90s
 INTEGRATION-002  NATS monitoring endpoint is reachable from host
@@ -12,6 +22,7 @@ INTEGRATION-004  Agent containers start without immediate crash (exit code check
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -27,11 +38,34 @@ COMPOSE_PROJECT = "acc-integration-test"
 # Services that MUST reach healthy state before agents start
 INFRA_SERVICES = ["nats", "acc-redis"]
 AGENT_SERVICES = ["acc-agent-ingester", "acc-agent-analyst", "acc-agent-arbiter"]
+# The fixed ``container_name`` of the infra services in the compose file.
+INFRA_SERVICES_CONTAINERS = ["acc-nats", "acc-redis"]
 
-pytestmark = pytest.mark.skipif(
-    not _has_podman_compose(),
-    reason="podman-compose not available — skipping integration tests",
-)
+OPT_IN_ENV = "ACC_RUN_STACK_INTEGRATION"
+
+pytestmark = [
+    pytest.mark.skipif(
+        not _has_podman_compose(),
+        reason="podman-compose not available — skipping integration tests",
+    ),
+    pytest.mark.skipif(
+        os.environ.get(OPT_IN_ENV) != "1",
+        reason=(
+            f"set {OPT_IN_ENV}=1 to run — these tests up/down the production "
+            "compose file and must never run on a host with a live ACC stack"
+        ),
+    ),
+]
+
+
+def _existing_stack_containers() -> list[str]:
+    """Containers on this host that carry a name the compose file would claim."""
+    result = subprocess.run(
+        ["podman", "ps", "-a", "--format", "{{.Names}}"],
+        capture_output=True, text=True, check=False,
+    )
+    wanted = set(INFRA_SERVICES_CONTAINERS + AGENT_SERVICES)
+    return sorted(n for n in result.stdout.split() if n in wanted)
 
 
 def _compose_cmd(*args: str) -> list[str]:
@@ -53,6 +87,12 @@ def _get_container_status(container_name: str) -> str:
 @pytest.fixture(scope="module", autouse=True)
 def stack_lifecycle():
     """Start stack before tests, tear it down after."""
+    existing = _existing_stack_containers()
+    if existing:
+        pytest.skip(
+            "an ACC stack already exists on this host "
+            f"({', '.join(existing)}) — refusing to up/down over it"
+        )
     # Start the stack (build if needed)
     subprocess.run(
         _compose_cmd("up", "-d", "--build"),

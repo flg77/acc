@@ -137,6 +137,7 @@ async def test_apply_button_calls_nats_publish(tmp_path, monkeypatch):
     # Isolate the collective.yaml side-effect of Apply (PR-D) so this
     # smoke test doesn't mutate the repo's collective.yaml.
     monkeypatch.setenv("ACC_COLLECTIVE_PATH", str(tmp_path / "collective.yaml"))
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(tmp_path / "roles"))   # Apply writes role.yaml here
     monkeypatch.chdir(tmp_path)
     obs = _mock_observer()
     app = _TestApp(mock_observer=obs)
@@ -163,6 +164,7 @@ async def test_apply_button_calls_nats_publish(tmp_path, monkeypatch):
 async def test_apply_sets_awaiting_status(tmp_path, monkeypatch):
     """After Apply, status bar must show 'Awaiting arbiter approval' (REQ-INF-005)."""
     monkeypatch.setenv("ACC_COLLECTIVE_PATH", str(tmp_path / "collective.yaml"))
+    monkeypatch.setenv("ACC_ROLES_ROOT", str(tmp_path / "roles"))   # Apply writes role.yaml here
     monkeypatch.chdir(tmp_path)
     obs = _mock_observer()
     app = _TestApp(mock_observer=obs)

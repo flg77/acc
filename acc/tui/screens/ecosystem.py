@@ -41,7 +41,9 @@ from textual.widgets import (
     TextArea,
 )
 
+from acc.deploy import environment
 from acc.role_loader import RoleLoader, list_all_role_names, role_source
+from acc.tui.env_gate import gate, refuse
 from acc.tui.messages import RolePreloadMessage, RolesChangedMessage
 from acc.tui.path_resolution import resolve_manifest_root
 # FilePickerModal import removed in proposal 009 (upload flow moved
@@ -399,6 +401,8 @@ class EcosystemScreen(NavScreen):
 
     def action_toggle_edit_yaml(self) -> None:
         """Commit-3c — keyboard shortcut for the Edit/Lock toggle."""
+        if refuse(self, "role.write"):
+            return
         try:
             self._handle_toggle_edit_yaml()
         except Exception:
@@ -406,6 +410,8 @@ class EcosystemScreen(NavScreen):
 
     def action_save_yaml(self) -> None:
         """Commit-3c — keyboard shortcut for Save role.yaml."""
+        if refuse(self, "role.write"):
+            return
         try:
             self._handle_save_yaml()
         except Exception:
@@ -420,6 +426,8 @@ class EcosystemScreen(NavScreen):
 
     def action_get_pack(self) -> None:
         """Open the catalog pack-install modal; on confirm, fetch+install."""
+        if refuse(self, "package.install"):
+            return
         try:
             from acc.tui.widgets.pack_install_modal import PackInstallModal  # noqa: PLC0415
         except Exception:
@@ -768,6 +776,9 @@ class EcosystemScreen(NavScreen):
         """
         with Vertical(id="agentset-tab"):
             yield Label(
+                "AGENTSET — declared by the AgentCollective, reconciled by "
+                "the ACC operator.  Not editable from this pod."
+                if environment().cluster else
                 "AGENTSET — declarative collective.yaml.  "
                 "Edit + Save to persist; Apply to reconcile podman state.",
                 classes="panel-label",
@@ -786,7 +797,11 @@ class EcosystemScreen(NavScreen):
                 )
                 yield Button("Set model on selected",
                              id="btn-agentset-set-model", variant="default")
-            yield Label("collective.yaml", classes="panel-label")
+            yield Label(
+                "how to read it (nothing to edit here)" if environment().cluster
+                else "collective.yaml",
+                classes="panel-label",
+            )
             yield TextArea(
                 "",
                 id="collective-editor",
@@ -847,6 +862,7 @@ class EcosystemScreen(NavScreen):
         except Exception:
             logger.debug("ecosystem: model dropdown init failed", exc_info=True)
         self._load_collective_into_editor()
+        self._gate_for_environment()
 
         self._load_roles()
 
@@ -914,6 +930,10 @@ class EcosystemScreen(NavScreen):
             return
         if "agentset" in tab_id:
             agenda.update(
+                "[b]Agentset tab[/b] · the agentset is the AgentCollective "
+                "— read it with [yellow]oc get agentcollective -o yaml[/yellow] · "
+                "[yellow]Tab[/yellow] switch back to Roles"
+                if environment().cluster else
                 "[b]Agentset tab[/b] · "
                 "[yellow]Save[/yellow] write collective.yaml · "
                 "[yellow]Validate[/yellow] dry-run check · "
@@ -1055,6 +1075,7 @@ class EcosystemScreen(NavScreen):
                 self.query_one(f"#{btn_id}", Button).disabled = False
             except Exception:
                 logger.exception("ecosystem: failed to arm %s", btn_id)
+        self._gate_for_environment()
 
         # Commit-3a — repaint the selection-marker column.
         self._paint_selection_marker(role_name)
@@ -1443,6 +1464,17 @@ class EcosystemScreen(NavScreen):
             return container_path
         return Path("collective.yaml")
 
+    def _gate_for_environment(self) -> None:
+        """Disable what cannot work where this TUI runs, with the reason
+        (``acc.deploy.environment``).  Called at mount and again whenever a
+        selection arms the role buttons."""
+        gate(self, "role.write", "#btn-edit-yaml", "#btn-edit-md",
+             "#btn-save-yaml", "#btn-toggle-edit-yaml")
+        gate(self, "package.build", "#btn-roll-release")
+        gate(self, "agentset.write", "#btn-collective-save",
+             "#btn-collective-apply", "#btn-agentset-set-model",
+             "#agentset-model-select")
+
     def _load_collective_into_editor(self) -> None:
         """Populate `#collective-editor` from the on-disk spec.
 
@@ -1454,6 +1486,27 @@ class EcosystemScreen(NavScreen):
             editor = self.query_one("#collective-editor", TextArea)
             status = self.query_one("#agentset-status", Static)
         except Exception:
+            return
+        env = environment()
+        if env.cluster and not path.exists():
+            # A pod has no collective.yaml and no host to run acc-deploy.sh:
+            # say what the agentset is here instead of how to scaffold a file.
+            where = f" -n {env.namespace}" if env.namespace else ""
+            editor.text = (
+                f"# {env.label()}\n"
+                "# The agentset of this deployment is its AgentCollective - declared\n"
+                "# on the cluster and reconciled by the ACC operator, not a file here.\n"
+                "#\n"
+                f"#   oc{where} get agentcollective -o yaml     # roles x replicas, model\n"
+                f"#   oc{where} get accpackageinstall            # the package the roles come from\n"
+                "#\n"
+                "# The agents running right now: pane 1 (Soma).  The model each one\n"
+                "# resolved: pane 8 (Configuration, LLM Endpoints, LIVE BACKENDS).\n"
+            )
+            editor.read_only = True
+            status.update(
+                "[dim]read-only here — " + env.unavailable("agentset.write") + "[/dim]"
+            )
             return
         if not path.exists():
             editor.text = (
@@ -2019,6 +2072,11 @@ class EcosystemScreen(NavScreen):
         if not self._all_role_rows:
             try:
                 self.notify(
+                    f"No roles loaded from {root}.  In a cluster the roles "
+                    "come from the corpus's roles ConfigMap (ACC_ROLES_ROOT) "
+                    "and from installed packages — check the AgentCorpus and "
+                    "its AccPackageInstall."
+                    if environment().cluster else
                     f"No roles loaded from {root}.  Either set "
                     "ACC_REPO_ROOT to your agentic-cell-corpus checkout, "
                     "set ACC_ROLES_ROOT directly, or run acc-tui from "

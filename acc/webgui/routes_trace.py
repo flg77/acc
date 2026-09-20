@@ -64,6 +64,16 @@ def _evidence_hash(record: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def _refuse_missing_store(capability: str) -> None:
+    """In a cluster pod a missing store is not an outage: it was never here.
+    409 with the reason, so the screen can say it instead of "unavailable"."""
+    from acc.deploy import environment  # noqa: PLC0415
+
+    reason = environment().unavailable(capability)
+    if reason:
+        raise HTTPException(status_code=409, detail=f"not available here: {reason}")
+
+
 @router.get("/audit")
 def audit_timeline(limit: int = Query(200, ge=1, le=2000)) -> dict:
     """Read the JSONL audit backend, re-verify each record, return the
@@ -73,6 +83,7 @@ def audit_timeline(limit: int = Query(200, ge=1, le=2000)) -> dict:
     """
     base = os.environ.get("ACC_AUDIT_FILE_PATH", "/app/data/audit")
     if not os.path.isdir(base):
+        _refuse_missing_store("trace.audit")
         raise HTTPException(status_code=503,
                             detail=f"audit file backend not found at {base!r}")
     # Newest file first.
@@ -125,15 +136,16 @@ def episode_search(
     Returns ranked episodes; 503 when the LanceDB vector store or the
     embedding model is unavailable in this environment.
     """
+    lancedb_path = os.environ.get("ACC_LANCEDB_PATH", "/app/data/lancedb")
+    if not os.path.isdir(lancedb_path):
+        _refuse_missing_store("trace.episodes")
+        raise HTTPException(status_code=503,
+                            detail=f"LanceDB path not found at {lancedb_path!r}")
     try:
         from acc.backends.vector_lancedb import LanceDBBackend  # noqa: PLC0415
     except Exception as exc:
         raise HTTPException(status_code=503,
                             detail=f"LanceDB vector store unavailable: {exc}")
-    lancedb_path = os.environ.get("ACC_LANCEDB_PATH", "/app/data/lancedb")
-    if not os.path.isdir(lancedb_path):
-        raise HTTPException(status_code=503,
-                            detail=f"LanceDB path not found at {lancedb_path!r}")
     try:
         backend = LanceDBBackend(lancedb_path)
         results = backend.search_episodes(q, collective_id=collective_id, k=k)

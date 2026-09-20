@@ -273,10 +273,13 @@ def from_web(user: str, role: str, *, scope: str = "") -> Principal:
     """Adapt the web GUI's authenticated session onto a principal.
 
     The web surface already resolves an identity through oauth2-proxy and
-    Keycloak; this maps its two roles onto the shared tiers rather than giving
-    the browser a separate notion of who someone is.
+    Keycloak; this maps its roles onto the shared tiers rather than giving
+    the browser a separate notion of who someone is.  ``publisher`` sits above
+    ``operator`` on the web ladder (``acc/webgui/auth.py``): it may do what an
+    operator may, so it sees what an operator sees — mapped to viewer it could
+    act on a board it was only shown a viewer's slice of.
     """
-    tier = Tier.OPERATOR if role == "operator" else Tier.VIEWER
+    tier = Tier.OPERATOR if role in ("operator", "publisher") else Tier.VIEWER
     # ``webgui`` as the source: it is the string the Web GUI stamps on its
     # tasks (``webgui:<user>``) and the memory-scope policy keys on.
     return Principal(subject=user, source="webgui", tier=tier, scope=scope)

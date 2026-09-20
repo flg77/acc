@@ -14,6 +14,16 @@ WORKER_POOL_HINT = (
     "no dormant worker — raise `worker_pool` in collective.yaml or run "
     "`./acc-deploy.sh apply worker-pool`"
 )
+WORKER_POOL_HINT_CLUSTER = (
+    "no dormant worker — add an agent of this role (or a worker pool) to the "
+    "AgentCollective; the ACC operator starts it"
+)
+
+
+def worker_pool_hint() -> str:
+    from acc.deploy import environment  # noqa: PLC0415
+
+    return WORKER_POOL_HINT_CLUSTER if environment().cluster else WORKER_POOL_HINT
 
 
 def outcome_key(outcome: dict) -> tuple:
@@ -48,7 +58,7 @@ def outcome_lines(outcome: dict) -> list[str]:
                     f"✓ spawned {a.get('role', '')} → {a.get('target_agent_id', '')}"
                 )
         for role in outcome.get("unmet") or []:
-            lines.append(f"✗ spawn {role}: {WORKER_POOL_HINT}")
+            lines.append(f"✗ spawn {role}: {worker_pool_hint()}")
         if not lines and outcome.get("role"):
             lines.append(
                 f"· {outcome['role']}: already active "

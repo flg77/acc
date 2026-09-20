@@ -50,6 +50,20 @@ processors:
       - key: corpus
         value: {{ .CorpusName }}
         action: insert
+  {{- if .MLflowEndpoint }}
+  # MLflow is a store of agent TURNS: every root span it receives becomes a
+  # row in its trace list. The runtime's lifecycle spans are not turns --
+  # "agent.register" is emitted once per agent per start, and on bb3 five
+  # zero-length traces appeared in the experiment at every rollout
+  # (2026-09-19). They are dropped on the way to MLflow only; the general
+  # traces pipeline (remote OTLP, debug) still carries them. Add a name here
+  # when the runtime grows another span that is not part of a turn.
+  filter/mlflow:
+    error_mode: ignore
+    traces:
+      span:
+        - 'name == "agent.register"'
+  {{- end }}
 
 {{ if .MLflowKubernetesAuth -}}
 extensions:
@@ -122,7 +136,15 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch, resource]
-      exporters: [{{ if .RemoteEndpoint }}otlp, {{ end }}{{ if .MLflowEndpoint }}otlphttp/mlflow, {{ end }}debug]
+      exporters: [{{ if .RemoteEndpoint }}otlp, {{ end }}debug]
+    {{- if .MLflowEndpoint }}
+    # The same spans, a second time, for MLflow alone -- so its filter cannot
+    # take anything away from the other exporters.
+    traces/mlflow:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/mlflow, batch, resource]
+      exporters: [otlphttp/mlflow]
+    {{- end }}
     metrics:
       receivers: [otlp, prometheus]
       processors: [memory_limiter, batch, resource]

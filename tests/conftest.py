@@ -68,11 +68,15 @@ def isolated_tracelog(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def forget_deploy_mode():
-    """``acc.deploy.is_cluster()`` caches its answer for the process; a test
+def forget_deploy_mode(monkeypatch):
+    """``acc.deploy.environment()`` caches its answer for the process; a test
     that sets ``ACC_DEPLOY_MODE`` / ``ACC_CORPUS_NAME`` must not leak a
-    cluster verdict into the next one (proposal 056)."""
+    cluster verdict into the next one (proposal 056).  The suite also runs
+    inside a Tekton pod, which is a cluster by ``KUBERNETES_SERVICE_HOST`` —
+    a test says so itself when it wants one."""
     from acc import deploy
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+    monkeypatch.delenv("ACC_ENVIRONMENT", raising=False)
     deploy._reset()
     yield
     deploy._reset()

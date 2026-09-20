@@ -503,8 +503,10 @@ pytest tests/container/build/ -v
 # Tier 3: Runtime checks (requires built images)
 pytest tests/container/runtime/ -v
 
-# Tier 4: Full stack integration (requires podman-compose + built images)
-pytest tests/container/integration/ -v
+# Tier 4: Full stack integration (requires podman-compose + built images).
+# Opt-in, and ONLY on a host with no ACC stack: it ups and downs the production
+# compose file, whose fixed container names would replace a live stack's.
+ACC_RUN_STACK_INTEGRATION=1 pytest tests/container/integration/ -v
 
 # Run all tiers
 pytest tests/container/ -v

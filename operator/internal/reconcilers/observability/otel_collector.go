@@ -10,6 +10,8 @@ package observability
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -38,6 +40,17 @@ const (
 	// shipped via plain podman push was corrupt at the exec layer). Keep the tag in sync
 	// with the exporter set used in templates/otel_config.go.
 	defaultOTelCollectorImage = "quay.io/flg77/acc_images:otel-collector-contrib-0.119.0"
+
+	// OTelConfigHashAnnotation on the collector's pod template carries the
+	// SHA-256 of the rendered otel-collector.yaml. The collector reads its
+	// config once, at start: a changed ConfigMap reaches the volume within a
+	// minute and changes nothing in the running process. On bb3 every config
+	// change needed a hand `rollout restart` -- the experiment-id header
+	// (0.2.18 era), the RHOAI auth block (0.2.23), the MLflow filter (0.2.24)
+	// each sat unused in the ConfigMap until someone noticed. With the hash in
+	// the pod template a new config IS a new template, and the Deployment
+	// rolls on its own.
+	OTelConfigHashAnnotation = "acc.redhat.io/otel-config-sha256"
 )
 
 // OTelCollectorReconciler manages an OpenTelemetry Collector Deployment
@@ -169,7 +182,10 @@ func (r *OTelCollectorReconciler) Reconcile(ctx context.Context, corpus *accv1al
 			Replicas: ptr.To(int32(1)),
 			Selector: &metav1.LabelSelector{MatchLabels: util.SelectorLabels(labels)},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{
+					Labels:      labels,
+					Annotations: map[string]string{OTelConfigHashAnnotation: OTelConfigHash(otelConf)},
+				},
 				Spec: corev1.PodSpec{
 					ImagePullSecrets: util.ImagePullSecrets(corpus),
 					Containers: []corev1.Container{
@@ -227,4 +243,10 @@ func (r *OTelCollectorReconciler) Reconcile(ctx context.Context, corpus *accv1al
 	}
 
 	return reconcilers.SubResult{Progressing: result != util.UpsertResultNoop}, nil
+}
+
+// OTelConfigHash is the value of OTelConfigHashAnnotation for a rendered config.
+func OTelConfigHash(conf string) string {
+	sum := sha256.Sum256([]byte(conf))
+	return hex.EncodeToString(sum[:])
 }

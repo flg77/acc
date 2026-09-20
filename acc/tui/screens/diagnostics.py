@@ -47,6 +47,7 @@ from textual.widgets import (
 
 from textual.widgets.option_list import Option
 
+from acc.tui.env_gate import caveat, gate
 from acc.tui.widgets.nav_bar import NavigationBar, NavScreen
 
 logger = logging.getLogger("acc.tui.diagnostics")
@@ -294,6 +295,10 @@ class DiagnosticsScreen(NavScreen):
         # table, so a reload never clobbers in-progress edits.
         self._files_sig = self._compute_files_sig()
         self.set_interval(2.0, self._poll_changes)
+
+        gate(self, "package.build", "#btn-golden-pack")
+        caveat(self, "state.local", "#btn-golden-save", "#btn-form-save",
+               "#btn-golden-promote-eval", "#btn-golden-import")
 
     # ------------------------------------------------------------------
     # 047 Slice 1 — focus-driven resize (List / Workspace / Form)

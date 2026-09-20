@@ -47,10 +47,21 @@
 - [x] Integration: one turn through the in-memory OTel exporter; assert the MLflow keys on
       root/LLM/tool spans (`tests/test_mlflow_shaped_spans.py`; a recording tracer runs the
       same assertions on hosts without the SDK).
-- [ ] bb3: an ACC trace in the RHOAI MLflow workspace whose Summary shows Inputs/Outputs, whose
+- [x] bb3: an ACC trace in the RHOAI MLflow workspace whose Summary shows Inputs/Outputs, whose
       LLM span shows the messages and `gpt-oss-120b`, whose tool span shows arguments/result,
       and whose Sessions entry is `user:<dev_user_id>` — the module-4 walk-through holds.
-- [ ] Full sweep; lighthouse smoke.
+- [x] Proven 2026-09-19 on bb3 `wksp-user2`, runtime 0.17.17 + the app's bridge acc.5: trace
+      `tr-6023252f…` = 21 spans under one `acc.turn` root, AGENT / CHAT_MODEL / TOOL typed,
+      `openai/gpt-oss-120b-maas`, user `underwriter-demo`, the app's own session id (both traces
+      of the turn in one Sessions entry), tokens 1791/243. 0.17.16 had shown exactly twice the
+      tokens (the post-gate marker carried `gen_ai.usage.*` too) — fixed in 0.17.17.
+- [x] Full sweep (workstation: 5952 passed; the 4 `tests/catalog` failures fail on main too);
+      the acc1 pipeline's pytest gate passed for both tags.
+- [x] Lighthouse smoke (2026-09-19, v0.17.17 from the mirror): live tree fast-forwarded from
+      v0.17.10, 9 of 10 images built (the tenth has never built under the host's FIPS mode),
+      stack down/up, health 200, `acc.__version__` 0.17.17 inside an agent; two real turns through
+      the TUI channel's path to the analyst — the second with a named session and the new
+      `end_user` field, continuing the thread — both answered, no error in the agent's log.
 
 ## Phase 2 (deferred)
 - [ ] `EVAL_OUTCOME` → MLflow assessments (`/api/3.0/mlflow/traces/{id}/assessments`).

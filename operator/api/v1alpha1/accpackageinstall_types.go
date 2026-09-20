@@ -87,6 +87,17 @@ type AccPackageInstallStatus struct {
 	// +optional
 	InstalledVersion string `json:"installedVersion,omitempty"`
 
+	// RolledForVersion is the version the corpus' agents were last rolled
+	// for. An agent loads its package manifests (roles, skills, MCP servers)
+	// at boot, so a version CHANGE on disk reaches no running agent. The
+	// controller sets this when InstalledVersion moves from one version to
+	// another, and the agent StatefulSets carry it on their pod template --
+	// that is what rolls them. Empty after a first install: an agent that
+	// boots before its package lands promotes itself when it arrives and
+	// needs no restart.
+	// +optional
+	RolledForVersion string `json:"rolledForVersion,omitempty"`
+
 	// InstallPath is the unpacked tree location on the target pod.
 	// +optional
 	InstallPath string `json:"installPath,omitempty"`
