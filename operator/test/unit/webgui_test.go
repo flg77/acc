@@ -18,6 +18,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
@@ -33,6 +34,10 @@ func webguiClient(t *testing.T, objs ...client.Object) (client.Client, func() cl
 	s := newScheme(t)
 	if err := appsv1.AddToScheme(s); err != nil {
 		t.Fatalf("appsv1.AddToScheme: %v", err)
+	}
+	// The UI pods run as their own read-only ServiceAccount (ui/rbac.go).
+	if err := rbacv1.AddToScheme(s); err != nil {
+		t.Fatalf("rbacv1.AddToScheme: %v", err)
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
 	return c, func() client.Client { return c }

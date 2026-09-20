@@ -47,6 +47,15 @@ rules:
 - apiGroups: ["console.openshift.io"]
   resources: ["consolelinks"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# The UI pods' read-only ServiceAccount (internal/reconcilers/ui/rbac.go): a
+# namespaced Role on the four ACC kinds (get, list, watch) and its RoleBinding.
+# The operator can only grant what it holds itself.
+- apiGroups: [""]
+  resources: ["serviceaccounts"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["get", "list", "watch", "create"]

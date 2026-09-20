@@ -220,3 +220,16 @@ def test_infuse_without_the_variable_uses_the_shared_resolver(tmp_path, monkeypa
     monkeypatch.chdir(tmp_path)               # not "./roles" of wherever we are
     assert infuse._roles_root() == str(resolve_manifest_root("ACC_ROLES_ROOT", "roles"))
     assert infuse._roles_root() != "roles"
+
+
+@pytest.mark.asyncio
+async def test_llm_endpoints_leads_with_what_runs(workdir):
+    """The operator asked twice: the overview of the running agents and their
+    models first, the configured-backend summary and the form after — in a pod
+    those are empty, and an overview below the fold is not one."""
+    app = _host(ConfigurationScreen)
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        screen = app.screen
+        ids = [w.id for w in screen.query("#llm-live-table, #llm-config-summary, #llm-edit-form")]
+        assert ids == ["llm-live-table", "llm-config-summary", "llm-edit-form"]

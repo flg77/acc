@@ -11,6 +11,24 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-09-20
+
+In a cluster the TUI's Agentset tab said what the agentset is and showed
+nothing of it; its pod ran as the namespace's `default` ServiceAccount, which
+may read no ACC object at all. OpenSpec
+`20260920-agentset-over-the-agentcollective`, Phase 1 — see the cluster,
+read-only.
+
+### Added
+
+- **`acc.deployment.agentset()`** — the declared agentset of this deployment from the backend the environment selects: `collective.yaml` in a checkout; in a cluster pod the namespace's `AgentCollective`, `AgentCorpus` and `AccPackageInstall` over the Kubernetes API with the pod's own ServiceAccount token (standard library only — the UI images carry no `kubernetes` client). An agent's own `ACC_LLM_MODEL` wins over the collective's `llm` block, as in the runtime. A refusal is an answer: 403 names the object and what grants it.
+- **TUI: Ecosystem → Agentset in a cluster is the `AgentCollective`** — role, replicas, collective, declared model beside the model the agents resolved (from the bus), live count with *awaiting pack* while a package is not installed; below it where it is declared, the corpus version, each package's constraint → phase, and anything that could not be read. Read off the UI thread, refreshed every 30 s. Nothing is editable.
+- **Operator 0.2.27: the UI pods run as `<corpus>-ui`**, a ServiceAccount with a namespaced Role that may `get`, `list`, `watch` the four ACC kinds and nothing else — no core resource, no secret, no write verb; owned by the corpus. The operator's ClusterRole gains `serviceaccounts`, `roles` and `rolebindings` for it.
+
+### Changed
+
+- **TUI: Configuration → LLM Endpoints opens on LIVE BACKENDS** — each agent's resolved model first, the configured-backend summary and the form after. In a pod those two are empty and the truthful table sat below the fold.
+
 ## [0.18.2] — 2026-09-20
 
 No runtime change. v0.18.1 never produced an image: the pipeline's test gate

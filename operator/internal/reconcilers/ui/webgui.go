@@ -115,6 +115,9 @@ func (r *WebGUIReconciler) Reconcile(ctx context.Context, corpus *accv1alpha1.Ag
 	if err := withCorpusDelivery(ctx, r.Client, corpus, &deploy.Spec.Template.Spec, "webgui"); err != nil {
 		return reconcilers.SubResult{}, fmt.Errorf("webgui corpus delivery: %w", err)
 	}
+	if err := withUIServiceAccount(ctx, r.Client, r.Scheme, corpus, &deploy.Spec.Template.Spec); err != nil {
+		return reconcilers.SubResult{}, err
+	}
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {
 		ed := existing.(*appsv1.Deployment)
 		ed.Spec.Replicas = deploy.Spec.Replicas

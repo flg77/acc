@@ -433,6 +433,23 @@ class ConfigurationScreen(NavScreen):
         is still file-edit + container restart.
         """
         with ScrollableContainer():
+            # What runs comes first: each agent's resolved model, from its
+            # heartbeat.  The configured-backend summary and the form follow —
+            # in a pod they are empty, and an overview below the fold is not one.
+            yield Label("LIVE BACKENDS (per agent)", classes="panel-label")
+            yield Static(
+                "[dim]Each agent's RESOLVED model, from its heartbeat.  All rows "
+                "the same = every role runs on the default; map roles → models in "
+                "the registry below + Reload to differentiate them here.  p50 / "
+                "health are per-heartbeat placeholders until per-call telemetry "
+                "lands.[/dim]",
+                id="llm-live-hint",
+            )
+            # N7 — per-backend health rollup so the active LLMs are monitored
+            # at a glance (25.6.26 image 6), above the per-agent detail.
+            yield Static("", id="llm-health-rollup", classes="panel-label")
+            yield DataTable(id="llm-live-table", show_cursor=False)
+
             yield Label("CONFIGURED BACKEND", classes="panel-label")
             yield Static(
                 "[dim]Reading ACCConfig.llm …[/dim]",
@@ -502,20 +519,6 @@ class ConfigurationScreen(NavScreen):
                 "[dim]Press Test to ping the configured base_url.[/dim]",
                 id="llm-test-result",
             )
-
-            yield Label("LIVE BACKENDS (per agent)", classes="panel-label")
-            yield Static(
-                "[dim]Each agent's RESOLVED model, from its heartbeat.  All rows "
-                "the same = every role runs on the default; map roles → models in "
-                "the registry below + Reload to differentiate them here.  p50 / "
-                "health are per-heartbeat placeholders until per-call telemetry "
-                "lands.[/dim]",
-                id="llm-live-hint",
-            )
-            # N7 — per-backend health rollup so the active LLMs are monitored
-            # at a glance (25.6.26 image 6), above the per-agent detail.
-            yield Static("", id="llm-health-rollup", classes="panel-label")
-            yield DataTable(id="llm-live-table", show_cursor=False)
 
             # 033 WS-C — the "all configured LLM endpoints" overview the
             # 2026-06-16 TUI review asked for.  The registry (models.yaml)

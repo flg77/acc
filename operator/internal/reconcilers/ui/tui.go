@@ -160,6 +160,9 @@ func (r *TUIReconciler) reconcileIdlePod(ctx context.Context, corpus *accv1alpha
 	if err := withCorpusDelivery(ctx, r.Client, corpus, &deploy.Spec.Template.Spec, "tui"); err != nil {
 		return reconcilers.SubResult{}, fmt.Errorf("tui corpus delivery: %w", err)
 	}
+	if err := withUIServiceAccount(ctx, r.Client, r.Scheme, corpus, &deploy.Spec.Template.Spec); err != nil {
+		return reconcilers.SubResult{}, err
+	}
 
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {
 		ed := existing.(*appsv1.Deployment)
@@ -206,6 +209,9 @@ func (r *TUIReconciler) reconcileWebTerminal(ctx context.Context, corpus *accv1a
 	deploy := r.buildWebTerminalDeployment(ctx, corpus, name, labels, replicas, kc)
 	if err := withCorpusDelivery(ctx, r.Client, corpus, &deploy.Spec.Template.Spec, "tui"); err != nil {
 		return reconcilers.SubResult{}, fmt.Errorf("tui corpus delivery: %w", err)
+	}
+	if err := withUIServiceAccount(ctx, r.Client, r.Scheme, corpus, &deploy.Spec.Template.Spec); err != nil {
+		return reconcilers.SubResult{}, err
 	}
 	result, err := util.Upsert(ctx, r.Client, r.Scheme, corpus, deploy, func(existing client.Object) error {
 		ed := existing.(*appsv1.Deployment)

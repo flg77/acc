@@ -360,6 +360,39 @@ def _format_subrole_section(
     return "\n".join(lines)
 
 
+def _describe_cluster_agentset(env: Any, declared: Any) -> str:
+    """The read-only text under the Agentset table in a cluster: where the
+    agentset is declared, what it declares, the packages the roles come from,
+    and — instead of an empty pane — why something could not be read."""
+    where = f" -n {env.namespace}" if env.namespace else ""
+    lines = [f"# {env.label()}", f"# declared in: {declared.declared_in or '—'}"]
+    if declared.version:
+        lines.append(f"# corpus version: {declared.version}")
+    lines.append("")
+    if declared.agents:
+        lines.append("agents:")
+        for a in declared.agents:
+            lines.append(f"  - role: {a.role}")
+            lines.append(f"    replicas: {a.replicas}")
+            if a.model:
+                lines.append(f"    model: {a.model}")
+    if declared.packages:
+        lines += ["", "packages:"]
+        for pkg in declared.packages:
+            state = pkg.phase or "unknown"
+            installed = f" (installed {pkg.installed})" if pkg.installed else ""
+            lines.append(f"  - {pkg.name} {pkg.constraint}  ->  {state}{installed}")
+    for err in declared.errors:
+        lines += ["", f"# could not read: {err}"]
+    lines += [
+        "",
+        "# Reconciled by the ACC operator; nothing here is editable from this pod.",
+        f"#   oc{where} get agentcollective -o yaml",
+        f"#   oc{where} get accpackageinstall",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 class EcosystemScreen(NavScreen):
     """Genome browser — roles, LLM backends, Skills/MCP roadmap (REQ-TUI-037 – REQ-TUI-040)."""
 
@@ -798,7 +831,7 @@ class EcosystemScreen(NavScreen):
                 yield Button("Set model on selected",
                              id="btn-agentset-set-model", variant="default")
             yield Label(
-                "how to read it (nothing to edit here)" if environment().cluster
+                "declared on the cluster (read-only here)" if environment().cluster
                 else "collective.yaml",
                 classes="panel-label",
             )
@@ -848,9 +881,15 @@ class EcosystemScreen(NavScreen):
         # checkout — operator runs `./acc-deploy.sh setup` to scaffold).
         try:
             ag_table = self.query_one("#agentset-table", DataTable)
-            ag_table.add_columns(
-                "Role", "Replicas", "cluster_id", "purpose", "Model", "live",
-            )
+            if environment().cluster:
+                ag_table.add_columns(
+                    "Role", "Replicas", "Collective", "Declared model",
+                    "Running model", "live",
+                )
+            else:
+                ag_table.add_columns(
+                    "Role", "Replicas", "cluster_id", "purpose", "Model", "live",
+                )
         except Exception:
             logger.exception("ecosystem: agentset table init failed")
         # PR-MM2 — populate the model dropdown from the central registry.
@@ -1464,6 +1503,65 @@ class EcosystemScreen(NavScreen):
             return container_path
         return Path("collective.yaml")
 
+    # ------------------------------------------------------------------
+    # The agentset of a cluster: the AgentCollective (read-only)
+    # ------------------------------------------------------------------
+
+    def _read_cluster_agentset(self) -> None:
+        """Fetch the declared agentset in a worker thread and render it."""
+        from acc.deployment import agentset  # noqa: PLC0415
+
+        def _work() -> None:
+            declared = agentset()
+            self.app.call_from_thread(self._show_cluster_agentset, declared)
+
+        self.run_worker(_work, thread=True, exclusive=True, group="ecosystem-agentset")
+
+    def _show_cluster_agentset(self, declared: Any) -> None:
+        self._cluster_agentset = declared
+        self._refresh_cluster_agentset_table()
+        try:
+            editor = self.query_one("#collective-editor", TextArea)
+        except Exception:
+            return
+        editor.text = _describe_cluster_agentset(environment(), declared)
+
+    def _refresh_cluster_agentset_table(self) -> None:
+        """Declared (the AgentCollective) beside observed (the bus)."""
+        declared = getattr(self, "_cluster_agentset", None)
+        if declared is None:
+            return
+        try:
+            table = self.query_one("#agentset-table", DataTable)
+        except Exception:
+            return
+        live: dict[str, int] = {}
+        running: dict[str, set[str]] = {}
+        snap = self.snapshot
+        if snap is not None:
+            for a in snap.agents.values():
+                role = getattr(a, "role", "")
+                if role:
+                    live[role] = live.get(role, 0) + 1
+                    model = getattr(a, "llm_model", "")
+                    if model:
+                        running.setdefault(role, set()).add(model)
+        awaiting = declared.awaiting_packages()
+        table.clear()
+        for agent in declared.agents:
+            count = live.get(agent.role, 0)
+            note = ""
+            if count < agent.replicas:
+                note = " · awaiting pack" if awaiting else " · not on the bus"
+            table.add_row(
+                agent.role,
+                str(agent.replicas),
+                agent.collective or "—",
+                agent.model or "—",
+                ", ".join(sorted(running.get(agent.role, ()))) or "—",
+                f"{count}{note}",
+            )
+
     def _gate_for_environment(self) -> None:
         """Disable what cannot work where this TUI runs, with the reason
         (``acc.deploy.environment``).  Called at mount and again whenever a
@@ -1489,24 +1587,16 @@ class EcosystemScreen(NavScreen):
             return
         env = environment()
         if env.cluster and not path.exists():
-            # A pod has no collective.yaml and no host to run acc-deploy.sh:
-            # say what the agentset is here instead of how to scaffold a file.
-            where = f" -n {env.namespace}" if env.namespace else ""
-            editor.text = (
-                f"# {env.label()}\n"
-                "# The agentset of this deployment is its AgentCollective - declared\n"
-                "# on the cluster and reconciled by the ACC operator, not a file here.\n"
-                "#\n"
-                f"#   oc{where} get agentcollective -o yaml     # roles x replicas, model\n"
-                f"#   oc{where} get accpackageinstall            # the package the roles come from\n"
-                "#\n"
-                "# The agents running right now: pane 1 (Soma).  The model each one\n"
-                "# resolved: pane 8 (Configuration, LLM Endpoints, LIVE BACKENDS).\n"
-            )
+            # A pod has no collective.yaml: the agentset is the AgentCollective.
+            # Read it off the UI thread (three API calls) and again every 30 s;
+            # the bus supplies the live half on every snapshot.
             editor.read_only = True
+            editor.text = f"# {env.label()}\n# reading the AgentCollective …\n"
             status.update(
                 "[dim]read-only here — " + env.unavailable("agentset.write") + "[/dim]"
             )
+            self._read_cluster_agentset()
+            self.set_interval(30.0, self._read_cluster_agentset)
             return
         if not path.exists():
             editor.text = (
@@ -2008,6 +2098,9 @@ class EcosystemScreen(NavScreen):
         boundary (clear + add interleave with the on_mount path).
         """
         if snap is None:
+            return
+        if getattr(self, "_cluster_agentset", None) is not None:
+            self._refresh_cluster_agentset_table()
             return
         try:
             # Cheap: reuse the existing on-disk spec rather than

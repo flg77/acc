@@ -102,7 +102,7 @@ metadata:
     # "enable plugin" box). The named ConsolePlugin object is delivered as a
     # standalone bundle object (acc-console-plugin.consoleplugin.yaml).
     console.openshift.io/plugins: '["acc-console-plugin"]'
-    containerImage: quay.io/flg77/acc_images:acc-operator-0.2.26
+    containerImage: quay.io/flg77/acc_images:acc-operator-0.2.27
     createdAt: "2026-04-15T00:00:00Z"
     operatorframework.io/suggested-namespace: acc-system
     description: >-
@@ -115,7 +115,7 @@ metadata:
     operators.operatorframework.io/builder: operator-sdk-v1.34.0
     operators.operatorframework.io/project_layout: go.kubebuilder.io/v4
     support: Community (best-effort; no SLA) — NOT supported by Red Hat
-  name: acc-operator.v0.2.26
+  name: acc-operator.v0.2.27
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -240,6 +240,15 @@ spec:
         - apiGroups: [""]
           resources: ["services", "configmaps", "persistentvolumeclaims", "events"]
           verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        # The UI pods' read-only ServiceAccount (ui/rbac.go): the operator
+        # creates it with a namespaced Role on the four ACC kinds (get, list,
+        # watch) and the RoleBinding. It can only grant what it holds itself.
+        - apiGroups: [""]
+          resources: ["serviceaccounts"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["rbac.authorization.k8s.io"]
+          resources: ["roles", "rolebindings"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
         - apiGroups: [""]
           resources: ["secrets"]
           verbs: ["get", "list", "watch"]
@@ -304,7 +313,7 @@ spec:
                 - --metrics-bind-address=:8080
                 command:
                 - /manager
-                image: quay.io/flg77/acc_images:acc-operator-0.2.26
+                image: quay.io/flg77/acc_images:acc-operator-0.2.27
                 imagePullPolicy: Always
                 livenessProbe:
                   httpGet:
@@ -371,7 +380,7 @@ spec:
             spec:
               containers:
               - name: acc-console-plugin
-                image: quay.io/flg77/acc_images:acc-console-plugin-0.2.26
+                image: quay.io/flg77/acc_images:acc-console-plugin-0.2.27
                 imagePullPolicy: Always
                 ports:
                 - name: tls
@@ -461,12 +470,12 @@ spec:
     name: Agentic Cell Corpus (Community)
     url: https://github.com/flg77/acc
   relatedImages:
-  - image: quay.io/flg77/acc_images:acc-operator-0.2.26
+  - image: quay.io/flg77/acc_images:acc-operator-0.2.27
     name: manager
-  - image: quay.io/flg77/acc_images:acc-console-plugin-0.2.26
+  - image: quay.io/flg77/acc_images:acc-console-plugin-0.2.27
     name: console-plugin
-  version: 0.2.26
-  replaces: acc-operator.v0.2.25
+  version: 0.2.27
+  replaces: acc-operator.v0.2.26
   skips:
   - acc-operator.v0.2.19
   - acc-operator.v0.2.20
