@@ -11,6 +11,16 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.18.2] — 2026-09-20
+
+No runtime change. v0.18.1 never produced an image: the pipeline's test gate
+runs inside a pod, and two tests of the new environment detection saw that
+pod.
+
+### Fixed
+
+- **The test suite is isolated from the pod it runs in** — the image pipeline runs the suite inside a Tekton pod, which carries a real ServiceAccount mount; `acc.deploy.environment()` read its `namespace` file and two tests then saw `cluster · tekton-pipelines · …`, failing the gate that blocks every image of v0.18.1. `tests/conftest.py` cleared `KUBERNETES_SERVICE_HOST` but not the mount; it now points `ACC_SERVICEACCOUNT_DIR` at nothing for every test, and a test that wants a pod makes its own. No runtime change.
+
 ## [0.18.1] — 2026-09-20
 
 The first look at 0.18.0 on the edge host: the environment line the TUI now

@@ -68,15 +68,21 @@ def isolated_tracelog(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def forget_deploy_mode(monkeypatch):
+def forget_deploy_mode(monkeypatch, tmp_path):
     """``acc.deploy.environment()`` caches its answer for the process; a test
     that sets ``ACC_DEPLOY_MODE`` / ``ACC_CORPUS_NAME`` must not leak a
-    cluster verdict into the next one (proposal 056).  The suite also runs
-    inside a Tekton pod, which is a cluster by ``KUBERNETES_SERVICE_HOST`` —
-    a test says so itself when it wants one."""
+    cluster verdict into the next one (proposal 056).
+
+    The suite also runs inside a Tekton pod.  That pod is a cluster by
+    ``KUBERNETES_SERVICE_HOST`` **and** carries a real ServiceAccount mount,
+    whose ``namespace`` file ``environment()`` reads: v0.18.1's build failed
+    its gate on two tests that then saw ``cluster · tekton-pipelines · …``.
+    Both signals are taken away here; a test that wants a pod says so itself
+    (``ACC_SERVICEACCOUNT_DIR`` pointed at a directory it made)."""
     from acc import deploy
     monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
     monkeypatch.delenv("ACC_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("ACC_SERVICEACCOUNT_DIR", str(tmp_path / "no-serviceaccount-here"))
     deploy._reset()
     yield
     deploy._reset()
