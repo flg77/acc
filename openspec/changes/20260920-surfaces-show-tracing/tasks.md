@@ -18,8 +18,11 @@
       (bb3's block, a role declared off, log backend, no MLflow, 403), checkout backend (env,
       default), the TUI tab (pilot), the WebGUI handler.
 - [x] `tsc --noEmit` on the SPA.
-- [ ] a cluster: bb3 `wksp-user2` — both surfaces say *workspace wksp-user2, experiment id 2,
-      with its message text*.
+- [x] a cluster: bb3 `wksp-user2`, runtime 0.20.0 (2026-09-20 23:20) — rendered inside the live TUI
+      pod, Configuration → Tracing: *Every turn is exported to MLflow, workspace wksp-user2,
+      experiment id 2 — with its message text.*; the WebGUI pod's handler answers the same, no
+      read errors, and its SPA bundle carries the page. A fresh underwriter turn is in that
+      experiment with its text. Not done: a click through a browser session.
 
 ## Phase 2 (deferred)
 - [ ] The last turns (needs MLflow read for the UI ServiceAccount — the operator's word).

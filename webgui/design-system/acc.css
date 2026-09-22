@@ -1,0 +1,128 @@
+/* ACC on PatternFly 6 — the layer that is ours.
+ *
+ * PatternFly supplies the mechanics (page, table, form, modal, label, banner,
+ * progress stepper).  This file adds only what PatternFly has no word for:
+ *
+ *   1. ACC state tokens      — declared / converging / converged / drift …
+ *   2. .acc-envbar           — where this surface runs, always on screen
+ *   3. .acc-do               — a declared value beside the observed one
+ *   4. .acc-proposal         — a change with a life: asked → approved → applied → converged
+ *   5. .acc-gated            — an action that is not available here says why
+ *
+ * Every colour is a PatternFly token, so light, dark and high-contrast follow
+ * the theme class on <html> (pf-v6-theme-dark) with nothing to maintain here.
+ */
+
+:root {
+  /* 1 — state.  One vocabulary for agents, packages, catalogs, settings. */
+  --acc-state--converged: var(--pf-t--global--color--status--success--default);
+  --acc-state--converging: var(--pf-t--global--color--status--info--default);
+  --acc-state--awaiting: var(--pf-t--global--color--status--warning--default);
+  --acc-state--drift: var(--pf-t--global--color--nonstatus--orange--default);
+  --acc-state--failed: var(--pf-t--global--color--status--danger--default);
+  --acc-state--unknown: var(--pf-t--global--text--color--subtle);
+
+  /* where the surface runs */
+  --acc-env--cluster: var(--pf-t--global--color--brand--default);
+  --acc-env--standalone: var(--pf-t--global--color--nonstatus--teal--default);
+}
+
+/* ── 2. environment bar ─────────────────────────────────────────────────────
+ * Sits on a PatternFly banner (pf-v6-c-banner pf-m-sticky).  Facts left,
+ * the person right; wraps instead of scrolling at 900 px and inside a frame. */
+.acc-envbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--pf-t--global--spacer--xs) var(--pf-t--global--spacer--md);
+  font-size: var(--pf-t--global--font--size--sm);
+}
+.acc-envbar__kind {
+  font-weight: var(--pf-t--global--font--weight--body--bold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.acc-envbar__fact > span:first-child { opacity: 0.75; margin-inline-end: 0.35em; }
+.acc-envbar__fact code,
+.acc-do code {
+  font-family: var(--pf-t--global--font--family--mono);
+  font-size: 0.95em;
+}
+.acc-envbar__person { margin-inline-start: auto; }
+
+/* ── 3. declared / observed ─────────────────────────────────────────────────
+ * Two values of one fact.  Equal: shown once.  Different: both, the declared
+ * one first, and the row carries a state that says which way it is moving. */
+.acc-do { display: inline-grid; grid-template-columns: auto auto; column-gap: 0.5em; align-items: baseline; }
+.acc-do__label {
+  font-size: var(--pf-t--global--font--size--xs);
+  color: var(--pf-t--global--text--color--subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* emphasis by weight and an underline in the drift colour — the status
+ * colours are too light to carry text on a light background */
+.acc-do.is-drift .acc-do__observed {
+  font-weight: var(--pf-t--global--font--weight--body--bold);
+  text-decoration: underline var(--acc-state--drift) 2px;
+  text-underline-offset: 0.2em;
+}
+.acc-do.is-same .acc-do__label { display: none; }
+
+.acc-state { display: inline-flex; align-items: center; gap: 0.4em; white-space: nowrap; }
+.acc-state::before {
+  content: "";
+  inline-size: 0.6em; block-size: 0.6em; border-radius: 50%;
+  background: var(--acc-state--unknown);
+}
+.acc-state.is-converged::before { background: var(--acc-state--converged); }
+.acc-state.is-converging::before { background: var(--acc-state--converging); animation: acc-pulse 1.2s ease-in-out infinite; }
+.acc-state.is-awaiting::before { background: var(--acc-state--awaiting); }
+.acc-state.is-drift::before { background: var(--acc-state--drift); }
+.acc-state.is-failed::before { background: var(--acc-state--failed); }
+.acc-reason { display: block; font-size: var(--pf-t--global--font--size--sm); color: var(--pf-t--global--text--color--subtle); }
+@keyframes acc-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .acc-state.is-converging::before { animation: none; } }
+
+/* where a fact is declared — shown with every declared value's table */
+.acc-source {
+  font-size: var(--pf-t--global--font--size--sm);
+  color: var(--pf-t--global--text--color--subtle);
+}
+
+/* ── 4. proposal lifecycle ──────────────────────────────────────────────────
+ * A PatternFly card holding: what changes (a diff), who asked, who may
+ * approve and under which ceiling, then a PatternFly progress stepper. */
+.acc-proposal__diff {
+  font-family: var(--pf-t--global--font--family--mono);
+  font-size: var(--pf-t--global--font--size--sm);
+  background: var(--pf-t--global--background--color--secondary--default);
+  border-radius: var(--pf-t--global--border--radius--small);
+  padding: var(--pf-t--global--spacer--sm) var(--pf-t--global--spacer--md);
+  white-space: pre-wrap;
+  margin: 0;
+}
+.acc-proposal__diff .add { color: var(--pf-t--global--text--color--status--success--default); }
+.acc-proposal__diff .del { color: var(--pf-t--global--text--color--status--danger--default); }
+
+/* ── 5. capability-gated action ─────────────────────────────────────────────
+ * The reason is TEXT next to the control, never only a tooltip: a tooltip
+ * does not exist on touch, in a screenshot, or for someone tabbing past. */
+.acc-gated { display: inline-flex; flex-direction: column; gap: 0.25em; align-items: flex-start; max-inline-size: 28rem; }
+.acc-gated__reason { font-size: var(--pf-t--global--font--size--sm); color: var(--pf-t--global--text--color--subtle); }
+.acc-gated.is-caveat .acc-gated__reason {
+  color: var(--pf-t--global--text--color--regular);
+  border-inline-start: 3px solid var(--acc-state--awaiting);
+  padding-inline-start: var(--pf-t--global--spacer--sm);
+}
+
+/* a page's own rhythm: PageSection supplies the padding, this the gap */
+.acc-page { display: grid; gap: var(--pf-t--global--spacer--md); align-content: start; }
+
+/* ── preview scaffolding (the cards only) ─────────────────────────────────── */
+.ds-preview { padding: var(--pf-t--global--spacer--md); background: var(--pf-t--global--background--color--primary--default); }
+.ds-preview h2 { font-size: var(--pf-t--global--font--size--sm); color: var(--pf-t--global--text--color--subtle); text-transform: uppercase; letter-spacing: 0.05em; margin: var(--pf-t--global--spacer--md) 0 var(--pf-t--global--spacer--sm); }
+.ds-preview h2:first-child { margin-block-start: 0; }
+.ds-row { display: flex; flex-wrap: wrap; gap: var(--pf-t--global--spacer--md); align-items: flex-start; }
+.ds-swatch { display: inline-flex; align-items: center; gap: 0.5em; font-size: var(--pf-t--global--font--size--sm); }
+.ds-swatch i { inline-size: 1.25em; block-size: 1.25em; border-radius: var(--pf-t--global--border--radius--small); display: inline-block; }

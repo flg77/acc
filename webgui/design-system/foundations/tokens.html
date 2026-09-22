@@ -1,0 +1,45 @@
+<!-- @dsCard group="Foundations" -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACC tokens on PatternFly</title>
+  <link rel="stylesheet" href="../vendor/patternfly.min.css">
+  <link rel="stylesheet" href="../acc.css">
+</head>
+<body class="ds-preview">
+
+  <h2>State — one vocabulary for agents, packages, catalogs and settings</h2>
+  <div class="ds-row">
+    <span class="ds-swatch"><i style="background: var(--acc-state--converged)"></i><span class="acc-state is-converged">Converged</span></span>
+    <span class="ds-swatch"><i style="background: var(--acc-state--converging)"></i><span class="acc-state is-converging">Converging</span></span>
+    <span class="ds-swatch"><i style="background: var(--acc-state--awaiting)"></i><span class="acc-state is-awaiting">Awaiting pack</span></span>
+    <span class="ds-swatch"><i style="background: var(--acc-state--drift)"></i><span class="acc-state is-drift">Drift</span></span>
+    <span class="ds-swatch"><i style="background: var(--acc-state--failed)"></i><span class="acc-state is-failed">Failed</span></span>
+    <span class="ds-swatch"><i style="background: var(--acc-state--unknown)"></i><span class="acc-state">Not on the bus</span></span>
+  </div>
+
+  <h2>Where the surface runs</h2>
+  <div class="ds-row">
+    <span class="ds-swatch"><i style="background: var(--acc-env--cluster)"></i>cluster — PatternFly brand</span>
+    <span class="ds-swatch"><i style="background: var(--acc-env--standalone)"></i>standalone / edge — teal</span>
+  </div>
+
+  <h2>Tiers, risk and trust use PatternFly labels as they are</h2>
+  <div class="ds-row">
+    <span class="pf-v6-c-label pf-m-outline"><span class="pf-v6-c-label__content"><span class="pf-v6-c-label__text">viewer</span></span></span>
+    <span class="pf-v6-c-label pf-m-blue"><span class="pf-v6-c-label__content"><span class="pf-v6-c-label__text">operator</span></span></span>
+    <span class="pf-v6-c-label pf-m-purple"><span class="pf-v6-c-label__content"><span class="pf-v6-c-label__text">publisher</span></span></span>
+    <span class="pf-v6-c-label pf-m-success"><span class="pf-v6-c-label__content"><span class="pf-v6-c-label__text">LOW</span></span></span>
+    <span class="pf-v6-c-label pf-m-warning"><span class="pf-v6-c-label__content"><span class="pf-v6-c-label__text">MEDIUM</span></span></span>
+    <span class="pf-v6-c-label pf-m-danger"><span class="pf-v6-c-label__content"><span class="pf-v6-c-label__text">HIGH</span></span></span>
+    <span class="pf-v6-c-label pf-m-green"><span class="pf-v6-c-label__content"><span class="pf-v6-c-label__text">signed · curated</span></span></span>
+    <span class="pf-v6-c-label pf-m-orange"><span class="pf-v6-c-label__content"><span class="pf-v6-c-label__text">unsigned</span></span></span>
+  </div>
+
+  <h2>Everything else is PatternFly</h2>
+  <p class="acc-source">Type (Red Hat Text / Display / Mono), spacing, radius, elevation, light · dark · high-contrast: PatternFly 6 tokens, untouched. <code>acc.css</code> defines eight custom properties and five small patterns — nothing in it sets a colour value of its own.</p>
+
+</body>
+</html>

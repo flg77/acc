@@ -8,6 +8,7 @@ oversight) ship in PR-3, the tracing endpoints in PR-4.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -58,7 +59,10 @@ def environment_info() -> dict:
 
     from acc.deploy import environment  # noqa: PLC0415
 
+    import acc  # noqa: PLC0415
+
     info = environment().to_dict()
+    info["runtime"] = acc.__version__
     # The two trace stores are files: where one IS mounted the screen works,
     # whatever kind of place this is.
     for cap, env_var, default in (
@@ -68,6 +72,62 @@ def environment_info() -> dict:
         if os.path.isdir(os.environ.get(env_var, default)):
             info["capabilities"][cap] = {"available": True, "reason": ""}
     return info
+
+
+# The declared read is three Kubernetes API calls in a cluster; the page polls,
+# so it is answered from the last read for a few seconds.  ``read_at`` says how old.
+_AGENTSET_TTL_S = 10.0
+_agentset_cache: "tuple[float, object] | None" = None
+
+
+def _declared_agentset():
+    global _agentset_cache  # noqa: PLW0603 — a process-wide read-through cache
+    from acc.deployment import agentset  # noqa: PLC0415
+
+    now = time.time()
+    if _agentset_cache is None or now - _agentset_cache[0] > _AGENTSET_TTL_S:
+        _agentset_cache = (now, agentset())
+    return _agentset_cache
+
+
+@router.get("/api/agentset", tags=["read"], dependencies=[Depends(require_viewer)])
+def agentset_info(collective: str = "", hub: ObserverHub = Depends(get_hub)) -> dict:
+    """The agentset of this deployment — declared beside running.
+
+    *Declared* is ``acc.deployment.agentset``: ``collective.yaml`` in a
+    checkout, the namespace's ``AgentCollective`` in a cluster pod.  *Running*
+    is what the bus has seen for *collective* (``acc.deployment.compare``, the
+    rule the TUI shares).  A refused read arrives as ``errors``, never as an
+    empty list.  A plain ``def``: the read blocks, so it runs in the threadpool.
+    """
+    from acc.deployment import compare  # noqa: PLC0415
+
+    read_at, declared = _declared_agentset()
+    cid = collective or (hub.collective_ids() or [""])[0]
+    snapshot = hub.latest(cid) if cid else None
+    running = None
+    if snapshot is not None:
+        running = [
+            (str(a.get("role") or ""), str(a.get("llm_model") or ""))
+            for a in (snapshot.get("agents") or {}).values()
+        ]
+    rows, undeclared = compare(declared, running)
+    body = declared.to_dict()
+    body.update({
+        "collective": cid,
+        "read_at": round(read_at, 3),
+        "bus": running is not None,
+        "rows": [dataclasses.asdict(r) for r in rows],
+        "undeclared": undeclared,
+    })
+    return body
+
+
+@router.get("/api/whoami", tags=["read"])
+def whoami(principal: Principal = Depends(require_viewer)) -> dict:
+    """Who the signed-in person is and at which tier — the environment bar
+    shows it, so a missing control is explained by the tier, not left to guess."""
+    return {"user": principal.user, "role": principal.role}
 
 
 @router.get("/api/tracing", tags=["read"], dependencies=[Depends(require_viewer)])

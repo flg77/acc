@@ -1,0 +1,59 @@
+<!-- @dsCard group="Shell" -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Environment bar</title>
+  <link rel="stylesheet" href="../vendor/patternfly.min.css">
+  <link rel="stylesheet" href="../acc.css">
+</head>
+<body class="ds-preview">
+
+  <h2>Cluster · operator tier</h2>
+  <div class="pf-v6-c-banner pf-m-blue pf-m-sticky" role="status" aria-label="Environment">
+    <div class="acc-envbar">
+      <span class="acc-envbar__kind">Cluster</span>
+      <span class="acc-envbar__fact"><span>project</span><code>wksp-user2</code></span>
+      <span class="acc-envbar__fact"><span>corpus</span><code>mortgage-agents-corpus</code></span>
+      <span class="acc-envbar__fact"><span>runtime</span><code>0.20.0</code></span>
+      <span class="acc-envbar__fact"><span>operator</span><code>0.2.27</code></span>
+      <span class="acc-envbar__fact"><span>declared in</span><code>AgentCollective</code> · reconciled by the ACC operator</span>
+      <span class="acc-envbar__person">user2 · <strong>operator</strong></span>
+    </div>
+  </div>
+
+  <h2>Cluster · viewer — same facts, the tier says why controls are missing</h2>
+  <div class="pf-v6-c-banner pf-m-blue pf-m-sticky" role="status" aria-label="Environment">
+    <div class="acc-envbar">
+      <span class="acc-envbar__kind">Cluster</span>
+      <span class="acc-envbar__fact"><span>project</span><code>wksp-user2</code></span>
+      <span class="acc-envbar__fact"><span>corpus</span><code>mortgage-agents-corpus</code></span>
+      <span class="acc-envbar__fact"><span>runtime</span><code>0.20.0</code></span>
+      <span class="acc-envbar__person">user1 · <strong>viewer</strong> — read-only</span>
+    </div>
+  </div>
+
+  <h2>Standalone (edge) — the same bar, another source of truth</h2>
+  <div class="pf-v6-c-banner pf-m-teal pf-m-sticky" role="status" aria-label="Environment">
+    <div class="acc-envbar">
+      <span class="acc-envbar__kind">Standalone</span>
+      <span class="acc-envbar__fact"><span>host</span><code>lighthouse</code></span>
+      <span class="acc-envbar__fact"><span>collective</span><code>sol-01</code></span>
+      <span class="acc-envbar__fact"><span>runtime</span><code>0.20.0</code></span>
+      <span class="acc-envbar__fact"><span>declared in</span><code>collective.yaml</code> · reconciled by <code>acc-deploy.sh apply</code></span>
+      <span class="acc-envbar__person">operator (local)</span>
+    </div>
+  </div>
+
+  <h2>Could not find out — says so, never guesses</h2>
+  <div class="pf-v6-c-banner pf-m-warning pf-m-sticky" role="status" aria-label="Environment">
+    <div class="acc-envbar">
+      <span class="acc-envbar__kind">Cluster</span>
+      <span class="acc-envbar__fact"><span>project</span><code>wksp-user2</code></span>
+      <span class="acc-envbar__fact">this pod's ServiceAccount may not read <code>agentcorpora</code> — the ACC operator grants that from 0.2.27</span>
+    </div>
+  </div>
+
+</body>
+</html>

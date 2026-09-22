@@ -25,6 +25,7 @@ and what grants it.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import ssl
@@ -78,6 +79,17 @@ class Agentset:
         comes from it is up and has no role to run (it boots DORMANT)."""
         return any(p.phase != "Installed" for p in self.packages)
 
+    def to_dict(self) -> dict:
+        """The wire form both surfaces read (``GET /api/agentset``)."""
+        return {
+            "declared_in": self.declared_in,
+            "version": self.version,
+            "agents": [dataclasses.asdict(a) for a in self.agents],
+            "packages": [dataclasses.asdict(p) for p in self.packages],
+            "awaiting_packages": self.awaiting_packages(),
+            "errors": list(self.errors),
+        }
+
 
 @dataclass(frozen=True)
 class Tracing:
@@ -127,6 +139,84 @@ class Tracing:
             "message_text_off": list(self.message_text_off),
             "summary": self.summary(), "errors": list(self.errors),
         }
+
+
+@dataclass(frozen=True)
+class AgentRow:
+    """One declared slot laid beside what the bus says is running.
+
+    ``state`` is the ACC state vocabulary of the design system
+    (``webgui/design-system``): converged · converging · awaiting · drift ·
+    missing · unknown.  ``reason`` is the sentence a person can act on.
+    """
+
+    role: str
+    collective: str
+    replicas_declared: int
+    replicas_running: int
+    model_declared: str
+    models_running: tuple[str, ...]
+    state: str
+    reason: str
+
+
+def compare(declared: Agentset, running: "list[tuple[str, str]] | None") -> tuple[list[AgentRow], list[dict]]:
+    """Declared beside observed — the one rule both surfaces use.
+
+    *running* is ``[(role, llm_model), …]`` of the agents the bus has seen, or
+    ``None`` when there is no bus (nothing can be said about what runs).
+    Returns the rows for every declared slot and the ``undeclared`` list —
+    roles that run here and are declared nowhere this deployment can read
+    (on an edge host the compose services; in a cluster a stray pod).
+    """
+    if running is None:
+        rows = [
+            AgentRow(a.role, a.collective, a.replicas, 0, a.model, (), "unknown",
+                     "no bus connection — what runs is not known")
+            for a in declared.agents
+        ]
+        return rows, []
+
+    count: dict[str, int] = {}
+    models: dict[str, set[str]] = {}
+    for role, model in running:
+        if not role:
+            continue
+        count[role] = count.get(role, 0) + 1
+        if model:
+            models.setdefault(role, set()).add(model)
+
+    rows = []
+    for a in declared.agents:
+        live = count.get(a.role, 0)
+        seen = tuple(sorted(models.get(a.role, ())))
+        mismatched = a.model and seen and a.model not in seen
+        if live > 0 and mismatched:
+            # The agent's own extraEnv overrides the collective's llm block, so
+            # the running value is the true one — worth flagging even while the
+            # replica count is still catching up: a wrong-model instance is a
+            # worse problem than a slow one, and "converging" would hide it.
+            reason = f"declared {a.model}, running {', '.join(seen)} — the running value is the true one"
+            if live < a.replicas:
+                reason += f"; {live} of {a.replicas} replicas on the bus"
+            state = "drift"
+        elif live >= a.replicas:
+            state, reason = "converged", ""
+        elif live > 0:
+            state, reason = "converging", f"{live} of {a.replicas} replicas on the bus"
+        elif declared.awaiting_packages():
+            state, reason = "awaiting", (
+                "the agent is up and has no role to run until its package reports Installed")
+        else:
+            state, reason = "missing", "declared, no heartbeat seen yet"
+        rows.append(AgentRow(a.role, a.collective, a.replicas, live, a.model, seen, state, reason))
+
+    declared_roles = {a.role for a in declared.agents}
+    undeclared = [
+        {"role": role, "replicas_running": n, "models_running": sorted(models.get(role, ()))}
+        for role, n in sorted(count.items()) if role not in declared_roles
+    ]
+    return rows, undeclared
 
 
 # ---------------------------------------------------------------------------

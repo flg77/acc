@@ -11,6 +11,44 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-09-22
+
+OpenSpec `20260921-webgui-on-patternfly`, Phase 3a — a Playwright suite over
+the new WebGUI shell, and a click-through of the screens Phase 2/3 did not
+rebuild. It found one real bug on the way.
+
+### Fixed
+
+- **`acc.deployment.compare()` could hide a wrong-model agent behind "still converging"** — a role whose one running instance was on the wrong model reported *Converging* (only the replica shortfall) instead of *Drift*, if its replica count had not yet caught up. A model mismatch is now reported as drift regardless of replica count. Found by the new Playwright suite, not assumed.
+
+### Added
+
+- **`webgui/e2e/` — a Playwright suite** over the real acc-webgui (`npm run e2e`): two projects, `cluster` and `edge`, each against its own fixture backend serving a real `vite build`. 44 tests across Overview, Agentset, Prompt, Board, Comms, Marketplace and Catalogs, plus a click-through smoke test of every screen still on the legacy stylesheet in both environments.
+- `ACC_WEBGUI_STATIC_DIR` overrides where `acc.webgui.app.create_app()` serves the SPA from — lets the e2e suite serve `webgui/dist` without copying build output into the source tree.
+
+OpenSpec `20260921-webgui-on-patternfly`, Phase 3 — Overview, Work and Packages
+rebuilt on PatternFly; the seven old screens they replace are gone.
+
+### Changed
+
+- **WebGUI: Overview** is one page (the old Dashboard and Performance): the collective in four numbers and one row per agent — state, queue and backpressure, current task, drift, compliance.
+- **WebGUI: Work** — *Prompt* picks its target from the roles on the bus and shows that it is waiting; *Board* is a five-column kanban that stacks when the frame is narrow, a viewer sees the cards and no buttons, a blocked card links to where the gate is answered; *Comms* as three tables.
+- **WebGUI: Packages** — *Marketplace* and *Catalogs* say once, above the table, why a change is not made from here (a cluster: `AccPackageInstall` / `AccCatalog`), instead of a disabled button per row. Catalog priority is saved when the field is left (it called the API on every keystroke); removing a catalog asks first; Install says nothing is installed until an operator dispatches it.
+
+OpenSpec `20260921-webgui-on-patternfly`, Phase 2 — the WebGUI's new shell and
+its first screen. The design decision (PatternFly, same everywhere, no lies) is
+in the vault, `20-backlog/k8s-webgui/KW-00` §0.
+
+### Added
+
+- **WebGUI: the Agentset page** (KW-03) — what runs and what should run: `collective.yaml` on the edge, the `AgentCollective` in a cluster, laid beside what the bus says is running (converged · converging · awaiting pack · drift · not on the bus), the agents that run here declared nowhere, the packages, a refused read as an alert. `acc.deployment.compare()` is the one rule; `GET /api/agentset`, `GET /api/whoami`.
+- **`webgui/design-system/`** — PatternFly 6 plus the five ACC patterns as preview cards (`npm run ds:vendor`), and the README for `/design-sync`.
+
+### Changed
+
+- **WebGUI shell on PatternFly** — masthead with an eight-item navigation (Overview · Agentset · Work · Packages · Models · Governance · Traces · Settings) instead of seventeen buttons, an environment bar that says where it runs and who you are, real URLs (`#/agentset/agents`), light and dark theme. Every previous screen is still reachable, inside its section, on a stylesheet scoped so it cannot restyle the shell.
+- `GET /api/environment` carries the runtime version.
+
 ## [0.20.0] — 2026-09-20
 
 On bb3 every turn was in MLflow with its full text and neither surface said

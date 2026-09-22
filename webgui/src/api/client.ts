@@ -132,6 +132,7 @@ export type Environment = {
   detected_by: string;
   label: string;
   capabilities: Record<string, Capability>;
+  runtime?: string;
 };
 
 export const fetchEnvironment = () => getJSON<Environment>("/api/environment");
@@ -153,6 +154,46 @@ export type Tracing = {
 };
 
 export const fetchTracing = () => getJSON<Tracing>("/api/tracing");
+
+// The agentset — declared (collective.yaml / the AgentCollective) beside what
+// the bus says is running.  One rule, in Python (acc.deployment.compare).
+export type AgentState =
+  | "converged"
+  | "converging"
+  | "awaiting"
+  | "drift"
+  | "missing"
+  | "unknown";
+
+export type AgentRow = {
+  role: string;
+  collective: string;
+  replicas_declared: number;
+  replicas_running: number;
+  model_declared: string;
+  models_running: string[];
+  state: AgentState;
+  reason: string;
+};
+
+export type Agentset = {
+  declared_in: string;
+  version: string;
+  collective: string;
+  read_at: number;
+  bus: boolean;
+  rows: AgentRow[];
+  undeclared: { role: string; replicas_running: number; models_running: string[] }[];
+  packages: { name: string; constraint: string; installed: string; phase: string }[];
+  awaiting_packages: boolean;
+  errors: string[];
+};
+
+export const fetchAgentset = (collectiveId: string) =>
+  getJSON<Agentset>(`/api/agentset?collective=${encodeURIComponent(collectiveId)}`);
+
+export type Whoami = { user: string; role: string };
+export const fetchWhoami = () => getJSON<Whoami>("/api/whoami");
 
 // `sessionId` names the conversation this prompt continues (RP-02). Only the
 // id travels — prior turns are replayed server-side from the durable tracelog,

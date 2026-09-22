@@ -1,0 +1,120 @@
+<!-- @dsCard group="ACC patterns" -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proposal lifecycle</title>
+  <link rel="stylesheet" href="../vendor/patternfly.min.css">
+  <link rel="stylesheet" href="../acc.css">
+</head>
+<body class="ds-preview">
+
+  <h2>Waiting for approval — the change has an object, an asker, an approver and a ceiling</h2>
+  <div class="pf-v6-c-card pf-m-compact acc-proposal">
+    <div class="pf-v6-c-card__header">
+      <div class="pf-v6-c-card__title"><h3 class="pf-v6-c-card__title-text">Add <code>assistant</code> to the agentset</h3></div>
+    </div>
+    <div class="pf-v6-c-card__body">
+      <pre class="acc-proposal__diff">AgentCollective wksp-user2/mortgage-agents-collective · spec.agents
+<span class="add">+ - role: assistant</span>
+<span class="add">+   replicas: 1</span>
+<span class="add">+   model: gpt-oss-120b        (from the platform: MaaS)</span></pre>
+    </div>
+    <div class="pf-v6-c-card__body">
+      <dl class="pf-v6-c-description-list pf-m-horizontal pf-m-compact">
+        <div class="pf-v6-c-description-list__group">
+          <dt class="pf-v6-c-description-list__term"><span class="pf-v6-c-description-list__text">Asked by</span></dt>
+          <dd class="pf-v6-c-description-list__description"><div class="pf-v6-c-description-list__text">user2 · 14:02</div></dd>
+        </div>
+        <div class="pf-v6-c-description-list__group">
+          <dt class="pf-v6-c-description-list__term"><span class="pf-v6-c-description-list__text">May approve</span></dt>
+          <dd class="pf-v6-c-description-list__description"><div class="pf-v6-c-description-list__text">operator tier in <code>wksp-user2</code></div></dd>
+        </div>
+        <div class="pf-v6-c-description-list__group">
+          <dt class="pf-v6-c-description-list__term"><span class="pf-v6-c-description-list__text">Risk · ceiling</span></dt>
+          <dd class="pf-v6-c-description-list__description"><div class="pf-v6-c-description-list__text">MEDIUM · within user2's ceiling (MEDIUM)</div></dd>
+        </div>
+      </dl>
+    </div>
+    <div class="pf-v6-c-card__body">
+      <ol class="pf-v6-c-progress-stepper pf-m-horizontal-on-md" role="list" aria-label="Life of this change">
+        <li class="pf-v6-c-progress-stepper__step pf-m-success" role="listitem">
+          <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon">✓</span></div>
+          <div class="pf-v6-c-progress-stepper__step-main">
+            <div class="pf-v6-c-progress-stepper__step-title">Asked</div>
+            <div class="pf-v6-c-progress-stepper__step-description">user2 · 14:02</div>
+          </div>
+        </li>
+        <li class="pf-v6-c-progress-stepper__step pf-m-current pf-m-info" role="listitem">
+          <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon">●</span></div>
+          <div class="pf-v6-c-progress-stepper__step-main">
+            <div class="pf-v6-c-progress-stepper__step-title pf-m-current">Approve</div>
+            <div class="pf-v6-c-progress-stepper__step-description">waiting — 3 min</div>
+          </div>
+        </li>
+        <li class="pf-v6-c-progress-stepper__step pf-m-pending" role="listitem">
+          <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon"></span></div>
+          <div class="pf-v6-c-progress-stepper__step-main"><div class="pf-v6-c-progress-stepper__step-title">Applied</div></div>
+        </li>
+        <li class="pf-v6-c-progress-stepper__step pf-m-pending" role="listitem">
+          <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon"></span></div>
+          <div class="pf-v6-c-progress-stepper__step-main"><div class="pf-v6-c-progress-stepper__step-title">Converged</div></div>
+        </li>
+      </ol>
+    </div>
+    <div class="pf-v6-c-card__footer">
+      <button class="pf-v6-c-button pf-m-primary" type="button"><span class="pf-v6-c-button__text">Approve</span></button>
+      <button class="pf-v6-c-button pf-m-secondary pf-m-danger" type="button"><span class="pf-v6-c-button__text">Refuse</span></button>
+      <button class="pf-v6-c-button pf-m-link" type="button"><span class="pf-v6-c-button__text">Withdraw</span></button>
+    </div>
+  </div>
+
+  <h2>Applied, converging — “saved” is not the end of a change in a controller-driven system</h2>
+  <ol class="pf-v6-c-progress-stepper pf-m-horizontal-on-md" role="list" aria-label="Life of this change">
+    <li class="pf-v6-c-progress-stepper__step pf-m-success" role="listitem">
+      <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon">✓</span></div>
+      <div class="pf-v6-c-progress-stepper__step-main"><div class="pf-v6-c-progress-stepper__step-title">Asked</div><div class="pf-v6-c-progress-stepper__step-description">user2 · 14:02</div></div>
+    </li>
+    <li class="pf-v6-c-progress-stepper__step pf-m-success" role="listitem">
+      <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon">✓</span></div>
+      <div class="pf-v6-c-progress-stepper__step-main"><div class="pf-v6-c-progress-stepper__step-title">Approved</div><div class="pf-v6-c-progress-stepper__step-description">acc-operator · 14:06</div></div>
+    </li>
+    <li class="pf-v6-c-progress-stepper__step pf-m-success" role="listitem">
+      <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon">✓</span></div>
+      <div class="pf-v6-c-progress-stepper__step-main"><div class="pf-v6-c-progress-stepper__step-title">Applied</div><div class="pf-v6-c-progress-stepper__step-description">patched · generation 14</div></div>
+    </li>
+    <li class="pf-v6-c-progress-stepper__step pf-m-current pf-m-info" role="listitem">
+      <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon">●</span></div>
+      <div class="pf-v6-c-progress-stepper__step-main"><div class="pf-v6-c-progress-stepper__step-title pf-m-current">Converging</div><div class="pf-v6-c-progress-stepper__step-description">pod starting · awaiting pack</div></div>
+    </li>
+  </ol>
+
+  <h2>Refused by the approver</h2>
+  <ol class="pf-v6-c-progress-stepper pf-m-horizontal-on-md" role="list" aria-label="Life of this change">
+    <li class="pf-v6-c-progress-stepper__step pf-m-success" role="listitem">
+      <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon">✓</span></div>
+      <div class="pf-v6-c-progress-stepper__step-main"><div class="pf-v6-c-progress-stepper__step-title">Asked</div><div class="pf-v6-c-progress-stepper__step-description">user2 · 14:02</div></div>
+    </li>
+    <li class="pf-v6-c-progress-stepper__step pf-m-danger" role="listitem">
+      <div class="pf-v6-c-progress-stepper__step-connector"><span class="pf-v6-c-progress-stepper__step-icon">✕</span></div>
+      <div class="pf-v6-c-progress-stepper__step-main"><div class="pf-v6-c-progress-stepper__step-title pf-m-danger">Refused</div><div class="pf-v6-c-progress-stepper__step-description">acc-operator · 14:06 — “the MaaS key has no budget for a sixth agent”</div></div>
+    </li>
+  </ol>
+
+  <h2>Above the asker's ceiling — refused, not asked (D-014): there is nothing to approve</h2>
+  <div class="pf-v6-c-alert pf-m-danger pf-m-inline" aria-label="Refused">
+    <div class="pf-v6-c-alert__icon">✕</div>
+    <p class="pf-v6-c-alert__title">Not filed: changing the Cat-A bundle is HIGH risk, above your ceiling (MEDIUM)</p>
+    <div class="pf-v6-c-alert__description">Ask someone at operator tier to make this change. Nothing was sent for approval.</div>
+  </div>
+
+  <h2>Applied elsewhere — the declared value changed under us</h2>
+  <div class="pf-v6-c-alert pf-m-warning pf-m-inline" aria-label="Changed elsewhere">
+    <div class="pf-v6-c-alert__icon">!</div>
+    <p class="pf-v6-c-alert__title"><code>spec.agents</code> was changed by <code>lab-gitops</code> (rollout) at 14:09, after your change converged</p>
+    <div class="pf-v6-c-alert__description">The agentset on screen is the current one. Your change of 14:06 is no longer in it.</div>
+  </div>
+
+</body>
+</html>

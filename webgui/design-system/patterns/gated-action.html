@@ -1,0 +1,51 @@
+<!-- @dsCard group="ACC patterns" -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Capability-gated action</title>
+  <link rel="stylesheet" href="../vendor/patternfly.min.css">
+  <link rel="stylesheet" href="../acc.css">
+</head>
+<body class="ds-preview">
+
+  <h2>Four renderings of one action — chosen by the environment's capabilities and the person's tier, never by an <code>if</code> in the screen</h2>
+
+  <div class="ds-row">
+
+    <div class="acc-gated">
+      <button class="pf-v6-c-button pf-m-primary" type="button"><span class="pf-v6-c-button__text">Add agent</span></button>
+      <span class="acc-gated__reason">Available: opens a proposal against <code>AgentCollective</code>.</span>
+    </div>
+
+    <div class="acc-gated">
+      <button class="pf-v6-c-button pf-m-primary pf-m-aria-disabled" type="button" aria-disabled="true" aria-describedby="why-1">
+        <span class="pf-v6-c-button__text">Add agent</span>
+      </button>
+      <span class="acc-gated__reason" id="why-1">Not from here: this corpus is read-only for the WebGUI (<code>spec.ui.control: read</code>). The agentset is declared in <code>AgentCollective wksp-user2/mortgage-agents-collective</code>.</span>
+    </div>
+
+    <div class="acc-gated is-caveat">
+      <button class="pf-v6-c-button pf-m-secondary" type="button" aria-describedby="why-2"><span class="pf-v6-c-button__text">Save golden prompt</span></button>
+      <span class="acc-gated__reason" id="why-2">Works, but is kept in this pod only — it is gone when the pod restarts.</span>
+    </div>
+
+    <div class="acc-gated">
+      <span class="pf-v6-c-label pf-m-outline"><span class="pf-v6-c-label__content"><span class="pf-v6-c-label__text">hidden for a viewer</span></span></span>
+      <span class="acc-gated__reason">A viewer is not shown deployment actions at all; the environment bar says <em>viewer — read-only</em> once, instead of twenty disabled buttons.</span>
+    </div>
+
+  </div>
+
+  <h2>The rule</h2>
+  <ul class="pf-v6-c-list">
+    <li><strong>Available</strong> → the PatternFly button, nothing else.</li>
+    <li><strong>Unavailable in this environment</strong> → <code>aria-disabled</code> (focusable, announced) with the reason as <em>text beside it</em>, naming the object that does hold the setting. Never a host command in a cluster, never a bare tooltip.</li>
+    <li><strong>Works with a caveat</strong> → enabled, the caveat marked with a warning rule — as text, in the regular text colour.</li>
+    <li><strong>Not this person's tier</strong> → not rendered; the environment bar carries the explanation.</li>
+    <li>The reason strings come from <code>/api/environment</code> (<code>capabilities[cap].reason</code>) — the SPA does not write its own.</li>
+  </ul>
+
+</body>
+</html>

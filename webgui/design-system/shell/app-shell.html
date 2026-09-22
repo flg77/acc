@@ -1,0 +1,89 @@
+<!-- @dsCard group="Shell" -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>App shell</title>
+  <link rel="stylesheet" href="../vendor/patternfly.min.css">
+  <link rel="stylesheet" href="../acc.css">
+  <style>
+    /* the card shows the shell at the width of a Showroom tab */
+    .ds-frame { max-inline-size: 900px; border: 1px solid var(--pf-t--global--border--color--default); block-size: 560px; overflow: hidden; position: relative; }
+    .ds-frame .pf-v6-c-page { block-size: 100%; }
+  </style>
+</head>
+<body class="ds-preview">
+
+  <h2>At 900 px — inside a Showroom tab. Horizontal nav in the masthead, the environment bar right under it, no sidebar to collapse</h2>
+  <div class="ds-frame">
+    <div class="pf-v6-c-page">
+      <header class="pf-v6-c-masthead">
+        <div class="pf-v6-c-masthead__main">
+          <div class="pf-v6-c-masthead__brand">
+            <a class="pf-v6-c-masthead__logo" href="#" style="text-decoration: none; color: inherit"><strong>ACC</strong></a>
+          </div>
+        </div>
+        <div class="pf-v6-c-masthead__content">
+          <div class="pf-v6-c-toolbar pf-m-static">
+            <div class="pf-v6-c-toolbar__content">
+              <div class="pf-v6-c-toolbar__content-section">
+                <div class="pf-v6-c-toolbar__item pf-m-overflow-container" style="--pf-v6-c-toolbar__item--MinWidth: 18ch;">
+                  <nav class="pf-v6-c-nav pf-m-scrollable pf-m-horizontal" aria-label="Global">
+                    <ul class="pf-v6-c-nav__list" role="list">
+                      <li class="pf-v6-c-nav__item"><a href="#" class="pf-v6-c-nav__link"><span class="pf-v6-c-nav__link-text">Overview</span></a></li>
+                      <li class="pf-v6-c-nav__item"><a href="#" class="pf-v6-c-nav__link pf-m-current" aria-current="page"><span class="pf-v6-c-nav__link-text">Agentset</span></a></li>
+                      <li class="pf-v6-c-nav__item"><a href="#" class="pf-v6-c-nav__link"><span class="pf-v6-c-nav__link-text">Work</span></a></li>
+                      <li class="pf-v6-c-nav__item"><a href="#" class="pf-v6-c-nav__link"><span class="pf-v6-c-nav__link-text">Packages</span></a></li>
+                      <li class="pf-v6-c-nav__item"><a href="#" class="pf-v6-c-nav__link"><span class="pf-v6-c-nav__link-text">Models</span></a></li>
+                      <li class="pf-v6-c-nav__item"><a href="#" class="pf-v6-c-nav__link"><span class="pf-v6-c-nav__link-text">Governance</span></a></li>
+                      <li class="pf-v6-c-nav__item"><a href="#" class="pf-v6-c-nav__link"><span class="pf-v6-c-nav__link-text">Traces</span></a></li>
+                      <li class="pf-v6-c-nav__item"><a href="#" class="pf-v6-c-nav__link"><span class="pf-v6-c-nav__link-text">Settings</span></a></li>
+                    </ul>
+                  </nav>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="pf-v6-c-page__main-container">
+        <main class="pf-v6-c-page__main" tabindex="-1">
+          <div class="pf-v6-c-banner pf-m-blue pf-m-sticky" role="status" aria-label="Environment">
+            <div class="acc-envbar">
+              <span class="acc-envbar__kind">Cluster</span>
+              <span class="acc-envbar__fact"><span>project</span><code>wksp-user2</code></span>
+              <span class="acc-envbar__fact"><span>corpus</span><code>mortgage-agents-corpus</code></span>
+              <span class="acc-envbar__fact"><span>runtime</span><code>0.20.0</code></span>
+              <span class="acc-envbar__person">user2 · <strong>operator</strong></span>
+            </div>
+          </div>
+          <section class="pf-v6-c-page__main-section">
+            <div class="pf-v6-c-content">
+              <h1>Agentset</h1>
+              <p class="acc-source">Declared in <code>AgentCollective wksp-user2/mortgage-agents-collective</code> · read 12 s ago</p>
+            </div>
+          </section>
+          <section class="pf-v6-c-page__main-section pf-m-fill">
+            <p class="acc-source">Page body — see <em>Declared / observed</em>.</p>
+          </section>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <h2>Navigation — eight questions instead of seventeen screens</h2>
+  <ul class="pf-v6-c-list">
+    <li><strong>Overview</strong> — is it well? (dashboard + health)</li>
+    <li><strong>Agentset</strong> — what runs, what should run (declared / observed)</li>
+    <li><strong>Work</strong> — prompt, board, plans, comms: what the agents are doing and asking</li>
+    <li><strong>Packages</strong> — marketplace, installed packs, catalogs</li>
+    <li><strong>Models</strong> — what each agent runs, what the platform offers</li>
+    <li><strong>Governance</strong> — rules, oversight, permissions, proposals</li>
+    <li><strong>Traces</strong> — where the turns go, waterfall, audit chain</li>
+    <li><strong>Settings</strong> — everything else that lives in a CR or in <code>acc-config.yaml</code></li>
+  </ul>
+
+</body>
+</html>

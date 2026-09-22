@@ -1,0 +1,126 @@
+<!-- @dsCard group="ACC patterns" -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Declared / observed</title>
+  <link rel="stylesheet" href="../vendor/patternfly.min.css">
+  <link rel="stylesheet" href="../acc.css">
+</head>
+<body class="ds-preview">
+
+  <h2>Agentset — every state on one table (cluster)</h2>
+  <p class="acc-source">Declared in <code>AgentCollective wksp-user2/mortgage-agents-collective</code> · observed on the bus (heartbeats) · read 12 s ago</p>
+
+  <table class="pf-v6-c-table pf-m-compact pf-m-grid-md" role="grid" aria-label="Agentset: declared beside observed">
+    <thead class="pf-v6-c-table__thead">
+      <tr class="pf-v6-c-table__tr" role="row">
+        <th class="pf-v6-c-table__th" role="columnheader" scope="col">Role</th>
+        <th class="pf-v6-c-table__th" role="columnheader" scope="col">Replicas</th>
+        <th class="pf-v6-c-table__th" role="columnheader" scope="col">Model</th>
+        <th class="pf-v6-c-table__th" role="columnheader" scope="col">Pack</th>
+        <th class="pf-v6-c-table__th" role="columnheader" scope="col">State</th>
+      </tr>
+    </thead>
+    <tbody class="pf-v6-c-table__tbody" role="rowgroup">
+
+      <tr class="pf-v6-c-table__tr" role="row">
+        <td class="pf-v6-c-table__td" role="cell" data-label="Role"><code>mortgage_underwriter</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Replicas">
+          <span class="acc-do is-same"><span class="acc-do__label">declared</span><span>1</span></span>
+        </td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Model">
+          <span class="acc-do is-same"><span class="acc-do__label">declared</span><code>gpt-oss-120b</code></span>
+        </td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Pack"><code>@acc/mortgage-roles 1.2.1</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="State"><span class="acc-state is-converged">Converged</span></td>
+      </tr>
+
+      <tr class="pf-v6-c-table__tr" role="row">
+        <td class="pf-v6-c-table__td" role="cell" data-label="Role"><code>mortgage_borrower</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Replicas">
+          <span class="acc-do is-drift">
+            <span class="acc-do__label">declared</span><span>2</span>
+            <span class="acc-do__label">running</span><span class="acc-do__observed">1</span>
+          </span>
+        </td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Model"><code>gpt-oss-120b</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Pack"><code>@acc/mortgage-roles 1.2.1</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="State">
+          <span class="acc-state is-converging">Converging</span>
+          <span class="acc-reason">second replica starting — pod scheduled 40 s ago</span>
+        </td>
+      </tr>
+
+      <tr class="pf-v6-c-table__tr" role="row">
+        <td class="pf-v6-c-table__td" role="cell" data-label="Role"><code>mortgage_loan_officer</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Replicas">1</td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Model"><code>gpt-oss-120b</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Pack">
+          <span class="acc-do is-drift">
+            <span class="acc-do__label">declared</span><code>1.2.2</code>
+            <span class="acc-do__label">installed</span><code class="acc-do__observed">1.2.1</code>
+          </span>
+        </td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="State">
+          <span class="acc-state is-awaiting">Awaiting pack</span>
+          <span class="acc-reason">the agent is up and has no role to run until <code>AccPackageInstall</code> reports <em>Installed</em></span>
+        </td>
+      </tr>
+
+      <tr class="pf-v6-c-table__tr" role="row">
+        <td class="pf-v6-c-table__td" role="cell" data-label="Role"><code>mortgage_executive</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Replicas">1</td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Model">
+          <span class="acc-do is-drift">
+            <span class="acc-do__label">declared</span><code>ollama / stand-in</code>
+            <span class="acc-do__label">running</span><code class="acc-do__observed">openai_compat / gpt-oss-120b</code>
+          </span>
+        </td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Pack"><code>@acc/mortgage-roles 1.2.1</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="State">
+          <span class="acc-state is-drift">Drift</span>
+          <span class="acc-reason">the agent's own <code>extraEnv</code> overrides the collective's <code>llm</code> block — the running value is the true one</span>
+        </td>
+      </tr>
+
+      <tr class="pf-v6-c-table__tr" role="row">
+        <td class="pf-v6-c-table__td" role="cell" data-label="Role"><code>mortgage_prospect</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Replicas">
+          <span class="acc-do is-drift">
+            <span class="acc-do__label">declared</span><span>1</span>
+            <span class="acc-do__label">running</span><span class="acc-do__observed">0</span>
+          </span>
+        </td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Model"><code>gpt-oss-120b</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Pack"><code>@acc/mortgage-roles 1.2.1</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="State">
+          <span class="acc-state is-failed">Failed</span>
+          <span class="acc-reason">CrashLoopBackOff — 6 restarts, last exit 1</span>
+        </td>
+      </tr>
+
+      <tr class="pf-v6-c-table__tr" role="row">
+        <td class="pf-v6-c-table__td" role="cell" data-label="Role"><code>assistant</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Replicas">1</td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Model"><code>gpt-oss-120b</code></td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="Pack">built-in</td>
+        <td class="pf-v6-c-table__td" role="cell" data-label="State">
+          <span class="acc-state">Not on the bus</span>
+          <span class="acc-reason">declared, no heartbeat seen yet</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>The rule</h2>
+  <ul class="pf-v6-c-list">
+    <li>Equal values are shown once. Different values are shown both, <strong>declared first</strong>, the observed one emphasised.</li>
+    <li>Every table of declared things names <strong>where it is declared</strong> and how old the read is.</li>
+    <li>A state always carries a reason a person can act on. The state dot is never the only signal — the word is next to it.</li>
+    <li>The same table on the edge: source <code>collective.yaml</code>, observed from podman + the bus. Same columns, same states.</li>
+  </ul>
+
+</body>
+</html>

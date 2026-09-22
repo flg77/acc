@@ -37,7 +37,14 @@ def _static_dir() -> str | None:
     PR-6's Containerfile copies the Vite `dist/` output to
     ``acc/webgui/static``.  In a dev checkout the directory is absent
     and the API still runs (the React dev server proxies to it).
+
+    ``ACC_WEBGUI_STATIC_DIR`` overrides the path — used by the Playwright
+    e2e suite (``webgui/e2e/``) to serve a `vite build` straight from
+    ``webgui/dist`` without copying it into the source tree.
     """
+    override = os.environ.get("ACC_WEBGUI_STATIC_DIR", "").strip()
+    if override:
+        return override if os.path.isdir(override) else None
     here = os.path.dirname(os.path.abspath(__file__))
     static = os.path.join(here, "static")
     return static if os.path.isdir(static) else None

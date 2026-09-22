@@ -1,12 +1,16 @@
-// acc-webgui application shell — navigation, collective switcher, and
-// the screen router.  Mirrors the acc-tui app shell (acc/tui/app.py):
-// a nav bar + per-collective data + the 8 parity screens, with the
-// enhanced-tracing views added.
+// acc-webgui application shell — boot (auth probe, collectives, environment),
+// then the PatternFly shell (src/shell) with its routed pages.
+//
+// The screens that have not been rebuilt on PatternFly yet are still the ones
+// in screens.tsx / tracing.tsx; src/shell/sections.tsx maps every one of them
+// into the eight-section navigation.
 
 import { useCallback, useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import type { FormEvent, ReactNode } from "react";
+import { HashRouter } from "react-router-dom";
 import {
   fetchEnvironment,
+  fetchWhoami,
   getAuthInfo,
   getToken,
   isAuthError,
@@ -14,61 +18,15 @@ import {
   login,
   setToken,
 } from "./api/client";
-import type { Environment } from "./api/client";
-import { SnapshotProvider, useSnapshot } from "./state/snapshot";
-import {
-  Dashboard,
-  Infuse,
-  Prompt,
-  Compliance,
-  Ecosystem,
-  Marketplace,
-  Catalogs,
-  RoleEditor,
-  Performance,
-  Comms,
-  Configuration,
-  Diagnostics,
-  Help,
-  Board,
-} from "./screens";
-import { TraceDestination, TraceWaterfall, PlanDag, AuditTimeline } from "./tracing";
+import type { Environment, Whoami } from "./api/client";
+import { SnapshotProvider } from "./state/snapshot";
+import { EnvironmentContext } from "./shell/EnvironmentContext";
+import { Shell } from "./shell/Shell";
 
-const SCREENS: Record<string, () => JSX.Element> = {
-  Dashboard,
-  Infuse,
-  Prompt,
-  Board,
-  Compliance,
-  Ecosystem,
-  Marketplace,
-  Catalogs,
-  "Role editor": RoleEditor,
-  Performance,
-  Comms,
-  Configuration,
-  Diagnostics,
-  Help,
-  "Trace · Where the turns go": TraceDestination,
-  "Trace · Waterfall": TraceWaterfall,
-  "Trace · PLAN DAG": PlanDag,
-  "Trace · Audit chain": AuditTimeline,
-};
-
-// A screen that needs a capability this environment lacks is not offered:
-// it could only answer with an error.
-const SCREEN_CAPABILITY: Record<string, string> = {
-  "Trace · Audit chain": "trace.audit",
-};
-
-function StatusBadge() {
-  const { connected } = useSnapshot();
-  return (
-    <span className={connected ? "badge live" : "badge stale"}>
-      {connected ? "live" : "connecting…"}
-    </span>
-  );
-}
+// The gates and the boot messages are on the legacy stylesheet (src/styles.css).
+const Legacy = ({ children }: { children: ReactNode }) => (
+  <div className="legacy">{children}</div>
+);
 
 // `token` mode — paste a static bearer token.
 function TokenGate({
@@ -80,38 +38,40 @@ function TokenGate({
 }) {
   const [value, setValue] = useState("");
   return (
-    <div className="token-gate">
-      <h1>acc-webgui</h1>
-      <p>This acc-webgui requires a bearer token to connect.</p>
-      {rejected && (
-        <p className="errmsg">
-          The saved token was rejected — paste a current one.
+    <Legacy>
+      <div className="token-gate">
+        <h1>acc-webgui</h1>
+        <p>This acc-webgui requires a bearer token to connect.</p>
+        {rejected && (
+          <p className="errmsg">
+            The saved token was rejected — paste a current one.
+          </p>
+        )}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (value.trim()) onSubmit(value.trim());
+          }}
+        >
+          <input
+            type="password"
+            placeholder="operator or viewer token"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            autoFocus
+          />
+          <button type="submit" disabled={!value.trim()}>
+            Connect
+          </button>
+        </form>
+        <p className="hint">
+          The token is the value of <code>ACC_WEBGUI_OPERATOR_TOKEN</code> or
+          <code> ACC_WEBGUI_VIEWER_TOKEN</code> on the acc-webgui container. It
+          is kept in this browser's localStorage; you can also open
+          <code> localhost:8080/?token=…</code> directly.
         </p>
-      )}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (value.trim()) onSubmit(value.trim());
-        }}
-      >
-        <input
-          type="password"
-          placeholder="operator or viewer token"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          autoFocus
-        />
-        <button type="submit" disabled={!value.trim()}>
-          Connect
-        </button>
-      </form>
-      <p className="hint">
-        The token is the value of <code>ACC_WEBGUI_OPERATOR_TOKEN</code> or
-        <code> ACC_WEBGUI_VIEWER_TOKEN</code> on the acc-webgui container. It
-        is kept in this browser's localStorage; you can also open
-        <code> localhost:8080/?token=…</code> directly.
-      </p>
-    </div>
+      </div>
+    </Legacy>
   );
 }
 
@@ -150,33 +110,35 @@ function LoginGate({
   };
 
   return (
-    <div className="token-gate">
-      <h1>acc-webgui</h1>
-      <p>Sign in to acc-webgui.</p>
-      {err && <p className="errmsg">{err}</p>}
-      <form className="login-form" onSubmit={submit}>
-        <input
-          type="text"
-          placeholder="username"
-          value={user}
-          onChange={(e) => setUser(e.target.value)}
-          autoFocus
-        />
-        <input
-          type="password"
-          placeholder="password"
-          value={pass}
-          onChange={(e) => setPass(e.target.value)}
-        />
-        <button type="submit" disabled={busy || !user.trim() || !pass}>
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
-      <p className="hint">
-        Credentials are your entry in the acc-webgui htpasswd file. A signed
-        session is kept in this browser's localStorage.
-      </p>
-    </div>
+    <Legacy>
+      <div className="token-gate">
+        <h1>acc-webgui</h1>
+        <p>Sign in to acc-webgui.</p>
+        {err && <p className="errmsg">{err}</p>}
+        <form className="login-form" onSubmit={submit}>
+          <input
+            type="text"
+            placeholder="username"
+            value={user}
+            onChange={(e) => setUser(e.target.value)}
+            autoFocus
+          />
+          <input
+            type="password"
+            placeholder="password"
+            value={pass}
+            onChange={(e) => setPass(e.target.value)}
+          />
+          <button type="submit" disabled={busy || !user.trim() || !pass}>
+            {busy ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+        <p className="hint">
+          Credentials are your entry in the acc-webgui htpasswd file. A signed
+          session is kept in this browser's localStorage.
+        </p>
+      </div>
+    </Legacy>
   );
 }
 
@@ -184,15 +146,17 @@ function LoginGate({
 // header or client certificate; it can only tell the operator why.
 function ProxyAuthError({ mode }: { mode: string }) {
   return (
-    <div className="token-gate">
-      <h1>acc-webgui</h1>
-      <p className="errmsg">Not authenticated.</p>
-      <p className="hint">
-        This acc-webgui uses <code>{mode}</code> authentication. Sign in
-        through your identity provider / proxy (or present a valid client
-        certificate) and reload this page.
-      </p>
-    </div>
+    <Legacy>
+      <div className="token-gate">
+        <h1>acc-webgui</h1>
+        <p className="errmsg">Not authenticated.</p>
+        <p className="hint">
+          This acc-webgui uses <code>{mode}</code> authentication. Sign in
+          through your identity provider / proxy (or present a valid client
+          certificate) and reload this page.
+        </p>
+      </div>
+    </Legacy>
   );
 }
 
@@ -205,12 +169,13 @@ type Boot =
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ state: "checking" });
   const [activeCid, setActiveCid] = useState<string>("");
-  const [screen, setScreen] = useState<string>("Dashboard");
   const [env, setEnv] = useState<Environment | null>(null);
+  const [who, setWho] = useState<Whoami | null>(null);
 
   useEffect(() => {
     if (boot.state !== "ready") return;
     fetchEnvironment().then(setEnv).catch(() => setEnv(null));
+    fetchWhoami().then(setWho).catch(() => setWho(null));
   }, [boot.state]);
 
   // Probe the backend: discover the auth mode, then list collectives.
@@ -262,7 +227,11 @@ export default function App() {
   }, [bootstrap]);
 
   if (boot.state === "checking") {
-    return <div className="loading">Connecting to acc-webgui…</div>;
+    return (
+      <Legacy>
+        <div className="loading">Connecting to acc-webgui…</div>
+      </Legacy>
+    );
   }
 
   if (boot.state === "need-auth") {
@@ -285,68 +254,40 @@ export default function App() {
 
   if (boot.state === "error") {
     return (
-      <div className="loading">
-        <p className="errmsg">Could not reach acc-webgui: {boot.message}</p>
-        <button onClick={bootstrap}>Retry</button>
-      </div>
+      <Legacy>
+        <div className="loading">
+          <p className="errmsg">Could not reach acc-webgui: {boot.message}</p>
+          <button onClick={bootstrap}>Retry</button>
+        </div>
+      </Legacy>
     );
   }
 
   if (boot.collectives.length === 0) {
     return (
-      <div className="loading">
-        Connected — but no collectives are being observed.
-        <br />
-        Check <code>ACC_COLLECTIVE_IDS</code> on the acc-webgui container.
-      </div>
+      <Legacy>
+        <div className="loading">
+          Connected — but no collectives are being observed.
+          <br />
+          Check <code>ACC_COLLECTIVE_IDS</code> on the acc-webgui container.
+        </div>
+      </Legacy>
     );
   }
 
   const cid = activeCid || boot.collectives[0];
-  const Screen = SCREENS[screen] ?? Dashboard;
 
   return (
-    <SnapshotProvider collectiveId={cid}>
-      <div className="app">
-        <header>
-          <h1>acc-webgui</h1>
-          <select value={cid} onChange={(e) => setActiveCid(e.target.value)}>
-            {boot.collectives.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-          <StatusBadge />
-          {env && (
-            <span
-              className={env.cluster ? "badge env cluster" : "badge env"}
-              title={`detected by ${env.detected_by}`}
-            >
-              {env.label}
-            </span>
-          )}
-        </header>
-        <nav>
-          {Object.keys(SCREENS)
-            .filter((name) => {
-              const cap = SCREEN_CAPABILITY[name];
-              return !cap || !env || env.capabilities[cap]?.available !== false;
-            })
-            .map((name) => (
-            <button
-              key={name}
-              className={name === screen ? "active" : ""}
-              onClick={() => setScreen(name)}
-            >
-              {name}
-            </button>
-          ))}
-        </nav>
-        <main>
-          <Screen />
-        </main>
-      </div>
-    </SnapshotProvider>
+    <EnvironmentContext.Provider value={{ env, who }}>
+      <SnapshotProvider collectiveId={cid}>
+        <HashRouter>
+          <Shell
+            collectives={boot.collectives}
+            collectiveId={cid}
+            onCollective={setActiveCid}
+          />
+        </HashRouter>
+      </SnapshotProvider>
+    </EnvironmentContext.Provider>
   );
 }

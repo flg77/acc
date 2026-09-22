@@ -263,3 +263,106 @@ async def test_the_tab_says_why_when_the_pod_may_not_read(cluster, roots):
         text = screen.query_one("#collective-editor", TextArea).text
         assert "could not read: this pod's ServiceAccount may not read agentcollectives" in text
         assert "0.2.27" in text
+
+
+# ---------------------------------------------------------------------------
+# the wire form — GET /api/agentset and /api/whoami
+# ---------------------------------------------------------------------------
+
+
+def test_the_wire_form_carries_what_the_page_needs(cluster):
+    body = deployment.agentset().to_dict()
+    assert body["declared_in"] == f"AgentCollective {NS}/mortgage-agents-collective"
+    assert body["version"] == "0.18.1" and body["errors"] == []
+    assert [(a["role"], a["replicas"], a["model"]) for a in body["agents"]] == [
+        ("mortgage_underwriter", 1, "gpt-oss-120b"), ("mortgage_borrower", 2, "stand-in")]
+    assert body["packages"] == [{
+        "name": "@acc/mortgage-roles", "constraint": "1.2.1",
+        "installed": "1.2.1", "phase": "Installed"}]
+    assert body["awaiting_packages"] is False
+
+
+class _Hub:
+    """Just enough of ObserverHub for the handler."""
+
+    def __init__(self, agents=None):
+        self._agents = agents
+
+    def collective_ids(self):
+        return ["mortgage-agents"]
+
+    def latest(self, cid):
+        if self._agents is None:
+            return None
+        # the real snapshot keys its agents by agent_id
+        return {"agents": {f"agent-{i}": a for i, a in enumerate(self._agents)}}
+
+
+def _agent(role, model=""):
+    return {"role": role, "llm_model": model}
+
+
+def test_compare_says_converged_converging_drift_missing_and_awaiting(cluster):
+    declared = deployment.agentset()          # underwriter x1 (gpt-oss-120b), borrower x2 (stand-in)
+
+    rows, undeclared = deployment.compare(declared, [
+        ("mortgage_underwriter", "gpt-oss-120b"),
+        ("mortgage_borrower", "stand-in"),          # one of two
+        ("arbiter", ""),                              # runs here, declared nowhere
+    ])
+    by = {r.role: r for r in rows}
+    assert by["mortgage_underwriter"].state == "converged"
+    assert (by["mortgage_borrower"].state, by["mortgage_borrower"].replicas_running) == ("converging", 1)
+    assert undeclared == [{"role": "arbiter", "replicas_running": 1, "models_running": []}]
+
+    rows, _ = deployment.compare(declared, [("mortgage_underwriter", "openai/gpt-oss-120b-maas")])
+    drift = {r.role: r for r in rows}["mortgage_underwriter"]
+    assert drift.state == "drift" and "running value is the true one" in drift.reason
+
+    rows, _ = deployment.compare(declared, [])
+    assert {r.state for r in rows} == {"missing"}
+
+    cluster.objects["accpackageinstalls"][0]["status"]["phase"] = "Installing"
+    try:
+        rows, _ = deployment.compare(deployment.agentset(), [])
+        assert {r.state for r in rows} == {"awaiting"}
+    finally:
+        cluster.objects["accpackageinstalls"][0]["status"]["phase"] = "Installed"
+
+
+def test_drift_outranks_converging_a_wrong_model_is_worse_than_a_slow_scale_up(cluster):
+    """borrower is declared x2 on ``stand-in``; only one instance has reported
+    in, and it is running the wrong model.  Reporting "converging" here would
+    hide the wrong-model instance behind "it just needs a minute" — drift
+    wins, and says both facts."""
+    declared = deployment.agentset()
+    rows, _ = deployment.compare(declared, [("mortgage_borrower", "openai/other-model")])
+    borrower = {r.role: r for r in rows}["mortgage_borrower"]
+    assert borrower.state == "drift"
+    assert borrower.replicas_running == 1 and borrower.replicas_declared == 2
+    assert "running value is the true one" in borrower.reason
+    assert "1 of 2 replicas" in borrower.reason
+
+
+def test_compare_without_a_bus_claims_nothing(cluster):
+    rows, undeclared = deployment.compare(deployment.agentset(), None)
+    assert {r.state for r in rows} == {"unknown"} and undeclared == []
+
+
+def test_the_webgui_handlers_answer_the_same(cluster):
+    from acc.webgui import auth, routes_read
+
+    routes_read._agentset_cache = None
+    paths = {getattr(r, "path", "") for r in routes_read.router.routes}
+    assert {"/api/agentset", "/api/whoami"} <= paths
+
+    body = routes_read.agentset_info(hub=_Hub([_agent("mortgage_underwriter", "gpt-oss-120b")]))
+    assert body["declared_in"] == f"AgentCollective {NS}/mortgage-agents-collective"
+    assert body["bus"] is True and body["collective"] == "mortgage-agents"
+    states = {r["role"]: r["state"] for r in body["rows"]}
+    assert states == {"mortgage_underwriter": "converged", "mortgage_borrower": "missing"}
+
+    assert routes_read.agentset_info(hub=_Hub(None))["bus"] is False       # no snapshot yet
+    assert routes_read.whoami(auth.Principal(user="user2", role=auth.ROLE_OPERATOR)) == {
+        "user": "user2", "role": auth.ROLE_OPERATOR}
+    routes_read._agentset_cache = None

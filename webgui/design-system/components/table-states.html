@@ -1,0 +1,62 @@
+<!-- @dsCard group="Components" -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Table states</title>
+  <link rel="stylesheet" href="../vendor/patternfly.min.css">
+  <link rel="stylesheet" href="../acc.css">
+</head>
+<body class="ds-preview">
+
+  <h2>Empty — and true: nothing is declared</h2>
+  <div class="pf-v6-c-empty-state pf-m-sm">
+    <div class="pf-v6-c-empty-state__content">
+      <div class="pf-v6-c-empty-state__header">
+        <div class="pf-v6-c-empty-state__title"><h3 class="pf-v6-c-empty-state__title-text">No agents declared</h3></div>
+      </div>
+      <div class="pf-v6-c-empty-state__body"><code>collective.yaml</code> on <code>lighthouse</code> has <code>agents: []</code>. The six agents running here are static compose services.</div>
+      <div class="pf-v6-c-empty-state__footer">
+        <div class="pf-v6-c-empty-state__actions">
+          <button class="pf-v6-c-button pf-m-primary" type="button"><span class="pf-v6-c-button__text">Add agent</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Refused — a 403 is an answer, not an empty table</h2>
+  <div class="pf-v6-c-alert pf-m-danger pf-m-inline" aria-label="Could not read">
+    <div class="pf-v6-c-alert__icon">✕</div>
+    <p class="pf-v6-c-alert__title">This pod's ServiceAccount may not read <code>agentcollectives</code> in <code>wksp-user2</code></p>
+    <div class="pf-v6-c-alert__description">The ACC operator grants that to the UI pods from 0.2.27. Installed: 0.2.26.</div>
+  </div>
+
+  <h2>Stale — the last good answer, marked</h2>
+  <div class="pf-v6-c-alert pf-m-warning pf-m-inline pf-m-plain" aria-label="Stale">
+    <div class="pf-v6-c-alert__icon">!</div>
+    <p class="pf-v6-c-alert__title">Showing the agentset as of 14:02 — the API has not answered for 3 min</p>
+  </div>
+
+  <h2>Loading — a skeleton of the real columns, not a spinner in a void</h2>
+  <table class="pf-v6-c-table pf-m-compact" role="grid" aria-label="Loading" aria-busy="true">
+    <thead class="pf-v6-c-table__thead">
+      <tr class="pf-v6-c-table__tr" role="row">
+        <th class="pf-v6-c-table__th" role="columnheader" scope="col">Role</th>
+        <th class="pf-v6-c-table__th" role="columnheader" scope="col">Replicas</th>
+        <th class="pf-v6-c-table__th" role="columnheader" scope="col">Model</th>
+        <th class="pf-v6-c-table__th" role="columnheader" scope="col">State</th>
+      </tr>
+    </thead>
+    <tbody class="pf-v6-c-table__tbody" role="rowgroup">
+      <tr class="pf-v6-c-table__tr" role="row">
+        <td class="pf-v6-c-table__td" role="cell"><div class="pf-v6-c-skeleton pf-m-width-50"></div></td>
+        <td class="pf-v6-c-table__td" role="cell"><div class="pf-v6-c-skeleton pf-m-width-25"></div></td>
+        <td class="pf-v6-c-table__td" role="cell"><div class="pf-v6-c-skeleton pf-m-width-50"></div></td>
+        <td class="pf-v6-c-table__td" role="cell"><div class="pf-v6-c-skeleton pf-m-width-33"></div></td>
+      </tr>
+    </tbody>
+  </table>
+
+</body>
+</html>
