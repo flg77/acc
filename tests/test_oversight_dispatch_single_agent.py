@@ -83,9 +83,17 @@ def _agent(redis: FakeRedis, agent_id: str) -> SimpleNamespace:
         backends=SimpleNamespace(signaling=MagicMock()),
     )
     a._notify_proposal_dispatch_failed = AsyncMock()
-    a._maybe_dispatch_assistant_proposal = (
-        Agent._maybe_dispatch_assistant_proposal.__get__(a)
-    )
+    for name in (
+        "_maybe_dispatch_assistant_proposal",
+        # `20260923-lessons-that-travel` Phase 8 -- the claim path now asks
+        # whether this identity may publish the mutation before taking the
+        # claim.  Bind the real helpers so the stand-in still mirrors the real
+        # object; with no security block they answer "nothing to enforce",
+        # which is what makes these tests unchanged by that phase.
+        "_may_dispatch_proposal",
+        "_nkey_identity",
+    ):
+        setattr(a, name, getattr(Agent, name).__get__(a))
     return a
 
 

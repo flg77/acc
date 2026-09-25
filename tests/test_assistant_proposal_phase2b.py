@@ -174,6 +174,11 @@ class _FakeRuntime:
         self._oversight_queue.record_auto_approved = AsyncMock(return_value="ov-auto")
         from acc.agent import Agent  # noqa: PLC0415
         self._record_auto_approved = Agent._record_auto_approved.__get__(self)
+        # `20260923-lessons-that-travel` Phase 8 -- the dispatch paths ask
+        # whether this identity may publish the mutation; inert without a
+        # security block, which is what this stand-in has.
+        for _name in ("_may_dispatch_proposal", "_nkey_identity"):
+            setattr(self, _name, getattr(Agent, _name).__get__(self))
 
 
 def test_handle_assistant_proposals_executes_each_executed():

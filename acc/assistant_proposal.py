@@ -220,6 +220,44 @@ _NEVER_AUTOEXEC: frozenset[str] = frozenset({
 })
 
 
+#: `20260923-lessons-that-travel` Phase 8 -- every subject dispatching each
+#: kind may publish.  One table, so "may this identity dispatch this kind?"
+#: is a question with an answer instead of a thing you find out from the
+#: server, as a refused publish nobody handles.
+#:
+#: **All** of a kind's subjects count, not the first: ``infuse`` announces the
+#: outcome on ``assistant.proposal`` AND, on a genuine first install, publishes
+#: the continuation ``TASK_ASSIGN`` (``_publish_infuse_continuation``).  An
+#: identity that may do the first but not the second would install the pack and
+#: then drop the continuation -- half a dispatch, which is the failure this
+#: table exists to make impossible to write by accident.
+#:
+#: Keep it in step with the ``_dispatch_*`` helpers below; the contract test in
+#: ``tests/test_proposal_dispatch_authority.py`` fails if a kind is missing or
+#: names a subject the arbiter may not publish.
+_DISPATCH_SUBJECTS_OF: dict[str, tuple[str, ...]] = {
+    PROPOSAL_SPAWN:       ("collective_reconcile",),
+    PROPOSAL_ROLE_UPDATE: ("role_update",),
+    PROPOSAL_ROUTE:       ("task_assign",),
+    PROPOSAL_INFUSE:      ("assistant_proposal", "task_assign"),
+    PROPOSAL_ROLE_GAP:    ("assistant_proposal",),
+    PROPOSAL_PUBLISH:     ("assistant_proposal",),
+}
+
+
+def dispatch_subjects(kind: str, collective_id: str) -> tuple[str, ...]:
+    """Every subject ``dispatch_approved_proposal`` may publish for *kind*.
+
+    Returns ``()`` for an unrecognised kind -- the caller must then treat the
+    dispatch as unauthorised rather than assume it is free, because an unknown
+    kind is exactly the case where guessing is wrong.
+    """
+    from acc import signals  # noqa: PLC0415
+
+    names = _DISPATCH_SUBJECTS_OF.get(str(kind or ""), ())
+    return tuple(getattr(signals, f"subject_{n}")(collective_id) for n in names)
+
+
 def _operator_mode_env() -> str:
     """Security-floor mode (proposal 034) from the environment; 'prod' default."""
     import os  # noqa: PLC0415
@@ -727,6 +765,22 @@ async def _dispatch_publish(
         source_requesters=[str(r) for r in (params.get("source_requesters") or [])],
         note_id=str(params.get("note_id") or ""),
     )
+    # `20260923-lessons-that-travel` Phase 2 -- the ledger row.
+    try:
+        from acc import refinements  # noqa: PLC0415
+        refinements.record(
+            "hub_promote" if destination.startswith("hub:") else "publish",
+            redis_client=redis_client, collective_id=cid, agent_id=p.agent_id,
+            role_label=role_label, trigger="publish_proposal_approved",
+            evidence={"proposal_id": p.proposal_id,
+                      "source_requesters": [str(r) for r in (params.get("source_requesters") or [])]},
+            target={"store": "shared_notes", "id": str(params.get("note_id") or ""),
+                    "destination": destination, "destination_collective": dest_cid or cid},
+            approver=approver, ceiling=str(params.get("ceiling") or ""),
+            scope=str(params.get("source_scope") or ""),
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("assistant_proposal: ledger write failed", exc_info=True)
 
     from acc.signals import subject_assistant_proposal  # noqa: PLC0415
     try:
@@ -790,6 +844,11 @@ async def _dispatch_role_update(signaling, cid: str, p: AssistantProposal) -> bo
         "fields": p.params.get("fields", {}),
         "ts": time.time(),
     }
+    # `20260923-lessons-that-travel` Phase 3 -- carry the lesson that asked
+    # for this change so the ledger row the RoleStore writes can cite it.
+    for key in ("lesson_id", "rollback_of"):
+        if p.params.get(key):
+            payload[key] = str(p.params[key])
     await signaling.publish(subject_role_update(cid), payload)
     logger.info(
         "assistant_proposal: role_update dispatched — role=%r fields=%s",

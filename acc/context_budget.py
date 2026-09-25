@@ -86,6 +86,8 @@ KIND_TASK = "task"
 KIND_THREAD = "thread"
 KIND_NOTES = "notes"
 KIND_EPISODES = "episodes"
+KIND_PEER_LESSONS = "peer_lessons"
+KIND_STEER = "steer"
 
 #: Cost of the newline that joins two items inside a block.
 _JOIN_COST = 1
@@ -390,8 +392,22 @@ def standard_blocks(
     episodes_footer: str = "",
     thread_heading: str = "",
     thread_items: Sequence[str] = (),
+    peer_heading: str = "",
+    peer_items: Sequence[str] = (),
+    steer_heading: str = "",
+    steer_items: Sequence[str] = (),
 ) -> list[Block]:
-    """The four blocks ACC actually assembles, with the orders already set.
+    """The six blocks ACC actually assembles, with the orders already set.
+
+    Steering (`20260923-lessons-that-travel` Phase 6) is a message a
+    principal addressed to this agent about this task: it renders right
+    before the task and is the **last** thing evicted after it.
+
+    Peer lessons (`20260923-lessons-that-travel`) are the **first** thing
+    evicted and render after the reader's own notes: they are hearsay from
+    another agent this turn, and the reader's own distilled lessons outrank
+    them.  With no peer items the block renders nothing, so every prompt built
+    before this block existed is byte-identical.
 
     The priority and display constants live here rather than at the call site
     so there is one place that knows the answer, and so a caller cannot get the
@@ -399,20 +415,28 @@ def standard_blocks(
     """
     return [
         Block(
-            kind=KIND_TASK, items=(task,), priority=0, display_rank=3,
+            kind=KIND_TASK, items=(task,), priority=0, display_rank=5,
             divisible=False,
         ),
         Block(
-            kind=KIND_THREAD, items=tuple(thread_items), priority=1,
-            display_rank=2, heading=thread_heading,
+            kind=KIND_STEER, items=tuple(steer_items), priority=1,
+            display_rank=4, heading=steer_heading,
         ),
         Block(
-            kind=KIND_NOTES, items=tuple(notes_items), priority=2,
+            kind=KIND_THREAD, items=tuple(thread_items), priority=2,
+            display_rank=3, heading=thread_heading,
+        ),
+        Block(
+            kind=KIND_NOTES, items=tuple(notes_items), priority=3,
             display_rank=0, heading=notes_heading,
         ),
         Block(
-            kind=KIND_EPISODES, items=tuple(episodes_items), priority=3,
-            display_rank=1, heading=episodes_heading, footer=episodes_footer,
+            kind=KIND_EPISODES, items=tuple(episodes_items), priority=4,
+            display_rank=2, heading=episodes_heading, footer=episodes_footer,
+        ),
+        Block(
+            kind=KIND_PEER_LESSONS, items=tuple(peer_items), priority=5,
+            display_rank=1, heading=peer_heading,
         ),
     ]
 

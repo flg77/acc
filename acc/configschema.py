@@ -332,6 +332,12 @@ ENV_KEYS: tuple[Key, ...] = tuple(
         ("ACC_SANDBOX_NAME", False, "Sandbox resource name for this agent."),
         ("OPENSHELL_GATEWAY", False, "OpenShell gateway URL the runtime delegates to."),
         ("OPENSHELL_BIN", False, "Path to the OpenShell client binary."),
+        # `20260923-lessons-that-travel`: reflected notes ride KNOWLEDGE_SHARE
+        # to peers and land in their next prompt.  "0" keeps every prompt
+        # byte-identical to v0.21.0 (nothing published, nothing rendered).
+        ("ACC_PEER_LESSONS", False, "Publish and render peer lessons (default 1; 0 = off)."),
+        # PA-09 Phase 1: the key set a receiver verifies a signed ask against.
+        ("ACC_NKEY_PUBLIC_KEYS_PATH", False, "public_keys.json for sender verification (default: beside the seed)."),
     )
 )
 

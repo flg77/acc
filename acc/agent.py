@@ -56,6 +56,11 @@ from acc.signals import (
     SIG_ROLE_ASSIGN,
     SIG_TASK_ASSIGN,
     SIG_TASK_COMPLETE,
+    SIG_KNOWLEDGE_SHARE,
+    SIG_AGENT_MESSAGE,
+    SIG_ROLE_UPDATE,
+    SIG_ROUTE_REQUEST,
+    redis_role_key,
     SIG_ALERT_ESCALATE,
     SIG_BRIDGE_DELEGATE,
     SIG_BRIDGE_RESULT,
@@ -71,6 +76,16 @@ from acc.signals import (
     subject_kernel,
     subject_bridge_delegate,
     subject_bridge_result,
+    subject_knowledge_share,
+    subject_knowledge_share_all,
+    subject_route_request,
+    redis_lesson_key,
+    redis_lessons_index_key,
+    redis_lesson_used_key,
+    redis_lesson_outcomes_key,
+    redis_message_key,
+    redis_agent_messages_key,
+    subject_agent_inbox,
 )
 
 logger = logging.getLogger("acc.agent")
@@ -174,6 +189,24 @@ def _should_route_redispatch(route_to: str, data: dict[str, Any]) -> bool:
     this confines the whole mechanism to a single orchestrator → worker hop.
     """
     return bool(route_to and data.get("task_id") and not data.get("routed_by"))
+
+
+def build_routed_task(data: dict, target_role: str, routed_by: str) -> dict:
+    """The directed ``TASK_ASSIGN`` an orchestrator's route produces.
+
+    `20260923-lessons-that-travel` Phase 9 pulled this out of the task loop
+    so the worker and the arbiter cannot build it differently: the SAME
+    ``task_id`` (the operator's reply correlation resolves on the routed
+    agent's answer), the chosen role, no pinned agent (broadcast to the role),
+    and ``routed_by`` -- the stamp that makes the hop cap of one enforceable
+    by :func:`_should_route_redispatch`.
+    """
+    routed = dict(data)
+    routed["signal_type"] = SIG_TASK_ASSIGN
+    routed["target_role"] = target_role
+    routed.pop("target_agent_id", None)
+    routed["routed_by"] = routed_by
+    return routed
 
 
 def _extract_eval_outcome(output: str) -> "Optional[dict]":
@@ -317,6 +350,19 @@ def _task_has_content(data: dict) -> bool:
 # ---------------------------------------------------------------------------
 # ACC-11: Membrane receptor model
 # ---------------------------------------------------------------------------
+
+
+def _nkey_config_of(obj) -> "Any | None":
+    """``security.nkey`` off an agent, or None when its config carries no
+    security block (`20260923-lessons-that-travel` Phase 8).
+
+    Total on purpose, and a module function rather than a method: the dispatch
+    guard promises never to be the reason a publish fails, so neither the
+    absence of a security block -- the shape every un-enforced deployment has
+    -- nor the absence of one more attribute on the object may raise here.
+    """
+    security = getattr(getattr(obj, "config", None), "security", None)
+    return getattr(security, "nkey", None)
 
 
 def _receptor_allows(
@@ -596,6 +642,9 @@ class Agent:
                 # for a day; None (no Redis) just skips the mirror.
                 redis_client=self._redis,
             )
+            # `20260923-lessons-that-travel` Phase 5 -- a reviewer's verdict
+            # reaches the lessons the reviewed step used.
+            self._plan_executor.on_critic_verdict = self._record_critic_verdict
         else:
             self._plan_executor = None
 
@@ -1028,6 +1077,24 @@ class Agent:
             )
             return
 
+        # ---- PHASE 8: an auto-execute this identity may not publish ----
+        # AUTO has no approval to leave for the arbiter, so a proposal this
+        # agent cannot publish is QUEUED rather than dropped: the mutation
+        # stays possible, a human is asked for it, and whoever claims the
+        # approval will be an identity that may publish it.  Degrading to
+        # "ask" beats degrading to "silently didn't happen".
+        _deferred = [p for p in executed if not self._may_dispatch_proposal(getattr(p, "kind", ""))]
+        if _deferred:
+            _defer_ids = {getattr(p, "proposal_id", "") for p in _deferred}
+            executed = [p for p in executed if getattr(p, "proposal_id", "") not in _defer_ids]
+            queued = [*queued, *_deferred]
+            logger.info(
+                "assistant_proposal: %d auto-execute proposal(s) queued instead "
+                "— identity %s may not publish their dispatch subject: %s",
+                len(_deferred), self._nkey_identity(),
+                ", ".join(sorted({str(getattr(p, "kind", "?")) for p in _deferred})),
+            )
+
         # ---- EXECUTE branch (AUTO / ACCEPT_EDITS auto-execute set) ----
         for p in executed:
             ok = False
@@ -1170,6 +1237,38 @@ class Agent:
             )
             return
         if raw:
+            # ---- PHASE 8: AUTHORITY BEFORE THE CLAIM -----------------
+            # The claim makes this agent responsible for dispatching, so an
+            # agent that may not publish the mutation must not take it --
+            # claiming and then failing would consume the approval and drop
+            # the mutation, which is worse than the server refusal it
+            # replaces.  Leaving it unclaimed hands it to an identity that
+            # may: every agent receives the same OVERSIGHT_DECISION and the
+            # arbiter, which may publish every dispatch subject, is among
+            # them.
+            _kind = ""
+            try:
+                _meta = redis.get(meta_key)
+                if _meta:
+                    if isinstance(_meta, (bytes, bytearray)):
+                        _meta = _meta.decode("utf-8", errors="replace")
+                    _kind = str((json.loads(_meta) or {}).get("kind", "") or "")
+            except Exception:  # noqa: BLE001
+                logger.debug("assistant_proposal: meta read failed", exc_info=True)
+            if not _kind:
+                try:
+                    _payload = raw.decode("utf-8", errors="replace") if isinstance(raw, (bytes, bytearray)) else raw
+                    _kind = str((json.loads(_payload) or {}).get("kind", "") or "")
+                except Exception:  # noqa: BLE001
+                    _kind = ""
+            if _kind and not self._may_dispatch_proposal(_kind):
+                logger.info(
+                    "assistant_proposal: %s is a %r proposal this identity (%s) "
+                    "may not publish — leaving it unclaimed for the arbiter",
+                    oversight_id, _kind, self._nkey_identity(),
+                )
+                return
+
             # ---- EXACTLY-ONCE CLAIM ----------------------------------
             # OVERSIGHT_DECISION is ENDOCRINE: it reaches every agent in
             # the collective, and every agent holds an oversight queue
@@ -2182,21 +2281,9 @@ class Agent:
             # Single-hop: a task that was already routed is never routed again
             # (loop guard), and process_task drops self-routes.
             if _should_route_redispatch(result.route_to, data):
-                routed = dict(data)
-                routed["signal_type"] = SIG_TASK_ASSIGN
-                routed["target_role"] = result.route_to
-                routed.pop("target_agent_id", None)  # broadcast to the role
-                routed["routed_by"] = self.agent_id
-                logger.info(
-                    "task_loop: orchestrator routing task '%s' → role '%s' — %s",
-                    data.get("task_id", ""), result.route_to, result.route_reason,
+                await self._route_task(
+                    data, result.route_to, result.route_reason, collective_id,
                 )
-                try:
-                    await self.backends.signaling.publish(
-                        subject_task_assign(collective_id), routed,
-                    )
-                except Exception:
-                    logger.exception("task_loop: route re-dispatch failed")
                 return
 
             # Publish TASK_COMPLETE
@@ -2262,6 +2349,10 @@ class Agent:
             # match this completion to its originating cluster spawn.
             if inbound_cluster_id:
                 complete_body["cluster_id"] = inbound_cluster_id
+            # `20260923-lessons-that-travel` -- which peer lessons this
+            # turn's prompt rendered, so a lesson can be joined to the
+            # tasks that saw it (``acc-cli lessons trace``).  Absent when
+            # none were, so older consumers see the body they always saw.
             # PR-MM3 — when this was a reviewer task whose output is a
             # structured verdict, surface it as eval_outcome so the
             # PlanExecutor's per-step critic loop can re-issue the
@@ -2269,6 +2360,25 @@ class Agent:
             _eo = _extract_eval_outcome(result.output or "")
             if _eo is not None:
                 complete_body["eval_outcome"] = _eo
+            _fp = str(getattr(result, "harness_fingerprint", "") or "")
+            if _fp:
+                complete_body["harness_fingerprint"] = _fp
+            _used = list(getattr(result, "lessons_used", []) or [])
+            if _used:
+                complete_body["lessons_used"] = _used
+                # Phase 5 -- how a task that had a lesson in its prompt ended
+                # is the only outcome signal a lesson gets.  Recorded per
+                # lesson; confidence moves on objective signals only.
+                self._record_lesson_outcomes(
+                    collective_id, str(data.get("task_id", "") or ""), _used,
+                    blocked=bool(result.blocked),
+                    verdict=str((_eo or {}).get("verdict", "") or ""),
+                    score=float(complete_body.get("compliance_health_score", 1.0) or 0.0),
+                    fingerprint=_fp,
+                )
+            _steered = list(getattr(result, "steer_used", []) or [])
+            if _steered:
+                complete_body["steer_used"] = _steered
             complete_payload = json.dumps(complete_body).encode()
             await self.backends.signaling.publish(
                 subject_task_complete(collective_id), complete_payload
@@ -2325,10 +2435,17 @@ class Agent:
             # The turn scope is closed here so every exit of the body — a
             # dozen early returns, an exception — ends the root span.
             turn = TurnScope()
+            # Phase 6 -- "in flight" is what decides steer vs follow-up.
+            self._tasks_in_flight = int(getattr(self, "_tasks_in_flight", 0) or 0) + 1
             try:
                 await _handle_task_body(msg, turn)
             finally:
+                self._tasks_in_flight = max(0, int(getattr(self, "_tasks_in_flight", 1) or 1) - 1)
                 turn.close()
+
+        # Phase 6 -- a follow-up message becomes a task through this same
+        # handler, without a bus round-trip a worker may not make.
+        self._local_task_handler = _handle_task
 
         # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 1 —
         # Assistant subscribes to its sleep/wake control subject so the
@@ -2703,6 +2820,30 @@ class Agent:
             # Only process updates targeting this agent or all agents
             target = payload.get("agent_id", "")
             if target and target != self.agent_id:
+                return
+
+            # `20260923-lessons-that-travel` Phase 7 -- an unsigned update
+            # is the arbiter's to countersign and re-publish, and nobody
+            # else's to apply.  A signed one that names a role is for the
+            # agents of that role only (it used to reach every agent).
+            if not str(payload.get("signature", "") or ""):
+                if not payload.get("countersigned"):
+                    signed = self._countersign_role_update(payload)
+                    if signed is not None:
+                        try:
+                            await self.backends.signaling.publish(
+                                subject_role_update(collective_id), json.dumps(signed).encode(),
+                            )
+                            logger.info(
+                                "countersign: ROLE_UPDATE for role %r signed and re-published "
+                                "(for=%s trigger=%s)", signed.get("role"),
+                                signed.get("countersigned_for"), signed.get("trigger", ""),
+                            )
+                        except Exception:  # noqa: BLE001
+                            logger.exception("countersign: re-publish failed")
+                return
+            role_name = str(payload.get("role", "") or (payload.get("role_definition") or {}).get("name", "") or "")
+            if role_name and role_name != self.config.agent.role:
                 return
 
             try:
@@ -3974,8 +4115,893 @@ class Agent:
                 "reflection: wrote %d memory note(s) for role=%s",
                 len(notes), self.config.agent.role,
             )
+            # `20260923-lessons-that-travel` -- the ledger row per note
+            # (Phase 2), and tell the collective (Phase 1).
+            self._record_notes(notes)
+            await self._publish_lessons(notes)
         except Exception:
             logger.exception("reflection: pass failed (non-fatal)")
+
+    # ------------------------------------------------------------------
+    # `20260923-lessons-that-travel` -- lessons on the wire
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _peer_lessons_enabled() -> bool:
+        return os.environ.get("ACC_PEER_LESSONS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+    def _lessons_journal_id(self) -> str:
+        """The tracelog session a lesson crossing this agent is recorded in.
+        Lessons arrive between tasks, so they get the agent's own journal
+        rather than a task's session."""
+        return f"lessons-{self.agent_id}"
+
+    def _lesson_domain_tag(self) -> str:
+        """The ligand a lesson this agent publishes carries: its role's
+        ``domain_id`` when one is assigned, else universal."""
+        role = getattr(self, "_active_role", None)
+        return str(getattr(role, "domain_id", "") or "").strip()
+
+    async def _publish_lessons(self, notes: list) -> int:
+        """Lift each reflected note onto ``acc.{cid}.knowledge.{tag}`` as a
+        :class:`acc.lessons.Lesson` and keep a 7-day copy in Redis for
+        ``acc-cli lessons``.  Best-effort, never raises; returns how many
+        went out.  Off with ``ACC_PEER_LESSONS=0``."""
+        if not notes or not self._peer_lessons_enabled():
+            return 0
+        try:
+            from acc import tracelog  # noqa: PLC0415
+            from acc.lessons import lesson_from_note  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            return 0
+        cid = self.config.agent.collective_id
+        tag = self._lesson_domain_tag()
+        sent = 0
+        for note in notes:
+            try:
+                lesson = lesson_from_note(note, collective_id=cid, domain_tag=tag)
+                body = lesson.model_dump()
+                await self.backends.signaling.publish(
+                    subject_knowledge_share(cid, tag or "general"),
+                    json.dumps(body).encode(),
+                )
+                self._store_lesson(cid, lesson.lesson_id, body)
+                tracelog.log_lesson(
+                    self._lessons_journal_id(), lesson_id=lesson.lesson_id,
+                    direction="published", from_agent=self.agent_id,
+                    role=lesson.role_label, kind=lesson.kind, scope=lesson.scope,
+                    ceiling=lesson.ceiling, summary=lesson.summary,
+                    domain_tag=tag,
+                )
+                sent += 1
+            except Exception:  # noqa: BLE001
+                logger.debug("lessons: publish failed for one note", exc_info=True)
+        if sent:
+            logger.info("lessons: published %d lesson(s) role=%s tag=%s",
+                        sent, self.config.agent.role, tag or "general")
+        return sent
+
+    def _store_lesson(self, cid: str, lesson_id: str, body: dict) -> None:
+        redis = getattr(self, "_redis", None)
+        if redis is None:
+            return
+        try:
+            redis.set(redis_lesson_key(cid, lesson_id), json.dumps(body))
+            redis.expire(redis_lesson_key(cid, lesson_id), 7 * 24 * 3600)
+            redis.zadd(redis_lessons_index_key(cid), {lesson_id: float(body.get("ts", time.time()))})
+        except Exception:  # noqa: BLE001
+            logger.debug("lessons: redis store failed", exc_info=True)
+
+    def _index_lessons_used(self, cid: str, task_id: str, lesson_ids: list) -> None:
+        redis = getattr(self, "_redis", None)
+        if redis is None or not task_id:
+            return
+        for lid in lesson_ids:
+            try:
+                key = redis_lesson_used_key(cid, str(lid))
+                redis.sadd(key, task_id)
+                redis.expire(key, 7 * 24 * 3600)
+            except Exception:  # noqa: BLE001
+                logger.debug("lessons: used-index write failed", exc_info=True)
+
+    def _classify_lesson(self, payload: object) -> tuple[str, "Any"]:
+        """Decide one inbound KNOWLEDGE_SHARE.  Returns ``(verdict, lesson)``:
+        ``accepted`` (a note, now in the ring), ``role_patch`` (Phase 3: the
+        caller queues a proposal), or a drop reason.  Pure apart from the
+        ring offer, the adoption write and the journal."""
+        from acc import tracelog  # noqa: PLC0415
+        from acc.lessons import parse_lesson  # noqa: PLC0415
+        core = getattr(self, "_cognitive_core", None)
+        lesson = parse_lesson(payload)
+        if lesson is None:
+            return "invalid", None
+        if lesson.from_agent == self.agent_id:
+            return "own", lesson
+        if lesson.target_agent_id and lesson.target_agent_id != self.agent_id:
+            return "not-addressed", lesson
+        role = getattr(self, "_active_role", None)
+        receptors = list(getattr(role, "domain_receptors", []) or [])
+        if not _receptor_allows(SIG_KNOWLEDGE_SHARE, lesson.domain_tag, receptors):
+            return "no-receptor", lesson
+        if lesson.kind == "role_patch":
+            # Phase 3 -- never applied on receipt; it becomes a proposal a
+            # person decides, with the lesson as its evidence.
+            return "role_patch", lesson
+        if lesson.kind != "note":
+            return "kind-not-rendered", lesson
+        if core is None or not core.receive_lesson(lesson):
+            return ("no-core" if core is None else "not-accepted"), lesson
+        tracelog.log_lesson(
+            self._lessons_journal_id(), lesson_id=lesson.lesson_id,
+            direction="received", from_agent=lesson.from_agent,
+            role=lesson.role_label, kind=lesson.kind, scope=lesson.scope,
+            ceiling=lesson.ceiling, summary=lesson.summary,
+            domain_tag=lesson.domain_tag,
+        )
+        # Phase 4 -- durable adoption, on unless the role's signed definition
+        # opted out (D-028).  A role object without the field takes the same
+        # default as a definition that left it unset.
+        from acc.config import ACCEPT_PEER_LESSONS_DEFAULT  # noqa: PLC0415
+        if getattr(role, "accept_peer_lessons", ACCEPT_PEER_LESSONS_DEFAULT):
+            self._adopt_lesson(lesson)
+        return "accepted", lesson
+
+    def _accept_lesson(self, payload: object) -> str:
+        """The verdict alone (what the Phase 1 tests and the log line use)."""
+        verdict, _lesson = self._classify_lesson(payload)
+        return verdict
+
+    def _adopt_lesson(self, lesson: "Any") -> bool:
+        """Phase 4 -- a peer's note enters THIS role's shared tier for the
+        lesson's scope, through :func:`acc.memory_reflection.publish_note`
+        (probation applies: the reader waits ``PROBATION_S`` before it shapes
+        a reply, the window a person has to revoke it).  Ledger row
+        ``adopt``.  Best-effort."""
+        try:
+            from acc import refinements  # noqa: PLC0415
+            from acc.memory_reflection import publish_note  # noqa: PLC0415
+            cid = self.config.agent.collective_id
+            role_label = self.config.agent.role
+            ok = publish_note(
+                self._redis, cid, role_label, lesson.summary, lesson.scope,
+                dissent=lesson.evidence.dissent, ceiling=lesson.ceiling or "CRITICAL",
+                source_requesters=list(lesson.source_requesters),
+                note_id=lesson.lesson_id,
+            )
+            if ok:
+                refinements.record(
+                    "adopt", redis_client=self._redis, collective_id=cid,
+                    agent_id=self.agent_id, role_label=role_label,
+                    trigger="accept_peer_lessons",
+                    evidence={"lesson_id": lesson.lesson_id, "from_agent": lesson.from_agent,
+                              "source_episode_ids": list(lesson.evidence.source_episode_ids)},
+                    target={"store": "shared_notes", "id": lesson.lesson_id,
+                            "destination": lesson.scope},
+                    ceiling=lesson.ceiling, scope=lesson.scope,
+                )
+            return bool(ok)
+        except Exception:  # noqa: BLE001
+            logger.debug("lessons: adoption failed", exc_info=True)
+            return False
+
+    async def _propose_from_lesson(self, lesson: "Any") -> str:
+        """Phase 3 -- a ``role_patch`` lesson becomes ONE ``role_update``
+        proposal in the oversight queue, rationale = the lesson.  Nothing is
+        applied here; approval dispatches a ROLE_UPDATE the RoleStore must
+        still countersign.  Returns the oversight id ("" when refused)."""
+        try:
+            from acc.assistant_proposal import PROPOSAL_ROLE_UPDATE, AssistantProposal  # noqa: PLC0415
+            patch = dict(lesson.patch or {})
+            fields = patch.get("fields") if isinstance(patch.get("fields"), dict) else {}
+            if not fields:
+                logger.warning("lessons: role_patch %s carries no fields — refused", lesson.lesson_id[:8])
+                return ""
+            cid = self.config.agent.collective_id
+            proposal = AssistantProposal(
+                kind=PROPOSAL_ROLE_UPDATE, risk_level="HIGH",
+                params={"role": str(patch.get("role") or self.config.agent.role),
+                        "fields": fields, "lesson_id": lesson.lesson_id},
+                summary=f"Lesson {lesson.lesson_id[:8]} from {lesson.role_label or lesson.from_agent}: "
+                        f"set {', '.join(sorted(fields))} on {patch.get('role') or self.config.agent.role}",
+                rationale=f"lesson {lesson.lesson_id}: {lesson.summary}"
+                          + (f" (dissent: {lesson.evidence.dissent})" if lesson.evidence.dissent else ""),
+                collective_id=cid, agent_id=self.agent_id,
+            )
+            oversight_id = await self._queue_assistant_proposal(proposal, cid)
+            from acc import tracelog  # noqa: PLC0415
+            tracelog.log_lesson(
+                self._lessons_journal_id(), lesson_id=lesson.lesson_id,
+                direction="proposed" if oversight_id else "dropped",
+                from_agent=lesson.from_agent, role=lesson.role_label, kind=lesson.kind,
+                scope=lesson.scope, ceiling=lesson.ceiling, summary=lesson.summary,
+                oversight_id=oversight_id, reason="" if oversight_id else "no oversight queue",
+            )
+            return oversight_id
+        except Exception:  # noqa: BLE001
+            logger.debug("lessons: proposal from lesson failed", exc_info=True)
+            return ""
+
+    def _record_notes(self, notes: list) -> None:
+        """Phase 2 -- one ledger row per reflected note."""
+        try:
+            from acc import refinements  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            return
+        cid = self.config.agent.collective_id
+        for note in notes:
+            try:
+                refinements.record(
+                    "note", redis_client=getattr(self, "_redis", None), collective_id=cid,
+                    agent_id=self.agent_id, role_label=str(getattr(note, "role_label", "") or ""),
+                    trigger="reflection",
+                    evidence={"source_episode_ids": list(getattr(note, "source_ids", []) or []),
+                              "dissent": str(getattr(note, "dissent", "") or ""),
+                              "source_requesters": list(getattr(note, "source_requesters", []) or [])},
+                    target={"store": "memory_notes", "id": str(getattr(note, "note_id", "") or "")},
+                    ceiling=str(getattr(note, "ceiling", "") or ""),
+                    scope=str(getattr(note, "scope", "") or ""),
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("lessons: ledger row for note failed", exc_info=True)
+
+    @staticmethod
+    def lesson_outcome_delta(*, blocked: bool, verdict: str) -> tuple[str, float]:
+        """Phase 5 -- ``(signal, delta)`` for one task outcome.  Objective
+        signals only: a blocked task or a BAD / NEEDS_REVISE verdict counts
+        against the lessons it saw, a GOOD verdict for them; an unreviewed
+        task that merely finished is recorded and moves nothing."""
+        v = (verdict or "").upper()
+        if blocked:
+            return "blocked", -0.10
+        if v in ("BAD", "NEEDS_REVISE"):
+            return f"verdict:{v}", -0.10
+        if v == "GOOD":
+            return "verdict:GOOD", 0.10
+        if v == "PARTIAL":
+            return "verdict:PARTIAL", 0.0
+        return "completed", 0.0
+
+    def _record_lesson_outcomes(self, cid: str, task_id: str, lesson_ids: list, *,
+                                blocked: bool, verdict: str, score: float,
+                                source: str = "self", fingerprint: str = "",
+                                reviewer_task_id: str = "") -> None:
+        """Phase 5 -- for every lesson this task rendered: the used-index (Phase
+        1), one outcome observation, the confidence move on the lesson's copy,
+        and a ledger row.  ``source`` is ``self`` (the task's own completion)
+        or ``critic`` (a downstream reviewer's verdict, via the arbiter).
+        Best-effort, never raises."""
+        if source == "self":
+            self._index_lessons_used(cid, task_id, lesson_ids)
+        signal, delta = self.lesson_outcome_delta(blocked=blocked, verdict=verdict)
+        redis = getattr(self, "_redis", None)
+        obs = {"task_id": task_id, "agent_id": self.agent_id, "ts": time.time(),
+               "blocked": bool(blocked), "verdict": (verdict or "").upper(),
+               "compliance_health_score": float(score), "signal": signal, "delta": delta,
+               "source": source, "harness_fingerprint": fingerprint,
+               "reviewer_task_id": reviewer_task_id}
+        try:
+            from acc import refinements  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            refinements = None
+        for lid in lesson_ids:
+            lid = str(lid)
+            confidence = None
+            if redis is not None:
+                try:
+                    key = redis_lesson_outcomes_key(cid, lid)
+                    redis.rpush(key, json.dumps(obs))
+                    redis.expire(key, 7 * 24 * 3600)
+                    if delta:
+                        raw = redis.get(redis_lesson_key(cid, lid))
+                        if raw:
+                            body = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+                            confidence = max(0.0, min(1.0, float(body.get("confidence", 0.0) or 0.0) + delta))
+                            body["confidence"] = confidence
+                            redis.set(redis_lesson_key(cid, lid), json.dumps(body))
+                            redis.expire(redis_lesson_key(cid, lid), 7 * 24 * 3600)
+                except Exception:  # noqa: BLE001
+                    logger.debug("lessons: outcome write failed", exc_info=True)
+            if refinements is not None:
+                try:
+                    refinements.record(
+                        "outcome", redis_client=redis, collective_id=cid,
+                        agent_id=self.agent_id, role_label=self.config.agent.role,
+                        trigger=f"{'critic' if source == 'critic' else 'task_complete'}:{signal}",
+                        evidence={"task_id": task_id, "reviewer_task_id": reviewer_task_id,
+                                  "harness_fingerprint": fingerprint},
+                        target={"store": "lessons", "id": lid},
+                        measured={**obs, "confidence": confidence},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+
+    async def _subscribe_knowledge_share(self) -> None:
+        """Hear what peers learned (``acc.{cid}.knowledge.*``) and hold it
+        for this agent's next prompt.  No-op without a CognitiveCore or with
+        ``ACC_PEER_LESSONS=0``; a malformed envelope is dropped and logged,
+        never raised inside the callback."""
+        if self._cognitive_core is None or not self._peer_lessons_enabled():
+            return
+        cid = self.config.agent.collective_id
+
+        async def _handle(msg: object) -> None:
+            try:
+                data = json.loads(_payload_bytes(msg))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("lessons: invalid JSON on KNOWLEDGE_SHARE")
+                return
+            try:
+                verdict, lesson = self._classify_lesson(data)
+            except Exception:  # noqa: BLE001 -- never let the callback die
+                logger.debug("lessons: accept failed", exc_info=True)
+                return
+            if verdict == "accepted":
+                logger.info("lessons: accepted lesson %s from %s",
+                            str(data.get("lesson_id", ""))[:8], data.get("from_agent", ""))
+            elif verdict == "role_patch" and lesson is not None:
+                oversight_id = await self._propose_from_lesson(lesson)
+                logger.info("lessons: role_patch %s from %s → proposal %s",
+                            lesson.lesson_id[:8], lesson.from_agent, oversight_id or "refused")
+            else:
+                logger.debug("lessons: dropped (%s)", verdict)
+
+        try:
+            await self.backends.signaling.subscribe(subject_knowledge_share_all(cid), _handle)
+            logger.info("lessons: listening on %s", subject_knowledge_share_all(cid))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("lessons: subscribe failed: %s", exc)
+            return
+        await self._stop_event.wait()
+
+    def _record_critic_verdict(self, *, lesson_ids: list, reviewed_task_id: str,
+                               reviewer_task_id: str, verdict: str,
+                               plan_id: str = "", step_id: str = "") -> None:
+        """Phase 5, the arbiter's half: a reviewer step's verdict lands on the
+        lessons the step it reviewed had in its prompt.  ``source=critic`` --
+        the one outcome an agent cannot give itself."""
+        self._record_lesson_outcomes(
+            self.config.agent.collective_id, reviewed_task_id, list(lesson_ids),
+            blocked=False, verdict=verdict, score=1.0, source="critic",
+            reviewer_task_id=reviewer_task_id,
+        )
+
+    # ------------------------------------------------------------------
+    # `20260923-lessons-that-travel` Phase 9 -- routing through the arbiter
+    # ------------------------------------------------------------------
+
+    def _sender_seed(self) -> str:
+        """This process's NKey seed text, read once.
+
+        `20260923-lessons-that-travel` PA-09 Phase 1.  ``""`` when NKeys are
+        off or the seed is unreadable -- a missing key means an ask goes out
+        unsigned, never that the agent stops working.
+        """
+        cached = getattr(self, "_nkey_seed_cache", None)
+        if cached is not None:
+            return cached
+        seed = ""
+        nkey = _nkey_config_of(self)
+        if getattr(nkey, "enabled", False):
+            from acc.wire import read_seed  # noqa: PLC0415
+            try:
+                seed = read_seed(getattr(nkey, "seed_path", "") or "")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "wire: NKey seed unreadable (%s) — asks go out unsigned", exc,
+                )
+        self._nkey_seed_cache = seed
+        return seed
+
+    def _sender_public_keys(self) -> dict:
+        """The ``{identity: U…}`` key set this agent verifies against, read
+        once.  Empty means "cannot verify", which is not an error: it is every
+        deployment that has not distributed the key set yet."""
+        cached = getattr(self, "_nkey_public_keys_cache", None)
+        if cached is not None:
+            return cached
+        keys: dict = {}
+        nkey = _nkey_config_of(self)
+        if getattr(nkey, "enabled", False):
+            from acc.wire import default_public_keys_path, load_public_keys  # noqa: PLC0415
+            path = str(getattr(nkey, "public_keys_path", "") or "")
+            if not path:
+                path = str(default_public_keys_path(getattr(nkey, "seed_path", "") or ""))
+            keys = load_public_keys(path)
+            if not keys:
+                logger.info(
+                    "wire: no key set at %s — inbound asks are accepted "
+                    "unverified (distribute public_keys.json to turn "
+                    "verification on)", path,
+                )
+        self._nkey_public_keys_cache = keys
+        return keys
+
+    def _sign_ask(self, payload: dict) -> dict:
+        """Attach this agent's sender proof to an ask that crosses a
+        privilege boundary.  Returns *payload* unchanged when there is no
+        seed to sign with."""
+        seed = self._sender_seed()
+        if not seed:
+            return payload
+        try:
+            from acc.wire import sign_payload  # noqa: PLC0415
+            return sign_payload(
+                payload, identity=self._nkey_identity(), seed=seed,
+                agent_id=self.agent_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("wire: could not sign the ask (%s) — sending unsigned", exc)
+            return payload
+
+    def _sender_refusal(self, payload: dict, *, claimed_role: str = "") -> str:
+        """Why this payload's sender is not proven, or ``""``.
+
+        Two checks, and the second is the one worth reading:
+
+        * the signature verifies against the key set, so the message came
+          from a holder of that bus identity and nothing in it was changed
+          on the way; and
+        * **when the claimed role is itself an NKey identity**, the signer
+          must BE it.  That is what stops an `analyst` asking in the
+          `arbiter`'s name.  A packaged role the matrix does not name
+          (`orchestrator`, `assistant`) presents a worker identity, so its
+          identity cannot prove its role -- for those the signed role
+          definition and the roster stay the bound, and this returns "".
+
+        With no key set readable, nothing is refused: the deployment has not
+        turned verification on.
+        """
+        keys = self._sender_public_keys()
+        if not keys:
+            return ""
+        from acc.nkeys import NKEY_IDENTITIES  # noqa: PLC0415
+        from acc.wire import verify_payload  # noqa: PLC0415
+        expected = claimed_role if claimed_role in NKEY_IDENTITIES else ""
+        reason = verify_payload(payload, keys, expected_identity=expected)
+        return f"sender not proven: {reason}" if reason else ""
+
+    def _may_publish_task_assign(self) -> bool:
+        """Whether this identity may publish ``task.assign`` itself.
+
+        Inert unless ``security.nkey.enabled``, like the Phase 8 guard: with
+        the matrix off the publish succeeds and routing behaves exactly as it
+        did before any of this existed.
+        """
+        if not getattr(_nkey_config_of(self), "enabled", False):
+            return True
+        try:
+            from acc.nats_permissions import may_publish  # noqa: PLC0415
+            return may_publish(
+                self._nkey_identity(),
+                subject_task_assign(self.config.agent.collective_id),
+            )
+        except Exception:  # noqa: BLE001 -- never fail a route on the guard
+            logger.debug("route: authority check failed", exc_info=True)
+            return True
+
+    async def _route_task(self, data: dict, route_to: str, reason: str,
+                          collective_id: str) -> bool:
+        """Hand the task to the role the orchestrator chose.
+
+        Publishes the directed ``TASK_ASSIGN`` itself where the identity may,
+        and otherwise asks the arbiter to (Phase 9).  Returns whether anything
+        went out; never raises -- a failed route leaves the task unanswered,
+        which the operator sees, rather than killing the task loop.
+        """
+        logger.info(
+            "task_loop: orchestrator routing task '%s' → role '%s' — %s",
+            data.get("task_id", ""), route_to, reason,
+        )
+        try:
+            if self._may_publish_task_assign():
+                await self.backends.signaling.publish(
+                    subject_task_assign(collective_id),
+                    build_routed_task(data, route_to, self.agent_id),
+                )
+                return True
+            # The matrix is enforced here and `task.assign` is arbiter-only.
+            # The routing DECISION is still this role's -- its signed
+            # definition carries `can_route` -- and only the privileged
+            # publish moves.  Asking is not a widening: the arbiter re-checks
+            # `can_route` and the hop cap before it acts.
+            await self.backends.signaling.publish(
+                subject_route_request(collective_id),
+                # PA-09 Phase 1 -- signed with the key this process
+                # authenticates its own NATS connection with, so the arbiter
+                # checks who sent it instead of who it says it is.
+                self._sign_ask({
+                    "signal_type": SIG_ROUTE_REQUEST,
+                    "collective_id": collective_id,
+                    "from_agent": self.agent_id,
+                    "from_role": self.config.agent.role,
+                    "target_role": route_to,
+                    "reason": reason,
+                    "task": data,
+                    "ts": time.time(),
+                }),
+            )
+            logger.info(
+                "task_loop: asked the arbiter to route '%s' → '%s' "
+                "(identity %s may not publish task.assign)",
+                data.get("task_id", ""), route_to, self._nkey_identity(),
+            )
+            return True
+        except Exception:
+            logger.exception("task_loop: route re-dispatch failed")
+            return False
+
+    def _route_request_refusal(self, payload: dict) -> str:
+        """Why this ROUTE_REQUEST must not be honoured, or ``""``.
+
+        The arbiter re-checks everything the worker was trusted with, because
+        a request is only as good as what the receiver verifies:
+
+        * the requesting role's **signed definition** carries ``can_route`` --
+          the authorisation the matrix cannot read, and the reason relaying is
+          not a widening;
+        * the roster agrees the asking agent holds that role;
+        * the task is routable at all, and has not been routed already (the
+          hop cap of one, re-applied here rather than trusted from the ask).
+
+        Since PA-09 Phase 1 the sender is **proven** before any of that is
+        weighed: the ask is signed with the key the sender authenticates its
+        NATS connection with, and where the claimed role is itself an NKey
+        identity the signer must be it (:meth:`_sender_refusal`).  What that
+        still cannot prove is the role of an agent whose role the matrix does
+        not name -- a packaged `orchestrator` presents a worker identity, so
+        its identity says nothing about its role, and there the signed role
+        definition and the roster remain the bound.  With no key set
+        distributed, nothing is refused for being unsigned.
+        """
+        task = payload.get("task")
+        if not isinstance(task, dict):
+            return "no task payload"
+        from_agent = str(payload.get("from_agent", "") or "")
+        from_role = str(payload.get("from_role", "") or "")
+        target_role = str(payload.get("target_role", "") or "")
+        if not from_agent or not from_role or not target_role:
+            return "incomplete request"
+        # PA-09 Phase 1 -- before anything the payload says about itself is
+        # weighed, establish that the payload is the sender's.
+        sender = self._sender_refusal(payload, claimed_role=from_role)
+        if sender:
+            return sender
+        if not _should_route_redispatch(target_role, task):
+            return "task is not routable (no task_id, or already routed)"
+        entry = (getattr(self, "_worker_roster", {}) or {}).get(from_agent)
+        if entry is not None and str(getattr(entry, "role", "")) != from_role:
+            return (f"roster says {from_agent} is "
+                    f"{getattr(entry, 'role', '?')!r}, not {from_role!r}")
+        definition = self._resolve_role_definition(from_role)
+        if definition is None:
+            return f"role {from_role!r} is not resolvable"
+        if not definition.get("can_route", False):
+            return f"role {from_role!r} does not carry can_route"
+        return ""
+
+    async def _handle_route_request(self, payload: dict) -> bool:
+        """Honour one verified ROUTE_REQUEST by publishing the TASK_ASSIGN the
+        asking role chose.  Arbiter-only; returns whether it routed."""
+        if self.config.agent.role != "arbiter":
+            return False
+        refusal = self._route_request_refusal(payload)
+        if refusal:
+            logger.warning(
+                "route: refused a request from %s (%s) → %r: %s",
+                payload.get("from_agent"), payload.get("from_role"),
+                payload.get("target_role"), refusal,
+            )
+            return False
+        task = dict(payload["task"])
+        routed = build_routed_task(
+            task, str(payload["target_role"]), str(payload["from_agent"]),
+        )
+        try:
+            await self.backends.signaling.publish(
+                subject_task_assign(self.config.agent.collective_id), routed,
+            )
+        except Exception:
+            logger.exception("route: re-dispatch publish failed")
+            return False
+        logger.info(
+            "route: re-dispatched task '%s' → role '%s' on behalf of %s — %s",
+            task.get("task_id", ""), payload.get("target_role"),
+            payload.get("from_agent"), payload.get("reason", ""),
+        )
+        return True
+
+    async def _subscribe_route_requests(self) -> None:
+        """Arbiter: hear ``can_route`` roles asking for a re-dispatch."""
+        if self.config.agent.role != "arbiter":
+            return
+        collective_id = self.config.agent.collective_id
+
+        async def _handle(msg: object) -> None:
+            try:
+                data = json.loads(_payload_bytes(msg))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("route: invalid JSON on ROUTE_REQUEST")
+                return
+            try:
+                await self._handle_route_request(data)
+            except Exception:  # noqa: BLE001 -- never let the callback die
+                logger.debug("route: request handling failed", exc_info=True)
+
+        try:
+            await self.backends.signaling.subscribe(
+                subject_route_request(collective_id), _handle,
+            )
+            logger.info("route: listening on %s", subject_route_request(collective_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("route: subscribe failed: %s", exc)
+            return
+        await self._stop_event.wait()
+
+    # ------------------------------------------------------------------
+    # `20260923-lessons-that-travel` Phase 8 -- may I dispatch this?
+    # ------------------------------------------------------------------
+
+    def _nkey_identity(self) -> str:
+        """The NATS identity this process presents: ``security.nkey.role``
+        when the deployment pins one, else its agent role (what the connect
+        path derives)."""
+        pinned = str(getattr(_nkey_config_of(self), "role", "") or "").strip()
+        agent = getattr(getattr(self, "config", None), "agent", None)
+        return pinned or str(getattr(agent, "role", "") or "")
+
+    def _may_dispatch_proposal(self, kind: str) -> bool:
+        """Whether THIS agent may publish the mutation that dispatching
+        *kind* performs.
+
+        Phase 8.  Dispatching an approved proposal is a control-plane
+        publish, and the identity that happens to claim the approval is not
+        always the identity the matrix lets make it: a worker may not publish
+        ``role_update`` or ``task.assign``.  Until now nobody asked, so the
+        publish went out and the server refused it -- silently, on the one
+        deployment shape (NKeys enforced) where governance is strictest.
+
+        **Only enforced where the server enforces it.** With
+        ``security.nkey.enabled`` false the matrix is inert, the publish
+        would succeed, and refusing it here would be this code inventing a
+        restriction the deployment did not ask for -- so the answer is
+        unconditionally yes, exactly as before this existed.
+        """
+        if not getattr(_nkey_config_of(self), "enabled", False):
+            return True
+        try:
+            from acc.assistant_proposal import dispatch_subjects  # noqa: PLC0415
+            from acc.nats_permissions import may_publish  # noqa: PLC0415
+            subjects = dispatch_subjects(kind, self.config.agent.collective_id)
+            if not subjects:
+                logger.warning(
+                    "assistant_proposal: kind %r has no known dispatch subject "
+                    "— treating as not dispatchable by %s", kind, self.agent_id,
+                )
+                return False
+            # EVERY subject: a dispatch that can publish two things and is
+            # allowed only one performs half a mutation.
+            identity = self._nkey_identity()
+            return all(may_publish(identity, s) for s in subjects)
+        except Exception:  # noqa: BLE001 -- never fail a dispatch on the guard
+            logger.debug("assistant_proposal: authority check failed", exc_info=True)
+            return True
+
+    # ------------------------------------------------------------------
+    # `20260923-lessons-that-travel` Phase 7 -- the arbiter countersigns
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _bump_role_version(version: str) -> str:
+        """``0.1.0`` -> ``0.1.1``; ``7`` -> ``8``; anything else gets ``.1``."""
+        v = str(version or "").strip()
+        if v.isdigit():
+            return str(int(v) + 1)
+        parts = v.split(".")
+        if parts and parts[-1].isdigit():
+            parts[-1] = str(int(parts[-1]) + 1)
+            return ".".join(parts)
+        return f"{v}.1" if v else "0.1.1"
+
+    def _resolve_role_definition(self, role_name: str) -> dict | None:
+        """The current definition of *role_name* as the roster knows it:
+        Redis first (a running agent's countersigned state), then the roles
+        directory (the same loader every agent boots from)."""
+        redis = getattr(self, "_redis", None)
+        cid = self.config.agent.collective_id
+        if redis is not None:
+            try:
+                for aid, entry in list(getattr(self, "_worker_roster", {}).items()):
+                    if (getattr(entry, "role", "") or "") != role_name:
+                        continue
+                    raw = redis.get(redis_role_key(cid, aid))
+                    if raw:
+                        data = json.loads(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+                        if isinstance(data, dict):
+                            return data
+            except Exception:  # noqa: BLE001
+                logger.debug("countersign: redis role read failed", exc_info=True)
+        try:
+            from acc.cli._common import roles_root  # noqa: PLC0415
+            from acc.role_loader import RoleLoader  # noqa: PLC0415
+            role = RoleLoader(roles_root=roles_root(), role_name=role_name).load()
+            if role is not None:
+                return role.model_dump() if hasattr(role, "model_dump") else dict(role)
+        except Exception:  # noqa: BLE001
+            logger.debug("countersign: roles dir read failed", exc_info=True)
+        return None
+
+    def _countersign_role_update(self, payload: dict) -> dict | None:
+        """Turn an unsigned ROLE_UPDATE into a signed one, or refuse.
+
+        Two unsigned shapes reach the bus today and both ended in every
+        RoleStore's ``rejected: missing_signature`` row: the approved
+        proposal's ``{trigger: assistant_proposal, role, fields}``
+        (``_dispatch_role_update``) and ``acc-cli role infuse``'s full
+        ``role_definition`` with ``signature: ""``.  The arbiter -- the one
+        identity whose key every RoleStore verifies -- resolves the target
+        role, applies the fields, bumps the version and signs the canonical
+        ``{approver_id, role_definition}`` message the RoleStore checks.
+        The original approver stays on the payload as ``countersigned_for``:
+        the signature says the arbiter relayed it, the audit says who decided.
+        Returns the signed payload, or None with the reason logged.
+        """
+        if self.config.agent.role != "arbiter":
+            return None
+        signing_key = getattr(self.config.security, "arbiter_signing_key", "")
+        if not signing_key:
+            logger.warning("countersign: no arbiter_signing_key configured — cannot countersign ROLE_UPDATE")
+            return None
+        role_name = str(payload.get("role", "") or "")
+        definition = payload.get("role_definition")
+        fields = payload.get("fields") if isinstance(payload.get("fields"), dict) else {}
+        if not isinstance(definition, dict) or not definition:
+            if not role_name:
+                logger.warning("countersign: ROLE_UPDATE names no role and carries no definition — refused")
+                return None
+            definition = self._resolve_role_definition(role_name)
+            if definition is None:
+                logger.warning("countersign: role %r not resolvable — refused", role_name)
+                return None
+        if not role_name:
+            role_name = str(definition.get("name", "") or "")
+        merged = dict(definition)
+        for key, value in fields.items():
+            merged[str(key)] = value
+        if fields:
+            merged["version"] = self._bump_role_version(str(merged.get("version", "") or ""))
+        try:
+            from acc.config import RoleDefinitionConfig  # noqa: PLC0415
+            validated = RoleDefinitionConfig.model_validate(merged).model_dump()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("countersign: merged role definition invalid — refused: %s", str(exc).splitlines()[0])
+            return None
+        try:
+            import base64  # noqa: PLC0415
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: PLC0415
+            private_key = Ed25519PrivateKey.from_private_bytes(base64.b64decode(signing_key))
+            message = json.dumps(
+                {"approver_id": self.agent_id, "role_definition": validated},
+                sort_keys=True, separators=(",", ":"),
+            ).encode()
+            signature = base64.b64encode(private_key.sign(message)).decode("ascii")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("countersign: signing failed — refused: %s", exc)
+            return None
+        signed = {
+            "signal_type": SIG_ROLE_UPDATE,
+            "collective_id": self.config.agent.collective_id,
+            "ts": time.time(),
+            "role": role_name,
+            "agent_id": str(payload.get("agent_id", "") or ""),
+            "approver_id": self.agent_id,
+            "signature": signature,
+            "role_definition": validated,
+            "countersigned": True,
+            "countersigned_for": str(payload.get("approver_id", "") or payload.get("trigger", "") or ""),
+        }
+        for key in ("trigger", "proposal_id", "lesson_id", "rollback_of"):
+            if payload.get(key):
+                signed[key] = payload[key]
+        return signed
+
+    # ------------------------------------------------------------------
+    # `20260923-lessons-that-travel` Phase 6 -- the inbox
+    # ------------------------------------------------------------------
+
+    def _messages_journal_id(self) -> str:
+        return f"messages-{self.agent_id}"
+
+    def _write_receipt(self, cid: str, message: "Any", status: str, **extra: "Any") -> None:
+        """The receipt: Redis (``acc-cli msg tail``) and the journal."""
+        body = {**message.model_dump(), "status": status, "received_ts": time.time(), **extra}
+        redis = getattr(self, "_redis", None)
+        if redis is not None:
+            try:
+                redis.set(redis_message_key(cid, message.message_id), json.dumps(body, default=str))
+                redis.expire(redis_message_key(cid, message.message_id), 7 * 24 * 3600)
+                lst = redis_agent_messages_key(cid, self.agent_id)
+                redis.lpush(lst, message.message_id)
+                redis.ltrim(lst, 0, 199)
+                redis.expire(lst, 7 * 24 * 3600)
+            except Exception:  # noqa: BLE001
+                logger.debug("inbox: receipt write failed", exc_info=True)
+        try:
+            from acc import tracelog  # noqa: PLC0415
+            tracelog.log_agent_message(
+                self._messages_journal_id(), message_id=message.message_id, status=status,
+                from_agent=message.from_agent, to_agent=message.to_agent,
+                delivery=message.delivery, body=message.body, **extra,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _deliver_message(self, payload: object) -> str:
+        """Decide and deliver one inbound AGENT_MESSAGE.  Returns the receipt
+        status: ``delivered`` (steered into the task in flight), ``follow_up``
+        (became a task) or ``dropped:<reason>``."""
+        from acc.agent_messages import parse_message  # noqa: PLC0415
+        cid = self.config.agent.collective_id
+        message = parse_message(payload)
+        if message is None:
+            return "dropped:invalid"
+        if message.to_agent != self.agent_id:
+            return "dropped:not-addressed"
+        core = getattr(self, "_cognitive_core", None)
+        if core is None:
+            self._write_receipt(cid, message, "dropped", reason="no-core")
+            return "dropped:no-core"
+        busy = int(getattr(self, "_tasks_in_flight", 0) or 0) > 0
+        delivery = message.delivery
+        if delivery == "auto":
+            delivery = "steer" if busy else "follow_up"
+        if delivery == "steer" and not busy:
+            # Nothing to steer.  Said so on the receipt, delivered anyway.
+            delivery = "follow_up"
+        if delivery == "steer":
+            core.receive_steer(message)
+            self._write_receipt(cid, message, "delivered", resolved_delivery="steer")
+            return "delivered"
+        handler = getattr(self, "_local_task_handler", None)
+        if handler is None:
+            self._write_receipt(cid, message, "dropped", reason="no-task-loop")
+            return "dropped:no-task-loop"
+        task = message.follow_up_task(target_role=self.config.agent.role)
+        self._write_receipt(cid, message, "follow_up", resolved_delivery="follow_up",
+                            task_ref=task["task_id"])
+        try:
+            await handler(json.dumps(task).encode())
+        except Exception:  # noqa: BLE001
+            logger.exception("inbox: follow-up task failed (message=%s)", message.message_id[:8])
+        return "follow_up"
+
+    async def _subscribe_agent_inbox(self) -> None:
+        """Hear messages addressed to this agent.  No-op without a
+        CognitiveCore.  A malformed envelope is dropped and logged."""
+        if self._cognitive_core is None:
+            return
+        cid = self.config.agent.collective_id
+
+        async def _handle(msg: object) -> None:
+            try:
+                data = json.loads(_payload_bytes(msg))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("inbox: invalid JSON on AGENT_MESSAGE")
+                return
+            try:
+                status = await self._deliver_message(data)
+            except Exception:  # noqa: BLE001
+                logger.debug("inbox: delivery failed", exc_info=True)
+                return
+            logger.info("inbox: message %s from %s → %s",
+                        str(data.get("message_id", ""))[:8], data.get("from_agent", ""), status)
+
+        try:
+            await self.backends.signaling.subscribe(subject_agent_inbox(cid, self.agent_id), _handle)
+            logger.info("inbox: listening on %s", subject_agent_inbox(cid, self.agent_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("inbox: subscribe failed: %s", exc)
+            return
+        await self._stop_event.wait()
 
     async def _curate_once(self) -> int:
         """One curator pass (`20260906-enterprise-brain-hub-scope` Phase 2).
@@ -4299,6 +5325,12 @@ class Agent:
                 # CognitiveCore is present + the role opted in.
                 self._reflection_loop(),
                 self._curator_loop(),
+                # `20260923-lessons-that-travel` -- peer lessons in (Phase 1)
+                # and the inbox (Phase 6).
+                self._subscribe_knowledge_share(),
+                self._subscribe_agent_inbox(),
+                # Phase 9 -- arbiter-only; a no-op on every other role.
+                self._subscribe_route_requests(),
                 # Proactive wakeup self-check (2026-06-09). No-ops unless the
                 # active role sets proactive_wakeup: true (only the Assistant
                 # does). Keeps an opted-in agent active instead of purely

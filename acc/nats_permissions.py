@@ -94,6 +94,29 @@ def subject_matches(glob: str, subject: str) -> bool:
     return len(g_tokens) == len(s_tokens)
 
 
+def may_publish(identity: str, subject: str) -> bool:
+    """Whether *identity* may publish *subject* under the matrix.
+
+    `20260923-lessons-that-travel` Phase 8.  This is the question a caller
+    has to be able to ask BEFORE it publishes -- otherwise the only answer
+    comes from the server, as a refused publish nobody handles.  It is not
+    :func:`subject_covered`, which passes when *any* identity matches on
+    publish **or subscribe**: the arbiter subscribes ``acc.>``, so coverage
+    says yes for every subject in the tree while its publish side may be
+    granted to nobody.
+
+    An identity the matrix does not name -- a packaged role, an instance --
+    is treated as a **worker**, the conservative reading: packaged roles are
+    provisioned from the worker baseline (``acc/comms_provisioning.py``), and
+    guessing higher would hand a role authority the matrix never gave it.
+    """
+    matrix = load_permission_matrix()
+    perms = matrix.get(identity)
+    if perms is None:
+        perms = matrix.get("analyst", {"publish": []})
+    return any(subject_matches(glob, subject) for glob in perms["publish"])
+
+
 def subject_covered(subject: str) -> bool:
     """Return True if *subject* is matched by at least one publish or
     subscribe glob of at least one role in the matrix.

@@ -135,8 +135,16 @@ def test_no_redispatch_without_route_target():
 
 def test_agent_route_redispatch_wiring_present():
     """Guard the re-dispatch wiring (gate call + routed_by stamp) against a
-    silent refactor — complements the behavioral gate tests above."""
+    silent refactor — complements the behavioral gate tests above.
+
+    `20260923-lessons-that-travel` Phase 9 moved the publish out of the task
+    loop into ``Agent._route_task`` and the payload into ``build_routed_task``,
+    so the orchestrator and the arbiter cannot build a routed task
+    differently. The gate is still called from the loop; the stamp is now the
+    builder's job, and ``tests/test_route_through_arbiter.py`` asserts both
+    behaviourally rather than by source text."""
     src = (Path(__file__).resolve().parent.parent / "acc" / "agent.py").read_text(encoding="utf-8")
     assert "if _should_route_redispatch(result.route_to, data):" in src
-    assert 'routed["target_role"] = result.route_to' in src
-    assert 'routed["routed_by"] = self.agent_id' in src
+    assert "await self._route_task(" in src
+    assert 'routed["target_role"] = target_role' in src
+    assert 'routed["routed_by"] = routed_by' in src

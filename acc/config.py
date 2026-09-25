@@ -91,6 +91,13 @@ class RoleTelemetryConfig(BaseModel):
     redact_messages: bool = False
 
 
+#: `20260923-lessons-that-travel` Phase 4, D-028: whether a role keeps an
+#: accepted peer lesson in its shared tier when its definition does not say.
+#: The one place the default lives -- the agent's fallback reads it too, so a
+#: role object without the field behaves exactly like one that left it unset.
+ACCEPT_PEER_LESSONS_DEFAULT = True
+
+
 class RoleDefinitionConfig(BaseModel):
     """Role definition injected into the agent's CognitiveCore system prompt.
 
@@ -143,6 +150,18 @@ class RoleDefinitionConfig(BaseModel):
     # bandwidth one of the variables that decides whether consensus reflects
     # anything (arXiv 2603.24676).  Raising this widens that channel.
     memory_note_bandwidth: int = 3
+
+    # `20260923-lessons-that-travel` Phase 4 -- durable adoption.  On, a
+    # note-kind lesson this role accepts ALSO enters its shared tier for the
+    # lesson's scope (probation applies, so a person has the window to revoke
+    # it: ``acc-cli refine rollback``).  Off, a peer lesson is rendered once and
+    # gone.  **On by default** (D-028, operator decision 2026-09-24): a lesson
+    # that has to be re-taught every turn is not a lesson.  A role opts out with
+    # ``accept_peer_lessons: false`` in its signed definition, and
+    # ``ACC_PEER_LESSONS=0`` stops every direction collective-wide.  It stays a
+    # role field so the change goes through a signed ROLE_UPDATE like
+    # ``memory_note_bandwidth`` -- it decides what this role remembers.
+    accept_peer_lessons: bool = ACCEPT_PEER_LESSONS_DEFAULT
 
     # Proposal `20260531-role-perception-profiles` Phase 1
     # (v0.3.45) — opt this role into a typed perception profile.
@@ -1126,6 +1145,17 @@ class NKeyConfig(BaseModel):
     ``agent.role``" at connect time (the common case for agent
     pods)."""
 
+    public_keys_path: str = ""
+    """`20260923-lessons-that-travel` PA-09 Phase 1 -- the
+    ``public_keys.json`` ``scripts/acc-nkeys generate`` writes beside the
+    seeds: ``{identity: U...}``.  It is what lets a receiver VERIFY the
+    sender of an ask that crosses a privilege boundary, instead of believing
+    the ``from_agent`` field in the payload.
+
+    Empty means "look beside ``seed_path``", which is where the generator
+    puts it.  With no key set readable, senders still sign and receivers
+    still accept -- unverified, and they say so."""
+
     leaf_seed_path: str = ""
     """Seed file for the edge leaf-node link to the hub
     (``deploy_mode: edge`` only).  Empty disables leaf-link
@@ -1550,6 +1580,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     # NATS NKey authentication (proposal 013 PR-2)
     "ACC_NKEY_ENABLED":             ("security", "nkey", "enabled"),
     "ACC_NKEY_SEED_PATH":           ("security", "nkey", "seed_path"),
+    "ACC_NKEY_PUBLIC_KEYS_PATH":    ("security", "nkey", "public_keys_path"),
     "ACC_NKEY_ROLE":                ("security", "nkey", "role"),
     "ACC_NKEY_LEAF_SEED_PATH":      ("security", "nkey", "leaf_seed_path"),
     # Note: ACC_SPIFFE_FEDERATION_PEERS handled separately — list type

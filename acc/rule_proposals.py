@@ -182,6 +182,18 @@ def approve_proposal(
     p.decided_by = by
     save_proposal(p, root)
     _append_overlay(p, root)
+    # `20260923-lessons-that-travel` Phase 2 -- one ledger row per approved
+    # learned rule.
+    try:
+        from acc import refinements  # noqa: PLC0415
+        refinements.record(
+            "rule", trigger="rule_proposal_approved", approver=by,
+            target={"store": "proposed_rules", "id": pid,
+                    "category": getattr(p, "category", ""),
+                    "rule_id": getattr(p, "rule_id", "")},
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return p
 
 

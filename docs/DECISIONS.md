@@ -1329,3 +1329,42 @@ it with no fixture in the path, so the shim is retired. Deferred: the GET
 listening stream for server-initiated messages, and resumability — a server
 that only pushes results rather than answering the POST will not work, and the
 failure is a clean timeout rather than a wrong answer.
+
+## D-028 — A peer's lesson is kept by default, and a role opts out
+
+**Status:** ACCEPTED 2026-09-24 (acc-spearhead #480, `20260923-lessons-that-travel` Phase 4).
+**Date:** 2026-09-24
+**Context:** Phase 4 of `20260923-lessons-that-travel` let a role keep a
+note-kind lesson a peer sent it, by writing it into the role's shared tier for
+the lesson's scope. It shipped on the branch *off* by default: a role had to
+carry `accept_peer_lessons: true` in its signed definition, otherwise a peer's
+lesson was rendered in one prompt and gone. The build deferred the default as a
+decision for the operator (PA-03's open question), and the gap analysis's own
+recommendation was "ephemeral by default" — durable reopens a surface RP-01
+Phase 3 had closed, where notes never passed through episode retrieval.
+
+**Decision:** on by default. `RoleDefinitionConfig.accept_peer_lessons`
+defaults to `True`; a role opts out with `accept_peer_lessons: false` in its
+signed definition. The default lives in one constant,
+`acc.config.ACCEPT_PEER_LESSONS_DEFAULT`, which the agent's fallback also reads,
+so a role object without the field behaves exactly like a definition that left
+it unset.
+
+**Rationale:** the operator answered the deferred question directly ("Yes",
+open-questions Q1, 2026-09-24). The point of the change is that a learning
+travels between agents; a lesson that has to be re-taught every turn does not.
+The recommendation against it was about the *reach* of a durable note, and the
+reach is bounded elsewhere: the adopted note keeps the lesson's ceiling and
+scope, the read path filters on both, probation still holds it back before it
+shapes a reply, and `acc-cli refine rollback` revokes it. What changes is
+*whether* an accepted lesson is kept, not who may read it.
+
+**Consequences:** every role that does not opt out now grows its shared tier
+from its peers, bounded by `memory_note_bandwidth` on read and by the ring on
+receipt. A deployment that wants the old behaviour sets
+`accept_peer_lessons: false` per role, or `ACC_PEER_LESSONS=0` for the whole
+collective (which also stops publishing and rendering). Control roles are not
+exempt by default; whether the arbiter or the curator should opt out is a
+per-role question the soak run (PA-08 S1) is placed to answer. Every adoption
+writes an `adopt` row to the refinement ledger, so the effect is traceable per
+lesson.

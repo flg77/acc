@@ -47,6 +47,8 @@ KIND_GOVERNANCE = "governance"
 KIND_REDTEAM = "redteam"
 KIND_OVERSIGHT = "oversight"
 KIND_PLAN_STEP = "plan_step"
+KIND_LESSON = "lesson"
+KIND_AGENT_MESSAGE = "agent_message"
 
 # Governance categories carried on KIND_GOVERNANCE records.
 CAT_A = "A"  # constitutional (immutable floor)
@@ -169,6 +171,33 @@ def log_plan_step(session_id: str, *, plan_id: str, step_id: str, status: str,
     (``plan-<plan_id>``), is what survives the arbiter and the TUI."""
     emit(session_id, KIND_PLAN_STEP, plan_id=plan_id, step_id=step_id,
          status=status, previous=previous, task_id=task_id, role=role, **fields)
+
+
+def log_lesson(session_id: str, *, lesson_id: str, direction: str,
+               from_agent: str, role: str, kind: str, scope: str, ceiling: str,
+               summary: str, **fields: Any) -> None:
+    """Record one lesson crossing this agent's boundary
+    (`20260923-lessons-that-travel`): ``direction`` is ``published`` (this
+    agent distilled it), ``received`` (accepted into the peer ring) or
+    ``dropped`` (with a ``reason``).  Lives in the agent's own lessons
+    journal (``lessons-<agent_id>``) because a lesson arrives between tasks,
+    not inside one; the task that *uses* it records ``lessons_used`` on its
+    own ``reply_out``."""
+    emit(session_id, KIND_LESSON, lesson_id=lesson_id, direction=direction,
+         from_agent=from_agent, role=role, lesson_kind=kind, scope=scope,
+         ceiling=ceiling, summary=summary[:500], **fields)
+
+
+def log_agent_message(session_id: str, *, message_id: str, status: str,
+                      from_agent: str, to_agent: str, delivery: str, body: str,
+                      **fields: Any) -> None:
+    """Record one AGENT_MESSAGE reaching an agent (`20260923-lessons-that-travel`
+    Phase 6): ``status`` is ``delivered`` (steered into the task in flight),
+    ``follow_up`` (became a task; ``task_ref`` names it) or ``dropped``
+    (``reason``).  In the receiver's ``messages-<agent_id>`` journal."""
+    emit(session_id, KIND_AGENT_MESSAGE, message_id=message_id, status=status,
+         from_agent=from_agent, to_agent=to_agent, delivery=delivery,
+         body=body[:500], **fields)
 
 
 def log_redteam(session_id: str, *, task_id: str, challenge: str, outcome: str,

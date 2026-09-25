@@ -119,6 +119,9 @@ class _Step:
     task_id: str = ""        # uuid generated when we publish TASK_ASSIGN
     completed_ts: float = 0.0
     output: str = ""         # truncated output from TASK_COMPLETE
+    #: `20260923-lessons-that-travel` Phase 5 -- the peer lessons this step's
+    #: last task rendered, so a downstream critic's verdict can reach them.
+    lessons_used: list = field(default_factory=list)
 
     # PR-E1 — iteration loop state
     max_iterations: int = 1
@@ -367,6 +370,11 @@ class PlanExecutor:
         # Legacy single-agent path with PR-E1 iteration loop hook.
         step.completed_ts = time.time()
         step.output = str(payload.get("output", ""))[:500]
+        step.lessons_used = [str(x) for x in (payload.get("lessons_used") or [])]
+        # `20260923-lessons-that-travel` Phase 5 -- a verdict on this step is
+        # a verdict on the lessons its UPSTREAM steps used: a reviewer step
+        # depends_on the work it reviews.
+        await self._notify_critic_verdict(plan, step, payload, task_id)
 
         # PR-E1 — accumulate token usage for the cost cap.  Receivers
         # without knowledge of `tokens_used` simply omit the field;
@@ -518,6 +526,42 @@ class PlanExecutor:
     # collective's Cat-B setpoints; this is the safety floor for the
     # built-in plan executor.
     PROMPT_PATCH_MAX_CHARS: int = 2000
+
+    async def _notify_critic_verdict(
+        self, plan: _Plan, step: _Step, payload: dict, task_id: str,
+    ) -> int:
+        """Hand a reviewer's verdict to the lessons the reviewed steps used.
+
+        `20260923-lessons-that-travel` Phase 5.  Only steps this one
+        ``depends_on`` count as reviewed, and only when they rendered a lesson.
+        The hook (``on_critic_verdict``, set by the arbiter) records the
+        outcome; nothing here touches step state.  Returns how many steps
+        were reported.  Never raises.
+        """
+        hook = getattr(self, "on_critic_verdict", None)
+        if hook is None:
+            return 0
+        eo = payload.get("eval_outcome") or {}
+        verdict = str(eo.get("verdict", "") or "").upper() if isinstance(eo, dict) else ""
+        if not verdict:
+            return 0
+        reported = 0
+        for dep_id in step.depends_on:
+            dep = plan.steps.get(dep_id)
+            if dep is None or not dep.lessons_used:
+                continue
+            try:
+                result = hook(
+                    lesson_ids=list(dep.lessons_used), reviewed_task_id=dep.task_id,
+                    reviewer_task_id=task_id, verdict=verdict,
+                    plan_id=plan.plan_id, step_id=dep.step_id,
+                )
+                if asyncio.iscoroutine(result):
+                    await result
+                reported += 1
+            except Exception:  # noqa: BLE001
+                logger.debug("plan: critic verdict hook failed", exc_info=True)
+        return reported
 
     async def _maybe_reissue_for_revise(
         self, plan: _Plan, step: _Step, payload: dict, task_id: str,

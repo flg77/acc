@@ -101,6 +101,30 @@ sudo rpm --import https://sat1.ic3net.internal/katello/api/v2/repositories/<id>/
 Signed repository metadata (`repo_gpgcheck=1`) is not available: `hammer` exposes
 no metadata-signing option for custom yum repositories on this Satellite.
 
+### The standalone key — what actually signs `acc-spearhead` today (2026-09-22)
+
+The OpenBao path above is what `channels.yml` is *built* to do; it was never
+run, because it needs a `BAO_TOKEN` under the `ops` policy and setting that up
+was more than the operator wanted right now. Instead, `ic3net_internal/ACC/acc-spearhead`
+is signed with a **plain key**: generated once with `gpg --gen-key` directly on
+the build host (lighthouse, `GNUPGHOME=/home/flg/.acc-rpm-gpg`, RSA 4096, no
+expiry, UID `ACC Release Signer <hostmaster@ic3net.internal>`), its public half
+registered as the Satellite content credential `acc-spearhead-signing` (id 7)
+and wired onto the `ACC` product and the `acc-spearhead` repository.
+
+```bash
+packaging/rpm/release-pipeline.sh v0.22.0 --standalone-key
+packaging/rpm/sign-rpms-standalone.sh lighthouse:<dir>            # on its own
+```
+
+**The trade-off, plainly**: `sign-rpms.sh` never lets the private key touch a
+disk and signs inside a network-less container with a tmpfs keyring;
+`sign-rpms-standalone.sh` signs with a key that sits in an ordinary directory
+on lighthouse, protected by filesystem permissions and nothing else. If that
+stops being enough, `channels.yml` already exists and does the harder version
+— switching needs no code change here, only pointing the Satellite's content
+credential at the OpenBao-held key instead of this one.
+
 ## The mirror on acc1 — installing without a Satellite subscription
 
 `rpm.ic3net.internal` (acc1) serves a copy of the same channel, so a host can

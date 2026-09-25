@@ -25,10 +25,17 @@ _BASE_PUBLISH = (
     "acc.*.queue.*",
     "acc.*.backpressure.*",
     "acc.*.alert",
+    # `20260923-lessons-that-travel` Phase 8 -- proposal announcements, the
+    # same grant the static matrix gives every worker role.
+    "acc.*.assistant.*",
+    # Phase 9 -- ask the arbiter to re-dispatch (a `can_route` role never
+    # publishes `task.assign` itself).
+    "acc.*.route.request",
 )
 _BASE_SUBSCRIBE = (
     "acc.*.task.assign",
     "acc.*.task.cancel",
+    "acc.*.agent.*.inbox",
     "acc.*.role.update",
     "acc.*.config.reload",
 )

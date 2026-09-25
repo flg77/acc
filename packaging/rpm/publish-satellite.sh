@@ -93,6 +93,28 @@ ssh "$SAT_HOST" "$HAMMER --no-headers package list \
     --organization-label '$SAT_ORG' --product '$SAT_PRODUCT' --repository '$SAT_REPO' \
     --fields filename" | sort
 
+# Same "no key yet vs. carries a key" branch as the verdict check above: the
+# .repo snippet a client is told to use must match what the repository ACTUALLY
+# enforces, or it either fails closed on every install (gpgcheck=1, no key) or
+# silently trusts nothing (gpgcheck=0 once a key exists). hammer AND the JSON
+# parse both run ON sat1 in one call -- piping into a LOCAL python3 from the
+# build host hit exactly the Windows-Store-stub trap sign-rpms.sh documents.
+read -r REPO_ID GPG_ID <<<"$(ssh "$SAT_HOST" "$HAMMER --output json repository info --organization-label '$SAT_ORG' \
+    --product '$SAT_PRODUCT' --name '$SAT_REPO' | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+g = d.get(\"GPG Key\") or {}
+print(d.get(\"Id\", \"\"), g.get(\"Id\", \"\") if isinstance(g, dict) else \"\")
+'")"
+if [[ -n "$GPG_ID" ]]; then
+    # The blank-looking indent on the continuation line matches the heredoc's
+    # own 2-space style below -- cosmetic only, a .repo file does not need it.
+    GPGCHECK_LINE="gpgcheck=1
+  gpgkey=https://$SAT_HOST.ic3net.internal/katello/api/v2/repositories/$REPO_ID/gpg_key_content"
+else
+    GPGCHECK_LINE="gpgcheck=0"
+fi
+
 cat <<EOF
 
 Consume it with, on a client:
@@ -102,7 +124,7 @@ Consume it with, on a client:
   name=ACC (spearhead)
   baseurl=https://$SAT_HOST.ic3net.internal/pulp/content/$SAT_ORG/Library/custom/$SAT_PRODUCT/$SAT_REPO/
   enabled=1
-  gpgcheck=0
+  $GPGCHECK_LINE
   sslverify=1
   REPO
   sudo dnf install acc

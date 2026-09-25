@@ -94,7 +94,7 @@
 - [x] `npm run e2e` (`vite build && playwright test`) — 44 passed, 0 failed, twice in a row.
 - [x] a hand-verified spot check of Infuse, Configuration and Compliance under the new shell
       (screenshots) — the nav's `aria-current` follows the route correctly.
-- [ ] on bb3 after a release.
+- [x] on bb3 (2026-09-22 18:52), runtime v0.21.0 (lab-gitops #410): rendered inside the live TUI pod — `agentset()` and `tracing()` both answer with no read errors, five personas declared, *Every turn is exported to MLflow, workspace wksp-user2, experiment id 2*. An underwriter persona turn through the mortgage app answered in 97.5 s with the real queue. The live WebGUI route was not opened in a browser — it sits behind Keycloak login, which automation here does not do. First build attempt hit a Quay 502 storm (the same pattern as 2026-09-20); recovered by rebuilding the six image tasks standalone on the failed run's surviving source PVC, two at a time, after the operator restarted Quay — one image (acc-catalog) was pushed to a wrong doubled tag on the first try and caught before the rollout, then rebuilt correctly.
 
 ## Phase 4+ (deferred)
 - [ ] Rebuild the rest: Roles / Infuse / Role editor, Models & settings, Governance, Traces, Settings.

@@ -129,6 +129,18 @@ def forget_person(
     if not who:
         report.unsupported = "no person given"
         return report
+    if not dry_run:
+        # `20260923-lessons-that-travel` Phase 2 -- erasure is a refinement
+        # too (the one that cannot be rolled back; the ledger says so).
+        try:
+            from acc import refinements  # noqa: PLC0415
+            refinements.record(
+                "forget", redis_client=redis_client, collective_id=collective_id,
+                trigger="memory forget --apply",
+                target={"store": "memory_notes", "id": who},
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     missing = [name for name in _REQUIRED if not hasattr(vector, name)]
     if missing:

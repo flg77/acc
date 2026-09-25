@@ -96,6 +96,19 @@ start immediately in parallel (A-012: only arbiter may publish)."""
 SIG_KNOWLEDGE_SHARE = "KNOWLEDGE_SHARE"
 """Namespace-scoped knowledge propagation between roles within a collective."""
 
+SIG_ROUTE_REQUEST = "ROUTE_REQUEST"
+"""`20260923-lessons-that-travel` Phase 9 -- a ``can_route`` role asking the
+arbiter to re-dispatch a task it received to another role.  The orchestrator
+used to publish that ``TASK_ASSIGN`` itself, which only works where the NKey
+matrix is inert: ``acc.*.task.assign`` is arbiter-only.  The decision stays the
+orchestrator's; the privileged publish moves to the identity that may make
+it."""
+
+SIG_AGENT_MESSAGE = "AGENT_MESSAGE"
+"""`20260923-lessons-that-travel` Phase 6 -- a direct message to ONE agent on
+its inbox subject (steer the task in flight, or a follow-up task).  Published
+by the arbiter and the operator surfaces only (the NKey matrix)."""
+
 SIG_EVAL_OUTCOME = "EVAL_OUTCOME"
 """Evaluation feedback loop with per-criterion rubric scores.
 
@@ -225,6 +238,8 @@ SIGNAL_MODES: dict[str, str] = {
     SIG_CENTROID_UPDATE:        SIGNAL_MODE_ENDOCRINE,
     SIG_PLAN:                   SIGNAL_MODE_ENDOCRINE,
     SIG_PLAN_STEP_CONTROL:      SIGNAL_MODE_SYNAPTIC,
+    SIG_AGENT_MESSAGE:          SIGNAL_MODE_SYNAPTIC,
+    SIG_ROUTE_REQUEST:          SIGNAL_MODE_SYNAPTIC,
     SIG_BRIDGE_DELEGATE:        SIGNAL_MODE_ENDOCRINE,
     SIG_BRIDGE_RESULT:          SIGNAL_MODE_ENDOCRINE,
     SIG_DOMAIN_DIFFERENTIATION: SIGNAL_MODE_ENDOCRINE,
@@ -778,6 +793,39 @@ def subject_knowledge_share(collective_id: str, tag: str) -> str:
     return f"acc.{collective_id}.knowledge.{tag}"
 
 
+def subject_route_request(collective_id: str) -> str:
+    """Return the NATS subject a ``can_route`` role asks the arbiter to
+    re-dispatch on (ROUTE_REQUEST, `20260923-lessons-that-travel` Phase 9).
+
+    Workers may publish it; the arbiter subscribes, verifies and publishes the
+    ``TASK_ASSIGN`` itself.
+
+    Example::
+
+        subject_route_request("sol-01")
+        # -> "acc.sol-01.route.request"
+    """
+    return f"acc.{collective_id}.route.request"
+
+
+def subject_agent_inbox(collective_id: str, agent_id: str) -> str:
+    """Return the NATS subject of one agent's inbox (AGENT_MESSAGE,
+    `20260923-lessons-that-travel` Phase 6).
+
+    Example::
+
+        subject_agent_inbox("sol-01", "analyst-9c1d")
+        # → "acc.sol-01.agent.analyst-9c1d.inbox"
+    """
+    return f"acc.{collective_id}.agent.{agent_id}.inbox"
+
+
+def subject_agent_inbox_all(collective_id: str) -> str:
+    """Return the wildcard over every agent inbox in a collective (the
+    arbiter and the TUI observe; a worker subscribes to its own)."""
+    return f"acc.{collective_id}.agent.*.inbox"
+
+
 def subject_knowledge_share_all(collective_id: str) -> str:
     """Return the NATS wildcard subject for subscribing to all KNOWLEDGE_SHARE signals.
 
@@ -878,6 +926,62 @@ def redis_knowledge_key(collective_id: str, tag: str) -> str:
         # → "acc:sol-01:knowledge:code_patterns"
     """
     return f"acc:{collective_id}:knowledge:{tag}"
+
+
+def redis_lesson_key(collective_id: str, lesson_id: str) -> str:
+    """Return the Redis key holding one lesson envelope as JSON
+    (`20260923-lessons-that-travel`).  TTL 7 days; the durable copy is the
+    producer's memory note, this is what ``acc-cli lessons`` reads.
+
+    Key pattern: ``acc:{collective_id}:lesson:{lesson_id}``
+    """
+    return f"acc:{collective_id}:lesson:{lesson_id}"
+
+
+def redis_lessons_index_key(collective_id: str) -> str:
+    """Return the Redis sorted-set key (score = publish ts) indexing every
+    lesson published in a collective.
+
+    Key pattern: ``acc:{collective_id}:lessons``
+    """
+    return f"acc:{collective_id}:lessons"
+
+
+def redis_lesson_outcomes_key(collective_id: str, lesson_id: str) -> str:
+    """Return the Redis list key of outcome observations for a lesson
+    (`20260923-lessons-that-travel` Phase 5): one JSON object per task that
+    rendered it, how that task ended.
+
+    Key pattern: ``acc:{collective_id}:lesson:{lesson_id}:outcomes``
+    """
+    return f"acc:{collective_id}:lesson:{lesson_id}:outcomes"
+
+
+def redis_message_key(collective_id: str, message_id: str) -> str:
+    """Return the Redis key holding one AGENT_MESSAGE and its receipt
+    (`20260923-lessons-that-travel` Phase 6).  TTL 7 days.
+
+    Key pattern: ``acc:{collective_id}:message:{message_id}``
+    """
+    return f"acc:{collective_id}:message:{message_id}"
+
+
+def redis_agent_messages_key(collective_id: str, agent_id: str) -> str:
+    """Return the Redis list key (newest first) of message ids one agent
+    received -- what ``acc-cli msg tail`` reads.
+
+    Key pattern: ``acc:{collective_id}:agent:{agent_id}:messages``
+    """
+    return f"acc:{collective_id}:agent:{agent_id}:messages"
+
+
+def redis_lesson_used_key(collective_id: str, lesson_id: str) -> str:
+    """Return the Redis set key of task ids whose prompt rendered a lesson --
+    the ``lessons trace`` join (`20260923-lessons-that-travel`).
+
+    Key pattern: ``acc:{collective_id}:lesson:{lesson_id}:used``
+    """
+    return f"acc:{collective_id}:lesson:{lesson_id}:used"
 
 
 def redis_queue_status_key(collective_id: str, agent_id: str) -> str:

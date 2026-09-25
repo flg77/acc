@@ -111,7 +111,10 @@ def _runtime(queue: HumanOversightQueue) -> SimpleNamespace:
         _redis=None,
         _oversight_queue=queue,
     )
-    for name in ("_handle_assistant_proposals", "_record_auto_approved"):
+    # `20260923-lessons-that-travel` Phase 8 adds the authority helpers the
+    # EXECUTE branch consults; with no security block they are inert.
+    for name in ("_handle_assistant_proposals", "_record_auto_approved",
+                 "_may_dispatch_proposal", "_nkey_identity"):
         setattr(rt, name, getattr(Agent, name).__get__(rt))
     return rt
 

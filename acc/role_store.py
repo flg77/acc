@@ -394,6 +394,7 @@ class RoleStore:
 
         # --- Apply update ---
         old_version = self._current.version
+        old_role = self._current
         self._current = new_role
 
         # Write to Redis
@@ -418,6 +419,27 @@ class RoleStore:
             f"approver={approver_id}",
             approver_id,
         )
+        # `20260923-lessons-that-travel` Phase 2 -- the ledger row: which
+        # fields moved, from what to what, on whose approval, and the lesson
+        # (if any) that asked for it.  What role_audit's diff_summary never
+        # carried, and what a rollback needs.
+        try:
+            from acc import refinements  # noqa: PLC0415
+            old_f, new_f = refinements.changed_fields(old_role.model_dump(), new_role.model_dump())
+            refinements.record(
+                "role_patch", redis_client=self._redis,
+                collective_id=self._collective_id, agent_id=self._agent_id,
+                role_label=str(payload.get("role", "") or getattr(new_role, "name", "") or ""),
+                trigger=str(payload.get("trigger", "") or "role_update"),
+                evidence={"lesson_id": str(payload.get("lesson_id", "") or ""),
+                          "proposal_id": str(payload.get("proposal_id", "") or "")},
+                target={"store": "role_definitions", "id": self._agent_id,
+                        "old_version": old_version, "new_version": new_role.version,
+                        "old": old_f, "new": new_f},
+                approver=approver_id,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("role_store: ledger write failed", exc_info=True)
 
         logger.info(
             "role_store: role updated (agent_id=%s %s→%s approver=%s)",

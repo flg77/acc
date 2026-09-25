@@ -502,8 +502,13 @@ def publish_note(
     """Make one note readable in *destination*.
 
     The only way a note crosses a context boundary. Called from the approved
-    -proposal dispatcher and nowhere else -- reflection cannot reach it, which
-    is the property that keeps promotion a decision rather than a side effect.
+    -proposal dispatcher -- and, since `20260923-lessons-that-travel` Phase 4,
+    from :func:`acc.agent.Agent._adopt_lesson` for every role whose signed
+    definition has not opted out of ``accept_peer_lessons`` (on by default
+    since D-028).  Reflection still cannot reach it: the decision is a
+    person's -- an approval, the operator's default, or a role change the
+    arbiter countersigned -- never the agent's own, and what a peer's lesson
+    may reach is bounded by the scope and ceiling it was accepted under.
     """
     if redis_client is None or not summary or not destination:
         return False
@@ -529,6 +534,49 @@ def publish_note(
     except Exception as exc:
         logger.warning("memory_reflection: publish failed: %s", exc)
         return False
+
+
+def revoke_note(
+    redis_client: Any,
+    vector: Any,
+    collective_id: str,
+    role_label: str,
+    note_id: str,
+) -> dict[str, Any]:
+    """Pull one note out of everything a prompt reads (`20260923-lessons-that-
+    travel` Phase 2, ``acc-cli refine rollback``): the role's hot cache and
+    shared tier for every scope, and the ``memory_notes`` row.  Reports what
+    it removed; never raises.  The lesson copy in ``acc:{cid}:lesson:<id>``
+    is left, so the ledger can still show what was revoked."""
+    report: dict[str, Any] = {"note_id": note_id, "caches": [], "row_deleted": False}
+    if not note_id:
+        return report
+    if redis_client is not None:
+        try:
+            pattern_keys = [
+                *(redis_client.keys(redis_memory_notes_key(collective_id, role_label, "*")) or []),
+                *(redis_client.keys(redis_shared_notes_key(collective_id, role_label, "*")) or []),
+            ]
+        except Exception:  # noqa: BLE001
+            pattern_keys = []
+        for raw_key in pattern_keys:
+            key = raw_key.decode() if isinstance(raw_key, (bytes, bytearray)) else str(raw_key)
+            entries = _raw_note_entries(redis_client, key)
+            remaining = [e for e in entries if str(e.get("note_id") or "") != note_id]
+            if len(remaining) == len(entries):
+                continue
+            try:
+                redis_client.set(key, json.dumps(remaining))
+                report["caches"].append(key)
+            except Exception:  # noqa: BLE001
+                logger.warning("memory_reflection: revoke write failed for %s", key, exc_info=True)
+    if vector is not None and hasattr(vector, "delete_where"):
+        try:
+            safe = note_id.replace("'", "''")
+            report["row_deleted"] = bool(vector.delete_where("memory_notes", f"id = '{safe}'"))
+        except Exception:  # noqa: BLE001
+            logger.warning("memory_reflection: revoke row delete failed", exc_info=True)
+    return report
 
 
 def _raw_note_entries(redis_client: Any, key: str) -> list[dict[str, Any]]:

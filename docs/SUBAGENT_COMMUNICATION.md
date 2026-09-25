@@ -134,21 +134,99 @@ member 1 finishes step 4 ──► KNOWLEDGE_SHARE
                           (continues)       (continues)
 ```
 
-Wire shape:
+Wire shape — since `20260923-lessons-that-travel` the payload is the
+typed `Lesson` envelope in `acc/lessons.py` (validated on receipt;
+anything else is dropped and logged, never partially read):
 
 ```json
 {
   "signal_type": "KNOWLEDGE_SHARE",
-  "agent_id": "coding_agent-aaa",
-  "collective_id": "<cid>",
+  "schema_rev": 1,
+  "lesson_id": "<memory note id>",
   "ts": 1.700e9,
+  "collective_id": "<cid>",
+  "from_agent": "analyst-aaa",
+  "role_label": "analyst",
+  "kind": "note",
   "domain_tag": "code_patterns",
-  "knowledge_type": "draft_interface",
-  "content": "...",
+  "scope": "local",
+  "ceiling": "MEDIUM",
+  "source_requesters": ["slack:U1"],
+  "trigger": "reflection",
+  "summary": "PDFs above 50 MB exhaust the ingester; chunk them.",
+  "evidence": {"source_episode_ids": ["…"], "dissent": "", "tracelog_refs": []},
+  "expected_outcome": "",
   "confidence": 0.7,
-  "cluster_id": "<optional, but recommended>"
+  "target_agent_id": ""
 }
 ```
+
+Who publishes it today: the reflection loop, once per persisted memory
+note (`Agent._publish_lessons`), and `acc-cli lessons send`. Who
+consumes it: every agent with a matching receptor
+(`Agent._subscribe_knowledge_share` → `_accept_lesson` →
+`CognitiveCore.receive_lesson`), which renders it **once** into its
+next prompt as a `PEER_LESSONS` block after its own `MEMORY_NOTES`,
+under the same scope + ceiling rule the notes use. `target_agent_id`
+addresses one agent on the shared subject (everyone else drops it) —
+`TASK_COMPLETE.lessons_used` names the lessons a turn saw;
+`acc-cli lessons trace <id>` joins them to how those tasks ended
+(Phase 5: a blocked task or a BAD / NEEDS_REVISE verdict lowers the
+lesson's confidence, GOOD raises it). A `kind: role_patch` lesson is
+**never applied on receipt** — the receiver queues one `role_update`
+proposal with the lesson as its evidence (Phase 3). A role also keeps a
+note-kind lesson in its shared tier for the lesson's scope, after the usual
+probation (Phase 4; `acc-cli refine rollback` revokes it). That is **on by
+default** (D-028); a role opts out with `accept_peer_lessons: false` in its
+signed definition. The kept note carries the lesson's ceiling, so a reader
+below it never sees it.
+
+## Pattern D — A message to one agent (the inbox)
+
+`20260923-lessons-that-travel` Phase 6. One addressed subject,
+`acc.{cid}.agent.{agent_id}.inbox` (SYNAPTIC), carrying the typed
+`AgentMessage` envelope in `acc/agent_messages.py`:
+
+```json
+{
+  "signal_type": "AGENT_MESSAGE",
+  "message_id": "…", "ts": 1.700e9, "collective_id": "<cid>",
+  "from_agent": "acc-cli", "to_agent": "reviewer-9c1d",
+  "delivery": "steer | follow_up | auto",
+  "body": "Also check the regression test.",
+  "task_id": "<the task this is about, if known>",
+  "attribution": {"requested_by": "…", "requester_tier": "…", "requester_ceiling": "…"}
+}
+```
+
+* **Signed since PA-09 Phase 1**: a `ROUTE_REQUEST` carries a
+  `sender_proof` — the payload signed with the key the sender
+  authenticates its NATS connection with, verified by the arbiter
+  against `public_keys.json` before anything the payload claims about
+  itself is weighed. Where the claimed role is itself an NKey identity
+  the signer must be it; a packaged role presents a worker identity, so
+  there the signed `can_route` and the roster remain the bound. With no
+  key set distributed nothing is refused for being unsigned.
+* **Who may publish**: the arbiter and the operator surface (`tui`),
+  per the NKey matrix. Workers subscribe to their own inbox and may not
+  publish to anyone's — member-to-member stays relayed through the
+  arbiter. The design rule above (no direct member channel) still
+  holds; what changed is that the arbiter and the operator now have a
+  word for a running agent other than *cancel*.
+* **`steer`** — the message lands in the prompt of the task in flight
+  as an `OPERATOR_STEERING` block right before the task, the last block
+  the context budget evicts. ACC's task is one LLM call, so "in flight"
+  means "the prompt has not been built yet"; a steer that finds nothing
+  in flight is delivered as a follow-up and the receipt says
+  `resolved_delivery: follow_up`.
+* **`follow_up`** — the message becomes a `TASK_ASSIGN`-shaped task the
+  receiver hands its own task loop (no bus round-trip), addressed to
+  itself, with the message's `attribution` copied verbatim: the task
+  runs as the sender, at the sender's ceiling.
+* **Receipts**: Redis `acc:{cid}:message:{id}` (`delivered` /
+  `follow_up` + `task_ref` / `dropped` + `reason`) and the receiver's
+  `messages-<agent_id>` tracelog journal; `acc-cli msg tail <agent>`.
+  `TASK_COMPLETE.steer_used` names the messages a turn rendered.
 
 Notes:
 * `cluster_id` echo on KNOWLEDGE_SHARE is **strongly recommended**

@@ -186,6 +186,24 @@ class CognitiveResult:
     route_reason: str = ""
     """Short rationale the orchestrator gave for the ``route_to`` decision."""
 
+    lessons_used: list = field(default_factory=list)
+
+    steer_used: list = field(default_factory=list)
+
+    harness_fingerprint: str = ""
+    """`20260923-lessons-that-travel` Phase 2 (PA-04) -- what the model was
+    running under this turn: sha256 over the role version, the system prompt,
+    the notes, peer lessons and steering rendered.  On the episode's
+    ``payload_json``, on ``TASK_COMPLETE`` and on every outcome observation, so
+    a regression can be attributed to the refinement that preceded it."""
+    """`20260923-lessons-that-travel` Phase 6 -- ids of the AGENT_MESSAGEs
+    steered into this turn's prompt."""
+    """`20260923-lessons-that-travel` -- ids of the peer lessons rendered into
+    this turn's prompt.  Echoed on ``TASK_COMPLETE`` and indexed in Redis so
+    ``acc-cli lessons trace`` can join a lesson to the tasks that saw it.
+    Empty for every turn that rendered none (the default, and every turn
+    before this field existed)."""
+
     # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 2 (sub-phase 2b)
     # — Assistant proposal intents.  Cognitive core PARSES + CLASSIFIES
     # by mode (decide_dispatch); agent.py owns the I/O (queue submit,
@@ -789,6 +807,15 @@ class CognitiveCore:
         #: because the system prompt is stable per role (PR-CA1); the key
         #: carries the rendered length so a role edit invalidates it.
         self._system_token_cache: dict[str, int] = {}
+        # `20260923-lessons-that-travel` -- lessons heard from peers and not
+        # yet used.  Filled by the agent's KNOWLEDGE_SHARE subscription
+        # (``receive_lesson``), drained by the next prompt build that may see
+        # them (scope + ceiling), never persisted.
+        from acc.lessons import PeerLessonRing  # noqa: PLC0415
+        self._peer_lessons = PeerLessonRing()
+        # Phase 6 -- steer messages waiting for the next prompt build.
+        from acc.agent_messages import SteerRing  # noqa: PLC0415
+        self._steer = SteerRing()
         # Proposal `20260531-role-proposal-assistant-action-loop` Phase 1 —
         # populated by the agent constructor with a reference to the
         # NATS signaling backend.  Required for the Assistant's
@@ -1252,9 +1279,26 @@ class CognitiveCore:
                 int(getattr(role, "memory_note_bandwidth", 3) or 3),
                 reader_ceiling=_ceiling_of(task_payload),
             )
+        # `20260923-lessons-that-travel` -- what peers learned since this
+        # agent's last turn, under the same scope + ceiling filter the notes
+        # use, capped by the same bandwidth.  Consumed: rendered once.
+        peer_lessons: list = []
+        if getattr(role, "memory_retrieval", True) and self._peer_lessons_enabled():
+            from acc.identity import ceiling_of as _ceiling_of  # noqa: PLC0415
+            peer_lessons = self._peer_lessons.take(
+                reader_ceiling=_ceiling_of(task_payload),
+                reader_scope=scope_key(task_payload),
+                limit=int(getattr(role, "memory_note_bandwidth", 3) or 3),
+            )
+        lessons_used: list[str] = [lesson.lesson_id for lesson in peer_lessons]
+        # Phase 6 -- what the operator / arbiter said while this task was
+        # in flight.  Always rendered (it is addressed, not hearsay).
+        steer_msgs = self._steer.take()
+        steer_used: list[str] = [m.message_id for m in steer_msgs]
         emit_stage("acc.pipeline.memory_retrieve", {
             "episodes_count": len(retrieved_episodes),
             "notes_count": len(memory_notes),
+            "peer_lessons_count": len(peer_lessons),
         })
         if retrieved_episodes or memory_notes:
             bits = []
@@ -1321,6 +1365,11 @@ class CognitiveCore:
             budget=_resolve_context_budget(
                 self._system_prompt_tokens(role, system_prompt)
             ),
+            peer_lessons=peer_lessons,
+            steer=steer_msgs,
+        )
+        harness_fingerprint = self.harness_fingerprint(
+            role, system_prompt, memory_notes, lessons_used, steer_used,
         )
 
         # ACC-12 — PRE-GUARDRAIL (OWASP LLM01/04/06/08)
@@ -1556,7 +1605,10 @@ class CognitiveCore:
                 output_embedding = await self._llm.embed(output_text)
                 episode_id = self._persist_episode(
                     output_embedding,
-                    task_payload,
+                    # The fingerprint rides payload_json only: the episodes
+                    # schema is fixed, and the payload is where the S1/S5
+                    # runner joins an outcome to the harness that produced it.
+                    {**task_payload, "harness_fingerprint": harness_fingerprint},
                     response,
                 )
             except Exception as exc:
@@ -1804,7 +1856,61 @@ class CognitiveCore:
             assistant_proposals_queued=proposals_queued,
             assistant_proposals_executed=proposals_executed,
             assistant_proposals_plan=proposals_plan,
+            lessons_used=lessons_used,
+            steer_used=steer_used,
+            harness_fingerprint=harness_fingerprint,
         )
+
+    # ------------------------------------------------------------------
+    # `20260923-lessons-that-travel` -- peer lessons
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _peer_lessons_enabled() -> bool:
+        """The kill switch.  ``ACC_PEER_LESSONS=0`` keeps every prompt
+        byte-identical to the build before lessons existed."""
+        import os  # noqa: PLC0415
+        return os.environ.get("ACC_PEER_LESSONS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+    def receive_lesson(self, lesson: Any) -> bool:
+        """Accept one validated, transport-filtered lesson into the ring.
+        The agent's subscription is the only caller; it has already dropped
+        this agent's own lessons, lessons addressed elsewhere and ligands no
+        receptor matches."""
+        if not self._peer_lessons_enabled():
+            return False
+        return bool(self._peer_lessons.offer(lesson))
+
+    def pending_peer_lessons(self) -> list:
+        """What is waiting in the ring (oldest first).  Observability only."""
+        return self._peer_lessons.peek()
+
+    @staticmethod
+    def harness_fingerprint(role: Any, system_prompt: str, memory_notes: list,
+                            lesson_ids: list, steer_ids: list) -> str:
+        """16 hex chars over everything that shaped this turn besides the
+        task itself.  Two turns with the same fingerprint ran under the same
+        harness; a pass-rate that moves between fingerprints moved because
+        of a refinement."""
+        import hashlib  # noqa: PLC0415
+        parts = [
+            str(getattr(role, "name", "") or ""),
+            str(getattr(role, "version", "") or ""),
+            system_prompt or "",
+            "\x1f".join(str(n) for n in (memory_notes or [])),
+            "\x1f".join(str(i) for i in (lesson_ids or [])),
+            "\x1f".join(str(i) for i in (steer_ids or [])),
+        ]
+        return hashlib.sha256("\x1e".join(parts).encode("utf-8")).hexdigest()[:16]
+
+    def receive_steer(self, message: Any) -> bool:
+        """Phase 6 -- hold one addressed message for the next prompt build.
+        The agent's inbox subscription is the only caller and has already
+        checked the address."""
+        return bool(self._steer.offer(message))
+
+    def pending_steer(self) -> list:
+        return self._steer.peek()
 
     # ------------------------------------------------------------------
     # Phase 4.3 — Skills + MCP invocation surface
@@ -2378,6 +2484,8 @@ class CognitiveCore:
         memory_notes: list[str] | None = None,
         thread_block: str = "",
         budget: "ContextBudget | None" = None,
+        peer_lessons: list | None = None,
+        steer: list | None = None,
     ) -> str:
         """Prepend durable memory notes + the RAG episode block (if any)
         to the task content for the LLM user message.  The bare task
@@ -2398,17 +2506,31 @@ class CognitiveCore:
             return self._packed_user_content(
                 user_content, retrieved_episodes, memory_notes,
                 thread_block=thread_block, budget=budget,
+                peer_lessons=peer_lessons, steer=steer,
             )
 
         parts: list[str] = []
         notes_block = self._render_memory_notes_block(memory_notes or [])
         if notes_block:
             parts.append(notes_block)
+        # `20260923-lessons-that-travel` -- after the reader's own notes,
+        # before the specifics; empty for every turn that heard nothing.
+        if peer_lessons:
+            from acc.lessons import render_peer_lessons_block  # noqa: PLC0415
+            peer_block = render_peer_lessons_block(peer_lessons)
+            if peer_block:
+                parts.append(peer_block)
         rag_block = self._render_episode_block(retrieved_episodes)
         if rag_block:
             parts.append(rag_block)
         if thread_block:
             parts.append(thread_block)
+        # Phase 6 -- addressed steering, right before the task.
+        if steer:
+            from acc.agent_messages import render_steering_block  # noqa: PLC0415
+            steer_block = render_steering_block(steer)
+            if steer_block:
+                parts.append(steer_block)
         parts.append(user_content)
         return "\n\n".join(parts)
 
@@ -2457,6 +2579,8 @@ class CognitiveCore:
         *,
         thread_block: str,
         budget: "ContextBudget",
+        peer_lessons: list | None = None,
+        steer: list | None = None,
     ) -> str:
         """Assemble under a ceiling, and record whatever did not fit.
 
@@ -2476,6 +2600,10 @@ class CognitiveCore:
         thread_heading, thread_items = (
             self._split_thread_block(thread_block) if thread_block else ("", [])
         )
+        from acc.lessons import peer_lessons_parts  # noqa: PLC0415
+        peer_heading, peer_items = peer_lessons_parts(peer_lessons)
+        from acc.agent_messages import steering_parts  # noqa: PLC0415
+        steer_heading, steer_items = steering_parts(steer)
 
         blocks = standard_blocks(
             task=user_content,
@@ -2483,6 +2611,8 @@ class CognitiveCore:
             episodes_heading=eps_heading, episodes_items=eps_items,
             episodes_footer=eps_footer,
             thread_heading=thread_heading, thread_items=thread_items,
+            peer_heading=peer_heading, peer_items=peer_items,
+            steer_heading=steer_heading, steer_items=steer_items,
         )
         try:
             result = pack(

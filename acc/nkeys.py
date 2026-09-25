@@ -25,7 +25,14 @@ from __future__ import annotations
 import base64
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
+
+
+class NKeyError(ValueError):
+    """An NKey string is malformed, truncated, or not the expected kind."""
 
 # The eight NKey identities (six agent roles + the operator surface +
 # the edge leaf-node link).  Order is stable so generated key sets and
@@ -64,6 +71,60 @@ def _b32(data: bytes) -> str:
 def _encode(prefix: bytes, payload: bytes) -> str:
     body = prefix + payload
     return _b32(body + _crc16(body).to_bytes(2, "little"))
+
+
+def _unb32(text: str) -> bytes:
+    """Inverse of :func:`_b32` -- NKey strings carry no padding."""
+    pad = "=" * (-len(text) % 8)
+    try:
+        return base64.b32decode(text.strip().upper() + pad)
+    except Exception as exc:  # noqa: BLE001
+        raise NKeyError(f"not base32: {exc}") from exc
+
+
+def _decode(text: str, prefix_len: int) -> bytes:
+    """Strip an NKey's prefix and CRC and return the raw 32-byte key.
+
+    `20260923-lessons-that-travel` PA-09 Phase 1.  The encoder above has
+    always been here; the decoder is what lets ACC *verify* something signed
+    with bus key material instead of only minting it.
+    """
+    raw = _unb32(text)
+    if len(raw) < prefix_len + 32 + 2:
+        raise NKeyError("too short to be an NKey")
+    body, crc = raw[:-2], int.from_bytes(raw[-2:], "little")
+    if _crc16(body) != crc:
+        raise NKeyError("checksum mismatch")
+    return body[prefix_len:]
+
+
+def decode_seed(seed: str) -> Ed25519PrivateKey:
+    """The private key inside an ``S``-prefixed NKey *seed*.
+
+    Raises :class:`NKeyError` on anything that is not one -- a public key
+    passed here, a truncated file, a stray newline that broke the CRC.
+    """
+    text = seed.strip()
+    if not text.startswith("S"):
+        raise NKeyError("not a seed (expected an S-prefixed NKey)")
+    return Ed25519PrivateKey.from_private_bytes(_decode(text, 2))
+
+
+def decode_public(public_key: str) -> Ed25519PublicKey:
+    """The public key inside a ``U``-prefixed NKey user key."""
+    text = public_key.strip()
+    if not text.startswith("U"):
+        raise NKeyError("not a user public key (expected a U-prefixed NKey)")
+    return Ed25519PublicKey.from_public_bytes(_decode(text, 1))
+
+
+def public_key_of_seed(seed: str) -> str:
+    """The ``U`` public key belonging to an ``S`` seed -- what a signer
+    publishes so a receiver can check it against the key set."""
+    raw_pub = decode_seed(seed).public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw,
+    )
+    return _encode(bytes([_PREFIX_USER]), raw_pub)
 
 
 def generate_user_nkey() -> tuple[str, str]:

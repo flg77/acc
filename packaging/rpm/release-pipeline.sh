@@ -6,6 +6,11 @@
 #   packaging/rpm/release-pipeline.sh v0.15.0 --no-client   # skip the client check
 #   packaging/rpm/release-pipeline.sh v0.15.0 --dry-run     # say what would happen
 #   packaging/rpm/release-pipeline.sh v0.15.0 --unsigned    # only into a channel with NO key yet
+#   packaging/rpm/release-pipeline.sh v0.15.0 --standalone-key   # sign with the
+#                                        plain build-host key instead of OpenBao
+#                                        (packaging/rpm/sign-rpms-standalone.sh;
+#                                        no BAO_TOKEN needed) -- operator decision
+#                                        2026-09-22, see packaging/rpm/README.md
 #
 # The internal Satellite is the distribution base, so every release has to reach
 # it -- a channel that lags the tag is worse than no channel, because a host that
@@ -31,11 +36,13 @@ shift || true
 DRY_RUN=0
 CHECK_CLIENT=1
 SIGN=1
+SIGN_METHOD="${SIGN_METHOD:-openbao}"    # openbao | standalone
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --no-client) CHECK_CLIENT=0 ;;
         --unsigned) SIGN=0 ;;
+        --standalone-key) SIGN_METHOD=standalone ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
@@ -159,23 +166,41 @@ else
 fi
 
 # ------------------------------------------------------------------- 3b. sign
-# Both packages are signed ON THE BUILD HOST with the channel's key, which lives
-# only in OpenBao (created once by lab-gitops satellite-content channels.yml).
-# The key never touches a disk: sign-rpms.sh pipes it into a network-less signer
-# container whose keyring is a tmpfs, and checks every signature against the
-# channel's public key before returning.  publish-satellite.sh then refuses
-# anything unsigned for a channel that carries a key -- so --unsigned is only a
-# way into a channel that has no key yet, never a way around one.
+# Both packages are signed ON THE BUILD HOST.  Two ways, picked by SIGN_METHOD /
+# --standalone-key:
+#   openbao (default)  the channel's key lives only in OpenBao (created once by
+#                       lab-gitops satellite-content channels.yml); sign-rpms.sh
+#                       pipes it into a network-less signer container whose
+#                       keyring is a tmpfs, checking every signature against the
+#                       channel's public key before returning. Needs BAO_TOKEN.
+#   standalone          a plain `gpg --gen-key` on the build host itself
+#                       (packaging/rpm/sign-rpms-standalone.sh); the key sits in
+#                       a normal directory there, protected by filesystem
+#                       permissions and nothing else -- a real trade-off against
+#                       the openbao path's isolation, taken deliberately
+#                       (operator decision 2026-09-22) to avoid OpenBao token
+#                       management for now. Switching later needs no code
+#                       change here, only wiring channels.yml's credential onto
+#                       the Satellite instead of this one.
+# Either way, publish-satellite.sh refuses anything unsigned for a channel that
+# carries a key -- so --unsigned is only a way into a channel with no key yet,
+# never a way around one.
 SIGN_CHANNEL="${SIGN_CHANNEL:-${SAT_ORG:-ic3net_internal}/${SAT_PRODUCT:-ACC}/${SAT_REPO:-acc-spearhead}}"
 if [[ $SIGN == 1 ]]; then
-    say "sign with the key of $SIGN_CHANNEL"
-    if [[ $DRY_RUN == 0 ]] && [[ -z "${BAO_TOKEN:-${VAULT_TOKEN:-}}" ]]; then
-        echo "ERROR: signing needs BAO_TOKEN (or VAULT_TOKEN) -- the channel key lives in OpenBao." >&2
-        echo "       A channel with no key yet: create it with lab-gitops channels.yml, or" >&2
-        echo "       publish into it unsigned on purpose with --unsigned." >&2
-        exit 1
+    if [[ $SIGN_METHOD == standalone ]]; then
+        say "sign with the standalone build-host key"
+        run bash "$HERE/sign-rpms-standalone.sh" "$BUILD_HOST:$(dirname "$REMOTE_RPM")"
+    else
+        say "sign with the key of $SIGN_CHANNEL"
+        if [[ $DRY_RUN == 0 ]] && [[ -z "${BAO_TOKEN:-${VAULT_TOKEN:-}}" ]]; then
+            echo "ERROR: signing needs BAO_TOKEN (or VAULT_TOKEN) -- the channel key lives in OpenBao." >&2
+            echo "       A channel with no key yet: create it with lab-gitops channels.yml, or" >&2
+            echo "       sign with the standalone build-host key instead: --standalone-key, or" >&2
+            echo "       publish into it unsigned on purpose with --unsigned." >&2
+            exit 1
+        fi
+        run bash "$HERE/sign-rpms.sh" "$SIGN_CHANNEL" "$BUILD_HOST:$(dirname "$REMOTE_RPM")"
     fi
-    run bash "$HERE/sign-rpms.sh" "$SIGN_CHANNEL" "$BUILD_HOST:$(dirname "$REMOTE_RPM")"
 else
     say "NOT signing (--unsigned)"
     echo "   publish-satellite.sh will refuse these for any channel that carries a signing key."
