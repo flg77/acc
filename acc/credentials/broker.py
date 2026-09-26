@@ -113,7 +113,9 @@ class SealedFileStore:
     def __init__(self, root: str | Path, *, key: str | None = None) -> None:
         from cryptography.fernet import Fernet  # noqa: PLC0415 — optional dep
 
-        k = key or os.environ.get("ACC_CRED_KEY", "")
+        from acc import secret_source  # noqa: PLC0415
+
+        k = key or secret_source.get("ACC_CRED_KEY")
         if not k:
             raise RuntimeError(
                 "SealedFileStore: ACC_CRED_KEY is not set (a urlsafe-base64 "
@@ -175,9 +177,15 @@ class ProviderConfig:
             auth_url=os.environ.get(f"{up}_OAUTH_AUTH_URL") or defaults.get("auth_url", ""),
             token_url=os.environ.get(f"{up}_OAUTH_TOKEN_URL") or defaults.get("token_url", ""),
             client_id=os.environ.get(f"{up}_OAUTH_CLIENT_ID", ""),
-            client_secret=os.environ.get(f"{up}_OAUTH_CLIENT_SECRET", ""),
+            client_secret=_secret(f"{up}_OAUTH_CLIENT_SECRET"),
             scopes=tuple(scopes),
         )
+
+
+def _secret(name: str) -> str:
+    from acc import secret_source  # noqa: PLC0415
+
+    return secret_source.get(name)
 
 
 _WELL_KNOWN: dict[str, dict[str, str]] = {

@@ -27,6 +27,18 @@
 # Raise it deliberately.  A larger window allocates a larger KV cache per
 # request, so a host sized for the old default is where an OOM lands.  Get the
 # served figure from `acc-cli doctor --probe` rather than from the model card.
+#
+# accepts_images (optional, true|false) says whether THIS MODEL reads image
+# input.  It is a property of the model, not the backend: an OpenAI-compatible
+# gateway forwards an image to whatever sits behind it, and a text-only model
+# then answers as if it had seen nothing.  So:
+#
+#   * openai_compat sends an image only to a model declared `true`; undeclared
+#     or `false` refuses the turn, naming the model -- never a silent drop;
+#   * anthropic sends it unless the model is declared `false`;
+#   * ollama / vllm / llama_stack never carry images.
+#
+# Declare `true` only for a model you know reads images through this endpoint.
 models:
   # ── Anthropic ────────────────────────────────────────────────────────
   - model_id: claude-opus

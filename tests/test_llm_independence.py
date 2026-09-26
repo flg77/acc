@@ -407,6 +407,7 @@ class TestBuildBackendsOpenAICompat:
             embedding_model_path="/app/models/all-MiniLM-L6-v2",
             timeout_s=120,
             max_retries=3,
+            accepts_images=None,  # F2b -- undeclared
         )
         # build_llm_backend now wraps its result to enforce the
         # model-visible-means-logged invariant (DS-01), so assert on the

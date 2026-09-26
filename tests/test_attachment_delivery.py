@@ -134,7 +134,8 @@ class TestOpenAICompatCarriesThem:
                 })
 
         monkeypatch.setattr(httpx, "AsyncClient", _Client)
-        backend = OpenAICompatBackend("http://unused/v1", "m")
+        # F2b -- only a model declared to take images gets them.
+        backend = OpenAICompatBackend("http://unused/v1", "m", accepts_images=True)
         asyncio.run(backend.complete("sys", "what is this?", content=[BLOCK]))
         user = sent["messages"][1]["content"]
         assert user[1]["type"] == "image_url"

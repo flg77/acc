@@ -198,6 +198,7 @@ class TestTheRegistryRoundTrip:
         populated = ModelEntry(
             model_id="m", backend="vllm", model="q", base_url="http://h/v1",
             api_key_env="K", label="L", notes="N", zone="Z", context_window=1,
+            accepts_images=True,
         )
         emitted = set(_entry_to_dict(populated))
         declared = set(ModelEntry.model_fields)

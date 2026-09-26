@@ -258,10 +258,11 @@ export function PromptPage() {
           </Alert>
         )}
         {attached.length > 0 && capability && !capability.accepts_images && (
-          <Alert isInline variant="warning" title="This deployment's backend cannot take images" component="p">
-            The configured backend ({capability.backend || "unknown"}) is text-only. Unless
-            {" "}{role || "the role"} is bound to a multimodal model, the turn will be refused —
-            it will not be answered without the image.
+          <Alert isInline variant="warning" title="This deployment's model is not declared to take images" component="p">
+            The configured backend ({capability.backend || "unknown"}) sends an image only to a
+            model declared <code>accepts_images: true</code> in models.yaml. Unless
+            {" "}{role || "the role"} is bound to one, the turn will be refused — it will not be
+            answered without the image.
           </Alert>
         )}
         <div style={{ display: "flex", gap: "var(--pf-t--global--spacer--sm)" }}>

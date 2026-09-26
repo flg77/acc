@@ -162,6 +162,19 @@ type AgentCorpusSpec struct {
 	// +optional
 	Sandbox *SandboxSpec `json:"sandbox,omitempty"`
 
+	// SecretMount mounts one Secret read-only into every agent at
+	// /var/run/acc/secrets -- one file per key -- and sets
+	// ACC_SECRET_SOURCE=mounted, so the runtime reads credentials there at
+	// call time (acc/secret_source.py). The kubelet rewrites the files when
+	// the Secret changes, so a rotated key is used on the next call with no
+	// restart; the environment stays the fallback for any name the Secret
+	// lacks. OpenBao / Vault reach it through the External Secrets Operator
+	// or the Vault Secrets Operator, which sync into an ordinary Secret.
+	// A nil block leaves credentials in the environment (unchanged).
+	// OpenSpec 20260926-secrets-from-kubernetes-and-a-live-broker, Phase 2.
+	// +optional
+	SecretMount *SecretMountSpec `json:"secretMount,omitempty"`
+
 	// MCPServers configures shared MCP servers visible to every collective in
 	// this corpus. Each entry produces a Deployment + Service named
 	// acc-mcp-{name}, matching the URL convention used by mcps/<name>/mcp.yaml.
@@ -212,6 +225,22 @@ type RHOAISpec struct {
 	// +kubebuilder:default="redhat-ods-applications"
 	// +optional
 	DashboardNamespace string `json:"dashboardNamespace,omitempty"`
+}
+
+// SecretMountSpec names the Secret the agents read credentials from.
+type SecretMountSpec struct {
+	// SecretName is a Secret in the corpus's namespace. The agents do not
+	// start without it -- a declared source that silently is not there
+	// would leave them on whatever the environment holds.
+	// +kubebuilder:validation:MinLength=1
+	SecretName string `json:"secretName"`
+
+	// Items narrows the mount to these keys, each a file of the same name.
+	// Empty mounts every key. A listed key the Secret lacks keeps the pod
+	// from starting, for the same reason.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	Items []string `json:"items,omitempty"`
 }
 
 // SandboxSpec configures OpenShell kernel-enforced execution sandboxing for a

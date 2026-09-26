@@ -1104,6 +1104,23 @@ spec:
                           repository). Set this on disconnected clusters or to use your own
                           mirror of opentelemetry-collector-contrib.
                         type: string
+                      mlflowAuth:
+                        description: |-
+                          MLflowAuth selects how the collector authenticates to MLflowEndpoint.
+                          "" sends no credentials. "kubernetes" is RHOAI's MLflow: the pod's
+                          ServiceAccount token as a Bearer (the collector's bearertokenauth
+                          extension reads the mounted token file, so rotation is followed) and
+                          the OpenShift service CA (injected into the <collector>-service-ca
+                          ConfigMap) verifying the endpoint's certificate. The ServiceAccount
+                          the collector runs as must hold MLflow's rights in the workspace
+                          namespace: a RoleBinding to RHOAI's ClusterRole
+                          mlflow-operator-mlflow-integration (the plugin checks a
+                          SubjectAccessReview on the virtual group mlflow.kubeflow.org; the
+                          OTLP endpoint needs "update" on experiments).
+                        enum:
+                        - ""
+                        - kubernetes
+                        type: string
                       mlflowEndpoint:
                         description: |-
                           MLflowEndpoint is an optional additional OTLP/HTTP endpoint to
@@ -1111,18 +1128,6 @@ spec:
                           operator-rendered Collector config gains an extra otlphttp/mlflow
                           exporter on the traces pipeline.  Leave empty to skip the fan-out
                           (operators who run a standalone Collector configure MLflow there).
-                        type: string
-                      mlflowAuth:
-                        description: |-
-                          MLflowAuth selects how the collector authenticates to MLflowEndpoint.
-                          "" sends no credentials. "kubernetes" is RHOAI's MLflow: the pod's
-                          ServiceAccount token as a Bearer and the OpenShift service CA (injected
-                          into the <collector>-service-ca ConfigMap) verifying the endpoint. The
-                          ServiceAccount the collector runs as needs a RoleBinding to RHOAI's
-                          ClusterRole mlflow-operator-mlflow-integration in the workspace namespace.
-                        enum:
-                        - ""
-                        - kubernetes
                         type: string
                       mlflowExperimentID:
                         description: |-
@@ -1135,9 +1140,10 @@ spec:
                         type: string
                       mlflowWorkspace:
                         description: |-
-                          MLflowWorkspace is the MLflow workspace the fan-out posts into, sent as
-                          the X-MLFLOW-WORKSPACE header (RHOAI's MLflow scopes by workspace =
-                          namespace). Leave empty for a workspace-less MLflow.
+                          MLflowWorkspace is the MLflow workspace the fan-out posts into, sent
+                          as the X-MLFLOW-WORKSPACE header. RHOAI's MLflow (the operator-managed
+                          instance, workspaces enabled) scopes experiments and traces by
+                          workspace = namespace; leave empty for a workspace-less MLflow.
                         type: string
                       protocol:
                         default: grpc
@@ -1301,6 +1307,38 @@ spec:
                     - 3
                     format: int32
                     type: integer
+                type: object
+              secretMount:
+                description: |-
+                  SecretMount mounts one Secret read-only into every agent at
+                  /var/run/acc/secrets -- one file per key -- and sets
+                  ACC_SECRET_SOURCE=mounted, so the runtime reads credentials there at
+                  call time (acc/secret_source.py). The kubelet rewrites the files when
+                  the Secret changes, so a rotated key is used on the next call with no
+                  restart; the environment stays the fallback for any name the Secret
+                  lacks. OpenBao / Vault reach it through the External Secrets Operator
+                  or the Vault Secrets Operator, which sync into an ordinary Secret.
+                  A nil block leaves credentials in the environment (unchanged).
+                  OpenSpec 20260926-secrets-from-kubernetes-and-a-live-broker, Phase 2.
+                properties:
+                  items:
+                    description: |-
+                      Items narrows the mount to these keys, each a file of the same name.
+                      Empty mounts every key. A listed key the Secret lacks keeps the pod
+                      from starting, for the same reason.
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                  secretName:
+                    description: |-
+                      SecretName is a Secret in the corpus's namespace. The agents do not
+                      start without it -- a declared source that silently is not there
+                      would leave them on whatever the environment holds.
+                    minLength: 1
+                    type: string
+                required:
+                - secretName
                 type: object
               tui:
                 description: |-

@@ -54,7 +54,9 @@ SUPPORTED = {
     "image/webp": (b"RIFF",),
 }
 
-#: Backends that accept image content blocks today.
+#: Backends that CAN carry image blocks. Whether an image actually reaches a
+#: model that reads it is the model's declaration (F2b, ``accepts_images``):
+#: see :func:`accepts_images`.
 MULTIMODAL_BACKENDS = frozenset({"anthropic", "openai_compat"})
 
 
@@ -245,6 +247,21 @@ def prune(keep_digests: Iterable[str], *, root: Path | None = None) -> list[str]
 
 def backend_accepts_images(backend: str) -> bool:
     return str(backend or "").strip() in MULTIMODAL_BACKENDS
+
+
+def accepts_images(backend: str, declared: bool | None = None) -> bool:
+    """Whether an image sent to this backend and model will be read (F2b).
+
+    Mirrors what the backends enforce: a declaration wins; undeclared,
+    ``anthropic`` takes images and ``openai_compat`` does not (it cannot know
+    what model sits behind the gateway); text-only backends never do.
+    """
+    name = str(backend or "").strip()
+    if name not in MULTIMODAL_BACKENDS:
+        return False
+    if declared is not None:
+        return bool(declared)
+    return name == "anthropic"
 
 
 def content_blocks(

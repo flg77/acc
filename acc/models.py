@@ -71,6 +71,20 @@ class ModelEntry(BaseModel):
 
     Change: ``openspec/changes/20260826-context-budget``.
     """
+    accepts_images: Optional[bool] = None
+    """Whether this model takes image input (F2b).
+
+    A property of the **model**, not the backend: an OpenAI-compatible gateway
+    passes an image to whatever sits behind it, and a text-only model answers
+    "I'm unable to see the image" -- the silent drop the attachment path
+    exists to prevent (found live on lighthouse, 2026-09-26, ``gpt-oss-120b``).
+
+    ``None`` is undeclared, and each backend decides what that means:
+    ``openai_compat`` refuses an image unless the model is declared ``true``
+    (it cannot know what is behind the gateway); ``anthropic`` sends it unless
+    declared ``false`` (every current Claude model takes images); the text-only
+    backends refuse either way.
+    """
     zone: str = ""
     """Trust / data-residency zone, for the failover policy gate.
 
@@ -193,6 +207,9 @@ def model_env(entry: ModelEntry) -> dict[str, str]:
     # so it rides the universal var for every backend.
     if entry.context_window:
         env["ACC_LLM_CONTEXT_WINDOW"] = str(entry.context_window)
+    # Like capacity, a property of the model, carried for every backend.
+    if entry.accepts_images is not None:
+        env["ACC_LLM_ACCEPTS_IMAGES"] = "true" if entry.accepts_images else "false"
     return env
 
 
@@ -423,6 +440,9 @@ def _entry_to_dict(entry: ModelEntry) -> dict:
             out[field] = val
     if entry.context_window:
         out["context_window"] = entry.context_window
+    # Listed, or the next registry save strips it from every entry (see above).
+    if entry.accepts_images is not None:
+        out["accepts_images"] = entry.accepts_images
     return out
 
 

@@ -262,13 +262,62 @@ def check_duplicate_keys(ctx: Context) -> Iterable[Result]:
         yield Result("duplicate-keys", Severity.OK, "no duplicated top-level keys")
 
 
+@register("secrets")
+def check_secret_source(ctx: Context) -> Iterable[Result]:
+    """Where credentials come from, and what that does and does not protect.
+
+    Names and counts only. A mounted source whose directory is missing is
+    BROKEN: every read would fall back to the environment and the deployment
+    would look configured while running on whatever the container started with.
+    """
+    from acc import secret_source  # noqa: PLC0415
+
+    info = secret_source.describe(ctx.environ)
+    if info["source"] == secret_source.ENV:
+        yield Result(
+            "secrets", Severity.OK,
+            "credentials come from the environment (the default)",
+            detail=(
+                "Fixed at start: a rotated key needs a restart. "
+                f"{secret_source.SOURCE_VAR}=mounted reads a mounted Secret at "
+                "call time instead."
+            ),
+        )
+        return
+    if not info["present"]:
+        yield Result(
+            name="secrets",
+            severity=Severity.BROKEN,
+            summary=f"{secret_source.SOURCE_VAR}=mounted, but {info['directory']} does not exist",
+            detail=(
+                "Every read falls back to the environment, so this deployment runs "
+                "on whatever the container started with while looking configured."
+            ),
+        )
+        return
+    held = info["names"]
+    yield Result(
+        "secrets", Severity.OK,
+        f"credentials from a mounted Secret at {info['directory']}: {len(held)} name(s), "
+        f"read at call time",
+        detail=(
+            "Rotation needs no restart. The agent process can still read these "
+            "files: a mounted Secret keeps a key out of the environment, not out of "
+            "reach of a tool with filesystem access."
+        ),
+    )
+
+
 @register("key-names")
 def check_key_names(ctx: Context) -> Iterable[Result]:
-    """Every ``api_key_env`` a model refers to must exist in the environment.
+    """Every ``api_key_env`` a model refers to must be held by a secret source.
 
     Reads the **name**, never the value: a preflight report that could print a
-    credential is a preflight report nobody can paste into an issue.
+    credential is a preflight report nobody can paste into an issue. Since F3
+    the source may be a mounted Secret rather than the environment, and a key
+    held there is present.
     """
+    from acc import secret_source  # noqa: PLC0415
     from acc.models import load_models, load_role_chains  # noqa: PLC0415
 
     # ONLY models this deployment actually uses.  The shipped registry lists
@@ -285,7 +334,7 @@ def check_key_names(ctx: Context) -> Iterable[Result]:
         name = (entry.api_key_env or "").strip()
         if not name:
             continue
-        if name in ctx.environ and str(ctx.environ.get(name, "")).strip():
+        if secret_source.origin(name, environ=ctx.environ):
             continue
         if entry.model_id not in in_use:
             unused_missing += 1
@@ -294,7 +343,7 @@ def check_key_names(ctx: Context) -> Iterable[Result]:
         yield Result(
             name="key-names",
             severity=Severity.BROKEN,
-            summary=f"{name} is not set, but model {entry.model_id!r} needs it",
+            summary=f"no secret source holds {name}, but model {entry.model_id!r} needs it",
             detail=(
                 "A role is bound to this model and it declares api_key_env; "
                 "without that variable every call it makes is rejected."

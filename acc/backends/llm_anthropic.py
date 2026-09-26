@@ -25,8 +25,13 @@ class AnthropicBackend:
     (``all-MiniLM-L6-v2``) since Anthropic does not expose an embedding API.
     """
 
-    def __init__(self, model: str, embedding_model_path: str) -> None:
+    def __init__(
+        self, model: str, embedding_model_path: str, *, accepts_images: bool | None = None,
+    ) -> None:
         self._model = model
+        # F2b -- every current Claude model takes images, so undeclared sends
+        # them; a model declared `accepts_images: false` is refused.
+        self._accepts_images = accepts_images
         self._embedding_model_path = embedding_model_path
         # Accept the ACC-namespaced key OR the standard Anthropic SDK env name.
         # Operators (and the SDK itself) default to ANTHROPIC_API_KEY; honouring
@@ -72,6 +77,10 @@ class AnthropicBackend:
         *content* -- image blocks from :func:`acc.attachments.content_blocks`,
         already in the Messages API shape -- follow the text in the user turn.
         """
+        if content and self._accepts_images is False:
+            from acc.backends import ContentNotSupported  # noqa: PLC0415
+
+            raise ContentNotSupported("anthropic", model=self._model, declared=False)
         user_content = user
         if response_schema is not None:
             user_content = (

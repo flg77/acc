@@ -381,14 +381,20 @@ async def dispatch_invocations(
                     "capability_dispatch: progress callback raised "
                     "for %s — continuing", inv.target,
                 )
-        outcomes.append(await _dispatch_one(
-            inv, core, role,
-            oversight_queue=oversight_queue,
-            task_id=task_id,
-            operating_mode=mode,
-            requester_ceiling=requester_ceiling,
-            requester=requester,
-        ))
+        # F3 -- whose task this call serves, for a credential minted per person
+        # (an ``auth: oauth`` MCP). Scoped to the call: agents run tasks
+        # concurrently.
+        from acc.credentials.live import serving  # noqa: PLC0415
+
+        with serving(requester):
+            outcomes.append(await _dispatch_one(
+                inv, core, role,
+                oversight_queue=oversight_queue,
+                task_id=task_id,
+                operating_mode=mode,
+                requester_ceiling=requester_ceiling,
+                requester=requester,
+            ))
     return outcomes
 
 

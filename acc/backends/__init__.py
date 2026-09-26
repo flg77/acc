@@ -57,14 +57,29 @@ class ContentNotSupported(LLMCallError):
     stop there, not answer without the image.
     """
 
-    def __init__(self, backend: str) -> None:
-        super().__init__(
-            f"the {backend!r} backend cannot accept images. Bind this role to a "
-            f"multimodal model, or send the prompt without the attachment -- it "
-            f"will not be silently dropped.",
-            retryable=False,
-        )
+    def __init__(self, backend: str, *, model: str = "", declared: bool | None = None) -> None:
+        if model:
+            why = (
+                f"model {model!r} is declared as not taking images"
+                if declared is False else
+                f"model {model!r} is not declared to take images "
+                f"(accepts_images in its models.yaml entry)"
+            )
+            message = (
+                f"the {backend!r} backend would pass the image on, but {why}. "
+                f"Declare `accepts_images: true` for a model that takes images, bind "
+                f"this role to one, or send the prompt without the attachment -- it "
+                f"will not be silently dropped."
+            )
+        else:
+            message = (
+                f"the {backend!r} backend cannot accept images. Bind this role to a "
+                f"multimodal model, or send the prompt without the attachment -- it "
+                f"will not be silently dropped."
+            )
+        super().__init__(message, retryable=False)
         self.backend = backend
+        self.model = model
 
 
 def refuse_content(backend: str, content: list[dict] | None) -> None:

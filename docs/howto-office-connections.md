@@ -38,8 +38,17 @@ and govern it; we do **not** re-implement the Google APIs.
    optionally `GOOGLE_OAUTH_SCOPES` (defaults to read-only cal/gmail/drive).
 3. Token store key (edge/standalone): `ACC_CRED_KEY` (a Fernet key —
    `python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'`).
-4. Connect (operator surface — `/connect google` slash command + a Config
-   "Connections" panel — lands next; the broker engine + this manifest ship now).
+4. Connect, once per person:
+   ```bash
+   acc-cli oauth connect google --for tui:alice      # prints the consent URL
+   acc-cli oauth complete google --code <code> --for tui:alice
+   acc-cli oauth status google --for tui:alice
+   ```
+   A call is minted for the **person behind the task's requester**
+   (`source:subject`); connect for the name your tasks carry. A person who has not
+   connected gets a refusal naming this command — the request is never sent
+   unauthenticated. `ACC_CRED_KEY` and `GOOGLE_OAUTH_CLIENT_SECRET` may come from a
+   mounted Secret (`ACC_SECRET_SOURCE=mounted`) like any other credential.
 
 ## Governance
 

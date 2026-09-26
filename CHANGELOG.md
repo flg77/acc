@@ -11,6 +11,27 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-09-26
+
+**Secrets from a mounted Kubernetes Secret, the OAuth broker on the call path, and image support declared per model** — F3 (#488, #489; OpenSpec `20260926-secrets-from-kubernetes-and-a-live-broker`) and F2b (#490). ACC supports OpenBao/Vault and for now uses Kubernetes Secrets: the operator mounts one Secret into every agent, and the runtime reads credentials from it at call time, so a rotated key is used without a restart. The OAuth broker finally has a caller. And a text-only model behind a gateway no longer receives an image it cannot read — found live on lighthouse the day v0.24.0 shipped.
+
+**Upgrade notes:** operator **0.2.28** carries `spec.secretMount` and the corrected NATS permission matrix (NKey-enforced clusters were denying the v0.22.0 subjects). An `openai_compat` model now receives images only when `models.yaml` declares `accepts_images: true`; an `auth: oauth` MCP now refuses instead of calling unauthenticated — connect with `acc-cli oauth connect`.
+
+### Added
+
+- **`acc/secret_source.py`** — where a credential is read from, at the moment it is used. `env` stays the default; `ACC_SECRET_SOURCE=mounted` reads one file per name under `ACC_SECRET_DIR` (default `/var/run/acc/secrets`), a Kubernetes Secret mounted as a volume — which the kubelet rewrites when the Secret changes, so a rotated key is used on the next call without a restart. OpenBao/Vault reach a cluster the same way, through the External Secrets Operator or the Vault Secrets Operator. A name the mount lacks falls back to the environment.
+- **Call paths read through it per call**: the openai-compatible backend, the MCP HTTP transports' `api_key_env` (no bearer is baked into the client any more), the egress broker, the sealed OAuth store's key and OAuth client secrets.
+- **`acc-cli oauth connect|complete|status|disconnect`** — a person connects their own account for an `auth: oauth` MCP; they consent in the provider's screen, the PKCE verifier is sealed and single use, the refresh token is sealed per person.
+- **`acc-cli doctor --check secrets`** — the source; BROKEN when a mounted directory is missing; and, said plainly, that a mounted Secret keeps a key out of the environment but not out of reach of a tool with filesystem access.
+- **`AgentCorpus.spec.secretMount`** (`secretName`, optional `items`) — every agent gets the Secret read-only at `/var/run/acc/secrets`, one file per key, and `ACC_SECRET_SOURCE=mounted`, so the runtime reads credentials at call time and a rotated Secret is used on the next call without a restart. Mounted as a whole volume, never `subPath` (the kubelet does not refresh those); mode `0440`; required, so a declared Secret that is missing stops the pod rather than leaving it on the environment. OpenBao/Vault arrive through ESO or the Vault Secrets Operator. No new operator RBAC.
+
+### Fixed
+
+- **An `auth: oauth` MCP manifest went out unauthenticated.** The credential broker had no caller: the transport was built without a bearer resolver and the request carried no credential, silently. It now mints per request for the person whose task the call serves (tracked per call, so concurrent tasks never share a token), and refuses — naming `acc-cli oauth connect` — when that person has not connected.
+- **`doctor --check key-names` reported a mounted key as missing** — it read the environment only.
+- **The operator rendered an out-of-date NATS permission matrix.** Its vendored `nats_permissions.yaml` had not been re-copied since `20260923-lessons-that-travel` Phases 6, 8 and 9, so an NKey-enforced cluster denied the agent inbox, `route.request`, and the arbiter's `collective.reconcile` and `assistant.*` — the subjects that deliver steering, route requests and dispatch approved proposals.
+- **An image sent to a text-only model behind a gateway was silently ignored.** F2 decided whether a turn may carry an image by the *backend* (`openai_compat` counted as multimodal). On lighthouse the `analyst` role runs `openai_compat` → the MaaS gateway → `gpt-oss-120b`, a text-only model: the image was delivered, forwarded, and the model answered "I'm unable to see the image" — the silent drop F2 exists to prevent, one layer past ACC's check. Models now declare `accepts_images` in `models.yaml`; it travels to the backend through the container env (`ACC_LLM_ACCEPTS_IMAGES`), the failover overlay and the `llm:` config, and survives a registry save. `openai_compat` sends an image only to a model declared `true` and otherwise refuses the turn **before any request**, naming the model and the field; `anthropic` sends unless declared `false`. The web GUI's compose-time warning now reflects the model's declaration, not the backend kind.
+
 ## [0.24.0] — 2026-09-26
 
 **Decisions that wait and move, real usage on the compat endpoint, and images that reach the model** — three lanes merged 2026-09-26: G3 (#484, OpenSpec `20260925-decisions-that-wait-and-move`), F1 (#485, `20260829-openai-compat-server`) and F2 (#486, `20260830-attachment-delivery-path`). Each closes a gap where a shipped feature looked finished and was not: the decision panel's fields never reached the wire, the compat endpoint reported zero tokens for every request, and an uploaded image could not reach any model.

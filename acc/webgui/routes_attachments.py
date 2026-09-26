@@ -54,6 +54,16 @@ async def upload(
     }
 
 
+def _declared(store) -> bool | None:
+    try:
+        value = store.get("llm.accepts_images").value
+    except Exception:  # noqa: BLE001 -- an older schema without the field
+        return None
+    if value is None or value == "":
+        return None
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
 @router.get("/capability")
 def capability(principal: Principal = Depends(require_viewer)) -> dict:
     """Whether the configured backend can accept images at all.
@@ -66,7 +76,8 @@ def capability(principal: Principal = Depends(require_viewer)) -> dict:
     backend = str(store.get("llm.backend").value or "")
     return {
         "backend": backend,
-        "accepts_images": attachments.backend_accepts_images(backend),
+        # F2b -- the model's declaration, not the backend kind alone.
+        "accepts_images": attachments.accepts_images(backend, _declared(store)),
         "max_bytes": attachments.MAX_BYTES,
         "supported": sorted(attachments.SUPPORTED),
         "note": (

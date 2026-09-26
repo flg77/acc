@@ -42,13 +42,29 @@ _worker_publish: &worker_publish
   - acc.*.eval.*
   - acc.*.episode.nominate
   - acc.*.alert
+  # `20260923-lessons-that-travel` Phase 8 -- proposal ANNOUNCEMENTS
+  # (pending, outcome, dispatch-failed).  Every agent that queues a
+  # proposal says so on this subject, and the Compliance screen renders
+  # the row from it; it carries no mutation, so it belongs with alert /
+  # knowledge / eval rather than with the arbiter-only control subjects.
+  # Without it an NKey-enforced deployment could not announce a pending
+  # proposal at all (measured against the matrix, 2026-09-23).
+  - acc.*.assistant.*
+  # `20260923-lessons-that-travel` Phase 9 -- a ``can_route`` role ASKS the
+  # arbiter to re-dispatch; it still may not publish `task.assign` itself.
+  - acc.*.route.request
   - acc.bridge.*.*.delegate
   - acc.bridge.*.*.result
   - acc.bridge.*.pending
 
 _worker_subscribe: &worker_subscribe
+  - acc.*.route.request
   - acc.*.task.assign
   - acc.*.task.cancel
+  # `20260923-lessons-that-travel` Phase 6 -- a worker hears its own inbox
+  # (it filters on the agent_id token); only the arbiter and the operator
+  # surface may publish there, so member-to-member stays relayed.
+  - acc.*.agent.*.inbox
   - acc.*.role_update
   - acc.*.role_approval
   - acc.*.plan.*
@@ -67,11 +83,21 @@ roles:
     publish:
       - acc.*.task.assign
       - acc.*.task.cancel
+      - acc.*.agent.*.inbox
       - acc.*.plan.*
       - acc.*.centroid
       - acc.*.domain.*
       - acc.*.role_update
       - acc.*.role_approval
+      # `20260923-lessons-that-travel` Phase 8 -- the arbiter is the
+      # identity that DISPATCHES an approved proposal, so it needs the
+      # subject every dispatch lands on: `collective.reconcile` (spawn)
+      # and `assistant.*` (infuse / role_gap / publish outcomes).  Before
+      # this, no identity in the matrix could publish either, so those
+      # four proposal kinds were undispatchable under NKeys.
+      - acc.*.collective.reconcile
+      - acc.*.assistant.*
+      - acc.*.route.request
       - acc.*.heartbeat
       - acc.*.register
       - acc.*.alert
@@ -113,6 +139,7 @@ roles:
       - acc.*.oversight.*
       - acc.*.task.assign
       - acc.*.task.cancel
+      - acc.*.agent.*.inbox
     subscribe:
       - acc.>
 

@@ -183,7 +183,9 @@ required).
 Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
 `ACC_LLM_BACKEND` / `ACC_LLM_BASE_URL` / `ACC_LLM_MODEL`, `ACC_OPERATOR_MODE`
 (`prod` locks authoring; `dev` is refused on rhoai/edge), `ACC_TUI_PROFILE`,
-`ACC_THREAD_CONTINUITY=0` (kill switch), `ACC_PROMPT_PERMISSION_REGION=0`
+`ACC_SECRET_SOURCE=mounted` + `ACC_SECRET_DIR` (credentials read at call time
+from a mounted Secret — rotation without a restart; `acc-cli doctor --check
+secrets`), `ACC_THREAD_CONTINUITY=0` (kill switch), `ACC_PROMPT_PERMISSION_REGION=0`
 (plain gate card), `ACC_WORKSPACE_CHECKPOINTS`, `ACC_COMPAT_API_KEYS`,
 `ACC_WEBGUI_AUTH_MODE`. The schema is derived from the config models:
 `acc-cli config check --all` lists every key.

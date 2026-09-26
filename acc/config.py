@@ -839,6 +839,12 @@ class LLMConfig(BaseModel):
     budgeter (``openspec/changes/20260826-context-budget``) is the one that
     makes it load-bearing.
     """
+    accepts_images: bool | None = None
+    """Whether the configured model takes image input (env
+    ``ACC_LLM_ACCEPTS_IMAGES``). Mirrors :attr:`acc.models.ModelEntry.accepts_images`,
+    carried here by ``model_env`` and ``llm_failover._llm_overlay``. ``None`` is
+    undeclared: ``openai_compat`` then refuses images, ``anthropic`` sends them.
+    """
     enable_prompt_cache: bool = False
     """PR-CA2 — opt-in per-backend prompt-cache HINT (env
     ``ACC_LLM_ENABLE_PROMPT_CACHE``).  When true, the agent hints the
@@ -1580,6 +1586,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_LLM_MAX_RETRIES":          ("llm", "max_retries"),
     "ACC_LLM_ENABLE_PROMPT_CACHE":  ("llm", "enable_prompt_cache"),
     "ACC_LLM_CONTEXT_WINDOW":       ("llm", "context_window"),
+    "ACC_LLM_ACCEPTS_IMAGES":       ("llm", "accepts_images"),
     # Context budgeter posture overrides (RP-04 1.4).  The budgeter itself
     # reads these from the environment -- see ContextBudgetConfig on why.
     "ACC_CONTEXT_RESERVE_OUTPUT":   ("context_budget", "reserve_output"),
@@ -1758,6 +1765,7 @@ def _build_llm_backend_unrecorded(config: ACCConfig) -> LLMBackend:
         return AnthropicBackend(
             model=config.llm.anthropic_model,
             embedding_model_path=config.llm.embedding_model_path,
+            accepts_images=config.llm.accepts_images,
         )
     if config.llm.backend == "vllm":
         from acc.backends.llm_vllm import VLLMBackend
@@ -1778,6 +1786,7 @@ def _build_llm_backend_unrecorded(config: ACCConfig) -> LLMBackend:
             embedding_model_path=config.llm.embedding_model_path,
             timeout_s=config.llm.request_timeout_s,
             max_retries=config.llm.max_retries,
+            accepts_images=config.llm.accepts_images,
         )
     if config.llm.backend == "llama_stack":
         from acc.backends.llm_llama_stack import LlamaStackBackend

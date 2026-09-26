@@ -37,6 +37,7 @@ from typing import Any, Protocol
 
 import httpx
 
+from acc import secret_source
 from acc.mcp.errors import MCPConnectionError, MCPProtocolError, MCPTransportError
 from acc.mcp.manifest import MCPManifest
 
@@ -101,16 +102,13 @@ class HTTPTransport:
         # static ``api_key_env`` behaviour, fully backward-compatible.
         self._bearer_resolver = bearer_resolver
         headers = {"Content-Type": "application/json"}
-        if manifest.auth != "oauth" and manifest.api_key_env:
-            api_key = os.environ.get(manifest.api_key_env, "")
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            else:
-                logger.warning(
-                    "mcp: api_key_env=%r set on server_id=%r but env var is "
-                    "empty — sending request unauthenticated",
-                    manifest.api_key_env, manifest.server_id,
-                )
+        if (manifest.auth != "oauth" and manifest.api_key_env
+                and not secret_source.get(manifest.api_key_env)):
+            logger.warning(
+                "mcp: api_key_env=%r set on server_id=%r but no source holds "
+                "it — requests go unauthenticated until one does",
+                manifest.api_key_env, manifest.server_id,
+            )
         self._client = httpx.AsyncClient(
             base_url=manifest.url,
             timeout=manifest.timeout_s,
@@ -118,12 +116,11 @@ class HTTPTransport:
         )
 
     async def send_rpc(self, envelope: dict) -> dict:
-        # Per-request OAuth bearer (resolved fresh so an expired token refreshes).
-        req_headers: dict | None = None
-        if self._manifest.auth == "oauth" and self._bearer_resolver is not None:
-            token = await self._bearer_resolver()
-            if token:
-                req_headers = {"Authorization": f"Bearer {token}"}
+        # Resolved per request: an OAuth bearer refreshes, a rotated static key
+        # is used on the next call.
+        req_headers: dict | None = await _auth_headers(
+            self._manifest, self._bearer_resolver,
+        ) or None
         try:
             response = await self._client.post("", json=envelope, headers=req_headers)
         except httpx.TimeoutException as exc:
@@ -447,16 +444,13 @@ class StreamableHTTPTransport:
             # refuse the request outright.
             "Accept": "application/json, text/event-stream",
         }
-        if manifest.auth != "oauth" and manifest.api_key_env:
-            api_key = os.environ.get(manifest.api_key_env, "")
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            else:
-                logger.warning(
-                    "mcp: api_key_env=%r set on server_id=%r but env var is "
-                    "empty -- sending request unauthenticated",
-                    manifest.api_key_env, manifest.server_id,
-                )
+        if (manifest.auth != "oauth" and manifest.api_key_env
+                and not secret_source.get(manifest.api_key_env)):
+            logger.warning(
+                "mcp: api_key_env=%r set on server_id=%r but no source holds "
+                "it -- requests go unauthenticated until one does",
+                manifest.api_key_env, manifest.server_id,
+            )
         self._client = httpx.AsyncClient(
             timeout=manifest.timeout_s,
             headers=headers,
@@ -493,11 +487,7 @@ class StreamableHTTPTransport:
         return body
 
     async def _post(self, envelope: dict, *, notification: bool = False) -> dict:
-        req_headers: dict = {}
-        if self._manifest.auth == "oauth" and self._bearer_resolver is not None:
-            token = await self._bearer_resolver()
-            if token:
-                req_headers["Authorization"] = f"Bearer {token}"
+        req_headers: dict = await _auth_headers(self._manifest, self._bearer_resolver)
         if self._session_id:
             req_headers[SESSION_ID_HEADER] = self._session_id
             req_headers[PROTOCOL_VERSION_HEADER] = PROTOCOL_VERSION
@@ -599,6 +589,31 @@ class StreamableHTTPTransport:
             )
 
 
+async def _auth_headers(manifest: Any, bearer_resolver: Any) -> dict[str, str]:
+    """The ``Authorization`` header for one request, resolved now.
+
+    ``auth: oauth`` mints through the credential broker for the requester of the
+    task being served; with no broker the call is **refused** -- until F3 it went
+    out unauthenticated and said nothing. A static ``api_key_env`` is read from
+    the secret source per request, so a rotated credential is used on the next
+    call without a restart.
+    """
+    if manifest.auth == "oauth":
+        if bearer_resolver is None:
+            raise MCPTransportError(
+                f"server_id={manifest.server_id!r} declares auth: oauth, and no "
+                f"credential broker is configured for this agent -- refusing "
+                f"rather than sending the request unauthenticated"
+            )
+        token = await bearer_resolver()
+        return {"Authorization": f"Bearer {token}"} if token else {}
+    if manifest.api_key_env:
+        key = secret_source.get(manifest.api_key_env)
+        if key:
+            return {"Authorization": f"Bearer {key}"}
+    return {}
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -610,11 +625,20 @@ def build_transport(manifest: MCPManifest) -> Transport:
     Adding a new transport: implement the Protocol, dispatch here.
     The :class:`MCPClient` knows nothing about the concrete classes
     beyond the Protocol surface.
+
+    An ``auth: oauth`` manifest gets the live credential broker's resolver
+    here, so every construction path is covered (F3): it mints per request for
+    the person whose task the call serves.
     """
+    resolver = None
+    if manifest.auth == "oauth":
+        from acc.credentials.live import bearer_resolver  # noqa: PLC0415
+
+        resolver = bearer_resolver(manifest.oauth_provider)
     if manifest.transport == "http":
-        return HTTPTransport(manifest)
+        return HTTPTransport(manifest, bearer_resolver=resolver)
     if manifest.transport == "streamable-http":
-        return StreamableHTTPTransport(manifest)
+        return StreamableHTTPTransport(manifest, bearer_resolver=resolver)
     if manifest.transport == "stdio":
         return StdioTransport(manifest)
     raise NotImplementedError(

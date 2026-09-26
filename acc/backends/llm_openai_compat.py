@@ -71,12 +71,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 from typing import Any
 
 import httpx
 
+from acc import secret_source
 from acc.backends import BackendConnectionError, LLMCallError
 
 logger = logging.getLogger(__name__)
@@ -176,10 +176,15 @@ class OpenAICompatBackend:
         embedding_model_path: str = "/app/models/all-MiniLM-L6-v2",
         timeout_s: int = 120,
         max_retries: int = 3,
+        accepts_images: bool | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        # F2b -- only a model DECLARED to take images gets them: the gateway
+        # would forward an image to a text-only model, which then answers as
+        # if it had seen nothing. Undeclared is refused.
+        self._accepts_images = accepts_images
         self._model = model
-        self._api_key = os.environ.get(api_key_env, "") if api_key_env else ""
+        self._api_key = secret_source.get(api_key_env) if api_key_env else ""
         self._api_key_env = api_key_env
         self._embedding_model_path = embedding_model_path
         self._timeout_s = timeout_s
@@ -226,6 +231,12 @@ class OpenAICompatBackend:
             :class:`~acc.backends.BackendConnectionError`: When the endpoint is
                 unreachable (network error before any HTTP exchange).
         """
+        if content and self._accepts_images is not True:
+            from acc.backends import ContentNotSupported  # noqa: PLC0415
+
+            raise ContentNotSupported(
+                "openai_compat", model=self._model or "?", declared=self._accepts_images,
+            )
         payload: dict[str, Any] = {
             "model": self._model,
             "messages": [
@@ -410,9 +421,11 @@ class OpenAICompatBackend:
     # ------------------------------------------------------------------
 
     def _headers(self) -> dict[str, str]:
-        """Build request headers.  Re-reads the env var on each call so that
-        key rotation takes effect without restarting the agent."""
-        key = os.environ.get(self._api_key_env, "") if self._api_key_env else self._api_key
+        """Build request headers.  Re-reads the key on each call so that
+        rotation takes effect without restarting the agent -- which, since F3,
+        is true: a mounted Secret (``ACC_SECRET_SOURCE=mounted``) changes under
+        a running process, where an environment variable never did."""
+        key = secret_source.get(self._api_key_env) if self._api_key_env else self._api_key
         h: dict[str, str] = {"Content-Type": "application/json"}
         if key:
             h["Authorization"] = f"Bearer {key}"

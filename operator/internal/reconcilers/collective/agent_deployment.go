@@ -270,6 +270,10 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 		return 0, 0, false, fmt.Errorf("build manifest delivery for %s: %w", deployName, err)
 	}
 
+	// F3 Phase 2 -- the credentials Secret, mounted (nil-safe: all empty
+	// when the corpus declares none).
+	secretMounts, secretVolumes, secretEnv := SecretMountDelivery(corpus)
+
 	image := util.ComponentImage(corpus, "acc-agent-core", corpus.Spec.Version)
 
 	// Proposal 024 — agents are StatefulSets so each replica gets its own
@@ -344,7 +348,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 										},
 									},
 								},
-							}, manifestEnv...), extraEnv...),
+							}, manifestEnv...), append(extraEnv, secretEnv...)...),
 							Resources: derefResources(roleSpec.Resources),
 							VolumeMounts: append([]corev1.VolumeMount{
 								{Name: "acc-config", MountPath: "/etc/acc"},
@@ -373,7 +377,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 								// operator re-reconciles AccPackageInstall after a
 								// pod restart (032 §11 tail / proposal 034 §8-Q3).
 								{Name: "acc-packages", MountPath: "/var/lib/acc"},
-							}, manifestMounts...),
+							}, append(manifestMounts, secretMounts...)...),
 						},
 					},
 					Volumes: append([]corev1.Volume{
@@ -411,7 +415,7 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 							Name:         "acc-packages",
 							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
 						},
-					}, manifestVolumes...),
+					}, append(manifestVolumes, secretVolumes...)...),
 					// Per-replica /app/data PVC is the StatefulSet's
 					// VolumeClaimTemplate above — no extra Volume entry here.
 				},
@@ -498,6 +502,52 @@ func (r *AgentDeploymentReconciler) reconcileRoleDeployment(
 // vLLM model endpoint resolved from the referenced InferenceService status;
 // the rendered acc-config.yaml carries the ${ACC_VLLM_INFERENCE_URL}
 // placeholder that this env var satisfies.
+// Where the agents find a mounted credentials Secret. Matches the runtime's
+// default (acc/secret_source.py DEFAULT_DIR); set explicitly anyway, so the
+// two cannot drift apart silently.
+const (
+	SecretMountDir    = "/var/run/acc/secrets"
+	secretMountVolume = "acc-secrets"
+)
+
+// SecretMountDelivery returns the mount, volume and env that put
+// corpus.spec.secretMount in front of every agent -- or three empty slices
+// when the corpus declares none.
+//
+// The Secret is mounted as a whole volume at a directory, never per key with
+// subPath: the kubelet does not refresh subPath mounts, and rotation without a
+// restart is the point. 0440 keeps the files readable by the agent's group
+// (OpenShift runs it with an arbitrary UID and GID 0) and by nobody else.
+func SecretMountDelivery(corpus *accv1alpha1.AgentCorpus) (
+	[]corev1.VolumeMount, []corev1.Volume, []corev1.EnvVar,
+) {
+	sm := corpus.Spec.SecretMount
+	if sm == nil || sm.SecretName == "" {
+		return nil, nil, nil
+	}
+	source := &corev1.SecretVolumeSource{
+		SecretName:  sm.SecretName,
+		DefaultMode: ptr.To[int32](0o440),
+		Optional:    ptr.To(false),
+	}
+	for _, key := range sm.Items {
+		source.Items = append(source.Items, corev1.KeyToPath{Key: key, Path: key})
+	}
+	return []corev1.VolumeMount{{
+			Name:      secretMountVolume,
+			MountPath: SecretMountDir,
+			ReadOnly:  true,
+		}},
+		[]corev1.Volume{{
+			Name:         secretMountVolume,
+			VolumeSource: corev1.VolumeSource{Secret: source},
+		}},
+		[]corev1.EnvVar{
+			{Name: "ACC_SECRET_SOURCE", Value: "mounted"},
+			{Name: "ACC_SECRET_DIR", Value: SecretMountDir},
+		}
+}
+
 func BuildExtraEnv(
 	corpus *accv1alpha1.AgentCorpus,
 	collective *accv1alpha1.AgentCollective,

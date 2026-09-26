@@ -154,3 +154,25 @@ skipping the journal, and failover not forwarding `content` each fail it.
 - [ ] `image_url` on `/v1/chat/completions` (open question 3) — follows the web path.
 - [ ] The episode text noting an image (open question 4).
 - [ ] The TUI cannot attach (it has no picker); it shows that a turn had one.
+
+
+## APPLIED — F2b, image support per model, 2026-09-26
+
+Found live on lighthouse the day v0.24.0 shipped: `analyst` → `openai_compat` → MaaS
+`gpt-oss-120b` (text-only). The image travelled — web GUI store, shared `/logs`, the
+agent, `image_url`, the gateway — and the model answered "unable to see the image".
+F2 had asked the **backend**; image support is a property of the **model**.
+
+- [x] `ModelEntry.accepts_images: bool | None` (undeclared = `None`), `LLMConfig.accepts_images`
+      (`ACC_LLM_ACCEPTS_IMAGES`); carried by `model_env`, `llm_failover._llm_overlay`, the
+      `llm:` builders; listed in `_entry_to_dict` so a registry save keeps it (the `zone`
+      lesson).
+- [x] `openai_compat`: an image goes only to a model declared `true`; otherwise
+      `ContentNotSupported` naming the model and the field, before any request.
+      `anthropic`: refused only when declared `false`. Text-only backends unchanged.
+- [x] `attachments.accepts_images(backend, declared)` — the web GUI's capability route
+      and its compose-time warning follow the declaration.
+- [x] `tests/test_image_capability_per_model.py` (23).
+- [ ] Declare `accepts_images: true` on the deployment's vision models (lighthouse /
+      bb3 have none declared today — which is the honest state: no model there is
+      known to read images through its gateway).

@@ -252,8 +252,11 @@ def headers_for(
     if not destination.credential_env:
         return {}
 
-    env = environ if environ is not None else os.environ
-    value = str(env.get(destination.credential_env, "")).strip()
+    # F3 -- through the secret source: a mounted Secret is read at call time
+    # and never enters the environment.
+    from acc import secret_source  # noqa: PLC0415
+
+    value = secret_source.get(destination.credential_env, environ=environ).strip()
     if not value:
         raise EgressError(
             f"{destination.host} needs {destination.credential_env}, which is not "

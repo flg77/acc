@@ -91,6 +91,7 @@ def _build_parser() -> argparse.ArgumentParser:
         scan_cmd,
         nats_cmd,
         llm_cmd,
+        oauth_cmd,
         logs_cmd,
         mcp_cmd,
         trace_cmd,
@@ -123,6 +124,7 @@ def _build_parser() -> argparse.ArgumentParser:
     checkpoints_cmd.register(sub)
     collective_cmd.register(sub)
     nats_cmd.register(sub)
+    oauth_cmd.register(sub)
     llm_cmd.register(sub)
     logs_cmd.register(sub)
     mcp_cmd.register(sub)

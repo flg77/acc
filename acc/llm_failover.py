@@ -453,7 +453,7 @@ def _llm_overlay(entry: ModelEntry) -> dict[str, object]:
     target: that function boots a new agent on a model, this one points an
     in-process client at it.
     """
-    out: dict[str, str] = {"backend": entry.backend}
+    out: dict[str, object] = {"backend": entry.backend}
     if entry.backend == "anthropic":
         if entry.model:
             out["anthropic_model"] = entry.model
@@ -471,6 +471,8 @@ def _llm_overlay(entry: ModelEntry) -> dict[str, object]:
             out["api_key_env"] = entry.api_key_env
     if entry.context_window:
         out["context_window"] = entry.context_window
+    if entry.accepts_images is not None:
+        out["accepts_images"] = entry.accepts_images
     return out
 
 
