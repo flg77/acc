@@ -515,6 +515,10 @@ class NATSObserver:
             # HG-40.1b item 4 -- who asked, so a non-operator's Comms / Board
             # shows their own tasks only.
             "requested_by": str(data.get("requested_by", "") or ""),
+            # `20260830-attachment-delivery-path` -- a terminal cannot show the
+            # image, but an operator watching must be able to tell a turn had
+            # one: the references (short), never the bytes.
+            **_attachment_refs(data),
         })
 
         self._snapshot.last_updated_ts = time.time()
@@ -1047,6 +1051,12 @@ class NATSObserver:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _attachment_refs(data: dict) -> dict:
+    """``{"attachments": [short sha256, ...]}`` when the signal names images."""
+    refs = [str(r)[:12] for r in (data.get("attachments") or []) if isinstance(r, str)]
+    return {"attachments": refs[:8]} if refs else {}
+
 
 def _signal_key_field(signal_type: str, data: dict) -> str:
     """Return a concise summary of the key payload field for signal_flow_log."""

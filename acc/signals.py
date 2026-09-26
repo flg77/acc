@@ -183,12 +183,17 @@ Payload schema::
     {
         "signal_type": "OVERSIGHT_DECISION",
         "oversight_id": "<id from HumanOversightQueue.submit()>",
-        "decision":     "APPROVE" | "REJECT",
+        "decision":     "APPROVE" | "REJECT" | "DELEGATE",
         "approver_id":  "<operator id or 'tui:anonymous'>",
         "reason":       "<optional, free text>",
+        "delegate_to":  "<DELEGATE only: a person or a tier>",
         "ts":           <unix seconds float>,
         "collective_id": "<cid>"
     }
+
+``DELEGATE`` (`20260925-decisions-that-wait-and-move`, UX-06) hands the
+decision to another person or tier and leaves the row PENDING; an agent that
+predates it logs an unknown decision and changes nothing.
 
 Published by the TUI Compliance screen approve/reject buttons and
 consumed by the arbiter, which releases or escalates the underlying

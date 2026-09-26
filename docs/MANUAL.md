@@ -97,7 +97,9 @@ required).
 - **How long you have, and who has signed** — a decision that expires shows
   its countdown (`expires in 4m00s`, then `expired`), because a gate that
   times out is rejected and a deadline you cannot see is a decision you can
-  lose by reading slowly. A decision needing two approvers shows `PENDING
+  lose by reading slowly. Only a capability gate or a question the agent is
+  waiting on shows one: nothing expires a proposal, so it gets no countdown
+  rather than a false one. A decision needing two approvers shows `PENDING
   1/2` and names who has approved so far, read from the row itself so it
   moves when the second approver signs.
 - **Whose work this is** — the panel names the person the task was admitted
@@ -164,8 +166,17 @@ required).
   acc-tui`: the same runtime, its own memory / sessions / trace / overlays,
   owned by one person. `export` moves the definition, not the state.
 - **OpenAI-compatible endpoint** — set `ACC_COMPAT_API_KEYS`; `model` names a
-  role; gated work returns 202 with a pollable handle; `X-ACC-Session` names a
-  thread.
+  role; work still running after 120 s (usually a tool call held for approval)
+  returns 202 with a pollable handle, and the poll names the oversight row that
+  holds it; `usage` is the task's own count, `null` when not reported;
+  `X-ACC-Session` names a thread; `acc-cli doctor --check compat`. See
+  `docs/howto-openai-compat.md`.
+- **Images in a prompt** (web GUI) — *Attach image* on the Prompt page. The image
+  reaches a role bound to `anthropic` or `openai_compat`; any other backend
+  **refuses the turn** rather than answering without it. The web GUI and the
+  agents must share `/logs` (the compose file mounts it). Stored images follow
+  the session retention policy; `acc-cli doctor --check attachments` shows the
+  store.
 
 ## Configuration
 
@@ -192,7 +203,23 @@ still needs. A two-approver row shows `PENDING 1/2` and who has signed.
 | `n` | type a note onto the decision — kept on **your** approval record |
 | `c` | ask about this decision; the request **stays pending** while you do |
 | `r` | reject with a reason |
+| `d` | **defer** — back in 5 min, 15 min or 1 hour, or when the agent answers the question you asked about it; it always comes back a minute before it could expire, and the panel says when it had to pull the time in |
+| `h` | **hand off** to a person (`webgui:alice`, `slack:U1`) or a tier (`operator`) — it stays pending, anyone who could decide it still can, and it stops being raised here |
+| `y` / `Y` | copy the decision id / the command it runs |
 | `Esc` | later — still pending; `Ctrl+G` brings it back |
+
+A category gate at LOW or MEDIUM also offers **`4` allow this class for 30 min**:
+it approves this one and, for 30 minutes of this session, further gates of the
+same category, risk and requester — never a destructive call, never HIGH, never
+someone else's work, and never written anywhere that outlives the TUI. `3` is
+still **deny**. `/snooze` lists what is running and `/snooze off` ends it;
+`/deferred` lists deferrals (`/deferred now` brings them back) and `/delegated`
+what you handed on. `acc-cli oversight delegate <id> --to <person|tier>` does the
+same hand-off from a shell.
+
+`ACC_PROMPT_LINEAR=1` renders the panel in reading order — the options, then the
+highlighted option's details under a label — for a screen reader, instead of the
+details boxed beside the options.
 
 A reply proposing several steps keeps the compact list instead, where `1`/`2`
 take all of them and `a`/`d` take the highlighted row. `ACC_PROMPT_PANEL=0`

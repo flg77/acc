@@ -358,6 +358,19 @@ class PromptScreen(NavScreen):
         # request re-appeared for ~30 s (v0.17.0 lighthouse smoke).  Forgotten
         # once the snapshot stops listing the row.
         self._answered_gate_ids: set[str] = set()
+        # `20260925-decisions-that-wait-and-move` -- UX-05 deferrals (by id),
+        # the thread each deferred decision carried, and class snoozes
+        # ((category, risk, requester) -> until epoch ms); UX-06 decisions this
+        # pane handed on, held back until the heartbeat shows the delegation.
+        # None of it is saved with the session: a deferral or a snooze never
+        # outlives the TUI that was given it.
+        self._deferred: dict = {}
+        self._deferred_exchanges: dict[str, list] = {}
+        self._class_snoozes: dict = {}
+        self._delegated_here: dict[str, str] = {}
+        self._withheld_gates: list = []
+        self._last_gate_snap = None
+        self._panel_chat_oid: str = ""
         # UX-04 -- a question asked ABOUT the open decision (`c`): the next send
         # belongs to the panel, and that task's reply renders under the question.
         self._panel_chat_pending: bool = False
@@ -785,8 +798,18 @@ class PromptScreen(NavScreen):
         # gave earlier in the same task resolves itself (still a row, with
         # the reason on it).
         cards = self._apply_task_grants(cards)
+        # `20260925-decisions-that-wait-and-move` -- snoozed classes resolve
+        # themselves; deferred and handed-on decisions wait out of sight.
+        self._last_gate_snap = snap
+        now_ms = int(time.time() * 1000)
+        cards = self._apply_class_snoozes(cards, now_ms)
+        back = self._deferrals_due(cards, now_ms)
+        cards, self._withheld_gates = self._withhold(cards, now_ms)
         self._pending_gates = cards
         panel = self._acc_prompt_panel()
+        if panel is not None:
+            from acc.tui.actor import tui_actor, tui_actor_tier  # noqa: PLC0415
+            panel.viewer, panel.viewer_tier = tui_actor(), tui_actor_tier()
 
         # A destructive question is answered on its own, in the panel, whatever
         # ACC_PROMPT_PANEL or the region switch say: never batched, never one
@@ -800,6 +823,7 @@ class PromptScreen(NavScreen):
             new = first.oversight_id not in self._seen_gate_ids
             self._seen_gate_ids |= {c.oversight_id for c in cards}
             panel.show([first], more=len(cards) - 1)
+            self._restore_thread(panel, first.oversight_id, back)
             if new:
                 panel.focus()
             return
@@ -828,6 +852,7 @@ class PromptScreen(NavScreen):
             group = groups[0]
             proposal = proposals.get(group[0].task_id) if group else None
             panel.show(group, proposal=proposal, more=0)
+            self._restore_thread(panel, group[0].oversight_id, back)
             if new_ids:
                 panel.focus()
             return
@@ -836,6 +861,186 @@ class PromptScreen(NavScreen):
         widget.show(cards)
         if new_ids:
             widget.focus()
+
+    # -- 20260925-decisions-that-wait-and-move --------------------------------
+
+    def _apply_class_snoozes(self, cards: list, now_ms: int) -> list:
+        """UX-05 -- a gate in a snoozed class approves itself, as a real
+        OVERSIGHT_DECISION with the snooze as its reason.  Expired snoozes are
+        dropped here; nothing ineligible is ever reached (``snooze_eligible``)."""
+        from acc.tui.decision_timing import (  # noqa: PLC0415
+            active_snoozes, snooze_eligible, snooze_key, snooze_label,
+        )
+        expired = set(self._class_snoozes) - set(active_snoozes(self._class_snoozes, now_ms))
+        for key in expired:
+            self._class_snoozes.pop(key, None)
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"snooze ended: {snooze_label(key)} — asked again from now",
+                "ts": time.time(), "blocked": False,
+            })
+        if not self._class_snoozes:
+            return cards
+        kept = []
+        for c in cards:
+            key = snooze_key(c)
+            until = self._class_snoozes.get(key)
+            if (until and snooze_eligible(c)
+                    and c.oversight_id not in self._auto_resolved_gate_ids):
+                self._auto_resolved_gate_ids.add(c.oversight_id)
+                stamp = time.strftime("%H:%M", time.localtime(until / 1000))
+                self._resolve_gate(
+                    c.oversight_id, approve=True,
+                    reason=f"snoozed: {snooze_label(key)} until {stamp} (this session)",
+                )
+            elif c.oversight_id not in self._auto_resolved_gate_ids:
+                kept.append(c)
+        return kept
+
+    def _deferrals_due(self, cards: list, now_ms: int) -> set[str]:
+        """UX-05 -- deferrals whose time has come: announced, and made new
+        again so the decision takes focus.  A deferred row decided elsewhere
+        is dropped with a line saying so."""
+        live = {c.oversight_id for c in cards}
+        back: set[str] = set()
+        for oid, deferral in list(self._deferred.items()):
+            if oid not in live:
+                self._deferred.pop(oid, None)
+                self._deferred_exchanges.pop(oid, None)
+                self._append_history({
+                    "role": "system", "task_id": "",
+                    "text": f"the deferred decision '{deferral.title}' was settled elsewhere",
+                    "ts": time.time(), "blocked": False,
+                })
+                continue
+            if deferral.is_due(now_ms):
+                self._deferred.pop(oid, None)
+                self._dismissed_gate_ids.discard(oid)
+                self._seen_gate_ids.discard(oid)
+                back.add(oid)
+                self._append_history({
+                    "role": "system", "task_id": "",
+                    "text": f"back: the deferred decision '{deferral.title}'",
+                    "ts": time.time(), "blocked": False,
+                })
+        return back
+
+    def _withhold(self, cards: list, now_ms: int) -> tuple[list, list]:
+        """Split *cards* into what the pane raises and what waits out of sight:
+        deferred decisions not yet due, and decisions handed to someone else."""
+        from acc.tui.acc_prompt import is_for_viewer  # noqa: PLC0415
+        from acc.tui.actor import tui_actor, tui_actor_tier  # noqa: PLC0415
+        me, tier = tui_actor(), tui_actor_tier()
+        shown, held = [], []
+        for c in cards:
+            to = c.delegated_to or self._delegated_here.get(c.oversight_id, "")
+            if c.oversight_id in self._deferred:
+                held.append(c)
+            elif to and not is_for_viewer(to, me, tier):
+                held.append(c)
+            else:
+                shown.append(c)
+        # Forget local hand-offs once the heartbeat carries them, or the row is gone.
+        live = {c.oversight_id: c for c in cards}
+        for oid in list(self._delegated_here):
+            if oid not in live or live[oid].delegated_to:
+                self._delegated_here.pop(oid, None)
+        return shown, held
+
+    def _restore_thread(self, panel, oversight_id: str, back: set[str]) -> None:
+        if oversight_id in back and oversight_id in self._deferred_exchanges:
+            try:
+                panel.restore_exchanges(self._deferred_exchanges.pop(oversight_id))
+            except Exception:  # noqa: BLE001
+                logger.debug("prompt: thread restore failed", exc_info=True)
+
+    def on_acc_prompt_panel_deferred(self, message) -> None:
+        """UX-05 -- withhold the decision until its time; the promise is kept
+        by ``decision_timing.defer``, which never lets it outlive a deadline."""
+        from acc.tui.decision_timing import defer, describe  # noqa: PLC0415
+        now_ms = int(time.time() * 1000)
+        panel = self._acc_prompt_panel()
+        cards = {c.oversight_id: c for c in getattr(self, "_pending_gates", []) or []}
+        for oid in message.oversight_ids:
+            card = cards.get(oid)
+            deadline = card.timeout_ms if card is not None and card.deadline_enforced else 0
+            deferral, why_not = defer(
+                oversight_id=oid, title=message.title, now_ms=now_ms,
+                seconds=message.seconds, deadline_ms=deadline,
+                condition=message.condition,
+            )
+            if deferral is None:
+                if panel is not None:
+                    panel.say(why_not)
+                return
+            self._deferred[oid] = deferral
+            if panel is not None:
+                self._deferred_exchanges[oid] = panel.exchanges
+            self._append_history({
+                "role": "system", "task_id": "",
+                "text": f"{describe(deferral, now_ms)} — '{message.title}'. /deferred lists it",
+                "ts": time.time(), "blocked": False,
+            })
+        if panel is not None:
+            panel.clear()
+        self._refresh_gate_cards(self._last_gate_snap)
+        try:
+            self.query_one("#prompt-textarea", TextArea).focus()
+        except Exception:  # noqa: BLE001
+            logger.debug("prompt: refocus after deferral failed", exc_info=True)
+
+    def on_acc_prompt_panel_delegated(self, message) -> None:
+        """UX-06 -- hand the decision to a person or a tier.  It stays PENDING."""
+        from acc.tui.screens.compliance import _OversightAction  # noqa: PLC0415
+        for oid in message.oversight_ids:
+            try:
+                self.app.post_message(_OversightAction(
+                    action="delegate", oversight_id=oid, reason=message.note,
+                    delegate_to=message.to,
+                ))
+            except Exception as exc:  # noqa: BLE001
+                self._append_history({
+                    "role": "system", "task_id": "",
+                    "text": f"hand-off failed: {exc}",
+                    "ts": time.time(), "blocked": True,
+                })
+                return
+            self._delegated_here[oid] = message.to
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": (f"handed to {message.to} — it stays pending, and anyone who "
+                     f"could decide it still can. /delegated lists it"),
+            "ts": time.time(), "blocked": False,
+        })
+        panel = self._acc_prompt_panel()
+        if panel is not None:
+            panel.clear()
+        self._refresh_gate_cards(self._last_gate_snap)
+        try:
+            self.query_one("#prompt-textarea", TextArea).focus()
+        except Exception:  # noqa: BLE001
+            logger.debug("prompt: refocus after hand-off failed", exc_info=True)
+
+    def on_acc_prompt_panel_copy_requested(self, message) -> None:
+        """UX-10 -- copy the id or the command."""
+        from acc.tui.clipboard import copy_text  # noqa: PLC0415
+        host = copy_text(self.app, message.text)
+        where = "" if host else " (in-app only — this terminal did not take it)"
+        panel = self._acc_prompt_panel()
+        if panel is not None:
+            panel.say(f"copied {message.what}{where}")
+
+    def _record_snooze(self, key) -> None:
+        from acc.tui.decision_timing import SNOOZE_S, snooze_label  # noqa: PLC0415
+        until = int(time.time() * 1000) + SNOOZE_S * 1000
+        self._class_snoozes[tuple(key)] = until
+        stamp = time.strftime("%H:%M", time.localtime(until / 1000))
+        self._append_history({
+            "role": "system", "task_id": "",
+            "text": (f"snoozed until {stamp}: {snooze_label(tuple(key))} are approved "
+                     f"without asking, in this session only. /snooze off ends it"),
+            "ts": time.time(), "blocked": False,
+        })
 
     def _apply_task_grants(self, cards: list) -> list:
         from acc.tui.gate_cards import is_destructive  # noqa: PLC0415
@@ -860,6 +1065,8 @@ class PromptScreen(NavScreen):
     def on_permission_request_decided(self, message) -> None:
         for oid in message.oversight_ids:
             self._resolve_gate(oid, approve=message.approve, reason=message.reason)
+        if getattr(message, "snooze", None):
+            self._record_snooze(message.snooze)
         if message.grant:
             self._task_grants.add(message.grant)
             _task, kind, target = message.grant
@@ -909,6 +1116,23 @@ class PromptScreen(NavScreen):
         if not task_id or task_id != self._panel_chat_task:
             return
         self._panel_chat_task = ""
+        oid = self._panel_chat_oid
+        if oid and oid in self._deferred:
+            # UX-05 -- the decision is deferred: keep the answer with its
+            # thread, and bring it back now if that is what it was waiting for.
+            thread = self._deferred_exchanges.setdefault(oid, [])
+            for exchange in reversed(thread):
+                if not exchange[1]:
+                    thread[thread.index(exchange)] = (exchange[0], (text or "").strip())
+                    break
+            else:
+                thread.append(("", (text or "").strip()))
+            deferral = self._deferred[oid]
+            if deferral.condition == "answered":
+                from dataclasses import replace as _replace  # noqa: PLC0415
+                self._deferred[oid] = _replace(deferral, due_ms=0)
+                self._refresh_gate_cards(self._last_gate_snap)
+            return
         panel = self._acc_prompt_panel()
         if panel is None or panel.decision is None:
             return
@@ -932,6 +1156,8 @@ class PromptScreen(NavScreen):
                 oid, approve=message.approve, reason=message.note,
                 answer=getattr(message, "answer", ""),
             )
+        if getattr(message, "snooze", None):
+            self._record_snooze(message.snooze)
         if message.note:
             self._append_history({
                 "role": "system", "task_id": "",
@@ -976,6 +1202,7 @@ class PromptScreen(NavScreen):
         point of the panel: a doubt does not have to become a dismissal.
         """
         decision = message.decision
+        self._panel_chat_oid = decision.oversight_ids[0] if decision.oversight_ids else ""
         try:
             ta = self.query_one("#prompt-textarea", TextArea)
             ta.text = f"About the pending decision '{decision.title}': "
@@ -1934,6 +2161,58 @@ class PromptScreen(NavScreen):
             return
         if intent.kind == _sc.KIND_UNKNOWN:
             _system(intent.error, blocked=True)
+            return
+
+        # `20260925-decisions-that-wait-and-move` -- what is waiting out of sight.
+        if intent.kind == _sc.KIND_DEFERRED:
+            from acc.tui.decision_timing import describe  # noqa: PLC0415
+            now_ms = int(time.time() * 1000)
+            if not self._deferred:
+                _system("no deferred decisions.")
+                return
+            if intent.args.get("now"):
+                from dataclasses import replace as _replace  # noqa: PLC0415
+                for oid, d in list(self._deferred.items()):
+                    self._deferred[oid] = _replace(d, due_ms=0)
+                self._refresh_gate_cards(self._last_gate_snap)
+                return
+            _system("\n".join(
+                f"{d.oversight_id[:12]}  {d.title} — {describe(d, now_ms)}"
+                for d in sorted(self._deferred.values(), key=lambda x: x.due_ms)
+            ))
+            return
+        if intent.kind == _sc.KIND_SNOOZE:
+            from acc.tui.decision_timing import active_snoozes, snooze_label  # noqa: PLC0415
+            now_ms = int(time.time() * 1000)
+            running = active_snoozes(self._class_snoozes, now_ms)
+            if intent.args.get("off"):
+                self._class_snoozes.clear()
+                _system(f"snoozes ended ({len(running)}) — every gate is asked again")
+                return
+            if not running:
+                _system("no snoozes running.")
+                return
+            _system("\n".join(
+                f"{snooze_label(k)} — until "
+                f"{time.strftime('%H:%M', time.localtime(until / 1000))}"
+                for k, until in sorted(running.items(), key=lambda kv: kv[1])
+            ))
+            return
+        if intent.kind == _sc.KIND_DELEGATED:
+            held = [
+                c for c in (self._withheld_gates or [])
+                if (c.delegated_to or self._delegated_here.get(c.oversight_id))
+                and c.oversight_id not in self._deferred
+            ]
+            if not held:
+                _system("nothing handed on and still waiting.")
+                return
+            _system("\n".join(
+                f"{c.oversight_id[:12]}  {c.summary[:60]} — with "
+                f"{c.delegated_to or self._delegated_here.get(c.oversight_id)}"
+                + (f" (by {c.delegated_by})" if c.delegated_by else "")
+                for c in held
+            ))
             return
 
         # Proposal 044 (B8) — resolve a pending gate inline (the GATE CARD).

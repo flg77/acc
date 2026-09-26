@@ -1275,9 +1275,12 @@ class _OversightAction(Message):
 
     def __init__(
         self, action: str, oversight_id: str = "", reason: str = "", answer: str = "",
+        delegate_to: str = "",
     ) -> None:
         super().__init__()
-        self.action = action  # "approve" | "reject"
+        self.action = action  # "approve" | "reject" | "delegate"
         self.oversight_id = oversight_id
         self.reason = reason
         self.answer = answer
+        # `20260925-decisions-that-wait-and-move` (UX-06) -- a person or tier.
+        self.delegate_to = delegate_to

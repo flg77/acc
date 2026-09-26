@@ -209,6 +209,32 @@ def build_routed_task(data: dict, target_role: str, routed_by: str) -> dict:
     return routed
 
 
+def _summed_usage(*parts: Any) -> dict:
+    """Add per-turn usage dicts; empty when none of them reported any."""
+    out: dict[str, int] = {}
+    for part in parts:
+        for key, value in (part or {}).items():
+            try:
+                out[key] = out.get(key, 0) + int(value or 0)
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _usage_field(usage: Any) -> dict:
+    """``{"usage": {prompt_tokens, completion_tokens, total_tokens}}`` for a
+    TASK_COMPLETE, or ``{}`` when the task's model calls reported nothing."""
+    if not usage:
+        return {}
+    prompt = int(usage.get("prompt_tokens", 0) or 0)
+    completion = int(usage.get("completion_tokens", 0) or 0)
+    return {"usage": {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+    }}
+
+
 def _extract_eval_outcome(output: str) -> "Optional[dict]":
     """PR-MM3 — surface a reviewer's structured verdict from its LLM
     output so the arbiter's PlanExecutor critic loop
@@ -435,6 +461,43 @@ def failed_task_result(exc: BaseException) -> CognitiveResult:
     reason = f"task_error: {type(exc).__name__}: {exc}"
     return CognitiveResult(blocked=True, block_reason=reason[:400])
 
+
+
+#: What the heartbeat may carry of a row's evidence (UX-03): enough lines to
+#: show what a call runs, never a payload.
+_HEARTBEAT_EVIDENCE_LINES = 8
+_HEARTBEAT_EVIDENCE_CHARS = 240
+
+
+def _panel_fields(item: "Any") -> dict:
+    """The decision panel's view of a pending row, for the heartbeat.
+
+    ``20260925-decisions-that-wait-and-move``.  Evidence is masked at dispatch
+    (``capability_dispatch._mask_secrets``) and capped here; ``timeout_ms`` is the
+    row's **absolute** deadline; ``delegations`` names who handed it to whom.
+    """
+    out: dict = {}
+    evidence = [
+        str(line)[:_HEARTBEAT_EVIDENCE_CHARS]
+        for line in (getattr(item, "evidence", None) or [])[:_HEARTBEAT_EVIDENCE_LINES]
+    ]
+    if evidence:
+        out["evidence"] = evidence
+    for name in ("requester", "ceiling"):
+        value = str(getattr(item, name, "") or "")
+        if value:
+            out[name] = value
+    timeout_ms = int(getattr(item, "timeout_ms", 0) or 0)
+    if timeout_ms:
+        out["timeout_ms"] = timeout_ms
+    delegations = [
+        {"by": str(d.get("by", "")), "to": str(d.get("to", "")),
+         "ts_ms": int(d.get("ts_ms") or 0)}
+        for d in (getattr(item, "delegations", None) or []) if isinstance(d, dict)
+    ]
+    if delegations:
+        out["delegations"] = delegations
+    return out
 
 class Agent:
     """ACC agent with role infusion, cognitive core, and heartbeat lifecycle."""
@@ -1614,9 +1677,15 @@ class Agent:
                 scope = memory_scope.scope_key(data)
             except Exception:  # noqa: BLE001
                 scope = ""
+            # `20260830-attachment-delivery-path` -- the references, so the
+            # record says an image was part of the turn, and so retention can
+            # tell which stored images a surviving session still names.
+            refs = [str(r) for r in (data.get("attachments") or [])
+                    if isinstance(r, str)]
             tracelog.log_prompt_in(session_id, task_id=task_id, role=role,
                                    prompt=prompt, agent_id=agent_id,
-                                   collective_id=collective_id, scope=scope)
+                                   collective_id=collective_id, scope=scope,
+                                   **({"attachments": refs} if refs else {}))
         except Exception:  # noqa: BLE001
             logger.debug("tracelog: prompt_in emit failed", exc_info=True)
 
@@ -1798,6 +1867,13 @@ class Agent:
                             ],
                             # `20260911-question-envelope` -- what the agent asks
                             **({"question": it.question} if getattr(it, "question", None) else {}),
+                            # `20260925-decisions-that-wait-and-move` -- the fields
+                            # the decision panel reads.  The heartbeat never carried
+                            # them, so on the live path UX-03 (what the call runs),
+                            # UX-09 (for whom) and UX-08 (the deadline) were always
+                            # empty; their tests fed rows in directly.  Evidence is
+                            # already secret-masked at dispatch and is capped here.
+                            **_panel_fields(it),
                         })
                 except Exception:
                     logger.exception("oversight: pending serialisation failed")
@@ -2237,6 +2313,11 @@ class Agent:
                             (' (ignored %d marker(s) in the follow-up)'
                              % len(ignored)) if ignored else '',
                         )
+                        # The task cost both turns; the answer is the second.
+                        second.usage = _summed_usage(
+                            getattr(result, "usage", None),
+                            getattr(second, "usage", None),
+                        )
                         result = second
 
             # The turn's answer, on its root span (the final one: the
@@ -2331,14 +2412,19 @@ class Agent:
                 # Proposal G P2 — surface the per-task token + compliance
                 # numbers on the completion so the eval-history pane can show
                 # "what did this run cost / how compliant was it" without a
-                # Redis read (the TUI is NATS-only).  Sourced from the
-                # CognitiveResult stress counters; defensively defaulted.
-                "input_tokens": int(getattr(
-                    getattr(result, "stress", None), "prompt_input_tokens", 0,
-                ) or 0),
-                "cache_read_tokens": int(getattr(
-                    getattr(result, "stress", None), "cache_read_tokens", 0,
-                ) or 0),
+                # Redis read (the TUI is NATS-only).  Until F1 these were read
+                # from the stress counters, which are the agent's lifetime
+                # totals: every task reported everything before it as well.
+                "input_tokens": int(
+                    (getattr(result, "usage", None) or {}).get("prompt_tokens", 0) or 0
+                ),
+                "cache_read_tokens": int(
+                    (getattr(result, "usage", None) or {}).get("cache_read_tokens", 0) or 0
+                ),
+                # F1 — the standard triple, present only when the model
+                # reported usage.  Absent means "not reported"; a reader must
+                # not turn that into zero.
+                **_usage_field(getattr(result, "usage", None)),
                 "compliance_health_score": float(getattr(
                     getattr(result, "stress", None),
                     "compliance_health_score", 1.0,
@@ -3876,6 +3962,16 @@ class Agent:
                         collective_id, oversight_id, approver,
                         approver_tier=approver_tier, approvals=approvals,
                     )
+                elif decision == "DELEGATE":
+                    # `20260925-decisions-that-wait-and-move` (UX-06) -- the
+                    # row stays PENDING; only who is asked to look changes.
+                    ts = payload.get("ts")
+                    await queue.delegate(
+                        oversight_id, approver, approver_tier,
+                        str(payload.get("delegate_to", "") or ""), note=reason,
+                        ts_ms=int(float(ts) * 1000) if isinstance(ts, (int, float)) else 0,
+                    )
+                    return
                 elif decision == "REJECT":
                     if not await queue.reject(oversight_id, approver, reason, **answer_kw):
                         return

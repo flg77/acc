@@ -173,9 +173,11 @@ class CommunicationsScreen(NavScreen):
             sig_type = entry.get("signal_type", "?")[:16]
             agent = entry.get("agent_id", "")[:12]
             key_field = entry.get("key_field", "")[:20]
+            images = entry.get("attachments") or []
             lines.append(
                 f"[dim]{ts_str}[/dim]  [yellow]{sig_type}[/yellow]"
                 f"  {agent}  {key_field}"
+                + (f"  [cyan]image {' '.join(images)}[/cyan]" if images else "")
             )
 
         panel.update("\n".join(lines))

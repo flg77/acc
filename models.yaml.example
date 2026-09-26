@@ -46,6 +46,24 @@ models:
     label: "Claude Haiku (cheap/fast — worker)"
     notes: "Needs ACC_ANTHROPIC_API_KEY."
 
+  # ── Backends ACC does not ship ────────────────────────────────────────
+  # `backend:` may also name a third-party backend supplied by an installed
+  # plugin, rather than one of the five built-ins.  Loading one takes TWO
+  # deliberate acts, because installing a distribution is not consent to run
+  # code that sees every prompt:
+  #
+  #     1. install the distribution (it advertises an `acc.llm_backends` entry
+  #        point whose NAME is what you put in `backend:`)
+  #     2. name it in ACC_LLM_BACKEND_PLUGINS, in .env — empty by default
+  #
+  #     acc-cli doctor --check backend-plugins   # confirms both halves agree
+  #
+  # A plugin backend is built through the same factory as a built-in one, so
+  # prompt recording, the failover chain, `zone:` and secret scoping all apply
+  # to it unchanged.  Its own documentation ships with it, not here: what a
+  # given backend needs in `model:`, `zone:` and `notes:` is that plugin's
+  # business.  See `acc/backends/plugins.py` for the contract.
+
   # ── Local / edge (Ollama) ────────────────────────────────────────────
   - model_id: ollama-llama32-3b
     backend: ollama

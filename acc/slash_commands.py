@@ -90,6 +90,10 @@ KIND_GATE_DISALLOW = "gate_disallow"
 KIND_LOOP = "loop"
 KIND_SKILL = "skill"
 KIND_NEW_AGENT = "new_agent"
+# `20260925-decisions-that-wait-and-move` -- UX-05 / UX-06.
+KIND_DEFERRED = "deferred"
+KIND_DELEGATED = "delegated"
+KIND_SNOOZE = "snooze"
 KIND_UNKNOWN = "unknown"
 KIND_INVALID = "invalid"
 KIND_NOT_SLASH = "not_slash"
@@ -147,6 +151,11 @@ COMMANDS: list[CommandSpec] = [
             ("kill <cid>", "cancel every cluster member"),
         ),
     ),
+    CommandSpec(
+        "deferred", "Decisions you deferred, and when each comes back", category="oversight",
+        subforms=(("/deferred", "list them"), ("/deferred now", "bring them all back now")),
+    ),
+    CommandSpec("delegated", "Decisions handed to someone else, waiting on them", category="oversight"),
     CommandSpec("disallow", "Reject a pending gate (the inline GATE CARD)", "[<oversight_id>]", "oversight"),
     CommandSpec("done", "Release the current thread (no more follow-up replies)", category="control"),
     CommandSpec("goal", "Set a pinned objective (prepended to prompts)", "[<text> | clear]", "control"),
@@ -167,6 +176,10 @@ COMMANDS: list[CommandSpec] = [
     CommandSpec("skill", "Ask the active role to use a skill (governed prompt)", "<name> [args]", category="control"),
     CommandSpec("skills", "List skills for the current target", category="query"),
     CommandSpec("sleep", "Assistant → dormant-watcher mode", category="control"),
+    CommandSpec(
+        "snooze", "Classes you stopped being asked about, for this session", category="oversight",
+        subforms=(("/snooze", "list the running snoozes"), ("/snooze off", "end them all now")),
+    ),
     CommandSpec("status", "Show prompt state (role/mode/workspace)", category="query"),
     CommandSpec("wake", "Wake the Assistant (also Ctrl+Z toggle)", category="control"),
 ]
@@ -393,6 +406,13 @@ def parse(text: str) -> SlashIntent:
     # Proposal 044 (B8) — resolve a pending gate inline.  The optional arg is an
     # oversight_id; with no arg the screen targets the single pending gate (and
     # asks the operator to disambiguate when several are pending).
+    if verb == "deferred":
+        return SlashIntent(kind=KIND_DEFERRED, args={"now": bool(rest) and rest[0].lower() == "now"})
+    if verb == "delegated":
+        return SlashIntent(kind=KIND_DELEGATED)
+    if verb == "snooze":
+        return SlashIntent(kind=KIND_SNOOZE, args={"off": bool(rest) and rest[0].lower() == "off"})
+
     if verb in ("allow", "disallow"):
         kind = KIND_GATE_ALLOW if verb == "allow" else KIND_GATE_DISALLOW
         return SlashIntent(kind=kind, args={"oversight_id": rest[0] if rest else ""})

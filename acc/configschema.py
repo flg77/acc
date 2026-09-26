@@ -227,6 +227,40 @@ def _type_name(annotation: Any) -> str:
     return str(annotation)
 
 
+def _choices_for(dotted: str, annotation: Any) -> tuple[str, ...]:
+    """The permitted values of a key, for everything that offers or guards them.
+
+    ``choices`` is load-bearing well beyond documentation: ``config set``, a
+    profile's ``apply``, the setup wizard, the web GUI's validation and its
+    schema route all refuse or offer values from it. A key that loses its
+    choices silently loses all five.
+
+    Normally they come from a ``Literal`` annotation. ``llm.backend`` is the
+    one key whose permitted set is not knowable at import time — an operator may
+    permit a third-party backend (:mod:`acc.backends.plugins`) — so it is
+    answered here instead: the built-ins, plus whatever the allowlist names.
+    Special-casing one key is deliberate; a general "dynamic choices" mechanism
+    for a population of one would be harder to follow than the exception.
+
+    The allowlist is read once per process, because :func:`schema` caches. That
+    is correct for the thing it describes — the allowlist is an operator's
+    environment variable, fixed before the process starts — but a caller that
+    changes it in-process must pass ``refresh=True`` to see the difference.
+    """
+    if get_origin(annotation) is Literal:
+        return tuple(str(a) for a in get_args(annotation))
+    if dotted == "llm.backend":
+        from acc.backends import plugins  # noqa: PLC0415
+        from acc.config import BUILTIN_LLM_BACKENDS  # noqa: PLC0415
+
+        permitted = tuple(
+            name for name in plugins.allowlisted()
+            if name not in BUILTIN_LLM_BACKENDS
+        )
+        return tuple(BUILTIN_LLM_BACKENDS) + permitted
+    return ()
+
+
 def _default_of(fieldinfo: Any) -> tuple[Any, bool]:
     """Return ``(default, required)`` for a Pydantic FieldInfo."""
     from pydantic_core import PydanticUndefined  # noqa: PLC0415
@@ -280,9 +314,7 @@ def _walk_model(model: Any, prefix: str, file_id: str) -> Iterator[Key]:
 
         default, required = _default_of(info)
         origin = get_origin(annotation)
-        choices: tuple[str, ...] = ()
-        if origin is Literal:
-            choices = tuple(str(a) for a in get_args(annotation))
+        choices = _choices_for(dotted, annotation)
         # A mapping or a list of models is operator data, not schema: its
         # children are named by the operator (role names, model ids), so the
         # schema describes the container and stops there.

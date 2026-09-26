@@ -585,12 +585,15 @@ class TestTaskComplianceRecord:
         from acc.signals import redis_task_compliance_key
         redis = MagicMock()
         core = _make_core(redis_client=redis)
+        # The record is keyed by task, so it carries this task's usage -- not
+        # the stress counters, which are the agent's lifetime totals (F1).
         result = SimpleNamespace(
             stress=SimpleNamespace(
                 compliance_health_score=0.9,
-                prompt_input_tokens=120,
-                cache_read_tokens=30,
+                prompt_input_tokens=99_999,
+                cache_read_tokens=99_999,
             ),
+            usage={"prompt_tokens": 120, "completion_tokens": 7, "cache_read_tokens": 30},
             output="",
         )
         core._write_task_compliance_record({"task_id": "tk-1"}, result)

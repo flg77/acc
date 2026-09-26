@@ -6,7 +6,7 @@ import json
 
 import httpx
 
-from acc.backends import LLMCallError
+from acc.backends import LLMCallError, refuse_content
 
 _RETRYABLE = {429, 503}
 _NON_RETRYABLE = {400, 401, 422}
@@ -62,12 +62,15 @@ class OllamaBackend:
         user: str,
         response_schema: dict | None = None,
         cache_prefix: bool = False,  # PR-CA2: ignored — Ollama auto-caches prefixes
+        *,
+        content: list[dict] | None = None,
     ) -> dict:
         """POST to ``/api/chat``.
 
         When *response_schema* is provided, ``format: "json"`` is added to the
         request body so Ollama constrains output to JSON.
         """
+        refuse_content("ollama", content)
         body: dict = {
             "model": self._model,
             "messages": [

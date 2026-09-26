@@ -630,7 +630,9 @@ class ACCTUIApp(App):
         cid = self._active_collective_id
         from acc.signals import subject_oversight_decision  # noqa: PLC0415
         subject = subject_oversight_decision(cid, message.oversight_id)
-        decision = "APPROVE" if message.action == "approve" else "REJECT"
+        decision = {"approve": "APPROVE", "delegate": "DELEGATE"}.get(
+            message.action, "REJECT",
+        )
         import time as _time  # noqa: PLC0415
         payload = {
             "signal_type": "OVERSIGHT_DECISION",
@@ -645,6 +647,8 @@ class ACCTUIApp(App):
         answer = getattr(message, "answer", "")
         if answer:
             payload["answer"] = answer
+        if decision == "DELEGATE":
+            payload["delegate_to"] = getattr(message, "delegate_to", "")
         try:
             await obs.publish(subject, payload)
             logger.info(

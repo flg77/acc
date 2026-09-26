@@ -269,9 +269,21 @@ def content_blocks(
             f"multimodal model, or send the prompt without the attachment — it "
             f"will not be silently dropped."
         )
+    return image_blocks(items, root=root)
 
+
+def image_blocks(
+    attachments: Iterable[Attachment], *, root: Path | None = None
+) -> list[dict[str, Any]]:
+    """The provider blocks, with no capability check of their own.
+
+    For the dispatch path, where the check belongs to the backend itself: a
+    text-only backend raises ``ContentNotSupported`` when handed blocks
+    (``acc.backends.refuse_content``). That holds across a failover chain,
+    where the name of "the" backend is not one thing.
+    """
     blocks: list[dict[str, Any]] = []
-    for attachment in items:
+    for attachment in attachments:
         payload = load_bytes(attachment.sha256, root=root)
         blocks.append(
             {
@@ -284,6 +296,84 @@ def content_blocks(
             }
         )
     return blocks
+
+
+def is_reference(value: Any) -> bool:
+    """A sha256 hex digest -- the only form a reference takes on the wire."""
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(c in "0123456789abcdef" for c in value)
+    )
+
+
+def resolve(references: Iterable[Any], *, root: Path | None = None) -> list[Attachment]:
+    """The attachments a task names, re-read from the store.
+
+    The bytes are the authority, not the message: the digest is recomputed
+    and the media type sniffed again, so a reference can only ever name the
+    image that was accepted under it.
+
+    Raises:
+        AttachmentError: not a reference, no longer stored (retention ran --
+            :func:`load_bytes` says so distinguishably), or bytes that no
+            longer match their name.
+    """
+    out: list[Attachment] = []
+    for ref in references:
+        if not is_reference(ref):
+            raise AttachmentError(
+                f"{str(ref)[:16]!r} is not an attachment reference (a sha256 digest)"
+            )
+        if not (store_dir(root) / ref).is_file() and not _removed_by_retention(ref):
+            # Never stored where this process looks. The usual cause is a
+            # surface and an agent that do not share the store (separate pods,
+            # or a web GUI without the /logs mount) -- not retention, and the
+            # message must not blame it.
+            raise AttachmentError(
+                f"attachment {ref[:12]}... is not in the store this agent reads "
+                f"({store_dir(root)}). The surface that accepted it and the "
+                f"agents must share that store ({STORE_VAR})."
+            )
+        payload = load_bytes(ref, root=root)
+        if hashlib.sha256(payload).hexdigest() != ref:
+            raise AttachmentError(
+                f"attachment {ref[:12]}... does not match its digest; not sent"
+            )
+        media_type = detect_media_type(payload)
+        if not media_type:
+            raise AttachmentError(f"attachment {ref[:12]}... is not a supported image")
+        width, height = _dimensions(payload, media_type)
+        out.append(Attachment(
+            sha256=ref, media_type=media_type, size=len(payload),
+            width=width, height=height,
+        ))
+    return out
+
+
+def _removed_by_retention(ref: str) -> bool:
+    try:
+        from acc import sessions  # noqa: PLC0415
+
+        return any(
+            e.get("kind") == "attachment_removed" and e.get("sha256") == ref
+            for e in sessions.removals()
+        )
+    except Exception:  # noqa: BLE001 -- only chooses between two messages
+        return False
+
+
+def store_summary(root: Path | None = None) -> dict[str, Any]:
+    """Count, bytes and oldest age of the stored images, for ``doctor``."""
+    target = store_dir(root)
+    blobs = [b for b in target.iterdir() if b.is_file()] if target.is_dir() else []
+    stats = [b.stat() for b in blobs]
+    return {
+        "path": str(target),
+        "count": len(stats),
+        "bytes": sum(s.st_size for s in stats),
+        "oldest_mtime": min((s.st_mtime for s in stats), default=0.0),
+    }
 
 
 def records_for(attachments: Iterable[Attachment]) -> list[dict[str, Any]]:

@@ -130,7 +130,11 @@ def test_a_row_that_does_not_expire_says_nothing():
 
 
 def test_the_decision_computes_its_deadline_from_the_row():
-    card = _card(submitted_at_ms=1_000_000, timeout_ms=300_000)
+    """`timeout_ms` is the row's ABSOLUTE deadline -- the queue stores
+    ``now_ms + timeout_s * 1000``.  This test used to pin a duration
+    (`submitted_at_ms + timeout_ms`), which put a real row's deadline decades
+    out (20260925-decisions-that-wait-and-move)."""
+    card = _card(submitted_at_ms=1_000_000, timeout_ms=1_300_000)
     assert _decision(card).expires_at_ms == 1_300_000
 
 
@@ -139,12 +143,12 @@ def test_a_row_without_a_timeout_has_no_deadline():
 
 
 def test_the_panel_shows_the_countdown():
-    card = _card(submitted_at_ms=1_000_000, timeout_ms=300_000)
+    card = _card(submitted_at_ms=1_000_000, timeout_ms=1_300_000)
     assert "expires in 4m00s" in _panel(card, now_ms=1_060_000)
 
 
 def test_the_panel_shows_an_expired_decision_as_expired():
-    card = _card(submitted_at_ms=1_000_000, timeout_ms=300_000)
+    card = _card(submitted_at_ms=1_000_000, timeout_ms=1_300_000)
     assert "expired" in _panel(card, now_ms=9_000_000)
 
 

@@ -6,7 +6,7 @@ import json
 
 import httpx
 
-from acc.backends import LLMCallError
+from acc.backends import LLMCallError, refuse_content
 
 _RETRYABLE = {429, 503}
 
@@ -58,8 +58,11 @@ class VLLMBackend:
         user: str,
         response_schema: dict | None = None,
         cache_prefix: bool = False,  # PR-CA2: ignored — vLLM --enable-prefix-caching
+        *,
+        content: list[dict] | None = None,
     ) -> dict:
         """POST to ``/v1/chat/completions`` (OpenAI-compatible format)."""
+        refuse_content("vllm", content)
         body: dict = {
             "model": self._model,
             "messages": [

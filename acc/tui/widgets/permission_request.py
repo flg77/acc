@@ -70,12 +70,15 @@ class PermissionRequest(Static):
         def __init__(
             self, oversight_ids: list[str], approve: bool, *,
             reason: str = "", grant: tuple[str, str, str] | None = None,
+            snooze: tuple[str, str, str] | None = None,
         ) -> None:
             super().__init__()
             self.oversight_ids = oversight_ids
             self.approve = approve
             self.reason = reason
             self.grant = grant
+            # `20260925-decisions-that-wait-and-move` (UX-05).
+            self.snooze = snooze
 
     class Dismissed(Message):
         """``Esc`` — everything stays PENDING; focus goes back to the input."""
@@ -168,13 +171,17 @@ class PermissionRequest(Static):
             if opt is None:
                 handled = False
             else:
-                self._decide(cards, approve=opt.approve, key=key, grant=opt.grant)
+                self._decide(
+                    cards, approve=opt.approve, key=key, grant=opt.grant,
+                    snooze=getattr(opt, "snooze", False),
+                )
         if handled:
             event.stop()
             event.prevent_default()
 
     def _decide(
         self, cards: list[GateCard], *, approve: bool, key: str, grant: bool = False,
+        snooze: bool = False,
     ) -> None:
         # High-consequence approvals take the same key twice (inline confirm
         # — the Compliance pane's modal, refitted to the pane).
@@ -187,8 +194,13 @@ class PermissionRequest(Static):
         if grant and len(cards) == 1 and cards[0].task_id and cards[0].target:
             c = cards[0]
             grant_key = (c.task_id, c.kind, c.target)
+        snooze_key = None
+        if snooze and len(cards) == 1:
+            from acc.tui.decision_timing import snooze_eligible, snooze_key as _key  # noqa: PLC0415
+            if snooze_eligible(cards[0]):
+                snooze_key = _key(cards[0])
         self.post_message(self.Decided(
-            [c.oversight_id for c in cards], approve, grant=grant_key,
+            [c.oversight_id for c in cards], approve, grant=grant_key, snooze=snooze_key,
         ))
         # Drop the decided rows locally so the region reflects the decision
         # before the next heartbeat confirms it.

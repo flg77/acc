@@ -11,6 +11,63 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-09-26
+
+**Decisions that wait and move, real usage on the compat endpoint, and images that reach the model** — three lanes merged 2026-09-26: G3 (#484, OpenSpec `20260925-decisions-that-wait-and-move`), F1 (#485, `20260829-openai-compat-server`) and F2 (#486, `20260830-attachment-delivery-path`). Each closes a gap where a shipped feature looked finished and was not: the decision panel's fields never reached the wire, the compat endpoint reported zero tokens for every request, and an uploaded image could not reach any model.
+
+**Upgrade note:** `acc-webgui` now mounts the same `/logs` as the agents (`container/production/podman-compose.yml`) — the image store lives there. Recreate the web GUI container after the upgrade (`down` / `up --webgui`).
+
+### Added
+
+- **Defer a decision (`d`)** — 5 min, 15 min, 1 hour, or when the agent answers the question you asked about it. It is withheld from the pane until then and always comes back a minute before it could expire; `/deferred` lists them.
+- **Allow this class for 30 min** — an option on LOW / MEDIUM category gates that approves further gates of the same category, risk and requester for 30 minutes of this session. Never destructive calls, HIGH, escalations, questions or two-approver rows; each approval it makes is a real decision with the snooze as its reason. "deny" stays on `3`. `/snooze`, `/snooze off`.
+- **Hand a decision off (`h`)** to a person or a tier — `OVERSIGHT_DECISION` with `decision: DELEGATE` on the existing subject. The row stays PENDING and records who handed it to whom; only an operator-tier person may delegate; it changes who is asked to look, never who may decide. `/delegated`; `acc-cli oversight delegate`.
+- **Copy (`y` / `Y`)** the decision id or the command it runs; **`ACC_PROMPT_LINEAR=1`** renders the panel in reading order for a screen reader.
+
+**The compat endpoint's gaps, closed (F1)** — OpenSpec `20260829-openai-compat-server`, F1 section.
+- **The poll route says what a task waits on.** `GET /v1/tasks/{id}` reads the arbiter heartbeat's pending oversight rows; a task one of them holds answers `awaiting_approval` with the `oversight_id` and `waiting_on` (summary, risk, and `decide_by` when the heartbeat carries the row's deadline). Every poll body gains `expires_at`, when the handle itself is forgotten.
+- **`acc-cli doctor --check compat`** — off, on (the subjects holding keys; never a key or a digest), or broken: set but unparseable, or an entry that is not a lowercase SHA-256 digest, which can never authenticate and is most often the key itself pasted into configuration.
+- **`docs/howto-openai-compat.md`** — the key-to-principal format, pointing a client at ACC, the status codes, polling, sessions, and what the endpoint does not do.
+- **A round trip with the unmodified `openai` client** against the router on a real socket (HG-24's actual claim); `openai` joins the `dev` extra so the test runs rather than skips.
+
+**An attached image reaches the model, or the turn is refused (F2)** — OpenSpec `20260830-attachment-delivery-path`. HG-20 (v0.8.0) shipped the store, the validation and the provider blocks with no socket: an upload was stored and nothing downstream could carry it.
+- **`content=` on `LLMBackend.complete()`** — image blocks for the user turn, keyword-only, default `None`, so every existing call is unchanged. `anthropic` sends them after the text; `openai_compat` as `image_url` data URLs. `ollama`, `vllm` and `llama_stack` **raise** `ContentNotSupported` (non-retryable) — never ignore — so a failover chain that walks onto a text-only model stops there. A backend that predates the parameter (a plugin, a test double) is refused too: the core no longer falls back to calling it without the images.
+- **The path from browser to model.** `POST /api/prompt` takes `attachments` (sha256 references from `POST /api/attachments`, never bytes; an unknown one is a 400); `TASK_ASSIGN` carries them (omitted when empty); the cognitive core re-reads each image from the store — digest recomputed, type sniffed again — and blocks the turn with the reason when a reference no longer resolves or the backend cannot take it.
+- **Web GUI Prompt page**: *Attach image*, removable chips, a warning when the configured backend is text-only (a warning, not a block: the role may be bound elsewhere), and a refusal shown as a refusal instead of an empty answer.
+- **The record says an image was there.** `prompt_in` in the session trace lists the references; the TUI's Comms signal log shows `image <digest>` on the TASK_ASSIGN.
+- **`acc-cli doctor --check attachments`** — store path, count, size, oldest, and whether a retention policy governs it.
+
+### Fixed
+
+- **The heartbeat dropped the fields the decision panel reads.** `oversight_pending_items` carried no `evidence`, `requester`, `ceiling` or `timeout_ms`, so on the live arbiter heartbeat what a call runs (UX-03), for whom (UX-09) and its deadline (UX-08) were always empty — their tests fed rows in directly. They travel now; evidence is capped at 8 lines of 240 characters.
+- **The deadline was read as a duration.** The queue stores `timeout_ms` as an absolute time; the panel added it to the submit time. It is read as the deadline now, and shown only where something enforces it (a capability gate or a question) — nothing expires a proposal row.
+- A row written by a newer agent no longer makes an older one treat it as missing: the loader ignores fields it does not know.
+- **Token usage on the OpenAI-compatible endpoint is real.** It was zero on every response, for three separate reasons: the channel reply carried no `prompt_tokens`/`completion_tokens` for the route to read; `completion_response` read `input_tokens`/`output_tokens` while the route passed the standard names; and the one count `TASK_COMPLETE` did carry was the agent's **lifetime** total. The cognitive core now tallies each task's usage in a `ContextVar` (an agent runs tasks concurrently) over every model call, whichever naming the backend uses; `TASK_COMPLETE` carries a standard `usage` triple, summed over the tool-result follow-up turn. A task whose calls reported nothing sends no `usage`, and the endpoint answers `"usage": null` — never zeros, so a client billing on it can tell "free" from "unknown".
+- **`input_tokens` / `cache_read_tokens` on `TASK_COMPLETE` and the per-task compliance record are per task.** Both were the agent's running totals, so the golden-prompt eval history showed every earlier task's cost as well. The heartbeat's totals are unchanged.
+- **The image store had no retention.** `attachments.prune()` never had a caller; every stored image was personal data with no expiry. It now runs under the session policy on `acc-cli sessions retention --apply`: an image goes when no surviving session names it and it is older than `keep_days`, journaled before it is unlinked. Under `keep_forever` — the default — nothing is removed.
+- **The web GUI did not share the store with the agents** on the podman stack: it wrote uploads inside its own container. `acc-webgui` now mounts the same `/logs`. Where a surface and the agents still do not share it (Kubernetes pods today, KW-08), the refusal says so rather than blaming retention.
+
+## [0.23.0] — 2026-09-25
+
+**A seam for LLM backends ACC does not ship.** A backend can now be a separately
+installed distribution rather than code in ACC's tree. ACC ships the seam; which
+backend runs is the operator's choice, and nothing loads without two deliberate acts.
+
+### Added
+
+- **`acc/backends/plugins.py` — the backend plugin seam.** A distribution advertises an entry point in the `acc.llm_backends` group. **Two acts, never one:** installing is not consent — the backend must also be named in `ACC_LLM_BACKEND_PLUGINS`, empty by default, and the allowlist is checked **before** `EntryPoint.load()`, so a third party's import-time code never runs unasked. Refusals say which case failed (not permitted, not installed, two distributions claiming one name, factory raised, factory returned something that is not an `LLMBackend`). The plugin gets a plain `dict` of the universal LLM settings, not the Pydantic model.
+- **The seam sits below the governance layer.** A plugin client is wrapped by `recording_backend` exactly like a built-in one, so prompt recording and the failover chain cover it.
+- **`acc-cli doctor --check backend-plugins`** separates the two states operators confuse: installed but not permitted is inert and fine; permitted but not installed is broken, because every role bound to it fails on its first task.
+
+### Changed
+
+- **`llm.backend` widens from a fixed list to a validated name**: a built-in backend or an allowlisted plugin, and a typo is still rejected at load. `BackendPluginError` subclasses `ValueError`, so callers that caught the old error keep working.
+- The `choices` that `config set`, `profile apply`, the setup wizard and two web GUI routes offer from are kept explicit — deriving them from the widened type emptied them, which the `configstore` suite caught.
+
+### Not in this release
+
+- **Per-principal binding.** Nothing yet ties a model entry to a requester, so on a multi-user collective a plugin backend's credentials would answer every requester's tasks. Plugin backends are single-user for now.
+
 ## [0.22.0] — 2026-09-25
 
 **Learnings travel between agents** — OpenSpec `20260923-lessons-that-travel`, from

@@ -120,7 +120,9 @@ def test_the_panel_renders_the_options_and_the_highlighted_detail():
 
 
 def test_the_panel_offers_notes_and_chat_without_leaving():
-    body = plain(render_panel(_decision(), width=110))
+    # The full key line grew with d / h / y (20260925-decisions-that-wait-and-move);
+    # it shows where it fits, and shortens rather than wraps elsewhere.
+    body = plain(render_panel(_decision(), width=200))
     assert "press n to add notes" in body
     assert "Chat about this" in body
     assert "Esc to cancel" in body

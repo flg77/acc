@@ -30,7 +30,7 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Optional
 
 from acc.redis_compat import call_redis as _call_redis
@@ -113,6 +113,19 @@ class OversightItem:
     # operator could not see whether they were approving their own work.
     requester: str = ""
     ceiling: str = ""
+    # `20260925-decisions-that-wait-and-move` (UX-06) -- who handed this
+    # decision to whom: ``{by, by_tier, to, ts_ms, note?}``, oldest first.  The
+    # row stays PENDING; delegation moves the decision to someone's attention,
+    # it never changes who may decide it.
+    delegations: list = field(default_factory=list)
+
+    @property
+    def delegated_to(self) -> str:
+        """The person or tier the decision was last handed to ("" = nobody)."""
+        for entry in reversed(self.delegations or []):
+            if isinstance(entry, dict) and entry.get("to"):
+                return str(entry["to"])
+        return ""
 
     @property
     def approvals_needed(self) -> int:
@@ -120,6 +133,17 @@ class OversightItem:
         if self.status != "PENDING":
             return 0
         return max(0, int(self.required_approvals or 1) - len(self.approvals))
+
+
+def _item_from(data: dict) -> OversightItem:
+    """A row from its stored JSON, ignoring keys this version does not know.
+
+    ``OversightItem(**data)`` raised on any field a newer agent had added, and
+    the caller then treated the row as missing -- so one new field on the wire
+    made every older agent in the collective lose the decision.
+    """
+    known = {f.name for f in fields(OversightItem)}
+    return OversightItem(**{k: v for k, v in data.items() if k in known})
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +484,54 @@ class HumanOversightQueue:
         logger.info("oversight: rejected oversight_id=%s reason=%s", oversight_id, reason)
         return True
 
+    async def delegate(
+        self, oversight_id: str, by: str, by_tier: str, to: str,
+        note: str = "", ts_ms: int = 0,
+    ) -> bool:
+        """Hand a pending decision to *to* — a person (``webgui:alice``) or a
+        tier (``operator``).  ``20260925-decisions-that-wait-and-move`` (UX-06).
+
+        The row **stays PENDING**: a delegation moves the decision to someone's
+        attention and records who asked; it does not narrow who may decide.
+        Only an operator-tier person may delegate (the same bar a second
+        approval has).  Every agent applies the same OVERSIGHT_DECISION, so the
+        record is idempotent on ``(by, to, ts_ms)``.
+
+        Returns ``True`` when the delegation is on the row after this call.
+        """
+        target = str(to or "").strip()
+        if not target:
+            logger.warning("oversight: delegate refused — %s names no one", oversight_id)
+            return False
+        if str(by_tier or "").lower() != "operator":
+            logger.warning(
+                "oversight: delegate refused — %s by %s (%s); only an operator-tier "
+                "person may hand a decision on", oversight_id, by,
+                f"tier {by_tier!r}" if by_tier else "tier unknown",
+            )
+            return False
+        item = await self._load(oversight_id)
+        if item is None:
+            logger.warning("oversight: delegate — item %s not found", oversight_id)
+            return False
+        if item.status != "PENDING":
+            logger.warning(
+                "oversight: delegate refused — %s is already %s", oversight_id, item.status,
+            )
+            return False
+        stamp = int(ts_ms) or int(time.time() * 1000)
+        for entry in item.delegations:
+            if (isinstance(entry, dict) and entry.get("by") == by
+                    and entry.get("to") == target and int(entry.get("ts_ms") or 0) == stamp):
+                return True                                   # already applied
+        item.delegations.append({
+            "by": by, "by_tier": by_tier, "to": target, "ts_ms": stamp,
+            **({"note": note} if note else {}),
+        })
+        await self._save(item)
+        logger.info("oversight: %s delegated to %s by %s", oversight_id, target, by)
+        return True
+
     async def pending(self) -> list[OversightItem]:
         """Return all currently pending (unresolved) oversight items."""
         if self._redis is not None:
@@ -614,8 +686,7 @@ class HumanOversightQueue:
             try:
                 raw = await _call_redis(self._redis.get, key)
                 if raw:
-                    data = json.loads(raw)
-                    return OversightItem(**data)
+                    return _item_from(json.loads(raw))
                 return None
             except Exception as exc:
                 logger.error("oversight: Redis load failed: %s", exc)

@@ -263,11 +263,30 @@ def parse_request(body: dict[str, Any], *, session_id: str = "") -> ChatRequest:
 # ---------------------------------------------------------------------------
 
 
+def usage_block(usage: dict[str, Any] | None) -> dict[str, int] | None:
+    """The standard ``usage`` object, or ``None`` when nothing was reported.
+
+    Accepts either naming -- ``prompt_tokens``/``completion_tokens`` (the
+    standard, and what an F1 agent sends) or ``input_tokens``/``output_tokens``
+    (what a backend reports).  ``None`` rather than zeros: a client that sums
+    cost must be able to tell "free" from "unknown", and the schema allows a
+    null ``usage``.
+    """
+    if not usage:
+        return None
+    prompt = int(usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0)
+    completion = int(usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0)
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": int(usage.get("total_tokens", 0) or 0) or prompt + completion,
+    }
+
+
 def completion_response(
-    request: ChatRequest, reply: str, *, usage: dict[str, int] | None = None
+    request: ChatRequest, reply: str, *, usage: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """The response shape an unmodified client expects."""
-    counts = usage or {}
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
         "object": "chat.completion",
@@ -280,11 +299,7 @@ def completion_response(
                 "finish_reason": "stop",
             }
         ],
-        "usage": {
-            "prompt_tokens": int(counts.get("input_tokens", 0) or 0),
-            "completion_tokens": int(counts.get("output_tokens", 0) or 0),
-            "total_tokens": int(counts.get("total_tokens", 0) or 0),
-        },
+        "usage": usage_block(usage),
     }
 
 

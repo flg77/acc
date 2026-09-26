@@ -61,7 +61,31 @@ class GateCard:
     # which does not move when a second approver signs.
     required_approvals: int = 1
     approvals: tuple = ()
+    #: The row's ABSOLUTE deadline, epoch ms (the queue stores
+    #: ``now_ms + timeout_s * 1000``); 0 when the row carries none.
     timeout_ms: int = 0
+    # `20260925-decisions-that-wait-and-move` (UX-06) -- ``(by, to)`` pairs,
+    # oldest first.  The last ``to`` is who the decision was handed to.
+    delegations: tuple = ()
+
+    @property
+    def delegated_to(self) -> str:
+        return str(self.delegations[-1][1]) if self.delegations else ""
+
+    @property
+    def delegated_by(self) -> str:
+        return str(self.delegations[-1][0]) if self.delegations else ""
+
+    @property
+    def deadline_enforced(self) -> bool:
+        """Whether something actually acts at ``timeout_ms``.
+
+        The dispatcher waits on a capability gate and on a question it asked,
+        and expires the row at the deadline.  Nothing expires a proposal or a
+        submitted row (``expire_timed_out`` has no caller), so a countdown there
+        would promise a deadline that does not exist.
+        """
+        return bool(self.timeout_ms) and (bool(self.category) or self.question is not None)
 
 
 def is_destructive(card: GateCard) -> bool:
@@ -78,6 +102,10 @@ class RequestOption:
     label: str
     approve: bool
     grant: bool = False   # "allow for this task": remember (task, kind, target)
+    # `20260925-decisions-that-wait-and-move` (UX-05) -- "allow this class for
+    # 30 min": approve, and approve further gates of the same (category, risk,
+    # requester) for the rest of this TUI session, at most 30 minutes.
+    snooze: bool = False
 
 
 # Capability-gate copy, keyed by the summary's leading tag (capability_dispatch
@@ -268,6 +296,10 @@ def pending_gates(
                 for a in (item.get("approvals") or [])
             ),
             timeout_ms=int(item.get("timeout_ms") or 0),
+            delegations=tuple(
+                (str(d.get("by", "")), str(d.get("to", "")))
+                for d in (item.get("delegations") or []) if isinstance(d, dict)
+            ),
         ))
     if target_role:
         cards.sort(key=lambda c: 0 if c.role == target_role else 1)
@@ -320,11 +352,19 @@ def request_options(cards: list[GateCard]) -> list[RequestOption]:
             RequestOption("2", "deny", False),
         ]
     if c.category:
-        return [
+        from acc.tui.decision_timing import SNOOZE_S, snooze_eligible  # noqa: PLC0415
+        # "deny" keeps key 3: an operator who presses 3 to refuse must never
+        # find it approving a whole class instead.  The snooze comes after.
+        options = [
             RequestOption("1", "allow once", True),
             RequestOption("2", "allow for this task", True, grant=True),
             RequestOption("3", "deny", False),
         ]
+        if snooze_eligible(c):
+            options.append(RequestOption(
+                "4", f"allow this class for {SNOOZE_S // 60} min", True, snooze=True,
+            ))
+        return options
     return [
         RequestOption("1", "approve", True),
         RequestOption("2", "reject", False),

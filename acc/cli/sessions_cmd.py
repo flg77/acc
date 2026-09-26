@@ -261,7 +261,11 @@ def _cmd_retention(args) -> int:
         return 0
 
     removed = S.apply_retention()
-    print(f"  removed {len(removed)} session(s); each is recorded in the removal journal")
-    for entry in removed:
+    sessions = [e for e in removed if "session_id" in e]
+    images = [e for e in removed if "attachment" in e]
+    print(f"  removed {len(sessions)} session(s); each is recorded in the removal journal")
+    for entry in sessions:
         print(f"      {entry['session_id']}  sha256={entry['sha256'][:12]}...")
+    if images:
+        print(f"  removed {len(images)} stored image(s) no surviving session names")
     return 0

@@ -382,7 +382,7 @@ def _record_removal(
     root: Path | None = None,
 ) -> None:
     """Append the removal record. This is what makes deletion auditable."""
-    entry = {
+    _append_journal({
         "kind": "session_removed",
         "ts": time.time(),
         "session_id": info.session_id,
@@ -391,7 +391,10 @@ def _record_removal(
         "turns": info.turns,
         "started_at": info.started_at,
         "sha256": digest,
-    }
+    }, root=root)
+
+
+def _append_journal(entry: dict[str, Any], *, root: Path | None = None) -> None:
     path = removal_journal_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = path.read_text(encoding="utf-8") if path.is_file() else ""
@@ -440,6 +443,9 @@ def apply_retention(
     This is the ONLY removal path, and it cannot remove anything without first
     writing the removal record. A session that vanished with no trace would
     leave the audit trail claiming a history that is no longer there.
+
+    Stored images go under the same policy, after the sessions: an entry with
+    ``session_id`` is a session, one with ``attachment`` an image.
     """
     from acc import tracelog  # noqa: PLC0415
 
@@ -471,6 +477,90 @@ def apply_retention(
         logger.info(
             "sessions: removed %s under policy %r by %s",
             info.session_id, policy.name, actor,
+        )
+    removed.extend(_apply_attachment_retention(
+        policy, by=actor, root=root, dry_run=dry_run, now=now,
+    ))
+    return removed
+
+
+def referenced_attachments(*, root: Path | None = None) -> set[str]:
+    """The stored images a session on disk still names.
+
+    Derived from the durable records, never from the store: an image is kept
+    for as long as any surviving session's ``prompt_in`` names it, whatever its
+    age -- pruning by age alone would strand a record that points at nothing.
+    """
+    from acc import tracelog  # noqa: PLC0415
+
+    refs: set[str] = set()
+    for session_id in tracelog.list_sessions(root=root):
+        for record in tracelog.load_session(session_id, root=root):
+            if record.get("kind") != tracelog.KIND_PROMPT_IN:
+                continue
+            for ref in record.get("attachments") or []:
+                if isinstance(ref, str):
+                    refs.add(ref)
+    return refs
+
+
+def _apply_attachment_retention(
+    policy: RetentionPolicy,
+    *,
+    by: str,
+    root: Path | None = None,
+    dry_run: bool = False,
+    now: float | None = None,
+) -> list[dict[str, Any]]:
+    """Stored images under the session policy (`20260830-attachment-delivery-path`).
+
+    One policy, not two: an image goes when no surviving session names it and
+    it is older than ``keep_days`` -- the same age a session may reach.  Every
+    image in the store is personal data, so its removal is journaled exactly
+    like a session's: recorded first, then unlinked.  Runs only from
+    :func:`apply_retention`, which returns early under ``keep_forever``, so a
+    deployment that keeps sessions forever keeps its images too.
+    """
+    from acc import attachments  # noqa: PLC0415
+
+    store = attachments.store_dir(root)
+    if not store.is_dir():
+        return []
+    keep = referenced_attachments(root=root)
+    cutoff = (now if now is not None else time.time()) - policy.keep_days * 86400
+    removed: list[dict[str, Any]] = []
+    for blob in sorted(store.iterdir()):
+        if not blob.is_file() or blob.name in keep:
+            continue
+        try:
+            stat = blob.stat()
+        except OSError:  # pragma: no cover
+            continue
+        if stat.st_mtime > cutoff:
+            continue
+        entry = {"attachment": blob.name, "sha256": blob.name}
+        if dry_run:
+            removed.append(entry)
+            continue
+        _append_journal({
+            "kind": "attachment_removed",
+            "ts": time.time(),
+            "sha256": blob.name,
+            "removed_by": by,
+            "policy": policy.as_dict(),
+            "size": stat.st_size,
+            "stored_at": stat.st_mtime,
+        }, root=root)
+        try:
+            blob.unlink()
+        except OSError as exc:  # pragma: no cover
+            logger.error("sessions: could not remove attachment %s (%s)", blob.name, exc)
+            continue
+        removed.append(entry)
+    if removed and not dry_run:
+        logger.info(
+            "sessions: removed %d stored image(s) under policy %r by %s",
+            len(removed), policy.name, by,
         )
     return removed
 

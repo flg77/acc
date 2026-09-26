@@ -79,6 +79,10 @@ class PromptResponse:
     eval_verdict: str = ""
     """The model's ``[EVAL_OUTCOME]`` self-verdict when present
     (GOOD/PARTIAL/NEEDS_REVISE/BAD) — reviewer tasks only (proposal G P2)."""
+    usage: dict | None = None
+    """This task's ``{prompt_tokens, completion_tokens, total_tokens}`` (F1).
+    ``None`` when the agent did not report it — an agent older than F1, a
+    blocked task, or a backend that does not count.  Never read as zero."""
 
 
 @runtime_checkable

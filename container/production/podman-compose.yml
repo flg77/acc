@@ -1007,6 +1007,11 @@ services:
       - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
       - acc-frameworks-data:/app/.acc-frameworks:U,z
       - acc-compliance-data:/app/.acc-compliance:U,z
+      # `20260830-attachment-delivery-path` -- the image store is
+      # /logs/sessions/attachments; an uploaded image reaches a model only if
+      # the agents read the same directory, so the web GUI mounts the same
+      # /logs they do. :z, not :U -- the agents and the host keep writing here.
+      - ${ACC_STATE_DIR:-../..}/logs:/logs:z
     ports:
       - "8080:8080"
     networks:

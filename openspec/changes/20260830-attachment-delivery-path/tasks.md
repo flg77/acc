@@ -83,3 +83,74 @@ Presentation differs; the capability does not (proposal
 - [ ] Non-image attachments (PDF, audio). `MULTIMODAL_BACKENDS` and
       `detect_media_type` are image-shaped today; widening them is a separate
       decision.
+
+
+## APPLIED — F2, 2026-09-25
+
+Phases 0, 1, 2, 4 and the web half of 3, against the tree. The boxes above are
+left as written; this is the record.
+
+**Phase 0 — retention.**
+- [x] The trigger follows sessions, as the module says: `sessions.apply_retention()`
+      (`acc-cli sessions retention --apply`) removes stored images under the
+      **same** policy — an image goes when no surviving session names it and it
+      is older than `keep_days`. Under `keep_forever` (the default) nothing is
+      removed: changing what a deployment retains is a decision, not an upgrade.
+- [x] `keep` is derived from the durable records: `sessions.referenced_attachments()`
+      reads every surviving session's `prompt_in.attachments`.
+- [x] Journaled first, like a session: `attachment_removed` in `removals.jsonl`,
+      then unlink. `resolve()` tells a retention removal (journal entry) from an
+      image that was never in this store. `prune()` itself still has no caller —
+      it cannot journal, so the retention path does its own recorded removal.
+- [x] `acc-cli doctor --check attachments`: path, count, size, oldest, governance.
+
+**Phase 1 — the backend interface (option A).**
+- [x] `content: list[dict] | None = None`, keyword-only, on the protocol and every
+      in-tree backend and on `FailoverBackend` (forwarded only when non-empty, so
+      an old chain entry is called exactly as before).
+- [x] `anthropic` (blocks after the text) and `openai_compat` (`image_url` data
+      URLs) consume it.
+- [x] `ollama`, `vllm`, `llama_stack` raise `ContentNotSupported` —
+      `LLMCallError`, `retryable=False`, so failover stops rather than walking on.
+- [x] A backend that does not know the parameter (a plugin, a test double) raises
+      `TypeError`; the core now turns that into `ContentNotSupported` instead of
+      its legacy retry **without** the parameter — which would have been the
+      silent drop.
+- [x] A test per behaviour.
+
+**Phase 2 — browser to model.**
+- [x] `PromptRequest.attachments` (≤ 8 sha256 references; an unknown one is 400).
+- [x] `send(attachments=)` → `TASK_ASSIGN.attachments`, omitted when empty.
+- [x] The core re-reads each reference (`attachments.resolve`: digest recomputed,
+      type re-sniffed) and passes `image_blocks()` to the primary call and the
+      B1 retry. A reference that does not resolve, or a backend that refuses,
+      ends the turn **blocked** with `attachment: …` as the reason.
+- [x] Attribution: the TASK_ASSIGN carries the requester as every web prompt
+      does; `prompt_in` records the references beside it.
+
+**Where the bytes live — found while building.** The web GUI did not mount
+`/logs` on the podman stack, so an upload landed inside its own container and no
+agent could have read it. `acc-webgui` now mounts `${ACC_STATE_DIR}/logs:/logs:z`
+(same uid 1001 as the agents). On Kubernetes the web GUI and the agents are
+separate pods with no shared volume — KW-08 ("attachments on a volume") — and
+until then the refusal says the store is not shared, rather than blaming
+retention.
+
+**Phase 3 — web UI.**
+- [x] *Attach image*, chips with short digest, remove before sending.
+- [x] Capability warning — a warning, not a block.
+- [x] The digest shown on the sent turn; a blocked reply shown as `Refused: …`.
+
+**Phase 4 — TUI.**
+- [x] `TASK_ASSIGN` references ride the signal log; Comms shows `image <digest>`.
+
+Tests: `tests/test_attachment_delivery.py` (36). Mutation-checked: dropping the
+TypeError refusal, a no-op `refuse_content`, an empty `referenced_attachments`,
+skipping the journal, and failover not forwarding `content` each fail it.
+
+### Still open
+- [ ] Kubernetes: a volume both the web GUI and the agents mount (KW-08).
+- [ ] Context-budget accounting for images (open question 1).
+- [ ] `image_url` on `/v1/chat/completions` (open question 3) — follows the web path.
+- [ ] The episode text noting an image (open question 4).
+- [ ] The TUI cannot attach (it has no picker); it shows that a turn had one.

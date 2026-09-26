@@ -96,6 +96,7 @@ class TUIPromptChannel:
         workspace: str | None = None,
         session_id: str | None = None,
         end_user: str | None = None,
+        attachments: list[str] | None = None,
     ) -> str:
         """Build + publish a TASK_ASSIGN derived from *prompt*.
 
@@ -182,6 +183,11 @@ class TUIPromptChannel:
         # therefore today's one-turn behaviour) exactly as it was.
         if session_id:
             payload["session_id"] = str(session_id)
+        # `20260830-attachment-delivery-path` -- images by reference (sha256),
+        # never bytes: the agent re-reads them from the shared store.  Omitted
+        # when there are none, like session_id.
+        if attachments:
+            payload["attachments"] = [str(ref) for ref in attachments]
 
         try:
             await self._observer.publish(
@@ -277,6 +283,16 @@ def _payload_to_response(task_id: str, data: dict) -> PromptResponse:
     eo = data.get("eval_outcome")
     eval_verdict = str(eo.get("verdict", "") or "") if isinstance(eo, dict) else ""
     raw_compliance = data.get("compliance_health_score")
+    raw_usage = data.get("usage")
+    usage = None
+    if isinstance(raw_usage, dict):
+        try:
+            usage = {
+                key: int(raw_usage.get(key, 0) or 0)
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            }
+        except (TypeError, ValueError):
+            usage = None
     return PromptResponse(
         task_id=task_id,
         agent_id=str(data.get("agent_id", "")),
@@ -293,4 +309,5 @@ def _payload_to_response(task_id: str, data: dict) -> PromptResponse:
             float(raw_compliance) if raw_compliance is not None else -1.0
         ),
         eval_verdict=eval_verdict,
+        usage=usage,
     )

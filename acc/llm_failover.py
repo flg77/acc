@@ -281,10 +281,15 @@ class FailoverBackend:
         user: str,
         response_schema: dict | None = None,
         cache_prefix: bool = False,
+        *,
+        content: list[dict] | None = None,
     ) -> dict:
+        # ``content`` only when there is some: a chain entry built before the
+        # parameter existed is still called exactly as it always was.
+        extra = {"content": content} if content else {}
         return await self._attempt(
             "complete",
-            lambda c: c.complete(system, user, response_schema, cache_prefix),
+            lambda c: c.complete(system, user, response_schema, cache_prefix, **extra),
         )
 
     async def embed(self, text: str) -> list[float]:

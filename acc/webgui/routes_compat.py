@@ -180,7 +180,9 @@ async def _finish_in_background(receiving, channel: Any, task_id: str, request: 
     _pending.resolve(
         task_id,
         status="completed",
-        result=compat.completion_response(request, reply.output),
+        result=compat.completion_response(
+            request, reply.output, usage=getattr(reply, "usage", None),
+        ),
     )
 
 
@@ -255,16 +257,10 @@ async def _make_dispatch(collective_id: str, hub: Any):
                 status=403, error_type="policy_violation",
             )
 
-        usage = {
-            "prompt_tokens": 0,
-            "completion_tokens": 0,
-            "total_tokens": 0,
-        }
-        for key in usage:
-            value = getattr(reply, key, None)
-            if isinstance(value, int):
-                usage[key] = value
-        return reply.output, usage
+        # The task's own counts, as the agent reported them on TASK_COMPLETE.
+        # None from an agent older than F1: the response then says ``null``,
+        # not zero -- until F1 it said zero for every request.
+        return reply.output, getattr(reply, "usage", None)
 
     return dispatch
 
@@ -371,14 +367,56 @@ async def task_status(
                                "type": "invalid_request_error"}},
         )
 
-    return {
+    body = {
         "id": task_id,
         "object": "chat.completion.task",
         "status": record["status"],
         "oversight_id": record.get("oversight_id", ""),
         "model": record.get("model", ""),
         "result": record.get("result"),
+        # When this handle stops answering (PENDING_TTL_S after the 202).
+        "expires_at": int(record["created"] + PENDING_TTL_S),
     }
+    if record["status"] in ("running", "awaiting_approval"):
+        waiting = _waiting_on(request, task_id)
+        if waiting is not None:
+            body.update(waiting)
+    return body
+
+
+def _waiting_on(request: Request, task_id: str) -> dict[str, Any] | None:
+    """What a still-running task is held on, if the oversight queue holds it.
+
+    "running" alone cannot tell a slow model from a tool call waiting for a
+    person; the arbiter's heartbeat already lists every pending row with its
+    task_id, so the poll route reads it rather than guessing. Only the row's
+    public surface is passed on -- the same fields the heartbeat carries to
+    every surface. ``None`` when no pending row names this task.
+    """
+    try:
+        hub = get_hub(request)
+        snapshot = hub.latest(_collective_id(request)) or {}
+    except Exception:  # noqa: BLE001 -- a poll must answer even without a snapshot
+        return None
+    for item in snapshot.get("oversight_pending_items") or []:
+        if not isinstance(item, dict) or item.get("task_id") != task_id:
+            continue
+        waiting: dict[str, Any] = {
+            "status": "awaiting_approval",
+            "oversight_id": str(item.get("oversight_id", "")),
+            "waiting_on": {
+                "summary": str(item.get("summary", "")),
+                "risk_level": str(item.get("risk_level", "")),
+            },
+        }
+        timeout_ms = int(item.get("timeout_ms", 0) or 0)
+        if timeout_ms:
+            # When the queue stops waiting for a decision. Only heartbeats
+            # that carry the decision panel's fields (G3) have it; omitted
+            # otherwise rather than guessed.
+            waiting["waiting_on"]["decide_by"] = timeout_ms // 1000
+        return waiting
+    return None
 
 
 def is_enabled(environ: dict[str, str] | None = None) -> bool:

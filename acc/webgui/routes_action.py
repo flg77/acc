@@ -72,6 +72,14 @@ class PromptRequest(BaseModel):
     rejects absolute paths, ``..`` and ``/..``, and
     ``workspace.resolve_in_workspace`` enforces symlink-collapsed containment.
     This route already requires an operator principal."""
+    attachments: list[str] = Field(default_factory=list, max_length=8)
+    """Images for this turn, as the sha256 references ``POST /api/attachments``
+    returned -- never bytes (`20260830-attachment-delivery-path`).
+
+    Checked here only for being references to something stored, so a typo is a
+    400 now rather than a refusal later.  Whether the role's model can take an
+    image is decided at dispatch, where the backend is known: a text-only one
+    refuses the turn, it never answers without the picture."""
 
 
 class OversightRequest(BaseModel):
@@ -184,6 +192,17 @@ async def send_prompt(
     from acc.channels.webgui import WebPromptChannel  # noqa: PLC0415
 
     obs = _require_observer(hub, req.collective_id)
+    if req.attachments:
+        from acc import attachments as _attachments  # noqa: PLC0415
+
+        for ref in req.attachments:
+            if not _attachments.is_reference(ref) or not (
+                _attachments.store_dir() / ref
+            ).is_file():
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"no stored attachment {str(ref)[:16]!r}; upload it first",
+                )
     channel = WebPromptChannel(
         obs, collective_id=req.collective_id,
         from_agent=f"webgui:{principal.user}",
@@ -196,6 +215,7 @@ async def send_prompt(
         session_id=req.session_id,
         operating_mode=req.operating_mode,
         workspace=req.workspace,
+        attachments=req.attachments,
     )
     try:
         reply = await channel.receive(task_id, timeout=req.timeout_s)

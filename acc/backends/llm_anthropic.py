@@ -53,6 +53,8 @@ class AnthropicBackend:
         user: str,
         response_schema: dict | None = None,
         cache_prefix: bool = False,
+        *,
+        content: list[dict] | None = None,
     ) -> dict:
         """Send a chat completion request to Anthropic.
 
@@ -66,6 +68,9 @@ class AnthropicBackend:
         counts are surfaced in ``usage``.  Only worthwhile above
         Anthropic's minimum-cacheable-prefix size; below it the API
         silently treats it as a normal request.
+
+        *content* -- image blocks from :func:`acc.attachments.content_blocks`,
+        already in the Messages API shape -- follow the text in the user turn.
         """
         user_content = user
         if response_schema is not None:
@@ -89,7 +94,13 @@ class AnthropicBackend:
                 model=self._model,
                 max_tokens=4096,
                 system=system_arg,
-                messages=[{"role": "user", "content": user_content}],
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        [{"type": "text", "text": user_content}, *content]
+                        if content else user_content
+                    ),
+                }],
             )
         except anthropic.APIStatusError as exc:
             retryable = exc.status_code in {429, 503}

@@ -75,7 +75,15 @@ PerceptionProfile = Literal[
     "customer",
     "queue",
 ]
-LLMBackendChoice = Literal["ollama", "anthropic", "vllm", "llama_stack", "openai_compat"]
+#: The backends that ship inside the signed image.
+BUILTIN_LLM_BACKENDS = ("ollama", "anthropic", "vllm", "llama_stack", "openai_compat")
+#: Kept as a name because the TUI and the docs refer to it.  It is a plain
+#: ``str`` rather than a ``Literal`` because a backend may also come from an
+#: allowlisted plugin (:mod:`acc.backends.plugins`), whose names cannot be known
+#: at import time.  Validation did not go away — it moved to
+#: ``LLMConfig._known_backend``, which still rejects a typo, and now rejects an
+#: un-permitted plugin with the same clarity.
+LLMBackendChoice = str
 MetricsBackendChoice = Literal["log", "otel"]
 VectorBackendChoice = Literal["lancedb", "milvus", "turbovec"]
 SignalingBackendChoice = Literal["nats"]
@@ -839,6 +847,33 @@ class LLMConfig(BaseModel):
     Backends whose server auto-caches prefixes (vLLM, Ollama) ignore the
     hint — they already benefit from the stable prefix (PR-CA1), so this
     is optional in all modes and off by default."""
+
+    @field_validator("backend")
+    @classmethod
+    def _known_backend(cls, value: str) -> str:
+        """A built-in, or a plugin the operator has permitted — nothing else.
+
+        Widening ``backend`` to ``str`` for plugins would otherwise cost the
+        typo check that catches ``anthropc`` at load instead of at the first
+        task, so the check is kept and merely taught about the allowlist.  It
+        deliberately does **not** require the plugin to be installed: a config
+        file is frequently validated somewhere the plugin is absent (the CLI
+        image, a lint run), and "you meant this" and "it is not here" are
+        different faults that deserve different messages.  The second one is
+        raised by :func:`acc.backends.plugins.build`.
+        """
+        name = (value or "").strip()
+        if name in BUILTIN_LLM_BACKENDS:
+            return name
+        from acc.backends import plugins as _plugins  # noqa: PLC0415
+
+        if _plugins.is_allowlisted(name):
+            return name
+        raise ValueError(
+            f"unknown LLM backend {name!r}; built-ins are "
+            f"{', '.join(BUILTIN_LLM_BACKENDS)}. A third-party backend must be "
+            f"named in {_plugins.ALLOWLIST_VAR} as well as installed."
+        )
 
 
 class ContextBudgetConfig(BaseModel):
@@ -1750,7 +1785,15 @@ def _build_llm_backend_unrecorded(config: ACCConfig) -> LLMBackend:
             base_url=config.llm.llama_stack_url,
             embedding_model_path=config.llm.embedding_model_path,
         )
-    raise ValueError(f"Unknown LLM backend: {config.llm.backend}")
+    # Not a built-in.  An allowlisted plugin may supply it — and because this
+    # returns into build_llm_backend, the plugin's client is wrapped by
+    # recording_backend exactly like every built-in one.  A plugin cannot
+    # reach a model unrecorded, and cannot opt out of being recorded.
+    from acc.backends import plugins as _plugins  # noqa: PLC0415
+
+    return _plugins.build(
+        config.llm.backend, _plugins.settings_from(config.llm)
+    )
 
 
 def build_backends(config: ACCConfig) -> BackendBundle:

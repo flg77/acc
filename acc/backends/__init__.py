@@ -47,6 +47,32 @@ class LLMCallError(Exception):
         self.status_code = status_code
 
 
+class ContentNotSupported(LLMCallError):
+    """A backend was handed image blocks it cannot send.
+
+    `20260830-attachment-delivery-path` -- a text-only backend **raises**; it
+    never ignores the blocks.  Ignoring them would produce a confident answer
+    about an image the model never received, and nothing would look wrong.
+    Never retryable: a failover chain that walks onto a text-only model must
+    stop there, not answer without the image.
+    """
+
+    def __init__(self, backend: str) -> None:
+        super().__init__(
+            f"the {backend!r} backend cannot accept images. Bind this role to a "
+            f"multimodal model, or send the prompt without the attachment -- it "
+            f"will not be silently dropped.",
+            retryable=False,
+        )
+        self.backend = backend
+
+
+def refuse_content(backend: str, content: list[dict] | None) -> None:
+    """A text-only backend's whole answer to *content*: refuse, never drop."""
+    if content:
+        raise ContentNotSupported(backend)
+
+
 # ---------------------------------------------------------------------------
 # Signaling
 # ---------------------------------------------------------------------------
@@ -114,6 +140,8 @@ class LLMBackend(Protocol):
         user: str,
         response_schema: dict | None = None,
         cache_prefix: bool = False,
+        *,
+        content: list[dict] | None = None,
     ) -> dict:
         """Request a chat completion.
 
@@ -130,6 +158,12 @@ class LLMBackend(Protocol):
                 those without any cache API simply ignore it — the win
                 there comes from sending a stable prefix (PR-CA1), not a
                 client hint.
+            content: image blocks to send with the user turn, in the shape
+                :func:`acc.attachments.content_blocks` builds.  A backend
+                that cannot carry them MUST raise
+                :class:`ContentNotSupported` (:func:`refuse_content`) and
+                must never ignore them.  ``None`` -- every existing call --
+                changes nothing.
 
         Returns:
             Parsed response as a plain dict.

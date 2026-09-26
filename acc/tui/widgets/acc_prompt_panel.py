@@ -41,11 +41,19 @@ def panel_enabled() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
+def linear_layout() -> bool:
+    """``ACC_PROMPT_LINEAR=1`` renders the panel in reading order (UX-10):
+    the options, then the detail under a label, instead of side by side."""
+    raw = os.environ.get("ACC_PROMPT_LINEAR", "0").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 class AccPromptPanel(Static):
     """One decision, in full, where the operator already is.
 
     Keys: the option digits · ``↑``/``↓`` and ``Enter`` · ``n`` notes ·
-    ``c`` ask about it · ``r`` reject with a reason · ``Esc`` later.
+    ``c`` ask about it · ``r`` reject with a reason · ``d`` defer ·
+    ``h`` hand off · ``y`` / ``Y`` copy the id / the command · ``Esc`` later.
     """
 
     can_focus = True
@@ -74,7 +82,7 @@ class AccPromptPanel(Static):
         def __init__(
             self, oversight_ids: list[str], approve: bool, *,
             note: str = "", grant: tuple[str, str, str] | None = None,
-            answer: str = "",
+            answer: str = "", snooze: tuple[str, str, str] | None = None,
         ) -> None:
             super().__init__()
             self.oversight_ids = oversight_ids
@@ -82,6 +90,41 @@ class AccPromptPanel(Static):
             self.note = note
             self.grant = grant
             self.answer = answer
+            # UX-05 -- "allow this class for 30 min": the (category, risk,
+            # requester) to stop asking about, or None.
+            self.snooze = snooze
+
+    class Deferred(Message):
+        """UX-05 -- ``d``: withhold this decision until *seconds* pass, or
+        until the question asked about it is answered (``condition``)."""
+
+        def __init__(
+            self, oversight_ids: list[str], title: str, *, seconds: int,
+            condition: str = "timer",
+        ) -> None:
+            super().__init__()
+            self.oversight_ids = oversight_ids
+            self.title = title
+            self.seconds = seconds
+            self.condition = condition
+
+    class Delegated(Message):
+        """UX-06 -- ``h``: hand the decision to *to*, a person or a tier.
+        The row stays PENDING."""
+
+        def __init__(self, oversight_ids: list[str], to: str, *, note: str = "") -> None:
+            super().__init__()
+            self.oversight_ids = oversight_ids
+            self.to = to
+            self.note = note
+
+    class CopyRequested(Message):
+        """UX-10 -- ``y`` / ``Y``: copy *text* (the id, or the command)."""
+
+        def __init__(self, text: str, what: str) -> None:
+            super().__init__()
+            self.text = text
+            self.what = what
 
     class Dismissed(Message):
         """``Esc`` — the decision stays PENDING and focus returns to the input."""
@@ -114,6 +157,14 @@ class AccPromptPanel(Static):
         self._note_mode = False
         self._note_buffer = ""
         self._exchanges: list[list[str]] = []   # UX-04: [question, answer]
+        # UX-05 / UX-06 -- the two sub-modes, and a one-line notice.
+        self._defer_mode = False
+        self._defer_row = 0
+        self._handoff: str | None = None
+        self._notice = ""
+        #: Who is looking (set by the screen), for "delegated to you".
+        self.viewer = ""
+        self.viewer_tier = ""
         self.last_markup = ""
 
     # ------------------------------------------------------------------
@@ -135,6 +186,7 @@ class AccPromptPanel(Static):
         options = request_options(cards)
         decision = build_decision(
             cards, options, proposal=proposal, more=more, notes=self._note,
+            viewer=self.viewer, viewer_tier=self.viewer_tier,
         )
         if decision is None:
             self.clear()
@@ -151,7 +203,13 @@ class AccPromptPanel(Static):
             self._note_mode = False
             self._note_buffer = ""
             self._exchanges = []           # a different decision, a different thread
-            decision = build_decision(cards, options, proposal=proposal, more=more)
+            self._defer_mode = False
+            self._handoff = None
+            self._notice = ""
+            decision = build_decision(
+                cards, options, proposal=proposal, more=more,
+                viewer=self.viewer, viewer_tier=self.viewer_tier,
+            )
         self._cards = list(cards)
         self._decision = decision
         self.display = True
@@ -167,6 +225,9 @@ class AccPromptPanel(Static):
         self._note_mode = False
         self._note_buffer = ""
         self._exchanges = []
+        self._defer_mode = False
+        self._handoff = None
+        self._notice = ""
         self.last_markup = ""
         self.update("")
         self.display = False
@@ -183,10 +244,14 @@ class AccPromptPanel(Static):
         width = self.size.width or 100
         self.last_markup = render_panel(
             decision,
-            highlighted=self._row,
+            highlighted=self._defer_row if self._defer_mode else self._row,
             width=max(40, width - 4),
             confirm_key=self._confirm,
             note_mode=self._note_mode,
+            linear=linear_layout(),
+            defer_menu=self.defer_choices() if self._defer_mode else None,
+            handoff=self._handoff,
+            notice=self._notice,
         )
         self.update(self.last_markup)
 
@@ -219,6 +284,30 @@ class AccPromptPanel(Static):
     def exchanges(self) -> list[tuple[str, str]]:
         return [(q, a) for q, a in self._exchanges]
 
+    def restore_exchanges(self, exchanges: list[tuple[str, str]]) -> None:
+        """Put back the thread a deferred decision carried (UX-05)."""
+        if self._decision is None:
+            return
+        self._exchanges = [[q, a] for q, a in exchanges]
+        self._paint()
+
+    def question_in_flight(self) -> bool:
+        return any(q and not a for q, a in self._exchanges)
+
+    def defer_choices(self) -> tuple[tuple[str, str], ...]:
+        """UX-05 -- the deferral menu; "when answered" only while a question
+        about this decision is still waiting for the agent."""
+        from acc.tui.decision_timing import DEFER_CHOICES, WHEN_ANSWERED  # noqa: PLC0415
+        choices = [(k, label) for k, label, _s in DEFER_CHOICES]
+        if self.question_in_flight():
+            choices.append((WHEN_ANSWERED[0], WHEN_ANSWERED[1]))
+        return tuple(choices)
+
+    def say(self, notice: str) -> None:
+        """A one-line notice in the panel (a refused deferral, a copy)."""
+        self._notice = notice
+        self._paint()
+
     # ------------------------------------------------------------------
     # Keys
     # ------------------------------------------------------------------
@@ -228,6 +317,12 @@ class AccPromptPanel(Static):
             return
         if self._note_mode:
             self._note_key(event)
+            return
+        if self._defer_mode:
+            self._defer_key(event)
+            return
+        if self._handoff is not None:
+            self._handoff_key(event)
             return
         key = event.key
         options = self._decision.options
@@ -256,6 +351,27 @@ class AccPromptPanel(Static):
             ids = self._decision.oversight_ids
             if ids:
                 self.post_message(self.ReasonRequested(ids[0]))
+        elif key == "d":
+            self._defer_mode = True
+            self._defer_row = 0
+            self._confirm = None
+            self._notice = ""
+            self._paint()
+        elif key == "h":
+            self._handoff = ""
+            self._confirm = None
+            self._notice = ""
+            self._paint()
+        elif key == "y":
+            ids = self._decision.oversight_ids
+            if ids:
+                self.post_message(self.CopyRequested(ids[0], "the decision id"))
+        elif key == "Y":
+            command = self._decision.command
+            if command:
+                self.post_message(self.CopyRequested(command, "the command"))
+            else:
+                self.say("this decision carries no command to copy")
         else:
             opt = next((o for o in options if o.key == key), None)
             if opt is None:
@@ -290,6 +406,60 @@ class AccPromptPanel(Static):
         event.stop()
         event.prevent_default()
 
+    def _defer_key(self, event: events.Key) -> None:
+        """UX-05 -- the deferral menu owns the keys while it is open."""
+        from acc.tui.decision_timing import DEFER_CHOICES, WHEN_ANSWERED  # noqa: PLC0415
+        choices = self.defer_choices()
+        key = event.key
+        picked = None
+        if key == "escape":
+            self._defer_mode = False
+        elif key == "up":
+            self._defer_row = max(0, self._defer_row - 1)
+        elif key == "down":
+            self._defer_row = min(len(choices) - 1, self._defer_row + 1)
+        elif key == "enter":
+            picked = choices[self._defer_row][0]
+        elif any(k == key for k, _label in choices):
+            picked = key
+        if picked is not None and self._decision is not None:
+            self._defer_mode = False
+            if picked == WHEN_ANSWERED[0]:
+                seconds, condition = 0, "answered"
+            else:
+                seconds = next(sec for k, _l, sec in DEFER_CHOICES if k == picked)
+                condition = "timer"
+            self.post_message(self.Deferred(
+                list(self._decision.oversight_ids), self._decision.title,
+                seconds=seconds, condition=condition,
+            ))
+        self._paint()
+        event.stop()
+        event.prevent_default()
+
+    def _handoff_key(self, event: events.Key) -> None:
+        """UX-06 -- typing who to hand the decision to."""
+        key = event.key
+        buffer = self._handoff or ""
+        if key == "escape":
+            self._handoff = None
+        elif key == "enter":
+            target = buffer.strip()
+            if target and self._decision is not None:
+                self.post_message(self.Delegated(
+                    list(self._decision.oversight_ids), target, note=self._note,
+                ))
+                self._handoff = None
+            else:
+                self._notice = "name a person (webgui:alice) or a tier (operator)"
+        elif key == "backspace":
+            self._handoff = buffer[:-1]
+        elif len(event.character or "") == 1 and (event.character or "").isprintable():
+            self._handoff = buffer + event.character
+        self._paint()
+        event.stop()
+        event.prevent_default()
+
     def _decide(self, option, *, key: str) -> None:
         decision = self._decision
         if decision is None:
@@ -308,11 +478,17 @@ class AccPromptPanel(Static):
             card = self._cards[0]
             if card.task_id and card.target:
                 grant_key = (card.task_id, card.kind, card.target)
+        snooze_key = None
+        if getattr(option, "snooze", False) and len(self._cards) == 1:
+            from acc.tui.decision_timing import snooze_eligible, snooze_key as _key  # noqa: PLC0415
+            if snooze_eligible(self._cards[0]):
+                snooze_key = _key(self._cards[0])
         self.post_message(self.Decided(
             list(decision.oversight_ids),
             option.approve,
             note=self._note,
             grant=grant_key,
             answer=option.key if decision.asked else "",
+            snooze=snooze_key,
         ))
         self.clear()

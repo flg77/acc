@@ -210,12 +210,16 @@ export const sendPrompt = (
   // accepted by the channel long before this surface could send them.
   operatingMode?: string,
   workspace?: string,
+  // Images for this turn, as the sha256 references `uploadAttachment` returned
+  // (20260830-attachment-delivery-path). References, never bytes.
+  attachments?: string[],
 ) =>
   postJSON<{
     task_id: string;
     session_id: string;
     output: string;
     blocked: boolean;
+    block_reason: string;
   }>("/api/prompt", {
     collective_id: cid,
     target_role: targetRole,
@@ -224,7 +228,45 @@ export const sendPrompt = (
     session_id: sessionId ?? null,
     operating_mode: operatingMode ?? "AUTO",
     workspace: workspace ?? null,
+    attachments: attachments ?? [],
   });
+
+// --- attachments (20260830-attachment-delivery-path) ------------------------
+
+export type AttachmentRef = {
+  sha256: string;
+  media_type: string;
+  size: number;
+  width: number;
+  height: number;
+  filename: string;
+};
+
+// Uploads validate here (type, size, decodability); whether the role's model
+// can take an image is decided at dispatch, where the backend is known.
+export async function uploadAttachment(file: File): Promise<AttachmentRef> {
+  const form = new FormData();
+  form.append("file", file);
+  const resp = await fetch("/api/attachments", {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: form,
+  });
+  if (!resp.ok) {
+    const detail = await resp.text();
+    throw new Error(`${resp.status}: ${detail}`);
+  }
+  return resp.json() as Promise<AttachmentRef>;
+}
+
+export type AttachmentCapability = {
+  backend: string;
+  accepts_images: boolean;
+  max_bytes: number;
+  supported: string[];
+};
+export const fetchAttachmentCapability = () =>
+  getJSON<AttachmentCapability>("/api/attachments/capability");
 
 export const oversightDecision = (
   cid: string,

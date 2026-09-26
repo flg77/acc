@@ -401,6 +401,157 @@ def check_sandbox(ctx: Context) -> Iterable[Result]:
     yield Result("sandbox", Severity.OK, "sandbox delegation is configured")
 
 
+@register("backend-plugins")
+def check_backend_plugins(ctx: Context) -> Iterable[Result]:
+    """Third-party LLM backends: installed, permitted, and whether they agree.
+
+    Two states get confused constantly and fail at different times. A plugin
+    that is installed but not permitted is inert and the deployment is fine —
+    worth printing, because the operator who just installed it is about to ask
+    why nothing changed. A plugin that is permitted but not installed is a
+    deployment that will fail on its first task with that backend, and it is
+    worth saying so before any task runs.
+
+    Never loads a plugin: this reads entry-point metadata and an environment
+    variable. A health command that imports third-party code to report on it
+    has already done the thing it was meant to check.
+    """
+    from acc.backends import plugins as _plugins  # noqa: PLC0415
+
+    permitted = _plugins.allowlisted(ctx.environ)
+    installed = _plugins.discovered()
+
+    if not permitted and not installed:
+        yield Result("backend-plugins", Severity.OK, "no third-party LLM backends")
+        return
+
+    for name in permitted:
+        if name not in installed:
+            yield Result(
+                name="backend-plugins",
+                severity=Severity.BROKEN,
+                summary=f"backend plugin {name!r} is permitted but not installed",
+                detail=(
+                    f"{_plugins.ALLOWLIST_VAR} names {name!r}, but no installed "
+                    f"distribution advertises it in {_plugins.ENTRY_POINT_GROUP!r}. "
+                    "Any role bound to it fails on its first task."
+                ),
+                subject=name,
+            )
+    for name, dist in sorted(installed.items()):
+        if name in permitted:
+            yield Result(
+                "backend-plugins", Severity.OK,
+                f"backend plugin {name!r} permitted and installed ({dist})",
+                subject=name,
+            )
+        else:
+            yield Result(
+                name="backend-plugins",
+                severity=Severity.OK,
+                summary=f"backend plugin {name!r} installed but not permitted",
+                detail=(
+                    f"Installed by {dist} and inert: installing a backend is "
+                    f"deliberately not consent to run it. Add {name!r} to "
+                    f"{_plugins.ALLOWLIST_VAR} to allow it."
+                ),
+                subject=name,
+            )
+
+
+@register("compat")
+def check_compat_endpoint(ctx: Context) -> Iterable[Result]:
+    """The OpenAI-compatible endpoint: off, on, or configured so it cannot work.
+
+    Reports the subjects each key maps to, never a key or a digest.  The one
+    fault worth a non-zero exit is an entry that is not a SHA-256 digest: it
+    can never authenticate anyone, and the likeliest cause is the key itself
+    pasted where its digest belongs -- a credential sitting in plain config.
+    """
+    from acc import compat_endpoint as _compat  # noqa: PLC0415
+
+    raw = str(ctx.environ.get(_compat.KEYS_VAR, "") or "").strip()
+    if not raw:
+        yield Result("compat", Severity.OK, "compat endpoint off (no keys configured)")
+        return
+
+    keys = _compat._configured_keys(ctx.environ)
+    if not keys:
+        yield Result(
+            name="compat",
+            severity=Severity.BROKEN,
+            summary=f"{_compat.KEYS_VAR} is set but no entry parses",
+            detail=(
+                "Each entry is sha256(key):subject, comma-separated. With none "
+                "parsing, the endpoint is not mounted at all."
+            ),
+        )
+        return
+
+    malformed = sorted(
+        subject for digest, subject in keys.items()
+        if not _is_sha256_hex(digest)
+    )
+    for subject in malformed:
+        yield Result(
+            name="compat",
+            severity=Severity.BROKEN,
+            summary=f"the key for {subject!r} is not a lowercase SHA-256 hex digest",
+            detail=(
+                "It can never match a presented key. If it is the key itself, "
+                "the key is in plain configuration: rotate it, and store "
+                "sha256(key) instead (docs/howto-openai-compat.md)."
+            ),
+            subject=subject,
+        )
+    good = sorted(s for d, s in keys.items() if _is_sha256_hex(d))
+    if good:
+        yield Result(
+            "compat", Severity.OK,
+            f"compat endpoint on: {len(good)} key(s) for {', '.join(good)}",
+            detail="Each key is a requester, capped at MEDIUM (D-014).",
+        )
+
+
+def _is_sha256_hex(value: str) -> bool:
+    return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+@register("attachments")
+def check_attachments(ctx: Context) -> Iterable[Result]:
+    """The image store: where it is, how much it holds, and what governs it.
+
+    Every image in it is personal data. It is kept under the session retention
+    policy (`20260830-attachment-delivery-path`): an image goes when no
+    surviving session names it and it is older than ``keep_days``, on
+    ``acc-cli sessions retention --apply``.  Under ``keep_forever`` -- the
+    default -- nothing is removed, and this says so rather than letting a
+    growing store look governed.
+    """
+    import time as _time  # noqa: PLC0415
+
+    from acc import attachments as _attachments  # noqa: PLC0415
+    from acc import sessions as _sessions  # noqa: PLC0415
+
+    summary = _attachments.store_summary()
+    if not summary["count"]:
+        yield Result("attachments", Severity.OK, "no stored images",
+                     detail=summary["path"])
+        return
+    days = int((_time.time() - summary["oldest_mtime"]) // 86400)
+    policy = _sessions.load_policy()
+    governed = (
+        f"kept {policy.keep_days} day(s) unless a session names them"
+        if policy.keep_days > 0 else "kept forever (no retention policy set)"
+    )
+    yield Result(
+        "attachments", Severity.OK,
+        f"{summary['count']} stored image(s), {summary['bytes'] // 1024} KiB, "
+        f"oldest {days} day(s); {governed}",
+        detail=summary["path"],
+    )
+
+
 @register("drift")
 def check_drift(ctx: Context) -> Iterable[Result]:
     """Configuration edited more recently than the process that read it.

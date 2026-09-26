@@ -45,6 +45,8 @@ class PanelOption:
     approve: bool
     grant: bool = False
     detail: tuple[str, ...] = ()
+    #: UX-05 -- "allow this class for 30 min".
+    snooze: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +85,21 @@ class Decision:
     #: expire.  A decision with a deadline that the panel does not show is a
     #: decision the operator can lose by reading slowly.
     expires_at_ms: int = 0
+    #: `20260925-decisions-that-wait-and-move` (UX-06) -- who the decision was
+    #: last handed to, by whom, and whether that is the person looking.
+    delegated_to: str = ""
+    delegated_by: str = ""
+    delegated_to_viewer: bool = False
+
+    @property
+    def command(self) -> str:
+        """UX-10 -- the command this call runs (the ``runs:`` evidence line),
+        for copying; "" when the row carries none."""
+        for line in self.evidence:
+            text = str(line).strip()
+            if text.startswith("runs:"):
+                return text[len("runs:"):].strip()
+        return ""
 
     @property
     def needs_second_approver(self) -> bool:
@@ -142,6 +159,16 @@ def _detail_for(card: GateCard, option: RequestOption, proposal: dict) -> tuple[
     params = proposal.get("params") if isinstance(proposal, dict) else None
     params = params if isinstance(params, dict) else {}
 
+    if option.approve and getattr(option, "snooze", False):
+        from acc.tui.decision_timing import SNOOZE_S, snooze_key, snooze_label  # noqa: PLC0415
+        lines.append((card.consequence or "").strip() or f"{card.kind} runs as proposed")
+        lines.append(
+            f"-> for {SNOOZE_S // 60} min of this session, further "
+            f"{snooze_label(snooze_key(card))} are approved without asking"
+        )
+        lines.append("never a destructive call, never HIGH, never a second person's work")
+        lines.append("/snooze lists it, /snooze off ends it")
+        return tuple(lines)
     if option.approve:
         consequence = (card.consequence or "").strip()
         lines.append(consequence or f"{card.kind} runs as proposed")
@@ -174,8 +201,12 @@ def build_decision(
     proposal: dict | None = None,
     more: int = 0,
     notes: str = "",
+    viewer: str = "",
+    viewer_tier: str = "",
 ) -> Decision | None:
-    """One request -> the panel's value, or ``None`` when there is nothing to ask."""
+    """One request -> the panel's value, or ``None`` when there is nothing to ask.
+
+    *viewer* / *viewer_tier* are who is looking, for the delegation banner."""
     if not cards or not options:
         return None
     head = cards[0]
@@ -193,6 +224,7 @@ def build_decision(
                 label=o.label,
                 approve=o.approve,
                 grant=o.grant,
+                snooze=getattr(o, "snooze", False),
                 detail=_detail_for(head, o, proposal),
             )
             for o in options
@@ -221,15 +253,36 @@ def build_decision(
                 if isinstance(a, dict)
             ) if isinstance(approvals, list) else ())
         ),
-        expires_at_ms=(
-            head.submitted_at_ms + head.timeout_ms
-            if head.submitted_at_ms and head.timeout_ms else 0
-        ),
+        # `20260925-decisions-that-wait-and-move` -- ``timeout_ms`` is the row's
+        # ABSOLUTE deadline (the queue stores ``now_ms + timeout_s * 1000``); it
+        # was being added to the submit time.  And it is shown only where
+        # something acts on it: nothing expires a proposal row.
+        expires_at_ms=head.timeout_ms if head.deadline_enforced else 0,
+        delegated_to=head.delegated_to,
+        delegated_by=head.delegated_by,
+        delegated_to_viewer=is_for_viewer(head.delegated_to, viewer, viewer_tier),
         more=more,
         notes=notes,
         asked=head.question is not None,
         destructive=head.question is not None and head.question.destructive,
     )
+
+
+def is_for_viewer(delegated_to: str, viewer: str, viewer_tier: str = "") -> bool:
+    """Whether a decision handed to *delegated_to* is handed to the viewer.
+
+    A person matches by ``acc.attribution.person_of`` (so ``slack:U1@C1`` and
+    ``slack:U1@C2`` are one person, and the person map extends it across
+    surfaces when it lands); a tier matches the viewer's tier."""
+    if not delegated_to:
+        return False
+    from acc.attribution import person_of  # noqa: PLC0415
+    target = delegated_to.strip()
+    if viewer_tier and target.lower() == viewer_tier.strip().lower():
+        return True
+    if not viewer:
+        return False
+    return (person_of(target) or target) == (person_of(viewer) or viewer)
 
 
 # ---------------------------------------------------------------------------
@@ -355,8 +408,19 @@ def render_panel(
     confirm_key: str | None = None,
     note_mode: bool = False,
     now_ms: int | None = None,
+    linear: bool = False,
+    defer_menu: tuple[tuple[str, str], ...] | None = None,
+    handoff: str | None = None,
+    notice: str = "",
 ) -> str:
-    """Rich markup for the panel.  A pure function of the decision and cursor."""
+    """Rich markup for the panel.  A pure function of the decision and cursor.
+
+    *linear* (UX-10, ``ACC_PROMPT_LINEAR``) renders in reading order -- the
+    options, then the highlighted option's detail under a plain label -- instead
+    of the detail box beside the options, which a screen reader reads line by
+    line, interleaved.  *defer_menu* replaces the options with the deferral
+    choices (UX-05); *handoff* is the text being typed to delegate (UX-06);
+    *notice* is a one-line message such as a refused deferral."""
     highlighted = max(0, min(highlighted, len(decision.options) - 1))
     width = max(40, int(width))
     lines: list[str] = [f"[b reverse] {decision.title} [/b reverse]"]
@@ -383,6 +447,12 @@ def render_panel(
         colour = "red" if left == "expired" else "dim"
         lines.append(f"[{colour}]{left}[/{colour}]")
 
+    if decision.delegated_to:
+        who = "you" if decision.delegated_to_viewer else decision.delegated_to
+        by = decision.delegated_by or "someone"
+        colour = "b magenta" if decision.delegated_to_viewer else "magenta"
+        lines.append(f"[{colour}]delegated to {who}[/{colour}] [dim]by {by}[/dim]")
+
     if decision.requester or decision.ceiling:
         lines.append("")
         who = decision.requester or "unattributed"
@@ -404,16 +474,51 @@ def render_panel(
 
     lines.append("")
 
+    if notice:
+        lines.append(f"[yellow]{notice}[/yellow]")
+        lines.append("")
+
+    if defer_menu is not None:
+        lines.append("[b]Defer -- when should this come back?[/b]")
+        for i, (key, label) in enumerate(defer_menu):
+            marker = "[b cyan]>[/b cyan]" if i == highlighted else " "
+            text = f"[b]{label}[/b]" if i == highlighted else label
+            lines.append(f"{marker} {key}. {text}")
+        lines.append("[dim]  it always comes back before it can expire[/dim]")
+        lines.append("")
+        lines.append("[dim]Enter or digit to defer · ↑↓ move · Esc back[/dim]")
+        return "\n".join(lines)
+
+    if handoff is not None:
+        lines.append("[b]Hand off to:[/b] " + (handoff or "[dim italic]a person "
+                     "(webgui:alice, slack:U1) or a tier (operator)[/dim italic]"))
+        lines.append("[dim]  the decision stays pending; anyone who could decide it "
+                     "still can[/dim]")
+        lines.append("")
+        lines.append("[dim]Enter to hand off · Esc back[/dim]")
+        return "\n".join(lines)
+
     opt_lines = _option_lines(decision, highlighted, OPTIONS_WIDTH)
-    side_by_side = width >= MIN_SIDE_BY_SIDE
+    side_by_side = width >= MIN_SIDE_BY_SIDE and not linear
     # Stacked, the box owns the pane; beside the options it gets what is left.
     detail_width = (
         max(20, min(MAX_DETAIL_WIDTH, width - OPTIONS_WIDTH - 6))
         if side_by_side
         else max(20, min(MAX_DETAIL_WIDTH, width - 4))
     )
-    detail = _detail_box(decision.options[highlighted].detail, detail_width)
-    if side_by_side:
+    if linear:
+        lines.extend(opt_lines)
+        lines.append("")
+        lines.append("[b]Details:[/b]")
+        for item in decision.options[highlighted].detail or ("—",):
+            for text in _wrap(item, width - 4):
+                lines.append(f"  {text}")
+        detail: list[str] = []
+    else:
+        detail = _detail_box(decision.options[highlighted].detail, detail_width)
+    if linear:
+        pass
+    elif side_by_side:
         plain: list[int] = []
         for i, opt in enumerate(decision.options):
             body = _wrap(opt.label, max(8, OPTIONS_WIDTH - 6))
@@ -449,11 +554,11 @@ def render_panel(
     lines.append("[dim]Chat about this[/dim]")
     # The hints shorten rather than overflow: a wrapped key line reads as damage.
     full = (
-        "Enter to select · ↑/↓ to navigate · n to add notes · "
-        "c to ask about it · Esc to cancel"
+        "Enter to select · ↑/↓ to navigate · n to add notes · c to ask about it · "
+        "d to defer · h to hand off · y to copy the id · Esc to cancel"
     )
-    short = "Enter select · ↑↓ move · n note · c ask · Esc later"
-    tiny = "Enter · ↑↓ · n · c · Esc"
+    short = "Enter select · ↑↓ move · n note · c ask · d defer · h hand off · y copy · Esc later"
+    tiny = "Enter · ↑↓ · n · c · d · h · y · Esc"
     hint = next((h for h in (full, short, tiny) if len(h) <= width), tiny)
     lines.append(f"[dim]{hint}[/dim]")
     return "\n".join(lines)

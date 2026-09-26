@@ -88,7 +88,13 @@ def _build_llm_only_unrecorded(config: Any) -> Any:
             base_url=config.llm.llama_stack_url,
             embedding_model_path=config.llm.embedding_model_path,
         )
-    raise ValueError(f"Unknown LLM backend: {backend_name!r}")
+    # Not a built-in — an allowlisted plugin may supply it.  Mirrors the branch
+    # in ``acc.config``; the wrapper is applied by ``_build_llm_only`` above, so
+    # a plugin reached from the CLI is recorded too.  ``acc-cli llm test`` is
+    # the cheapest way to prove a freshly installed plugin actually answers.
+    from acc.backends import plugins as _plugins  # noqa: PLC0415
+
+    return _plugins.build(backend_name, _plugins.settings_from(config.llm))
 
 
 def register(sub: argparse._SubParsersAction) -> None:

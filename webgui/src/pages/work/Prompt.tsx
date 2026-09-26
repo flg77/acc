@@ -6,8 +6,13 @@
 // unknown mode normalises to AUTO agent-side, so the stricter gate wins on a typo.
 // New: the target is picked from the roles that are running, and the page says
 // it is waiting — an agent turn can take minutes.
+// Images (20260830-attachment-delivery-path): uploaded first, sent as sha256
+// references. A backend that cannot take one refuses the turn — the reason is
+// shown — rather than answering about a picture it never saw; the page warns
+// before sending when the configured backend is text-only, but does not block,
+// because the role actually asked may be bound elsewhere.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Button,
@@ -23,10 +28,23 @@ import {
   TextInput,
   Title,
 } from "@patternfly/react-core";
-import { sendPrompt } from "../../api/client";
+import {
+  AttachmentCapability,
+  AttachmentRef,
+  fetchAttachmentCapability,
+  sendPrompt,
+  uploadAttachment,
+} from "../../api/client";
 import { useSnapshot } from "../../state/snapshot";
 
-type Turn = { kind: "you" | "agent" | "error"; text: string; task?: string };
+type Turn = {
+  kind: "you" | "agent" | "error";
+  text: string;
+  task?: string;
+  images?: string[];
+};
+
+const short = (sha: string) => sha.slice(0, 12);
 
 const MODES = ["AUTO", "PLAN", "ACCEPT_EDITS", "ACCEPT_ALL"];
 
@@ -52,19 +70,48 @@ export function PromptPage() {
   const [mode, setMode] = useState("AUTO");
   const [workspace, setWorkspace] = useState("");
   const [busy, setBusy] = useState(false);
+  const [attached, setAttached] = useState<AttachmentRef[]>([]);
+  const [uploadError, setUploadError] = useState("");
+  const [capability, setCapability] = useState<AttachmentCapability | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetchAttachmentCapability().then(setCapability).catch(() => setCapability(null));
+  }, []);
+
+  const attach = async (files: FileList | null) => {
+    setUploadError("");
+    for (const file of Array.from(files ?? [])) {
+      try {
+        const ref = await uploadAttachment(file);
+        setAttached((a) => (a.some((x) => x.sha256 === ref.sha256) ? a : [...a, ref]));
+      } catch (e) {
+        setUploadError(`${file.name}: ${String(e)}`);
+      }
+    }
+    if (fileInput.current) fileInput.current.value = "";
+  };
 
   const send = async () => {
     const prompt = text.trim();
     if (!prompt || !role || busy) return;
-    setTurns((t) => [...t, { kind: "you", text: prompt }]);
+    const images = attached.map((a) => a.sha256);
+    setTurns((t) => [...t, { kind: "you", text: prompt, images }]);
     setText("");
+    setAttached([]);
     setBusy(true);
     try {
       const r = await sendPrompt(
         collectiveId, role, prompt, undefined, sessionId, mode, workspace || undefined,
+        images,
       );
       if (!sessionId && r.session_id) setSessionId(r.session_id);
-      setTurns((t) => [...t, { kind: "agent", text: r.output, task: r.task_id.slice(0, 8) }]);
+      setTurns((t) => [
+        ...t,
+        r.blocked
+          ? { kind: "error", text: `Refused: ${r.block_reason || "blocked"}`, task: r.task_id.slice(0, 8) }
+          : { kind: "agent", text: r.output, task: r.task_id.slice(0, 8) },
+      ]);
     } catch (e) {
       setTurns((t) => [...t, { kind: "error", text: String(e) }]);
     } finally {
@@ -103,7 +150,16 @@ export function PromptPage() {
                 <Label color={t.kind === "you" ? "blue" : t.kind === "agent" ? "green" : "red"} isCompact>
                   {t.kind === "you" ? "You" : t.kind === "agent" ? `${role} · ${t.task}` : "Error"}
                 </Label>
-                <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{t.text}</div>
+                <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                  {t.text}
+                  {t.images && t.images.length > 0 && (
+                    <div className="acc-source">
+                      {t.images.map((sha) => (
+                        <span key={sha}>image <code>{short(sha)}</code>{" "}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
             {busy && (
@@ -170,6 +226,44 @@ export function PromptPage() {
             />
           </FormGroup>
         </div>
+        <FormGroup label="Images" fieldId="prompt-images">
+          <input
+            ref={fileInput}
+            id="prompt-images"
+            type="file"
+            accept={(capability?.supported ?? ["image/png", "image/jpeg", "image/gif", "image/webp"]).join(",")}
+            multiple
+            hidden
+            onChange={(e) => void attach(e.target.files)}
+          />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--pf-t--global--spacer--sm)", alignItems: "center" }}>
+            <Button variant="secondary" onClick={() => fileInput.current?.click()} isDisabled={busy}>
+              Attach image
+            </Button>
+            {attached.map((a) => (
+              <Label
+                key={a.sha256}
+                isCompact
+                onClose={() => setAttached((x) => x.filter((y) => y.sha256 !== a.sha256))}
+                closeBtnAriaLabel={`Remove ${a.filename || short(a.sha256)}`}
+              >
+                {a.filename || "image"} · {short(a.sha256)}
+              </Label>
+            ))}
+          </div>
+        </FormGroup>
+        {uploadError && (
+          <Alert isInline variant="danger" title="Not attached" component="p">
+            {uploadError}
+          </Alert>
+        )}
+        {attached.length > 0 && capability && !capability.accepts_images && (
+          <Alert isInline variant="warning" title="This deployment's backend cannot take images" component="p">
+            The configured backend ({capability.backend || "unknown"}) is text-only. Unless
+            {" "}{role || "the role"} is bound to a multimodal model, the turn will be refused —
+            it will not be answered without the image.
+          </Alert>
+        )}
         <div style={{ display: "flex", gap: "var(--pf-t--global--spacer--sm)" }}>
           <Button type="submit" variant="primary" isDisabled={!text.trim() || !role || busy}>
             Send

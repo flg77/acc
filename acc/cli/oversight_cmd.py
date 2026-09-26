@@ -64,6 +64,19 @@ def register(sub: argparse._SubParsersAction) -> None:
     rej.add_argument("--reason", default="")
     rej.set_defaults(func=lambda a: _cmd_decide(a, "REJECT"))
 
+    # `20260925-decisions-that-wait-and-move` (UX-06).
+    dlg = ov_sub.add_parser(
+        "delegate",
+        help="Hand a pending decision to a person or a tier (it stays PENDING).",
+    )
+    dlg.add_argument("oversight_id")
+    dlg.add_argument("--to", required=True,
+                     help="A person (webgui:alice, slack:U1) or a tier (operator).")
+    dlg.add_argument("--note", default="", help="Why, for whoever picks it up.")
+    dlg.add_argument("--collective", "-c", default=None)
+    dlg.add_argument("--approver-id", default="cli:operator")
+    dlg.set_defaults(func=lambda a: _cmd_decide(a, "DELEGATE"))
+
 
 # ---------------------------------------------------------------------------
 # Handlers
@@ -93,6 +106,9 @@ async def _cmd_pending(args: argparse.Namespace) -> int:
             ts_str = time.strftime("%H:%M:%S", time.localtime(ms / 1000.0)) if ms else "—"
             from acc.oversight import status_label  # noqa: PLC0415
             status = status_label(it)
+            handed = [d for d in (it.get("delegations") or []) if isinstance(d, dict)]
+            if handed:
+                status = f"{status} -> {handed[-1].get('to', '')}"
             print(f"{oid} {agent:<20} {risk:<14} {ts_str:<10} {status}")
 
     async def _on_heartbeat(msg: Any) -> None:
@@ -231,10 +247,12 @@ async def _cmd_decide(args: argparse.Namespace, decision: str) -> int:
         "decision": decision,
         "approver_id": args.approver_id,
         "approver_tier": _approver_tier(),
-        "reason": getattr(args, "reason", ""),
+        "reason": getattr(args, "reason", "") or getattr(args, "note", ""),
         "ts": time.time(),
         "collective_id": cid,
     }
+    if decision == "DELEGATE":
+        payload["delegate_to"] = str(getattr(args, "to", "") or "").strip()
 
     try:
         await nc.publish(
@@ -245,5 +263,9 @@ async def _cmd_decide(args: argparse.Namespace, decision: str) -> int:
     finally:
         await nc.drain()
 
-    print(f"published OVERSIGHT_DECISION {decision} for {oversight_id}")
+    if decision == "DELEGATE":
+        print(f"published OVERSIGHT_DECISION DELEGATE for {oversight_id} -> "
+              f"{payload['delegate_to']} (it stays pending)")
+    else:
+        print(f"published OVERSIGHT_DECISION {decision} for {oversight_id}")
     return 0

@@ -127,6 +127,26 @@ def strip_control_tokens(text: "str | None") -> str:
     return "".join(kept).strip()
 
 
+def _user_parts(user: str, content: list[dict] | None) -> Any:
+    """The user turn: plain text, or text then images as data URLs.
+
+    `20260830-attachment-delivery-path` -- the blocks arrive in the Messages API
+    shape ``acc.attachments`` builds; Chat Completions takes an ``image_url``.
+    """
+    if not content:
+        return user
+    parts: list[dict[str, Any]] = [{"type": "text", "text": user}]
+    for block in content:
+        source = block.get("source") or {}
+        parts.append({
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{source.get('media_type', '')};base64,{source.get('data', '')}",
+            },
+        })
+    return parts
+
+
 class OpenAICompatBackend:
     """OpenAI Chat Completions-compatible inference backend with retry/back-off.
 
@@ -177,6 +197,8 @@ class OpenAICompatBackend:
         user: str,
         response_schema: dict | None = None,
         cache_prefix: bool = False,  # PR-CA2: ignored — provider/proxy-dependent
+        *,
+        content: list[dict] | None = None,
     ) -> dict:
         """POST to ``{base_url}/chat/completions`` (OpenAI Chat Completions format).
 
@@ -190,6 +212,9 @@ class OpenAICompatBackend:
                 ``response_format.type = json_schema`` structured output.  Falls
                 back gracefully to ``json_object`` mode on providers that do not
                 support the full schema parameter.
+            content: image blocks from :func:`acc.attachments.content_blocks`;
+                sent as ``image_url`` data URLs after the text, the Chat
+                Completions shape for vision input.
 
         Returns:
             Parsed response dict.  The ``content`` key holds the text output;
@@ -205,7 +230,7 @@ class OpenAICompatBackend:
             "model": self._model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": user},
+                {"role": "user", "content": _user_parts(user, content)},
             ],
         }
         if response_schema is not None:

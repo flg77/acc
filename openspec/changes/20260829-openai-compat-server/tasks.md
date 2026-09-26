@@ -163,3 +163,51 @@ This was recorded as "blocked on a design decision". It was not blocked — it w
 unanswered, and `thread_continuity`'s module docstring had already answered it.
 The tracelog is the single source of truth; compat was simply using the wrong
 one.
+
+
+## APPLIED — F1, the remaining gaps, 2026-09-25
+
+The sections above were never ticked as the work landed; this records where each
+stands now, against the tree.
+
+- [x] §2 poll route states, same-principal 404, expiry (`expired` after
+      `BACKGROUND_TIMEOUT_S`, handle forgotten after `PENDING_TTL_S`) — shipped
+      earlier; F1 adds `expires_at` to every poll body.
+- [x] §2 **what it waits on**: a task held by a pending oversight row answers
+      `awaiting_approval` with the row's `oversight_id` and `waiting_on`
+      (summary, risk, `decide_by` when the arbiter heartbeat carries
+      `timeout_ms`). Read from `hub.latest(cid)["oversight_pending_items"]` —
+      the arbiter's view, which is authoritative for the shared queue. A task
+      already `completed`/`refused` is never relabelled by a stale row.
+- [x] §3 **real usage.** It was zero on every response, for three reasons:
+      (1) `PromptResponse` had no `prompt_tokens`/`completion_tokens`, so the
+      route's `getattr` always missed; (2) `completion_response` read
+      `input_tokens`/`output_tokens` while the route passed the standard names;
+      (3) `TASK_COMPLETE.input_tokens` was `stress.prompt_input_tokens`, the
+      agent's lifetime total. Now: `cognitive_core._TASK_USAGE` (a ContextVar —
+      agents run tasks concurrently) tallies every model call of one
+      `process_task`, both backend namings; `CognitiveResult.usage`;
+      `TASK_COMPLETE.usage` summed over the tool-result follow-up turn;
+      `PromptResponse.usage`; `usage: null` when nothing was reported.
+- [x] §5 env format documented (`docs/howto-openai-compat.md`); `acc-cli
+      doctor --check compat` reports enabled/disabled and the subjects, never a
+      key or digest, and is BROKEN on an entry that cannot be a digest. Log
+      lines name `caller.subject` only (checked: no path logs a presented key).
+- [x] §6 the round trip with the unmodified `openai` library, against the
+      router on a real uvicorn socket so the client uses its own HTTP stack
+      (`openai` 3.x ships on `httpx2`, so an httpx `TestClient` cannot be
+      injected). `openai` joins the `dev` extra.
+- [x] §7 `docs/howto-openai-compat.md`.
+
+Tests: `tests/test_compat_usage_and_poll.py` (32). Mutation-checked: returning
+`{}` from dispatch, a tally shared across tasks, relabelling finished tasks and
+zeros-for-unknown each fail it.
+
+### Still open
+
+- [ ] `PendingStore` is in-process (restart loses handles; replicas do not share).
+- [ ] A pre-flight oversight gate for completions, so HIGH-risk roles can be
+      served rather than refused.
+- [ ] §3 budget: verify a compat request is charged against RP-04 like any other.
+- [ ] The Slack channel's reply converter does not carry usage (it carries no
+      token fields at all); not needed by the endpoint.

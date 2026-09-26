@@ -18,9 +18,11 @@ import math
 import re
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from acc.backends import ContentNotSupported
 from acc.backends.genai_semconv import messages_json, trace_messages_enabled
 from acc.backends.pipeline_tracing import (
     add_event,
@@ -51,6 +53,38 @@ _SCOPE_OVERFETCH = 5
 _PROCESS_TASK_TOTAL_STEPS = 6
 
 logger = logging.getLogger("acc.cognitive_core")
+
+#: This task's model usage, summed over every model call it makes.  A
+#: ContextVar, not an attribute: an agent runs tasks concurrently, and the
+#: stress counters on ``self`` are the agent's lifetime totals -- a per-task
+#: figure read from them is every earlier task's cost as well.
+_TASK_USAGE: ContextVar[dict[str, int] | None] = ContextVar(
+    "acc_task_usage", default=None,
+)
+
+
+def _add_usage(tally: dict[str, int], response: Any) -> None:
+    """Add one model call's usage to *tally*, whichever shape the backend used.
+
+    openai_compat and vLLM report ``prompt_tokens``/``completion_tokens``;
+    Anthropic and the plugin backends report ``input_tokens``/
+    ``output_tokens``.  A call with no ``usage`` adds nothing, so a backend
+    that never reports leaves the tally empty -- "not reported", never zero.
+    """
+    usage = response.get("usage") if isinstance(response, dict) else None
+    if not isinstance(usage, dict) or not usage:
+        return
+    prompt = usage.get("prompt_tokens", usage.get("input_tokens", 0))
+    completion = usage.get("completion_tokens", usage.get("output_tokens", 0))
+    for key, value in (
+        ("prompt_tokens", prompt),
+        ("completion_tokens", completion),
+        ("cache_read_tokens", usage.get("cache_read_input_tokens", 0)),
+    ):
+        try:
+            tally[key] = tally.get(key, 0) + int(value or 0)
+        except (TypeError, ValueError):
+            tally.setdefault(key, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +243,12 @@ class CognitiveResult:
     # by mode (decide_dispatch); agent.py owns the I/O (queue submit,
     # bus publish, Redis cache).  All three lists default to empty so
     # non-Assistant roles + Phase-1 Assistants behave identically.
+    usage: dict = field(default_factory=dict)
+    """This task's model usage: ``prompt_tokens``, ``completion_tokens`` and
+    ``cache_read_tokens``, summed over every model call the task made (the
+    B1 retry included).  Empty when no call reported usage -- a blocked task,
+    or a backend that does not count -- which is "unknown", not zero."""
+
     assistant_proposals_queued: list = field(default_factory=list)
     """Proposals routed to ``DISPATCH_QUEUE``: agent.py calls
     oversight_queue.submit + caches the proposal under the returned
@@ -999,9 +1039,15 @@ class CognitiveCore:
             **_trace_identity(task_payload),
         }
         with task_span("acc.task.process", root_attrs) as root_span:
-            result = await self._process_task_body(
-                task_payload, role, progress_callback=progress_callback,
-            )
+            tally: dict[str, int] = {}
+            outer = _TASK_USAGE.set(tally)
+            try:
+                result = await self._process_task_body(
+                    task_payload, role, progress_callback=progress_callback,
+                )
+            finally:
+                _TASK_USAGE.reset(outer)
+            result.usage = dict(tally)
             try:
                 # The turn itself: what was asked and what came back.  MLflow
                 # derives the trace's Inputs/Outputs (and its request/response
@@ -1106,15 +1152,16 @@ class CognitiveCore:
                     verdict = str(_eo.get("verdict", "") or "")
             except Exception:
                 verdict = ""
+            # This task's counts, not the agent's running totals -- the record
+            # is keyed by task_id.
+            usage = getattr(result, "usage", None) or {}
             record = {
                 "task_id": task_id,
                 "compliance_health_score": float(
                     getattr(stress, "compliance_health_score", -1.0),
                 ),
-                "input_tokens": int(getattr(stress, "prompt_input_tokens", 0) or 0),
-                "cache_read_tokens": int(
-                    getattr(stress, "cache_read_tokens", 0) or 0,
-                ),
+                "input_tokens": int(usage.get("prompt_tokens", 0) or 0),
+                "cache_read_tokens": int(usage.get("cache_read_tokens", 0) or 0),
                 "eval_verdict": verdict,
             }
             self._redis.set(
@@ -1457,10 +1504,33 @@ class CognitiveCore:
         # "Calling LLM" line stay visible for most of the elapsed time.
         # Confidence bumps slightly as we leave the gates and start
         # actual reasoning — captures "we got past the guards".
+        # `20260830-attachment-delivery-path` -- the images the task names,
+        # re-read from the store.  Refused, never dropped: a reference that no
+        # longer resolves, or a backend that cannot carry images, blocks the
+        # turn with the reason rather than answering without the picture.
+        content = None
+        if task_payload.get("attachments"):
+            from acc import attachments as _attachments  # noqa: PLC0415
+            try:
+                content = _attachments.image_blocks(
+                    _attachments.resolve(task_payload.get("attachments") or []),
+                )
+            except _attachments.AttachmentError as exc:
+                return CognitiveResult(
+                    blocked=True, block_reason=f"attachment: {exc}",
+                    stress=self._snapshot_stress(),
+                )
+
         _emit(3, "Calling LLM", confidence=0.55)
-        response, latency_ms, token_count = await self._traced_llm_call(
-            system_prompt, llm_user_content, role,
-        )
+        try:
+            response, latency_ms, token_count = await self._traced_llm_call(
+                system_prompt, llm_user_content, role, content=content,
+            )
+        except ContentNotSupported as exc:
+            return CognitiveResult(
+                blocked=True, block_reason=f"attachment: {exc}",
+                stress=self._snapshot_stress(),
+            )
         # PR-CA3 — accumulate best-effort prompt-cache telemetry.
         _usage = response.get("usage", {}) if isinstance(response, dict) else {}
         self._stress.cache_read_tokens += int(
@@ -1507,7 +1577,7 @@ class CognitiveCore:
                     self._perception,
                 )
                 r2, l2, t2 = await self._traced_llm_call(
-                    system_prompt, retry_user, role,
+                    system_prompt, retry_user, role, content=content,
                 )
                 latency_ms += l2
                 token_count += t2
@@ -2743,6 +2813,7 @@ class CognitiveCore:
 
     async def _traced_llm_call(
         self, system: str, user: str, role: RoleDefinitionConfig,
+        *, content: list[dict] | None = None,
     ) -> tuple[dict, float, int]:
         """:meth:`_call_llm` inside the ``acc.pipeline.llm_invoke`` span.
 
@@ -2759,7 +2830,12 @@ class CognitiveCore:
             "model": getattr(role, "llm_model", "") or "",
             "operation_name": "chat",
         }) as span:
-            response, latency_ms, token_count = await self._call_llm(system, user)
+            response, latency_ms, token_count = await self._call_llm(
+                system, user, content=content,
+            )
+            tally = _TASK_USAGE.get()
+            if tally is not None:
+                _add_usage(tally, response)
             if span is not None:
                 try:
                     usage = response.get("usage", {}) if isinstance(response, dict) else {}
@@ -2796,7 +2872,8 @@ class CognitiveCore:
             return response, latency_ms, token_count
 
     async def _call_llm(
-        self, system: str, user: str
+        self, system: str, user: str,
+        *, content: list[dict] | None = None,
     ) -> tuple[dict, float, int]:
         """Async call to the LLM backend with latency measurement.
 
@@ -2822,11 +2899,21 @@ class CognitiveCore:
         # loop, so without the tag a reflection pass's prompts would drain
         # into whichever task writes an audit record next.
         with _prompt_source("cognitive_core"):
+            # Only when there is some: a backend or test double that predates
+            # the parameter is called exactly as it always was.
+            extra = {"content": content} if content else {}
             try:
                 response = await self._llm.complete(
-                    system, user, cache_prefix=cache_prefix,
+                    system, user, cache_prefix=cache_prefix, **extra,
                 )
-            except TypeError:
+            except TypeError as exc:
+                if content:
+                    # A backend that does not know ``content`` cannot carry
+                    # images.  Retrying without it would send the prompt and
+                    # drop the picture -- the silent drop this path refuses.
+                    raise ContentNotSupported(
+                        type(getattr(self._llm, "_base", self._llm)).__name__,
+                    ) from exc
                 # Legacy backend / test double without the PR-CA2 kwarg.
                 response = await self._llm.complete(system, user)
         latency_ms = (time.monotonic() - t0) * 1000.0
