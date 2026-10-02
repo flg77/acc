@@ -330,6 +330,27 @@ def resolve_role_model_id(
     return model_for_role(role, path)
 
 
+def role_models_apply(
+    *,
+    environ: Optional[dict] = None,
+    path: Optional[Path] = None,
+) -> bool:
+    """Whether a registry's ``role_models`` decides an agent's model here.
+
+    Not under the ACC operator (``ACC_CORPUS_NAME`` set) unless the deployment
+    names a registry (``ACC_MODELS_PATH`` or *path*): there the AgentCollective
+    CR is the model source, and the fallback registry is the
+    ``models.yaml.example`` the image bakes as ``/app/models.yaml``.  Every
+    reader of ``role_models`` on the agent's model path asks this first — the
+    boot overlay, the post-promotion rebind and the failover chain."""
+    env = os.environ if environ is None else environ
+    if path is not None:
+        return True
+    if not (env.get("ACC_CORPUS_NAME") or "").strip():
+        return True
+    return bool((env.get("ACC_MODELS_PATH") or os.environ.get("ACC_MODELS_PATH") or "").strip())
+
+
 def apply_role_model_env(
     *,
     environ: Optional[dict] = None,
@@ -348,8 +369,18 @@ def apply_role_model_env(
     A ``role_models`` mapping OVERRIDES the global ``ACC_LLM_*`` default
     (keys are assigned, not ``setdefault``).  Returns the env dict applied
     (``{}`` when nothing resolved — global default stays).  Never raises on a
-    missing/empty registry."""
+    missing/empty registry.
+
+    Under the ACC operator (``ACC_CORPUS_NAME`` set) the AgentCollective CR
+    is the model source — ``spec.llm`` plus ``agents[].extraEnv`` — so no
+    registry is consulted unless the deployment names one (``ACC_MODELS_PATH``
+    or *path*).  Otherwise the fallback would find the ``models.yaml.example``
+    the image bakes as ``/app/models.yaml`` and its ``role_models`` would
+    overwrite the operator's per-agent model with one the cluster may hold no
+    key for (bb3, 2026-09-28)."""
     env = os.environ if environ is None else environ
+    if not role_models_apply(environ=env, path=path):
+        return {}
     role = (env.get("ACC_AGENT_ROLE") or "").strip()
     override = (env.get("ACC_AGENT_MODEL_ID") or "").strip()
     model_id = resolve_role_model_id(role, override_model_id=override, path=path)

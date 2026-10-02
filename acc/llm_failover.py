@@ -507,8 +507,10 @@ def wrap_for_role(
     if not role:
         return base
     try:
-        from acc.models import load_models, load_role_chains  # noqa: PLC0415
+        from acc.models import load_models, load_role_chains, role_models_apply  # noqa: PLC0415
 
+        if not role_models_apply(path=models_path):
+            return base  # operator path: the CR, not a registry, names the model
         chain = load_role_chains(models_path).get(role) or []
         if len(chain) < 2:
             return base

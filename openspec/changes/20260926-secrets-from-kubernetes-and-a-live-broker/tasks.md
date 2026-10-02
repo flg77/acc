@@ -77,10 +77,32 @@ spec:
     items: [MAAS_API_KEY, ACC_CRED_KEY]  # optional; omit for every key
 ```
 
-## Phase 3 (deferred) — UX-07, masked secret input
-- [ ] Written into the source: a file on the edge; on a cluster a patch of one named
-      Secret (needs a `resourceNames`-restricted `patch` for the UI ServiceAccount — a
-      decision).
+## Phase 3 — UX-07, credentials from the web GUI (decided 2026-10-02)
+The operator's decision: "the web-gui can be used for secret introduction and update of
+those." The surface is the web GUI, not the TUI decision panel.
+- [x] `acc/secret_writer.py` — two explicit targets: `ACC_SECRET_WRITE_DIR` (edge: a file,
+      written beside the target and renamed over it, `0640`) and `ACC_SECRET_WRITE_SECRET`
+      (cluster: one merge `PATCH` of the named Secret with the pod's ServiceAccount). Name =
+      an environment-variable name; value non-empty, no NUL, ≤ 64 KiB. Errors name the
+      credential and the target, never the value; the API's error body is not read.
+- [x] `acc/webgui/routes_secrets.py` — `GET /api/secrets` (viewer: target, names, the
+      models that use them, how many mounted agents see each), `POST /api/secrets/{name}`
+      (operator). The body is parsed by hand: a pydantic validation error quotes its input.
+- [x] Agents report `secrets: {source, names}` in the heartbeat (names only); the
+      snapshot keeps `secret_source` / `secret_names`.
+- [x] Web GUI **Settings → Credentials**: masked field, cleared after every attempt,
+      `autocomplete=new-password`; no value is ever fetched.
+- [x] Compose: named volume `acc-secrets` — `:U,z` in the web GUI, `:ro,z` in all 17
+      agents (base + specialists) and in synthesized cells, with `ACC_SECRET_SOURCE=mounted`.
+- [x] Operator 0.2.28 (still unreleased, so folded in): `UISecretWriterRule` — `patch`,
+      `resourceNames: [spec.secretMount.secretName]`, only when `spec.webgui` is enabled;
+      computed from the corpus alone so the TUI and WebGUI reconcilers write the same Role.
+      The operator holds `patch` on secrets (marker, `role.yaml`, CSV).
+- [x] Tests: `tests/test_secret_input_web.py` (31); Go `ui_secret_writer_test.go`.
+- [ ] Live: lighthouse (write → an agent's next call uses it, no restart); bb3 after the
+      operator release (rotate from the page, the agent uses it within a minute).
+- [ ] An agent asking for a missing credential (a decision-panel item that sends the
+      person to this page) — not built.
 
 ## Phase 4 (optional) — OpenBao / Vault read directly
 - [ ] KV v2 with Kubernetes auth, for a deployment running neither ESO nor VSO.

@@ -519,6 +519,9 @@ def _dormant_service(
         "ACC_LANCEDB_PATH": f"/app/data/lancedb/{aid}",
         "ACC_REDIS_URL": "redis://acc-redis:6379",
         "ACC_REDIS_PASSWORD": "${REDIS_PASSWORD:-}",
+        # UX-07 -- credentials from the shared acc-secrets volume (parity with
+        # the base agents); a name with no file falls back to .env.
+        "ACC_SECRET_SOURCE": "mounted",
     }
     service = {
         "image": image,
@@ -535,6 +538,7 @@ def _dormant_service(
             # that self-promotes can resolve + persist infused packs (mirrors
             # the base agents).
             "acc-packages:/var/lib/acc/packages:U,z",
+            "acc-secrets:/var/run/acc/secrets:ro,z",
             "${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z",
             # roles/ is RW (:z, not :ro,z) so a promoted assistant can
             # self-author role.yaml; writes stay gated by the role-authoring
@@ -625,7 +629,7 @@ def roles_to_compose(
             "networks": {
                 "acc-net": {"driver": "bridge"},  # match the base's bare bridge decl (not external+hardcoded-project-name) so -f base -f overlay merges into ONE shared project network
             },
-            "volumes": {"lancedb-data": None, "acc-packages": None},  # bare decls (null, not external) so -f base -f overlay merges; shares the project-prefixed lancedb-data + acc-packages so synthesized cells see installed packs
+            "volumes": {"lancedb-data": None, "acc-packages": None, "acc-secrets": None},  # bare decls (null, not external) so -f base -f overlay merges; shares the project-prefixed lancedb-data + acc-packages (+ acc-secrets, UX-07) so synthesized cells see installed packs and the credentials the web GUI writes
         }
 
     for agent in spec.agents:
@@ -640,6 +644,9 @@ def roles_to_compose(
                 "ACC_LANCEDB_PATH": f"/app/data/lancedb/{aid}",
                 "ACC_REDIS_URL": "redis://acc-redis:6379",
                 "ACC_REDIS_PASSWORD": "${REDIS_PASSWORD:-}",
+                # UX-07 -- credentials from the shared acc-secrets volume
+                # (parity with the base agents); no file falls back to .env.
+                "ACC_SECRET_SOURCE": "mounted",
                 # B6 (proposal 044) — points acc.models.models_path() at the
                 # mounted registry (see the volumes list below).  Without it
                 # the lookup falls back to <repo>/models.yaml, which does not
@@ -685,6 +692,7 @@ def roles_to_compose(
                     # infused packs persist + resolve across restarts (mirrors
                     # the base agent template).
                     "acc-packages:/var/lib/acc/packages:U,z",
+                    "acc-secrets:/var/run/acc/secrets:ro,z",
                     "${ACC_HOME_DIR:-../..}/acc-config.yaml:/app/acc-config.yaml:ro,z",
                     # B6 (proposal 044) — the role->model registry.  Without
                     # this mount (+ ACC_MODELS_PATH above) acc.models
@@ -711,7 +719,7 @@ def roles_to_compose(
     return {
         "services": services,
         "networks": {"acc-net": {"driver": "bridge"}},  # match base's bare bridge decl (not external+hardcoded project name) so -f base -f overlay merges into ONE shared project network
-        "volumes": {"lancedb-data": None, "acc-packages": None},  # bare decls (null, not external) so -f base -f overlay merges; shares the project-prefixed lancedb-data + acc-packages so synthesized cells see installed packs
+        "volumes": {"lancedb-data": None, "acc-packages": None, "acc-secrets": None},  # bare decls (null, not external) so -f base -f overlay merges; shares the project-prefixed lancedb-data + acc-packages (+ acc-secrets, UX-07) so synthesized cells see installed packs and the credentials the web GUI writes
     }
 
 

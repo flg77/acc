@@ -644,6 +644,11 @@ class NATSObserver:
                 llm_info.get("p50_latency_ms", snap.llm_p50_latency_ms)
             )
 
+        secrets_info = data.get("secrets")
+        if isinstance(secrets_info, dict):
+            snap.secret_source = str(secrets_info.get("source") or "")
+            snap.secret_names = [str(n) for n in (secrets_info.get("names") or [])]
+
         self._snapshot.agents[agent_id] = snap
 
         # Update collective-level compliance (worst-agent score)

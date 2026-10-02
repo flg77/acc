@@ -47,8 +47,50 @@ func UIReaderRules() []rbacv1.PolicyRule {
 	}}
 }
 
+// UISecretWriterRule lets the WebGUI's Credentials page (UX-07) write the one
+// Secret spec.secretMount names — and nothing else: `patch` only (no `get`, so
+// the page cannot read back what it writes) and `resourceNames`, so no other
+// Secret. Nil unless the corpus both mounts a Secret and runs a WebGUI.
+//
+// It depends on the corpus alone: the TUI and WebGUI reconcilers both upsert
+// the same Role, and a rule only one of them computed would flap on every
+// reconcile. The TUI runs as the same ServiceAccount, so it holds the grant
+// too; it has no surface that uses it.
+func UISecretWriterRule(corpus *accv1alpha1.AgentCorpus) *rbacv1.PolicyRule {
+	sm, web := corpus.Spec.SecretMount, corpus.Spec.WebGUI
+	if sm == nil || sm.SecretName == "" || web == nil || (web.Enabled != nil && !*web.Enabled) {
+		return nil
+	}
+	return &rbacv1.PolicyRule{
+		APIGroups:     []string{""},
+		Resources:     []string{"secrets"},
+		ResourceNames: []string{sm.SecretName},
+		Verbs:         []string{"patch"},
+	}
+}
+
+// secretWriteEnv names that Secret to the WebGUI (ACC_SECRET_WRITE_SECRET);
+// nothing when there is no writer rule, so the page says why it cannot write.
+func secretWriteEnv(corpus *accv1alpha1.AgentCorpus) []corev1.EnvVar {
+	w := UISecretWriterRule(corpus)
+	if w == nil {
+		return nil
+	}
+	return []corev1.EnvVar{{Name: "ACC_SECRET_WRITE_SECRET", Value: w.ResourceNames[0]}}
+}
+
+// UIRules is the UI Role:the reader rules, plus the secret writer when the
+// corpus has one.
+func UIRules(corpus *accv1alpha1.AgentCorpus) []rbacv1.PolicyRule {
+	rules := UIReaderRules()
+	if w := UISecretWriterRule(corpus); w != nil {
+		rules = append(rules, *w)
+	}
+	return rules
+}
+
 // withUIServiceAccount upserts the corpus's UI ServiceAccount with its
-// read-only Role and RoleBinding, and makes podSpec run as it.
+// Role (UIRules) and RoleBinding, and makes podSpec run as it.
 func withUIServiceAccount(ctx context.Context, c client.Client, scheme *runtime.Scheme, corpus *accv1alpha1.AgentCorpus, podSpec *corev1.PodSpec) error {
 	name := UIServiceAccountName(corpus)
 	labels := util.CommonLabels(corpus.Name, uiRBACComponent, corpus.Spec.Version)
@@ -59,7 +101,7 @@ func withUIServiceAccount(ctx context.Context, c client.Client, scheme *runtime.
 		return fmt.Errorf("upsert ui ServiceAccount: %w", err)
 	}
 
-	role := &rbacv1.Role{ObjectMeta: meta, Rules: UIReaderRules()}
+	role := &rbacv1.Role{ObjectMeta: meta, Rules: UIRules(corpus)}
 	if _, err := util.Upsert(ctx, c, scheme, corpus, role, func(existing client.Object) error {
 		existing.(*rbacv1.Role).Rules = role.Rules
 		return nil

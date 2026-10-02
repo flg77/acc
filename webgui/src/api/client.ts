@@ -492,6 +492,22 @@ export const installRole = (name: string, constraint?: string) =>
     target_constraint: string;
   }>("/api/roles/install", { name, constraint: constraint ?? null });
 
+// --- credentials (UX-07) — write-only: names come back, values never do ----
+
+export type SecretTarget = { kind: string; where: string; writable: boolean; reason: string };
+export type SecretRow = { name: string; used_by: string[]; seen_by: number };
+export type SecretList = {
+  target: SecretTarget;
+  rows: SecretRow[];
+  agents: { mounted: number; env: number; unknown: number };
+};
+
+export const fetchSecrets = () => getJSON<SecretList>("/api/secrets");
+
+export const writeSecret = (name: string, value: string) =>
+  postJSON<{ name: string; target: SecretTarget; written_by: string; note: string }>(
+    `/api/secrets/${encodeURIComponent(name)}`, { value });
+
 export type CatalogRow = {
   id: string;
   tier: string;

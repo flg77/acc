@@ -25,6 +25,7 @@ import { CommsPage } from "../pages/work/Comms";
 import { PromptPage } from "../pages/work/Prompt";
 import { CatalogsPage } from "../pages/packages/Catalogs";
 import { MarketplacePage } from "../pages/packages/Marketplace";
+import { CredentialsPage } from "../pages/settings/Credentials";
 
 export interface Tab {
   key: string;
@@ -114,6 +115,7 @@ export const SECTIONS: Section[] = [
     label: "Settings",
     question: "Everything else.",
     tabs: [
+      { key: "credentials", label: "Credentials", element: <CredentialsPage /> },
       { key: "diagnostics", label: "Diagnostics", element: legacy(<Diagnostics />) },
       { key: "help", label: "Help", element: legacy(<Help />) },
     ],

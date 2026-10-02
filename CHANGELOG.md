@@ -11,6 +11,37 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.26.0] — 2026-10-02
+
+**Credentials are set from the web GUI (UX-07, F3 Phase 3)** — OpenSpec `20260926-secrets-from-kubernetes-and-a-live-broker`.
+
+**Upgrade notes:** on the edge the production compose now mounts a new named volume, `acc-secrets`, and switches every agent to `ACC_SECRET_SOURCE=mounted`; the volume starts empty, so every credential keeps coming from `.env` until one is written. On a cluster the grant arrives with operator 0.2.28 and only for a corpus that sets both `spec.secretMount` and `spec.webgui`.
+
+### Added
+
+- **Settings → Credentials** in the web GUI: an operator introduces or replaces a credential by name in a masked field, and it lands in the secret source the agents read on every call. Write-only by design — the page lists names, the models that use each one, and how many agents see it in their mount (agents now report the names, never values, in their heartbeat); no route returns a value, the log line names the person and the credential, and the body is parsed by hand so a refused write never echoes its input. On the edge the value is a file in the shared `acc-secrets` volume, renamed into place so an agent never reads half of one; on a cluster it is one merge `PATCH` of the Secret `spec.secretMount` names.
+- **Operator 0.2.28:** the UI Role gains `patch` on that one Secret (`resourceNames`, no `get`) when the corpus has both a secret mount and a web GUI, and the web GUI is told its name (`ACC_SECRET_WRITE_SECRET`). The operator itself now holds `patch` on Secrets, because RBAC lets it grant nothing it does not hold; it never patches one. The TUI shares the UI ServiceAccount and so holds the grant too, with no surface that uses it.
+
+## [0.25.2] — 2026-09-28
+
+**On a cluster the AgentCollective names the model, not the image's example registry** — found on bb3, 2026-09-28, right after v0.25.1 made in-tree roles boot there (#497).
+
+**Upgrade notes:** no configuration change. Under the ACC operator an agent now runs on the model its `AgentCollective` gives it (`spec.llm`, or `agents[].extraEnv`), not on the `role_models` of the example registry the image bakes; a deployment that wants a registry on a cluster names it with `ACC_MODELS_PATH`. Edge and checkout deployments are unchanged.
+
+### Fixed
+
+- **An in-tree role under the operator ran on a model the cluster has no key for.** The agent image bakes `models.yaml.example` as `/app/models.yaml` (IN-11e), and with no `ACC_MODELS_PATH` the registry resolves to it. Its `role_models` maps the CONTROL and in-tree roles (the analyst to `maas-qwen3-14b`), and `apply_role_model_env` assigned that mapping over the operator's per-agent `extraEnv` at boot — so bb3's analyst, configured for `gpt-oss-120b` with its key, called `qwen3-14b` with none and got a 401. Pack roles are not in the map, which is why workshops worked. Under the operator (`ACC_CORPUS_NAME`) a registry now decides a model only when the deployment names one (`ACC_MODELS_PATH`); otherwise the CR — `spec.llm` plus `agents[].extraEnv` — does. One rule, `acc.models.role_models_apply`, guards all three places that read `role_models` on the model path: the boot overlay, the post-promotion rebind (DORMANT → ACTIVE, `ROLE_ASSIGN`) and the failover chain. Edge and checkout deployments are unchanged.
+
+## [0.25.1] — 2026-09-27
+
+**Roles load from `ACC_ROLES_ROOT` on a cluster** — found on bb3, 2026-09-27 (PB-13 Part D; #493). On the operator path every role not served by an installed pack — the CONTROL roles included — booted DORMANT and never answered; only pack roles ever came up.
+
+**Upgrade notes:** no configuration change. On a cluster, roll the agents onto the 0.25.1 image; an in-tree role then logs `role_store: loaded role from roles/ dir` instead of `booting DORMANT to await its pack`. Edge deployments (roles mounted at `/app/roles`) behave as before.
+
+### Fixed
+
+- **On the operator path every role not served by an installed pack booted DORMANT and never answered — the CONTROL roles included.** The operator delivers the roles tree at `/etc/acc/roles` and sets `ACC_ROLES_ROOT`; the agent image has no `/app/roles`. Every role lookup in the agent honoured `ACC_ROLES_ROOT` except the one that decides whether the agent boots: `RoleStore` was built with its cwd-relative default (`roles`), found nothing, fell back to the generic default, and the pack-role gate put the agent to sleep "to await its pack" — for a role no pack serves. Only pack roles (such as a workshop's) ever came up, which is why it went unseen. The agent now passes `resolve_manifest_root("ACC_ROLES_ROOT", "roles")` to `RoleStore`; on the edge (roles mounted at `/app/roles`, no `ACC_ROLES_ROOT`) nothing changes.
+
 ## [0.25.0] — 2026-09-26
 
 **Secrets from a mounted Kubernetes Secret, the OAuth broker on the call path, and image support declared per model** — F3 (#488, #489; OpenSpec `20260926-secrets-from-kubernetes-and-a-live-broker`) and F2b (#490). ACC supports OpenBao/Vault and for now uses Kubernetes Secrets: the operator mounts one Secret into every agent, and the runtime reads credentials from it at call time, so a rotated key is used without a restart. The OAuth broker finally has a caller. And a text-only model behind a gateway no longer receives an image it cannot read — found live on lighthouse the day v0.24.0 shipped.

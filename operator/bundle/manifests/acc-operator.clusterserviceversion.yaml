@@ -249,9 +249,12 @@ spec:
         - apiGroups: ["rbac.authorization.k8s.io"]
           resources: ["roles", "rolebindings"]
           verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        # patch (0.2.28, UX-07): granted on to the UI Role for the ONE
+        # Secret spec.secretMount names (resourceNames) -- the WebGUI's
+        # Credentials page. The operator itself never patches a Secret.
         - apiGroups: [""]
           resources: ["secrets"]
-          verbs: ["get", "list", "watch"]
+          verbs: ["get", "list", "watch", "patch"]
         - apiGroups: [""]
           resources: ["namespaces"]
           verbs: ["get", "patch"]

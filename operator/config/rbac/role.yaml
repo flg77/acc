@@ -56,9 +56,13 @@ rules:
 - apiGroups: ["rbac.authorization.k8s.io"]
   resources: ["roles", "rolebindings"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# patch (0.2.28, UX-07): the UI Role may patch the ONE Secret
+# spec.secretMount names (resourceNames-scoped) -- the WebGUI's Credentials
+# page. The operator itself never patches a Secret; it holds the verb only
+# because RBAC lets it grant nothing it does not hold.
 - apiGroups: [""]
   resources: ["secrets"]
-  verbs: ["get", "list", "watch", "create"]
+  verbs: ["get", "list", "watch", "create", "patch"]
 # RHOAI project association + dashboard tile/quickstarts (operator 0.1.4).
 - apiGroups: [""]
   resources: ["namespaces"]

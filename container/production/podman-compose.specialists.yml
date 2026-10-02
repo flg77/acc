@@ -27,6 +27,8 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: coding_agent_architect
+      # UX-07 -- credentials the web GUI writes; a name with no file falls back to .env.
+      ACC_SECRET_SOURCE: mounted
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/coding_agent_architect
@@ -34,6 +36,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
+      - acc-secrets:/var/run/acc/secrets:ro,z
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
@@ -60,6 +63,8 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: devops_engineer
+      # UX-07 -- credentials the web GUI writes; a name with no file falls back to .env.
+      ACC_SECRET_SOURCE: mounted
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/devops_engineer
@@ -67,6 +72,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
+      - acc-secrets:/var/run/acc/secrets:ro,z
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
@@ -93,6 +99,8 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: research_synthesizer
+      # UX-07 -- credentials the web GUI writes; a name with no file falls back to .env.
+      ACC_SECRET_SOURCE: mounted
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/research_synthesizer
@@ -100,6 +108,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
+      - acc-secrets:/var/run/acc/secrets:ro,z
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
@@ -126,6 +135,8 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: macro_strategist
+      # UX-07 -- credentials the web GUI writes; a name with no file falls back to .env.
+      ACC_SECRET_SOURCE: mounted
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/macro_strategist
@@ -133,6 +144,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
+      - acc-secrets:/var/run/acc/secrets:ro,z
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
@@ -159,6 +171,8 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: quant_researcher
+      # UX-07 -- credentials the web GUI writes; a name with no file falls back to .env.
+      ACC_SECRET_SOURCE: mounted
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/quant_researcher
@@ -166,6 +180,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
+      - acc-secrets:/var/run/acc/secrets:ro,z
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
@@ -192,6 +207,8 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: financial_analyst
+      # UX-07 -- credentials the web GUI writes; a name with no file falls back to .env.
+      ACC_SECRET_SOURCE: mounted
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/financial_analyst
@@ -199,6 +216,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
+      - acc-secrets:/var/run/acc/secrets:ro,z
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
@@ -225,6 +243,8 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: contract_analyst
+      # UX-07 -- credentials the web GUI writes; a name with no file falls back to .env.
+      ACC_SECRET_SOURCE: mounted
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/contract_analyst
@@ -232,6 +252,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
+      - acc-secrets:/var/run/acc/secrets:ro,z
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       # Role definitions (roles/<role>/role.yaml) — same mount as base agents,
@@ -258,6 +279,8 @@ services:
         required: false
     environment:
       ACC_AGENT_ROLE: okf_transformer
+      # UX-07 -- credentials the web GUI writes; a name with no file falls back to .env.
+      ACC_SECRET_SOURCE: mounted
       ACC_COLLECTIVE_ID: sol-01
       ACC_NATS_URL: nats://nats:4222
       ACC_LANCEDB_PATH: /app/data/lancedb/okf_transformer
@@ -265,6 +288,7 @@ services:
       ACC_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       ACC_REFLECTION_INTERVAL_S: ${ACC_REFLECTION_INTERVAL_S:-600}
     volumes:
+      - acc-secrets:/var/run/acc/secrets:ro,z
       - lancedb-data:/app/data/lancedb:U,z
       - acc-packages:/var/lib/acc/packages:U,z
       # Role definitions (roles/<role>/role.yaml) — same mount as base agents,

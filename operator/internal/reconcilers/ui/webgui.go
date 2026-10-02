@@ -200,7 +200,7 @@ func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name
 							// sole ingress (shared pod network namespace).
 							Name:  "webgui",
 							Image: util.ComponentImage(corpus, "acc-webgui", corpus.Spec.Version),
-							Env: append([]corev1.EnvVar{
+							Env: append(append([]corev1.EnvVar{
 								{Name: "ACC_WEBGUI_HOST", Value: "127.0.0.1"},
 								{Name: "ACC_WEBGUI_PORT", Value: fmt.Sprintf("%d", webguiPort)},
 								{Name: "ACC_WEBGUI_AUTH_MODE", Value: "oauth-proxy"},
@@ -217,7 +217,7 @@ func (r *WebGUIReconciler) buildDeployment(corpus *accv1alpha1.AgentCorpus, name
 								// experiments/runs layer — eval-history deep
 								// links + run logging when
 								// observability.mlflowTrackingUri is set.
-							}, mlflowEnv(corpus)...),
+							}, mlflowEnv(corpus)...), secretWriteEnv(corpus)...),
 						},
 						{
 							// oauth2-proxy — runs the Keycloak OIDC auth-code

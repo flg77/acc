@@ -299,3 +299,90 @@ def test_agent_core_containerfiles_bake_models_yaml():
             f"{cf} copies the untracked models.yaml -- it cannot build from a "
             f"clean clone or a tag (IN-11e)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Operator path — the AgentCollective CR is the model source, not a registry
+# ---------------------------------------------------------------------------
+# Found on bb3 (2026-09-28, v0.25.1): the agent image bakes models.yaml.example
+# as /app/models.yaml, whose role_models maps in-tree roles (analyst ->
+# maas-qwen3-14b).  apply_role_model_env overwrote the operator's per-agent
+# extraEnv with it, so the analyst called a model the cluster has no key for
+# (401).  Under the operator the CR (spec.llm + agents[].extraEnv) says which
+# model a role runs on; a registry applies only when ACC_MODELS_PATH names one.
+
+_OPERATOR_EXTRA_ENV = {
+    "ACC_AGENT_ROLE": "analyst",
+    "ACC_CORPUS_NAME": "mortgage-agents-corpus",   # set by the operator on every agent
+    "ACC_LLM_BACKEND": "openai_compat",
+    "ACC_LLM_BASE_URL": "https://maas.example/v1",
+    "ACC_LLM_MODEL": "gpt-oss-120b",
+    "ACC_LLM_API_KEY_ENV": "MAAS_OSS120B_API_KEY",
+}
+
+
+def test_operator_pod_ignores_the_baked_registry(monkeypatch):
+    """No ACC_MODELS_PATH: the resolver falls back to the shipped example, whose
+    role_models maps the analyst elsewhere; the operator's extraEnv must stand."""
+    from acc.models import apply_role_model_env, model_for_role
+    monkeypatch.delenv("ACC_MODELS_PATH", raising=False)
+    assert model_for_role("analyst"), "precondition: the shipped registry maps analyst"
+    env = dict(_OPERATOR_EXTRA_ENV)
+    assert apply_role_model_env(environ=env) == {}
+    assert env == _OPERATOR_EXTRA_ENV
+
+
+def test_operator_pod_with_an_explicit_registry_applies_it(registry_roles):
+    """A registry the deployment names via ACC_MODELS_PATH is a deliberate choice
+    and still applies on the operator path."""
+    from acc.models import apply_role_model_env
+    env = dict(_OPERATOR_EXTRA_ENV, ACC_AGENT_ROLE="assistant")   # role_models -> groq-70b
+    applied = apply_role_model_env(environ=env)
+    assert applied["ACC_LLM_MODEL"] == "llama-3.3-70b-versatile"
+    assert env["ACC_LLM_API_KEY_ENV"] == "GROQ_API_KEY"
+
+
+def test_role_models_apply_rule(tmp_path, monkeypatch):
+    from acc.models import role_models_apply
+    monkeypatch.delenv("ACC_MODELS_PATH", raising=False)
+    assert role_models_apply(environ={}) is True                                   # edge / checkout
+    assert role_models_apply(environ={"ACC_CORPUS_NAME": "c"}) is False            # operator, no registry named
+    assert role_models_apply(environ={"ACC_CORPUS_NAME": "c", "ACC_MODELS_PATH": "/r.yaml"}) is True
+    assert role_models_apply(environ={"ACC_CORPUS_NAME": "c"}, path=tmp_path / "m.yaml") is True
+
+
+_BAKED_WITH_CHAIN = _REGISTRY + """\
+role_models:
+  analyst: [groq-70b, claude-sonnet]
+"""
+
+
+@pytest.fixture
+def operator_pod_with_baked_registry(tmp_path, monkeypatch):
+    """An operator pod whose registry fallback resolves to a baked file that maps
+    the analyst (with a failover chain) — the bb3 situation."""
+    baked = tmp_path / "app-models.yaml"
+    baked.write_text(_BAKED_WITH_CHAIN, encoding="utf-8")
+    monkeypatch.delenv("ACC_MODELS_PATH", raising=False)
+    monkeypatch.setattr("acc.models.models_path", lambda: baked)
+    for k, v in _OPERATOR_EXTRA_ENV.items():
+        monkeypatch.setenv(k, v)
+    return baked
+
+
+def test_failover_chain_not_built_from_the_baked_registry(operator_pod_with_baked_registry):
+    from unittest.mock import MagicMock
+    from acc.llm_failover import wrap_for_role
+    base = MagicMock(name="operator-configured backend")
+    assert wrap_for_role(base, "analyst", MagicMock()) is base
+
+
+def test_promotion_rebind_keeps_the_operator_model(operator_pod_with_baked_registry):
+    """_reresolve_role_model (DORMANT -> ACTIVE, ROLE_ASSIGN) must not rebind an
+    operator pod onto the baked registry's model."""
+    import os
+    from acc.agent import Agent
+    agent = Agent.__new__(Agent)          # the method only needs its guard here
+    agent._reresolve_role_model("analyst")
+    assert os.environ["ACC_LLM_MODEL"] == "gpt-oss-120b"
+    assert os.environ["ACC_LLM_API_KEY_ENV"] == "MAAS_OSS120B_API_KEY"

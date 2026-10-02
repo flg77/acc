@@ -190,6 +190,23 @@ secrets`), `ACC_THREAD_CONTINUITY=0` (kill switch), `ACC_PROMPT_PERMISSION_REGIO
 `ACC_WEBGUI_AUTH_MODE`. The schema is derived from the config models:
 `acc-cli config check --all` lists every key.
 
+## Setting a credential from the web GUI
+
+**Settings → Credentials** introduces or replaces a credential by name
+(`MAAS_API_KEY`, …). The value is typed into a masked field, sent once and
+cleared; it goes into the secret source the agents read on every call, and
+never onto the bus, into a transcript or a log — nor back to the page, which
+lists only names, the models that use each one, and how many agents see it.
+Operators write; viewers see the names.
+
+- **Edge (compose):** the `acc-secrets` volume, writable by the web GUI
+  (`ACC_SECRET_WRITE_DIR`) and read-only in every agent
+  (`ACC_SECRET_SOURCE=mounted`). A name nobody wrote falls back to `.env`.
+- **Cluster:** set `spec.secretMount` and `spec.webgui` on the AgentCorpus. The
+  operator lets the UI ServiceAccount `patch` that one Secret — not `get` it,
+  not any other — and the kubelet refreshes the agents' mount within about a
+  minute.
+
 ## Answering a decision without leaving the Prompt pane
 
 When something needs your yes it is asked **in the Prompt pane**, not in

@@ -463,6 +463,21 @@ def failed_task_result(exc: BaseException) -> CognitiveResult:
 
 
 
+def _secrets_info() -> dict:
+    """Where this agent reads credentials, and the names its mount holds.
+
+    Names only (``secret_source.names``), never values. Never raises: the
+    heartbeat keeps flowing whatever the mount looks like.
+    """
+    try:
+        from acc import secret_source  # noqa: PLC0415
+
+        return {"source": secret_source.kind(), "names": secret_source.names()}
+    except Exception:  # noqa: BLE001
+        logger.debug("heartbeat: secret source unreadable", exc_info=True)
+        return {}
+
+
 #: What the heartbeat may carry of a row's evidence (UX-03): enough lines to
 #: show what a call runs, never a payload.
 _HEARTBEAT_EVIDENCE_LINES = 8
@@ -567,12 +582,19 @@ class Agent:
         # Redis working-memory client (Phase 0b) — None when not configured
         self._redis = _build_redis_client(self.config)
 
-        # Role store — loaded before CognitiveCore is instantiated
+        # Role store — loaded before CognitiveCore is instantiated.  The roles
+        # root follows ACC_ROLES_ROOT like every other role lookup in this
+        # module: the operator delivers roles at /etc/acc/roles and the image
+        # has no /app/roles, so the cwd-relative default left every non-pack
+        # role (CONTROL roles included) DORMANT on a cluster.
+        from acc.tui.path_resolution import resolve_manifest_root  # noqa: PLC0415
+
         self._role_store = RoleStore(
             config=self.config,
             agent_id=self.agent_id,
             redis_client=self._redis,
             vector=self.backends.vector,
+            roles_root=str(resolve_manifest_root("ACC_ROLES_ROOT", "roles")),
         )
         self._active_role = self._role_store.load_at_startup()
 
@@ -1894,6 +1916,10 @@ class Agent:
                 # `llm_backend` from each heartbeat).  health/p50 are
                 # placeholders until per-call telemetry lands.
                 "llm_backend": self._llm_info(),
+                # UX-07 -- where this agent reads credentials, and the names
+                # its mount holds (names, never values): the web GUI's
+                # Credentials page shows which agents see a key it wrote.
+                "secrets": _secrets_info(),
                 # StressIndicators (ACC-6a REQ-STRESS-002)
                 "drift_score": stress.drift_score,
                 "cat_b_deviation_score": stress.cat_b_deviation_score,
@@ -3220,7 +3246,10 @@ class Agent:
             from acc.models import (  # noqa: PLC0415
                 model_env_for_id,
                 resolve_role_model_id,
+                role_models_apply,
             )
+            if not role_models_apply():
+                return  # operator path: the CR, not a registry, names the model
             override = (os.environ.get("ACC_AGENT_MODEL_ID") or "").strip()
             model_id = resolve_role_model_id(role, override_model_id=override)
             if not model_id:

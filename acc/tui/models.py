@@ -99,6 +99,11 @@ class AgentSnapshot:
     llm_health: str = ""
     llm_p50_latency_ms: float = 0.0
 
+    # Where the agent reads credentials and the names its mount holds
+    # (from HEARTBEAT.secrets -- UX-07).  Names only, never values.
+    secret_source: str = ""
+    secret_names: list[str] = field(default_factory=list)
+
     def is_stale(self, heartbeat_interval_s: float = 30.0) -> bool:
         """Return True when this agent has missed two consecutive heartbeat intervals.
 
