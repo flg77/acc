@@ -26,7 +26,7 @@ with a human oversight queue for what a role's grants do not cover.
 | `acc/webgui/` (FastAPI + React) | The same snapshot over a WebSocket — each socket receives its principal's view (D-017) — attributed actions and prompts (`webgui:<user>`), config surface, Board, the OpenAI-compatible endpoint. |
 | `acc/instances.py` + `acc/cli/instance_cmd.py` | An **instance** (D-015): a collective bound to an owner, a posture and its own state roots under `instances/<id>/`; `acc-cli instance …`, `./acc-deploy.sh instance up`; export carries the definition, never state. |
 | `acc/cli/` (`acc-cli`, `acc-pkg`) | Headless operator surface: doctor, status, config, profiles, sessions, oversight, plan, memory, access, auth, egress, backup, scan… (see `CAPABILITIES.md`). |
-| `operator/` (Go) | The OpenShift/Kubernetes operator: `AgentCorpus` / collectives as CRDs, role sync, SPIFFE, NetworkPolicy, pack installs, the console plugin. |
+| `operator/` (Go) | The OpenShift/Kubernetes operator: `AgentCorpus` / collectives as CRDs, role sync, SPIFFE, NetworkPolicy, pack installs, the console plugin. Roles, skills and MCPs reach the agents as ConfigMaps under `/etc/acc/{roles,skills,mcps}` with `ACC_*_ROOT` pointing there; every role lookup resolves `ACC_ROLES_ROOT` (D-029). An `AgentCollective` gets workloads only once its corpus lists it in `spec.collectives`. |
 
 ## Data flow
 
@@ -133,5 +133,8 @@ with a human oversight queue for what a role's grants do not cover.
   (`ACC-Tests/`).
 - **Reasoning bench**: the promote gate scores deliberation depth; run for any
   reasoning-affecting change (role prompts), advisory on the 3B edge model.
+- **Mode 1 / Mode 2 A/B** (`tools/mode_ab/`): the same 30 prompts against a
+  fast and a reasoning arm, exported as `acc-cli e2e` golden files, with two
+  example collectives and RHOAI CRs (vault playbook PB-13).
 
-_Last updated: 2026-09-13 (v0.17.5)_
+_Last updated: 2026-10-03 (v0.26.1)_

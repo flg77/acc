@@ -1,0 +1,54 @@
+# Arms for tools/mode_ab/mode_ab.py — one arm = one backend + model + system
+# prompt (+ an optional thinking switch appended to the user turn).
+#
+#   backend      openai_compat, or the name of an installed backend plugin
+#                (ACC's plugin seam: it must also be in ACC_LLM_BACKEND_PLUGINS)
+#   system       strict (one pass, answer only) | work (short visible working allowed)
+#   switch       text appended to every prompt, e.g. " /no_think" for Qwen3
+#   api_key_env  NAME of the env var holding the key; the value lives in .env only
+#   concurrency  parallel calls within the arm (arms themselves run one after another)
+#
+# Copy to arms.yaml and edit; keep keys out of this file.
+arms:
+  # ── Run 1: different models ────────────────────────────────────────────
+  - name: scout-strict
+    backend: openai_compat
+    base_url: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+    model: llama-scout-17b
+    api_key_env: MAAS_API_KEY
+    system: strict
+    concurrency: 6
+  - name: scout-work
+    backend: openai_compat
+    base_url: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+    model: llama-scout-17b
+    api_key_env: MAAS_API_KEY
+    system: work
+    concurrency: 6
+
+  # ── Run 2: one model, thinking switched ────────────────────────────────
+  - name: qwen-off-strict
+    backend: openai_compat
+    base_url: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+    model: qwen3-14b
+    api_key_env: MAAS_API_KEY
+    system: strict
+    switch: " /no_think"
+    concurrency: 6
+  - name: qwen-off-work
+    backend: openai_compat
+    base_url: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+    model: qwen3-14b
+    api_key_env: MAAS_API_KEY
+    system: work
+    switch: " /no_think"
+    concurrency: 6
+  - name: qwen-on
+    backend: openai_compat
+    base_url: https://maas-rhdp.apps.maas.redhatworkshops.io/v1
+    model: qwen3-14b
+    api_key_env: MAAS_API_KEY
+    system: work
+    switch: " /think"
+    timeout_s: 300
+    concurrency: 6

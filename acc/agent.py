@@ -5071,6 +5071,15 @@ class Agent:
             return "dropped:invalid"
         if message.to_agent != self.agent_id:
             return "dropped:not-addressed"
+        # PA-09 (B1): a follow-up runs at the attribution the message carries,
+        # so who signed it is checked before anything is delivered.
+        from acc.agent_messages import sender_refusal  # noqa: PLC0415
+        refusal = sender_refusal(payload, self._sender_public_keys())
+        if refusal:
+            logger.warning("inbox: dropped message %s from %r -- sender not proven: %s",
+                           message.message_id[:8], message.from_agent, refusal)
+            self._write_receipt(cid, message, "dropped", reason=f"sender not proven: {refusal}")
+            return "dropped:sender-not-proven"
         core = getattr(self, "_cognitive_core", None)
         if core is None:
             self._write_receipt(cid, message, "dropped", reason="no-core")

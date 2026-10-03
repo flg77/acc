@@ -49,6 +49,8 @@ served from a community pack, and never declared in `required_packages`.
 | `demo-financial` | control plane + business specialists | `@acc/business-roles` | proposal-018 finance demo |
 | `demo-multi` | hub assistant + 2 managed sub-collectives | all of the above | `[DELEGATE:cid]` sub-collective routing |
 | `e2e-demo` | control plane + coding cluster + `reviewer` + `devops_engineer` | `@acc/workspace-roles` + `@acc/devops-roles` | end-to-end coding+review on **external MaaS** models (reviewer=`maas-qwen3-14b`, coding=`maas-llama-scout-17b`); key via `MAAS_API_KEY` in `.env` |
+| `mode1` | all 7 CONTROL roles + `analyst` + `research_synthesizer` + `research_critic`/`_competitor` (`m1-ab`) | `@acc/research-roles` | Mode 1 arm of the M1-04 A/B: every agent on non-thinking `maas-llama-scout-17b`; drive it with `acc-cli e2e run --root tools/mode_ab/golden` |
+| `mode2` | same roles as `mode1` (`m2-ab`) | `@acc/research-roles` | Mode 2 arm: every agent on `maas-qwen3-14b` (thinking on at the gateway); runs beside `mode1` |
 
 ## Keeping presets aligned
 

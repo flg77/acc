@@ -1,0 +1,72 @@
+# collective.mode1.yaml — the Mode 1 arm of the M1-04 A/B (fast, non-thinking).
+#
+# Every agent runs on a non-thinking model, so each step answers in one pass.
+# The Mode 2 twin is collective.mode2.yaml: same roles, same prefixes apart from
+# m1-/m2-, different models. That makes the two collectives a clean A/B.
+# Both can run beside the baseline sol-01 stack because each has its own
+# collective_id (its own NATS subjects) and its own agent_id prefixes.
+#
+#   ./acc-deploy.sh apply mode1                     # install packs, synthesize, up
+#   acc-cli e2e run --root tools/mode_ab/golden --collective-id m1-ab \
+#       --history test/history/mode_ab.m1.jsonl
+#   ./acc-deploy.sh apply collective.yaml --prune   # back to the baseline
+#
+# KNOWN ISSUE (v0.25.0, found by PB-13 Part C on lighthouse 2026-09-27):
+# `apply` runs `collective synthesize` WITHOUT --image, so every cell gets
+# localhost/acc-agent-core:0.2.0 and podman-compose tries to BUILD it (and on
+# a dirty tree ACC_VERSION=<x>-dirty makes it rebuild the base images too).
+# Until apply passes the image, bring the cells up by hand:
+#   python -m acc.cli collective synthesize <this file> \
+#       -o container/production/podman-compose.overlay.yml \
+#       --image localhost/acc-agent-core:<running version>
+#   ACC_VERSION=<running version> ./acc-deploy.sh \
+#       -f container/production/podman-compose.overlay.yml up -d --no-recreate
+#
+# Roles: all seven CONTROL roles, two in-tree workers, and two workers from
+# @acc/research-roles, which is installed (infused) at apply time.
+# Skills and MCPs come from each role's role.yaml (allowed_/default_ lists);
+# a collective cannot add them.
+collective_id: m1-ab
+
+required_packages:
+  - "@acc/research-roles@^1.0"
+
+agents:
+  # ── Control plane (the seven CONTROL roles) ────────────────────────────
+  - role: assistant
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-assistant
+  - role: arbiter
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-arbiter
+  - role: orchestrator
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-orchestrator
+  - role: reviewer
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-reviewer
+  - role: compliance_officer
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-compliance
+  - role: ingester
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-ingester
+  - role: observer
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-observer
+
+  # ── In-tree workers ────────────────────────────────────────────────────
+  - role: analyst
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-analyst
+  - role: research_synthesizer
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-research
+
+  # ── Infused workers (@acc/research-roles) ──────────────────────────────
+  - role: research_critic
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-critic
+  - role: research_competitor
+    model: maas-llama-scout-17b
+    agent_id_prefix: m1-competitor

@@ -317,12 +317,17 @@ class OpenAICompatBackend:
                     data["choices"][0]["message"].get("content")
                 )
                 usage = data.get("usage", {})
+                # Only a JSON *object* is the model's own dict.  A reply such
+                # as ``408`` or ``"yes"`` is valid JSON too, but it is text —
+                # treating it as a dict crashed the task (bb3, v0.26.0).
                 try:
                     parsed = json.loads(content)
+                except (json.JSONDecodeError, ValueError):
+                    parsed = None
+                if isinstance(parsed, dict):
                     parsed.setdefault("usage", usage)
                     return parsed
-                except (json.JSONDecodeError, ValueError):
-                    return {"content": content, "usage": usage}
+                return {"content": content, "usage": usage}
 
             except httpx.ConnectError as exc:
                 raise BackendConnectionError(

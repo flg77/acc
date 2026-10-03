@@ -1,0 +1,15 @@
+name: mab_m2_12
+description: M1-04 mode A/B prompt m2-12 (label mode2, consequence LOW). Generated
+  by tools/mode_ab/mode_ab.py export-golden; edit prompts.json, not this file.
+prompt: 'What is the probability of rolling at least one six in four rolls of a fair
+  die? Give a percentage rounded to one decimal place.
+
+
+  End your reply with one final line of the form ''ANSWER: <answer>'' containing only
+  the answer.'
+target_role: analyst
+timeout_s: 300.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: (?:ANSWER:\W*|\\boxed\{\s*)(?:51\.8)(?!\w|\.\d)

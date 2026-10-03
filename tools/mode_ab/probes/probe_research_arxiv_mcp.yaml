@@ -1,0 +1,21 @@
+name: probe_research_arxiv_mcp
+description: |
+  Capability probe: research_synthesizer should call an MCP for a literature
+  question. It asserts only the kind. Two things learned on lighthouse
+  (PB-13 Part C, 2026-09-27):
+  * invocations_* count PARSED markers, not executed calls. Scout emitted
+    `[MCP: web_fetch {...}]` (no `.tool`), the probe passed, and no
+    acc.tool.invoke span exists. Confirm execution in the trace, then pin the
+    real `server.tool` in invocations_target_contains.
+  * @acc/research-roles also ships research_synthesizer (default_mcps
+    web_fetch); the in-tree role has default_mcps []. Which one a cell loads
+    decides whether the model is told about any MCP at all.
+prompt: |
+  Find two arXiv papers from 2025 or later about routing queries between
+  fast and reasoning LLMs. Give each paper's arXiv id and title.
+target_role: research_synthesizer
+timeout_s: 300.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  invocations_kind_contains: [mcp]

@@ -1,0 +1,277 @@
+[
+ {
+  "id": "m1-01",
+  "label": "mode1",
+  "prompt": "Classify this support ticket as exactly one of: bug, feature, question.\nTicket: \"The app crashes when I click Save on an empty form.\"",
+  "accept": [
+   "bug"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-02",
+  "label": "mode1",
+  "prompt": "Classify this support ticket as exactly one of: bug, feature, question.\nTicket: \"Could you add a dark mode to the dashboard?\"",
+  "accept": [
+   "feature"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-03",
+  "label": "mode1",
+  "prompt": "Classify this support ticket as exactly one of: bug, feature, question.\nTicket: \"How do I reset my password?\"",
+  "accept": [
+   "question"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-04",
+  "label": "mode1",
+  "prompt": "Sentiment of this review, exactly one of: positive, negative, neutral.\nReview: \"Absolutely love the new release, setup took two minutes.\"",
+  "accept": [
+   "positive"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-05",
+  "label": "mode1",
+  "prompt": "Extract the email address: \"Contact Dana at dana.k@example.org for access.\"",
+  "accept": [
+   "dana.k@example.org"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-06",
+  "label": "mode1",
+  "prompt": "Is 97 a prime number? Answer yes or no.",
+  "accept": [
+   "yes"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-07",
+  "label": "mode1",
+  "prompt": "Which language is this sentence in: \"Wo ist der Bahnhof?\"",
+  "accept": [
+   "german",
+   "deutsch"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-08",
+  "label": "mode1",
+  "prompt": "What is the capital city of Australia?",
+  "accept": [
+   "canberra"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-09",
+  "label": "mode1",
+  "prompt": "Rate the risk of this operation as exactly one of LOW, MEDIUM, HIGH: \"Delete all production database backups older than 1 day.\"",
+  "accept": [
+   "high"
+  ],
+  "consequence": "HIGH"
+ },
+ {
+  "id": "m1-10",
+  "label": "mode1",
+  "prompt": "Extract the year: \"The treaty was signed on 4 March 1919 in Paris.\"",
+  "accept": [
+   "1919"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-11",
+  "label": "mode1",
+  "prompt": "Is 256.10.1.1 a valid IPv4 address? Answer yes or no.",
+  "accept": [
+   "no"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m1-12",
+  "label": "mode1",
+  "prompt": "How many minutes are in 3.5 hours?",
+  "accept": [
+   "210"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-01",
+  "label": "mode2",
+  "prompt": "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost, in cents?",
+  "accept": [
+   "5"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-02",
+  "label": "mode2",
+  "prompt": "If it takes 5 machines 5 minutes to make 5 widgets, how many minutes would it take 100 machines to make 100 widgets?",
+  "accept": [
+   "5"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-03",
+  "label": "mode2",
+  "prompt": "A patch of lily pads doubles in size every day. It covers the whole lake on day 48. On which day did it cover half the lake?",
+  "accept": [
+   "47"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-04",
+  "label": "mode2",
+  "prompt": "What does this Python print?\n\nx = [1, 2, 3]\ny = x\ny.append(4)\nprint(len(x) + sum(y))",
+  "accept": [
+   "14"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-05",
+  "label": "mode2",
+  "prompt": "With F1 = 1 and F2 = 1, what is the 10th Fibonacci number?",
+  "accept": [
+   "55"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-06",
+  "label": "mode2",
+  "prompt": "What day of the week was 1 January 2000?",
+  "accept": [
+   "saturday"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-07",
+  "label": "mode2",
+  "prompt": "How many times does the digit 1 appear when you write out all the integers from 1 to 100?",
+  "accept": [
+   "21"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-08",
+  "label": "mode2",
+  "prompt": "What is the sum of all integers from 1 to 200 that are divisible by 3 or by 5?",
+  "accept": [
+   "9368"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-09",
+  "label": "mode2",
+  "prompt": "Alice is taller than Bob. Carol is shorter than Bob. Dave is taller than Alice. Who is the second tallest?",
+  "accept": [
+   "alice"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-10",
+  "label": "mode2",
+  "prompt": "A train leaves at 14:40 and the trip takes 3 hours 35 minutes. What is the arrival time in 24-hour HH:MM format?",
+  "accept": [
+   "18:15",
+   "1815"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-11",
+  "label": "mode2",
+  "prompt": "How many distinct arrangements are there of the letters in the word LEVEL?",
+  "accept": [
+   "30"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "m2-12",
+  "label": "mode2",
+  "prompt": "What is the probability of rolling at least one six in four rolls of a fair die? Give a percentage rounded to one decimal place.",
+  "accept": [
+   "51.8"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "amb-01",
+  "label": "ambiguous",
+  "prompt": "Is 1001 a prime number? Answer yes or no.",
+  "accept": [
+   "no"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "amb-02",
+  "label": "ambiguous",
+  "prompt": "Which number is larger: 9.11 or 9.9?",
+  "accept": [
+   "9.9"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "amb-03",
+  "label": "ambiguous",
+  "prompt": "How many times does the letter r appear in the word strawberry?",
+  "accept": [
+   "3",
+   "three"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "amb-04",
+  "label": "ambiguous",
+  "prompt": "Sally has 3 brothers. Each brother has 2 sisters. How many sisters does Sally have?",
+  "accept": [
+   "1",
+   "one"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "amb-05",
+  "label": "ambiguous",
+  "prompt": "A farmer has 17 sheep. All but 9 run away. How many sheep are left?",
+  "accept": [
+   "9",
+   "nine"
+  ],
+  "consequence": "LOW"
+ },
+ {
+  "id": "amb-06",
+  "label": "ambiguous",
+  "prompt": "What is 17 multiplied by 24?",
+  "accept": [
+   "408"
+  ],
+  "consequence": "LOW"
+ }
+]

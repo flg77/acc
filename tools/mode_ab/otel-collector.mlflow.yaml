@@ -1,0 +1,76 @@
+# OTel Collector for the M1-04 A/B on an edge (podman compose) host:
+# ACC cells --gRPC--> this collector --OTLP/HTTP + bearer token--> MLflow /v1/traces.
+#
+# Why a collector at all: the acc-agent-core image installs only the core
+# dependencies (gRPC exporter), not the `mlflow` extra (HTTP exporter), so a
+# cell cannot post to MLflow directly.
+#
+# MLflow's OTLP ingest has two rules the stock sample
+# (deploy/observability/otel-collector.yaml) does not follow:
+#   * every request needs  x-mlflow-experiment-id: <numeric id>  (else 422)
+#   * the body must not be gzip-compressed, and otlphttp gzips by default (else 400)
+#
+# Auth: acc1's MLflow sits behind oauth2-proxy, which admits a Keycloak
+# client-credentials token for group mlflow-writers (lab-gitops
+# ansible/mlflow-machine-auth). The oauth2client extension fetches and
+# refreshes that token. The client secret is read with the ${file:...}
+# provider from a read-only mount, so it never appears in an env var, a
+# command line or `podman inspect`.
+#
+# Mounts:
+#   /etc/otel/client.secret   ~/.config/acc-otel/<client>.secret  (0600, delivered by the playbook)
+#   /etc/otel/ca.crt          ~/.config/acc-otel/ic3net-ca.crt    (lab internal CA)
+# Env:
+#   MLFLOW_OTEL_ENDPOINT   MLflow base URL, e.g. https://mlflow.ic3net.internal
+#                          (otlphttp appends /v1/traces itself)
+#   MLFLOW_EXPERIMENT_ID   numeric id, from
+#                          GET /api/2.0/mlflow/experiments/get-by-name?experiment_name=<name>
+#   OAUTH_CLIENT_ID        e.g. acc-otel-lighthouse
+#   OAUTH_TOKEN_URL        https://keycloak.ic3net.internal/realms/ic3net/protocol/openid-connect/token
+extensions:
+  oauth2client/keycloak:
+    client_id: "${env:OAUTH_CLIENT_ID}"
+    client_secret: "${file:/etc/otel/client.secret}"
+    token_url: "${env:OAUTH_TOKEN_URL}"
+    tls:
+      ca_file: /etc/otel/ca.crt
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 5s
+
+exporters:
+  otlphttp/mlflow:
+    endpoint: "${env:MLFLOW_OTEL_ENDPOINT}"
+    auth:
+      authenticator: oauth2client/keycloak
+    compression: none
+    # MLflow replies 200 with a body the exporter cannot parse, so it would
+    # re-send batches that are already stored. Same as the operator's
+    # rendered config (operator/internal/templates/otel_config.go).
+    retry_on_failure:
+      enabled: false
+    headers:
+      x-mlflow-experiment-id: "${env:MLFLOW_EXPERIMENT_ID}"
+    tls:
+      ca_file: /etc/otel/ca.crt
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [oauth2client/keycloak]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/mlflow, debug]
+    metrics:                      # MLflow does not ingest metrics; count them only
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

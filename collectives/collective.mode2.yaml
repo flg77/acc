@@ -1,0 +1,75 @@
+# collective.mode2.yaml — the Mode 2 arm of the M1-04 A/B (deliberate, thinking).
+#
+# Same roles as collective.mode1.yaml. Every agent runs on Qwen3-14B, which
+# the MaaS gateway serves with thinking ON by default (verified 2026-09-26:
+# the thinking arrives in reasoning_content, which ACC drops but still counts
+# in completion_tokens). The MaaS key behind maas-qwen3-14b must be allowed
+# qwen3-14b: lighthouse's is scoped to deepseek-r1-distill only (HTTP 401). A
+# per-agent `extra_env: ACC_LLM_MODEL` does NOT switch the model — the agent
+# re-applies models.yaml at boot — so a different model needs its own
+# models.yaml entry.
+#
+# Optional stronger control plane: if ANTHROPIC_API_KEY is in .env, switch the
+# five control-plane agents to `claude-sonnet`. A backend plugin that needs a
+# local binary or a login does NOT work here: cells run the signed
+# acc-agent-core image, which carries neither. Run it at backend level instead,
+# as an arm of tools/mode_ab/mode_ab.py.
+#
+#   ./acc-deploy.sh apply mode2
+#   acc-cli e2e run --root tools/mode_ab/golden --collective-id m2-ab \
+#       --history test/history/mode_ab.m2.jsonl
+#
+# KNOWN ISSUE (v0.25.0, found by PB-13 Part C on lighthouse 2026-09-27):
+# `apply` runs `collective synthesize` WITHOUT --image, so every cell gets
+# localhost/acc-agent-core:0.2.0 and podman-compose tries to BUILD it (and on
+# a dirty tree ACC_VERSION=<x>-dirty makes it rebuild the base images too).
+# Until apply passes the image, bring the cells up by hand:
+#   python -m acc.cli collective synthesize <this file> \
+#       -o container/production/podman-compose.overlay.yml \
+#       --image localhost/acc-agent-core:<running version>
+#   ACC_VERSION=<running version> ./acc-deploy.sh \
+#       -f container/production/podman-compose.overlay.yml up -d --no-recreate
+collective_id: m2-ab
+
+required_packages:
+  - "@acc/research-roles@^1.0"
+
+agents:
+  # ── Control plane (the seven CONTROL roles) ────────────────────────────
+  - role: assistant
+    model: maas-qwen3-14b          # or claude-sonnet (API key)
+    agent_id_prefix: m2-assistant
+  - role: arbiter
+    model: maas-qwen3-14b
+    agent_id_prefix: m2-arbiter
+  - role: orchestrator
+    model: maas-qwen3-14b
+    agent_id_prefix: m2-orchestrator
+  - role: reviewer
+    model: maas-qwen3-14b          # or claude-sonnet (API key)
+    agent_id_prefix: m2-reviewer
+  - role: compliance_officer
+    model: maas-qwen3-14b          # or claude-sonnet (API key)
+    agent_id_prefix: m2-compliance
+  - role: ingester
+    model: maas-qwen3-14b
+    agent_id_prefix: m2-ingester
+  - role: observer
+    model: maas-qwen3-14b
+    agent_id_prefix: m2-observer
+
+  # ── In-tree workers ────────────────────────────────────────────────────
+  - role: analyst
+    model: maas-qwen3-14b
+    agent_id_prefix: m2-analyst
+  - role: research_synthesizer
+    model: maas-qwen3-14b
+    agent_id_prefix: m2-research
+
+  # ── Infused workers (@acc/research-roles) ──────────────────────────────
+  - role: research_critic
+    model: maas-qwen3-14b
+    agent_id_prefix: m2-critic
+  - role: research_competitor
+    model: maas-qwen3-14b
+    agent_id_prefix: m2-competitor

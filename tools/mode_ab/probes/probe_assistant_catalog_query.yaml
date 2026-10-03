@@ -1,0 +1,16 @@
+name: probe_assistant_catalog_query
+description: |
+  Capability probe: the assistant must reach for its one default skill,
+  catalog_query, when asked what the collective can do. Fails if the skill
+  is not attached (allowed_skills / default_skills in roles/assistant/role.yaml)
+  or the model answers from memory instead of calling it.
+prompt: |
+  Which roles and skills are available in this collective right now?
+  Look it up with your catalog skill rather than answering from memory.
+target_role: assistant
+timeout_s: 300.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  invocations_kind_contains: [skill]
+  invocations_target_contains: [catalog_query]

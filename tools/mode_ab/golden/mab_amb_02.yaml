@@ -1,0 +1,14 @@
+name: mab_amb_02
+description: M1-04 mode A/B prompt amb-02 (label ambiguous, consequence LOW). Generated
+  by tools/mode_ab/mode_ab.py export-golden; edit prompts.json, not this file.
+prompt: 'Which number is larger: 9.11 or 9.9?
+
+
+  End your reply with one final line of the form ''ANSWER: <answer>'' containing only
+  the answer.'
+target_role: analyst
+timeout_s: 300.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: (?:ANSWER:\W*|\\boxed\{\s*)(?:9\.9)(?!\w|\.\d)

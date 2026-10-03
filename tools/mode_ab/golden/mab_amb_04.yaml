@@ -1,0 +1,15 @@
+name: mab_amb_04
+description: M1-04 mode A/B prompt amb-04 (label ambiguous, consequence LOW). Generated
+  by tools/mode_ab/mode_ab.py export-golden; edit prompts.json, not this file.
+prompt: 'Sally has 3 brothers. Each brother has 2 sisters. How many sisters does Sally
+  have?
+
+
+  End your reply with one final line of the form ''ANSWER: <answer>'' containing only
+  the answer.'
+target_role: analyst
+timeout_s: 300.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: (?:ANSWER:\W*|\\boxed\{\s*)(?:1|one)(?!\w|\.\d)

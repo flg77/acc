@@ -94,9 +94,13 @@ class OllamaBackend:
         data = response.json()
         content = data["message"]["content"]
         try:
-            return json.loads(content)
+            parsed = json.loads(content)
         except json.JSONDecodeError:
-            return {"text": content}
+            parsed = None
+        # A bare ``408`` or ``"yes"`` is valid JSON but not the model's dict.
+        if isinstance(parsed, dict):
+            return parsed
+        return {"text": content}
 
     async def embed(self, text: str) -> list[float]:
         """POST to ``/api/embeddings`` and return the embedding vector."""

@@ -69,10 +69,13 @@ def _core() -> tuple[CognitiveCore, _LLM]:
                          role_label="reviewer"), llm
 
 
-def _stub(*, core, redis=None, in_flight=0, handler=None):
+def _stub(*, core, redis=None, in_flight=0, handler=None, keys=None):
     return SimpleNamespace(
         agent_id="b1", _cognitive_core=core, _redis=redis, _tasks_in_flight=in_flight,
         _local_task_handler=handler,
+        # PA-09 (B1): no key set = verification off, the state of every
+        # deployment that has not distributed public_keys.json.
+        _sender_public_keys=lambda: dict(keys or {}),
         config=SimpleNamespace(agent=SimpleNamespace(collective_id="c", role="reviewer")),
         _messages_journal_id=lambda: "messages-b1",
         _write_receipt=lambda cid, m, status, **extra: Agent._write_receipt(_holder[0], cid, m, status, **extra),
@@ -247,3 +250,123 @@ def test_msg_send_records_sent_before_it_publishes(monkeypatch):
     args = SimpleNamespace(agent_id="b1", text="hello", delivery="auto", task="", collective="c", json=True)
     assert msg_cmd._cmd_send(args) == 0
     assert order == ["redis:sent", "publish:acc.c.agent.b1.inbox"]
+
+
+# ---------------------------------------------------------------------------
+# PA-09 (B1) -- a follow-up runs at the attribution the message carries, so the
+# sender is proven before anything is delivered
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def keyring():
+    """Seeds and the distributed key set for the two allowed signers and a worker."""
+    from acc.nkeys import generate_user_nkey
+
+    seeds, keys = {}, {}
+    for identity in ("arbiter", "tui", "analyst"):
+        seeds[identity], keys[identity] = generate_user_nkey()
+    return seeds, keys
+
+
+def _signed_by(identity, seeds, **kw):
+    from acc.wire import sign_payload
+
+    body = _msg(attribution={"requested_by": "cli:flg", "requester_tier": "operator",
+                             "requester_ceiling": "MEDIUM"}, **kw).model_dump()
+    return sign_payload(body, identity=identity, seed=seeds[identity], agent_id="x")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signer", ["tui", "arbiter"])
+async def test_a_message_signed_by_an_allowed_publisher_is_delivered(tmp_path, monkeypatch, keyring, signer):
+    monkeypatch.setenv("ACC_TRACELOG_DIR", str(tmp_path))
+    seeds, keys = keyring
+    core, _ = _core()
+    handler = AsyncMock()
+    stub = _stub_with_receipts(core=core, redis=_Redis(), handler=handler, keys=keys)
+    assert await Agent._deliver_message(stub, _signed_by(signer, seeds, message_id="OK1")) == "follow_up"
+    task = json.loads(handler.await_args.args[0])
+    assert task["requested_by"] == "cli:flg" and task["requester_ceiling"] == "MEDIUM"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("make, why", [
+    (lambda seeds: _msg(message_id="X1", attribution={"requester_ceiling": "CRITICAL"}).model_dump(),
+     "unsigned"),
+    (lambda seeds: _signed_by("analyst", seeds, message_id="X1"), "may not message an agent"),
+    (lambda seeds: {**_signed_by("tui", seeds, message_id="X1"),
+                    "attribution": {"requested_by": "cli:flg", "requester_ceiling": "CRITICAL"}},
+     "does not verify"),
+], ids=["unsigned", "signed-by-a-worker", "ceiling-raised-after-signing"])
+async def test_an_unproven_sender_is_dropped_before_its_attribution_becomes_a_task(
+        tmp_path, monkeypatch, keyring, make, why):
+    monkeypatch.setenv("ACC_TRACELOG_DIR", str(tmp_path))
+    seeds, keys = keyring
+    core, _ = _core()
+    handler = AsyncMock()
+    redis = _Redis()
+    stub = _stub_with_receipts(core=core, redis=redis, in_flight=1, handler=handler, keys=keys)
+    assert await Agent._deliver_message(stub, make(seeds)) == "dropped:sender-not-proven"
+    handler.assert_not_awaited()
+    assert core.pending_steer() == [], "a steer is refused too, not just a follow-up"
+    receipt = json.loads(redis.kv["acc:c:message:X1"])
+    assert receipt["status"] == "dropped" and why in receipt["reason"]
+
+
+@pytest.mark.asyncio
+async def test_with_no_key_set_an_unsigned_message_is_still_delivered(tmp_path, monkeypatch):
+    """Rollout order: sign -> distribute -> verify. Until the key set is
+    distributed, an inbox behaves as it did before signing existed."""
+    monkeypatch.setenv("ACC_TRACELOG_DIR", str(tmp_path))
+    core, _ = _core()
+    handler = AsyncMock()
+    stub = _stub_with_receipts(core=core, redis=_Redis(), handler=handler)
+    assert await Agent._deliver_message(stub, _msg(message_id="N1").model_dump()) == "follow_up"
+    handler.assert_awaited_once()
+
+
+def _nkey_config(monkeypatch, **nkey):
+    import acc.config
+
+    cfg = SimpleNamespace(security=SimpleNamespace(nkey=SimpleNamespace(
+        enabled=nkey.get("enabled", True), role=nkey.get("role", ""),
+        seed_path=nkey.get("seed_path", ""))))
+    monkeypatch.setattr(acc.config, "load_config", lambda *a, **k: cfg)
+
+
+def test_the_cli_signs_as_tui_and_the_proof_survives_the_wire(tmp_path, monkeypatch, keyring):
+    """What `acc-cli msg send` publishes verifies on the receiving side after
+    the real encode/decode -- the signature covers what the agent reads."""
+    from acc.agent_messages import sender_refusal
+    from acc.cli import msg_cmd
+    from acc.cli._common import decode_payload, encode_payload
+    from acc.wire import PROOF_FIELD
+
+    seeds, keys = keyring
+    seed_file = tmp_path / "seed"
+    seed_file.write_text(seeds["tui"], encoding="ascii")
+    _nkey_config(monkeypatch, seed_path=str(seed_file))
+    signed = msg_cmd._signed(_msg(message_id="W1", attribution={"requester_ceiling": "MEDIUM"}).model_dump())
+    assert signed[PROOF_FIELD]["identity"] == "tui"
+    received = decode_payload(encode_payload(signed))
+    if isinstance(received, (bytes, str)):
+        received = json.loads(received)
+    assert sender_refusal(received, keys) == ""
+
+
+def test_the_cli_sends_unsigned_when_nkeys_are_off(monkeypatch):
+    from acc.cli import msg_cmd
+    from acc.wire import PROOF_FIELD
+
+    _nkey_config(monkeypatch, enabled=False)
+    assert PROOF_FIELD not in msg_cmd._signed(_msg().model_dump())
+
+
+def test_the_cli_says_so_when_it_cannot_sign(tmp_path, monkeypatch, capsys):
+    from acc.cli import msg_cmd
+    from acc.wire import PROOF_FIELD
+
+    _nkey_config(monkeypatch, seed_path=str(tmp_path / "missing-seed"))
+    assert PROOF_FIELD not in msg_cmd._signed(_msg().model_dump())
+    assert "could not sign" in capsys.readouterr().err

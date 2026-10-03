@@ -1,0 +1,116 @@
+# M1-04 Mode 1 / Mode 2 collectives for the operator path (RHOAI / OpenShift).
+#
+# The operator analogue of collectives/collective.mode1.yaml + .mode2.yaml.
+# Replace CORPUS (your AgentCorpus name) and NAMESPACE before applying:
+#
+#   sed -e 's/CORPUS/<corpus>/g' -e 's/NAMESPACE/<ns>/g' mode-ab-collectives.yaml | oc apply -f -
+#
+# The MaaS key lives in a Secret you create yourself (never in this file):
+#   oc -n <ns> create secret generic acc-maas --from-literal=MAAS_API_KEY='<key>'
+#
+# Why extraEnv: the CRD's spec.llm knows only ollama|anthropic|vllm|llama_stack,
+# but the runtime has openai_compat, and spec.agents[].extraEnv is appended
+# LAST so it wins (agent_deployment.go BuildExtraEnv). spec.llm is set to an
+# inert ollama block because the CRD requires one. This is the pattern the
+# bb3 workshop rollout runs (lab-gitops acc-workshop agentcollective.yaml.j2).
+#
+# Roles: the seven CONTROL roles + analyst + research_synthesizer + two
+# @acc/research-roles workers. Roles outside the operator's role catalogue
+# (analyst, research_*) are admitted with a webhook WARNING, which is expected.
+# The Claude subscription route does not exist in-cluster (no `claude`
+# binary or login in the agent image); Mode 2 here is Qwen3 with thinking on.
+#
+# WHAT PB-13 PART D ON bb3 FOUND (2026-09-27, operator 0.2.27, runtime 0.24.0):
+#  * An AgentCollective only gets workloads when its corpus LISTS it:
+#      oc -n <ns> patch agentcorpus <corpus> --type json \
+#        -p '[{"op":"add","path":"/spec/collectives/-","value":{"name":"m1-ab"}}]'
+#    (and restore the list at cleanup). Unlisted, the CR sits in Progressing.
+#  * BLOCKER — every role that no installed PACK serves boots DORMANT forever,
+#    control roles included: RoleStore looks for roles under ./roles
+#    (/app/roles, absent in the image) and ignores ACC_ROLES_ROOT=/etc/acc/roles
+#    where the operator delivers them (acc/role_store.py RoleStore roles_root
+#    default; acc/agent.py does not pass it). Until fixed, these collectives
+#    admit prompts but never answer.
+#  * The corpus catalog must serve @acc/research-roles (bb3's workshop catalog
+#    serves only @acc/mortgage-roles), and the MaaS key must reach the model
+#    (bb3's keys reach gpt-oss-120b only).
+#  * StatefulSet PVCs (acc-data-<collective>-<role>-0) outlive the collective;
+#    delete them at cleanup.
+#  * RHOAI's MLflow API sits under /mlflow (/mlflow/api/3.0/mlflow/traces/search).
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AccPackageInstall
+metadata:
+  name: research-roles
+  namespace: NAMESPACE
+spec:
+  name: "@acc/research-roles"
+  constraint: "^1.0"
+  targetCorpus: CORPUS
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCollective
+metadata:
+  name: m1-ab
+  namespace: NAMESPACE
+  labels: { acc.redhat.io/experiment: m1-04 }
+spec:
+  collectiveId: m1-ab
+  corpusRef: { name: CORPUS }
+  llm:
+    backend: ollama            # inert: every agent's extraEnv overrides it
+    ollama: { baseUrl: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1", model: llama-scout-17b }
+  agents:
+    - role: assistant
+      replicas: 1
+      extraEnv: &mode1
+        - { name: ACC_LLM_BACKEND, value: openai_compat }
+        - { name: ACC_LLM_BASE_URL, value: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1" }
+        - { name: ACC_LLM_MODEL, value: llama-scout-17b }
+        - { name: ACC_LLM_API_KEY_ENV, value: MAAS_API_KEY }
+        - name: MAAS_API_KEY
+          valueFrom: { secretKeyRef: { name: acc-maas, key: MAAS_API_KEY } }
+    - { role: arbiter, replicas: 1, extraEnv: *mode1 }
+    - { role: orchestrator, replicas: 1, extraEnv: *mode1 }
+    - { role: reviewer, replicas: 1, extraEnv: *mode1 }
+    - { role: compliance_officer, replicas: 1, extraEnv: *mode1 }
+    - { role: ingester, replicas: 1, extraEnv: *mode1 }
+    - { role: observer, replicas: 1, extraEnv: *mode1 }
+    - { role: analyst, replicas: 1, extraEnv: *mode1 }
+    - { role: research_synthesizer, replicas: 1, extraEnv: *mode1 }
+    - { role: research_critic, replicas: 1, extraEnv: *mode1 }
+    - { role: research_competitor, replicas: 1, extraEnv: *mode1 }
+---
+apiVersion: acc.redhat.io/v1alpha1
+kind: AgentCollective
+metadata:
+  name: m2-ab
+  namespace: NAMESPACE
+  labels: { acc.redhat.io/experiment: m1-04 }
+spec:
+  collectiveId: m2-ab
+  corpusRef: { name: CORPUS }
+  llm:
+    backend: ollama            # inert: every agent's extraEnv overrides it
+    ollama: { baseUrl: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1", model: qwen3-14b }
+  agents:
+    - role: assistant
+      replicas: 1
+      extraEnv: &mode2
+        - { name: ACC_LLM_BACKEND, value: openai_compat }
+        - { name: ACC_LLM_BASE_URL, value: "https://maas-rhdp.apps.maas.redhatworkshops.io/v1" }
+        - { name: ACC_LLM_MODEL, value: qwen3-14b }
+        - { name: ACC_LLM_API_KEY_ENV, value: MAAS_API_KEY }
+        - { name: ACC_LLM_TIMEOUT_S, value: "300" }   # thinking calls reach 60 s+
+        - name: MAAS_API_KEY
+          valueFrom: { secretKeyRef: { name: acc-maas, key: MAAS_API_KEY } }
+    - { role: arbiter, replicas: 1, extraEnv: *mode2 }
+    - { role: orchestrator, replicas: 1, extraEnv: *mode2 }
+    - { role: reviewer, replicas: 1, extraEnv: *mode2 }
+    - { role: compliance_officer, replicas: 1, extraEnv: *mode2 }
+    - { role: ingester, replicas: 1, extraEnv: *mode2 }
+    - { role: observer, replicas: 1, extraEnv: *mode2 }
+    - { role: analyst, replicas: 1, extraEnv: *mode2 }
+    - { role: research_synthesizer, replicas: 1, extraEnv: *mode2 }
+    - { role: research_critic, replicas: 1, extraEnv: *mode2 }
+    - { role: research_competitor, replicas: 1, extraEnv: *mode2 }

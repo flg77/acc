@@ -1,0 +1,14 @@
+name: mab_m2_11
+description: M1-04 mode A/B prompt m2-11 (label mode2, consequence LOW). Generated
+  by tools/mode_ab/mode_ab.py export-golden; edit prompts.json, not this file.
+prompt: 'How many distinct arrangements are there of the letters in the word LEVEL?
+
+
+  End your reply with one final line of the form ''ANSWER: <answer>'' containing only
+  the answer.'
+target_role: analyst
+timeout_s: 300.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: (?:ANSWER:\W*|\\boxed\{\s*)(?:30)(?!\w|\.\d)

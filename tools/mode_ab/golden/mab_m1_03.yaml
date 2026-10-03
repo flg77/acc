@@ -1,0 +1,16 @@
+name: mab_m1_03
+description: M1-04 mode A/B prompt m1-03 (label mode1, consequence LOW). Generated
+  by tools/mode_ab/mode_ab.py export-golden; edit prompts.json, not this file.
+prompt: 'Classify this support ticket as exactly one of: bug, feature, question.
+
+  Ticket: "How do I reset my password?"
+
+
+  End your reply with one final line of the form ''ANSWER: <answer>'' containing only
+  the answer.'
+target_role: analyst
+timeout_s: 300.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: (?:ANSWER:\W*|\\boxed\{\s*)(?:question)(?!\w|\.\d)

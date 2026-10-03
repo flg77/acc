@@ -252,6 +252,9 @@ sends everything to that list.
 
 ## Troubleshooting
 
+- **On a cluster an agent logs `has no resolvable role.yaml yet … booting DORMANT to await its pack` for a role no pack serves, and never answers** — an agent image older than v0.25.1 looked for roles under `/app/roles` and ignored `ACC_ROLES_ROOT=/etc/acc/roles` (D-029). Roll the agents onto 0.25.1; the boot line then reads `role_store: loaded role from roles/ dir`. If an `AgentCollective` stays `Progressing` with no pods at all, its corpus does not list it: add it to `AgentCorpus.spec.collectives`.
+- **An agent on a cluster answers on a different model than its `AgentCollective` names, or gets a 401 from a key it was never given** — an agent image older than v0.25.2 applied the `role_models` of the example registry it bakes over the operator's per-agent environment (D-030). Roll the agents onto 0.25.2; to use a registry on a cluster, name it with `ACC_MODELS_PATH`.
+- **A short answer (a bare number, `yes`, a list) comes back blocked with `task_error: AttributeError: 'int' object has no attribute 'setdefault'`** — an agent image older than v0.26.1 crashed on a reply that is valid JSON but not an object (D-031). Roll the agents onto 0.26.1.
 - **Nothing happens after an approval** — check the arbiter log for the claim;
   a row already decided the other way is refused (the first decision stands).
 - **A release stops at "signing needs BAO_TOKEN"** — the channel's key lives in
@@ -305,4 +308,4 @@ sends everything to that list.
 - **First reply after a restart is slow** — the edge 3B model's first call can
   take minutes; the second is fast.
 
-_Last updated: 2026-09-11 (v0.17.1)_
+_Last updated: 2026-10-03 (v0.26.1)_

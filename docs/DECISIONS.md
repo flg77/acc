@@ -1368,3 +1368,94 @@ exempt by default; whether the arbiter or the curator should opt out is a
 per-role question the soak run (PA-08 S1) is placed to answer. Every adoption
 writes an `adopt` row to the refinement ledger, so the effect is traceable per
 lesson.
+
+## D-029 — Every role lookup resolves `ACC_ROLES_ROOT`, the one that decides whether an agent boots included
+
+**Status:** ACCEPTED 2026-09-27 (acc-spearhead #493, released in v0.25.1).
+**Date:** 2026-09-27
+**Context:** On bb3 (operator 0.2.27, agent image 0.24.0) every agent whose role
+no installed pack serves booted DORMANT "to await its pack" and never answered.
+That included the CONTROL roles, whose comment in the pack-role gate calls them
+"always in-image". The operator delivers the roles tree as ConfigMaps at
+`/etc/acc/roles` and sets `ACC_ROLES_ROOT`, and the agent image has no
+`/app/roles`. Every role lookup in `acc/agent.py` resolved `ACC_ROLES_ROOT`
+through `resolve_manifest_root` except the one in `RoleStore`, which the agent
+built with its cwd-relative default. Pack roles resolve through the package
+registry, which is why workshop collectives worked and the gap went unseen until
+an in-tree role ran on a cluster (vault PB-13 Part D).
+
+**Decision:** the agent passes `resolve_manifest_root("ACC_ROLES_ROOT", "roles")`
+to `RoleStore`. The rule: every role lookup an agent makes resolves the roles
+root the same way. `RoleStore`'s own default stays cwd-relative.
+
+**Rationale:** fixing the call site, rather than the default, keeps `RoleStore`
+a plain component whose tests chdir into a temp dir. Changing the default would
+have silently switched those tests to the repository's real `roles/` tree. The
+agent is the one place that knows it is an agent and already resolves the root
+for its other lookups. On the edge (roles mounted at `/app/roles`, no
+`ACC_ROLES_ROOT`) the resolved root is the same directory as before.
+
+**Consequences:** in-tree roles, CONTROL roles included, run on a cluster once
+its agents are on a 0.25.1 image. `tests/test_role_store_roles_root.py` pins the
+operator layout (roles only under `ACC_ROLES_ROOT`, outside the cwd, no
+installed packs) with a real `Agent` and `RoleStore`. A new component that loads
+roles must take the resolved root, not `"roles"`.
+
+## D-030 — On a cluster the AgentCollective names the model; a registry's `role_models` apply only when one is named
+
+**Status:** ACCEPTED 2026-09-28 (acc-spearhead #497, released in v0.25.2).
+**Date:** 2026-09-28
+**Context:** Once v0.25.1 let in-tree roles boot on bb3, the analyst answered
+on `qwen3-14b` with no key and got a 401, although its `AgentCollective`
+named `gpt-oss-120b` in `agents[].extraEnv`. The agent image bakes
+`models.yaml.example` as `/app/models.yaml`. Its `role_models` map was applied
+at boot by `apply_role_model_env`, and again by the post-promotion rebind and
+the failover chain, and it overwrote the operator's per-agent environment for
+every in-tree role it listed.
+
+**Decision:** one predicate, `acc.models.role_models_apply()`, guards all three
+paths. Under the operator (`ACC_CORPUS_NAME` set) a registry's `role_models`
+apply only when `ACC_MODELS_PATH` names the registry; an explicit path passed
+in code always applies; outside the operator nothing changes.
+
+**Rationale:** the operator is the authority for what a cluster agent runs on,
+and the baked file is an example, not a choice anyone made for that cluster.
+Guarding at the three call sites with one rule, instead of deleting the baked
+file, keeps the edge and checkout behaviour, where `models.yaml` is the
+operator's own file, exactly as it was. `ACC_MODELS_PATH` stays the opt-in for
+a cluster that does want a registry.
+
+**Consequences:** on a cluster an agent runs on `spec.llm` or its
+`agents[].extraEnv`. A cluster deployment that relied on the baked example's
+mapping must now name a registry with `ACC_MODELS_PATH`. Tests in
+`tests/test_models_registry.py` pin all three paths with and without the
+operator signal.
+
+## D-031 — Only a JSON object is the model's own dict; any other reply is text
+
+**Status:** ACCEPTED 2026-10-02 (acc-spearhead #513, released in v0.26.1).
+**Date:** 2026-10-02
+**Context:** The v0.26.0 rollout check on bb3 asked the analyst "17 × 24?";
+gpt-oss-120b answered with a bare `408`. The OpenAI-compatible backend parsed
+every reply with `json.loads` and called `.setdefault("usage", …)` on the
+result, so an `int` raised `AttributeError`, which escaped the backend and
+ended the task blocked with an empty reply. The Ollama backend returned the
+non-dict to its caller. The Anthropic and vLLM backends already checked the
+type. The bug predates v0.25.2, whose check passed only because the model
+answered in a sentence.
+
+**Decision:** a backend treats the parsed reply as the model's own structured
+output only when it is a JSON object. A number, string, list, `true`, `false`
+or `null` takes the plain-text shape: `content` + `usage` for
+OpenAI-compatible, `text` for Ollama.
+
+**Rationale:** a terse answer to a terse question is the normal case for a
+Mode 1 prompt, not an edge case, so it must not depend on the model choosing
+prose. Matching the guard the Anthropic and vLLM backends already had keeps
+one rule across backends, and the object and prose shapes callers rely on are
+unchanged.
+
+**Consequences:** `tests/test_backend_non_object_json.py` pins six non-object
+replies on both backends plus the object and prose shapes. A new backend that
+parses replies as JSON must check for a dict before treating the result as
+one. Proven on bb3 on 2026-10-03: the same prompt passes on 0.26.1.

@@ -95,6 +95,27 @@ def _attribution() -> dict:
         return {}
 
 
+def _signed(body: dict) -> dict:
+    """*body* with the operator's sender proof (PA-09, B1), or as it is when
+    NKeys are off here.  An agent that verifies drops an unsigned message, so
+    a seed that cannot be read is said out loud, not skipped quietly."""
+    try:
+        from acc.config import load_config  # noqa: PLC0415
+        nkey = load_config().security.nkey
+    except Exception:  # noqa: BLE001
+        return body
+    if not nkey.enabled:
+        return body
+    from acc.wire import read_seed, sign_payload  # noqa: PLC0415
+    try:
+        return sign_payload(body, identity=nkey.role or "tui",
+                            seed=read_seed(nkey.seed_path), agent_id="acc-cli")
+    except Exception as exc:  # noqa: BLE001
+        print(f"msg: could not sign ({type(exc).__name__}) -- sending unsigned; "
+              f"an agent that verifies senders will drop it", file=sys.stderr)
+        return body
+
+
 def _cmd_send(args: argparse.Namespace) -> int:
     from acc.agent_messages import AgentMessage  # noqa: PLC0415
 
@@ -122,7 +143,7 @@ def _cmd_send(args: argparse.Namespace) -> int:
     async def _go() -> None:
         nc = await connect_nats()
         try:
-            await nc.publish(subject_agent_inbox(cid, args.agent_id), encode_payload(body))
+            await nc.publish(subject_agent_inbox(cid, args.agent_id), encode_payload(_signed(body)))
             await nc.flush(timeout=2.0)
         finally:
             await nc.close()

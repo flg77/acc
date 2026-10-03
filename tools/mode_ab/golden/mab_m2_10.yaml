@@ -1,0 +1,15 @@
+name: mab_m2_10
+description: M1-04 mode A/B prompt m2-10 (label mode2, consequence LOW). Generated
+  by tools/mode_ab/mode_ab.py export-golden; edit prompts.json, not this file.
+prompt: 'A train leaves at 14:40 and the trip takes 3 hours 35 minutes. What is the
+  arrival time in 24-hour HH:MM format?
+
+
+  End your reply with one final line of the form ''ANSWER: <answer>'' containing only
+  the answer.'
+target_role: analyst
+timeout_s: 300.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: (?:ANSWER:\W*|\\boxed\{\s*)(?:18:15|1815)(?!\w|\.\d)

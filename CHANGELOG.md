@@ -11,6 +11,40 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.26.3] — 2026-10-03
+
+**The Mode 1 / Mode 2 A/B harness builds plugin backends through the plugin seam.**
+
+### Changed
+
+- **`tools/mode_ab/` resolves every non-built-in backend through `acc.backends.plugins`**, the same way a role does: the plugin must be installed (an `acc.llm_backends` entry point) and named in `ACC_LLM_BACKEND_PLUGINS`, and the seam's refusals apply. The harness no longer puts a plugin's source directory on `sys.path`, so an arm works with any installed backend plugin and the tool carries no path into a particular one. An arm names its plugin as `backend: <plugin name>`.
+
+## [0.26.2] — 2026-10-03
+
+**A message to an agent proves who sent it (PA-09, B1)** — OpenSpec `20260923-lessons-that-travel` Phase 10.
+
+### Security
+
+- **An `AGENT_MESSAGE` must be signed by an identity that may send one.** A follow-up message becomes a task that runs at the `attribution` the message carries — tier and ceiling — and nothing checked who wrote that block: any process that could publish to an inbox could name any requester at any ceiling. `acc-cli msg send` now signs the whole envelope with the operator's NKey seed (`security.nkey`, as `tui`), and the receiving agent verifies it against `public_keys.json` before delivering. The signer must be `arbiter` or `tui`, the identities the NKey matrix lets publish to an inbox. A message that is unsigned, altered after signing (a raised ceiling) or signed by a worker is dropped with a receipt reading `sender not proven: …`, steer and follow-up alike. **Upgrade note:** with a key set distributed, operators must send from a host that holds the `tui` seed, or their messages are dropped; with no key set, messages are accepted as before.
+
+## [0.26.1] — 2026-10-02
+
+**A terse answer no longer blocks the task** — found on bb3 by the v0.26.0 rollout check (#513).
+
+**Upgrade notes:** no configuration change.
+
+### Fixed
+
+- **A reply that is valid JSON but not an object is text.** gpt-oss-120b answered "What is 17 multiplied by 24?" with a bare `408`. The OpenAI-compatible backend parsed it as JSON, called `.setdefault` on the resulting `int`, and the `AttributeError` ended the task blocked with an empty reply, on every MaaS-backed role. Present well before v0.25.2. Only a JSON object is now the model's own dict; a number, string, list, `true`, `false` or `null` takes the plain-text shape (`content` + `usage`). The Ollama backend had the same gap and returned the non-dict to its caller; it now returns `text`. The Anthropic and vLLM backends already guarded this.
+
+### Added
+
+- **`tools/mode_ab/`** — the M1-04 Mode 1 / Mode 2 A/B: a runner (`run`, `summarize`, `export-golden`, `compare-e2e`), 30 prompts with a consequence field, golden files for `acc-cli e2e run`, two example collectives (`collectives/collective.mode1.yaml`, `collective.mode2.yaml`), RHOAI CRs, skill/MCP trace probes and an OTel collector config that authenticates to MLflow with client credentials (#492).
+
+### Documentation
+
+- D-029 and the architecture and manual notes on loading roles from `ACC_ROLES_ROOT` on a cluster (#496).
+
 ## [0.26.0] — 2026-10-02
 
 **Credentials are set from the web GUI (UX-07, F3 Phase 3)** — OpenSpec `20260926-secrets-from-kubernetes-and-a-live-broker`.

@@ -199,14 +199,18 @@ below it never sees it.
 }
 ```
 
-* **Signed since PA-09 Phase 1**: a `ROUTE_REQUEST` carries a
-  `sender_proof` — the payload signed with the key the sender
-  authenticates its NATS connection with, verified by the arbiter
-  against `public_keys.json` before anything the payload claims about
-  itself is weighed. Where the claimed role is itself an NKey identity
-  the signer must be it; a packaged role presents a worker identity, so
-  there the signed `can_route` and the roster remain the bound. With no
-  key set distributed nothing is refused for being unsigned.
+* **Signed (PA-09)**: the sender attaches a `sender_proof` — the whole
+  envelope, `attribution` included, signed with the NKey seed it
+  authenticates its NATS connection with (`acc-cli msg send` signs as
+  `tui`). The receiving agent verifies it against `public_keys.json`
+  **before** delivering: the signer must be one of the identities that
+  may publish here (`arbiter`, `tui`). A message with no proof, a proof
+  that does not verify (an attribution or ceiling changed after
+  signing) or one signed by a worker is dropped, and the receipt says
+  `sender not proven: …` — its attribution never becomes a task. With
+  no key set distributed nothing is refused for being unsigned (the
+  rollout order is sign → distribute → verify). `ROUTE_REQUEST` has
+  been signed the same way since PA-09 Phase 1.
 * **Who may publish**: the arbiter and the operator surface (`tui`),
   per the NKey matrix. Workers subscribe to their own inbox and may not
   publish to anyone's — member-to-member stays relayed through the

@@ -79,7 +79,14 @@
 - [x] **proof schema rev 2** — the proof carries the signer's **public key**, and the verifier resolves *which* identity signed by finding that key in the key set, then verifies with the **key set's** copy. `identity` is a log label nothing authorises on. Found by the lighthouse smoke: rev 1 asked the signer to name itself and looked the name up, so a packaged role (no `ACC_NKEY_ROLE`, signing with `seed-coding_agent`, labelling itself `orchestrator`) was refused — in exactly the deployment Phase 9 exists for
 - [x] `tests/test_wire.py` (40) + 10 in `tests/test_route_through_arbiter.py`, incl. the regression reproducing the smoke's `no public key for identity 'orchestrator'` verbatim
 - [x] lighthouse smoke with the guards ACTIVE (2026-09-23), 6/6 after the fix — evidence §4c: a packaged role's ask (worker key, `orchestrator` label) accepted and routed; unsigned, tampered, lifted-proof, wrong-role and **relabelled-proof** asks all refused; nothing refused reached `task.assign`
-- [ ] sign `AGENT_MESSAGE` too — its follow-up runs at the sender's attribution
+- [x] sign `AGENT_MESSAGE` too — its follow-up runs at the sender's attribution (2026-10-03,
+      lane B1): `acc-cli msg send` signs with the operator seed (`security.nkey`, identity
+      `role` or `tui`) and says so when it cannot; the receiving agent verifies before
+      delivering — signer in `MESSAGE_SIGNERS` (`arbiter`, `tui`, the matrix's inbox
+      publishers), else `dropped:sender-not-proven` with the reason on the receipt, steer
+      and follow-up alike. No key set ⇒ accepted as before. 8 tests in
+      `tests/test_agent_messages.py`, mutation-checked (check removed, a worker allowed,
+      verify skipped). Not yet: a lighthouse/bb3 smoke with a key set distributed
 - [ ] PA-09's other halves: typed envelopes for the legacy signals, `NATSBackend.request()`, a durable `task.*` stream, generated `docs/WIRE.md`
 
 ## Phase 9 (same PR) — a `can_route` role asks, the arbiter routes

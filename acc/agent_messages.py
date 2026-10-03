@@ -22,6 +22,16 @@ v1 the gap item named — the arbiter relays, the matrix stays static.  Sender
 identity is what the matrix let through, never a field in the payload the
 receiver trusts on its own.
 
+The matrix decides who may *publish*; it says nothing about what the message
+claims.  A follow-up runs at the ``attribution`` it carries — tier and ceiling
+— so that block is a claim of authority.  Since PA-09 (B1) the sender signs
+the whole envelope with its NKey seed (:mod:`acc.wire`), and the receiver
+delivers only what a :data:`MESSAGE_SIGNERS` identity signed: a message with
+no proof, a proof that does not verify, or one signed by a worker is dropped
+with a receipt saying why, before its attribution becomes a task.  With no
+key set distributed, verification is off and messages are accepted as before
+(the rollout order is sign → distribute → verify).
+
 Receipts live in Redis (``acc:{cid}:message:{id}``, ``acc:{cid}:agent:{id}:
 messages``) and in the receiver's ``messages-<agent_id>`` tracelog journal,
 so ``acc-cli msg tail`` needs no new subject.
@@ -101,6 +111,32 @@ class AgentMessage(BaseModel):
             if key in self.attribution and self.attribution[key] not in (None, ""):
                 task[key] = self.attribution[key]
         return task
+
+
+#: The NKey identities that may address an agent's inbox — the publishers the
+#: matrix allows (``acc/nats_permissions.yaml``): the arbiter, which relays,
+#: and the operator surface (TUI and CLI share the ``tui`` identity).
+MESSAGE_SIGNERS: tuple[str, ...] = ("arbiter", "tui")
+
+
+def sender_refusal(payload: dict[str, Any], public_keys: dict[str, str]) -> str:
+    """Why this message's sender is not proven, or ``""``.
+
+    ``""`` too when *public_keys* is empty: the deployment has not turned
+    verification on, and the caller logs that it accepted unverified.
+    """
+    if not public_keys:
+        return ""
+    from acc.wire import PROOF_FIELD, identity_of_key, verify_payload  # noqa: PLC0415
+
+    reason = verify_payload(payload, public_keys)
+    if reason:
+        return reason
+    proof = payload.get(PROOF_FIELD) or {}
+    signer = identity_of_key(str(proof.get("public_key", "")), public_keys)
+    if signer not in MESSAGE_SIGNERS:
+        return f"signed by {signer!r}, which may not message an agent"
+    return ""
 
 
 def parse_message(payload: Any) -> AgentMessage | None:
