@@ -376,6 +376,10 @@ services:
       - ${ACC_HOME_DIR:-../..}/models.yaml:/app/models.yaml:ro,z
       - ${ACC_HOME_DIR:-../..}/catalogs.yaml:/app/catalogs.yaml:ro,z
       - ${ACC_SHARE_DIR:-../..}/roles:/app/roles:ro,z
+      # The role prompt points operators at docs/*.md; mounted read-only
+      # INSIDE the workspace so fs_read (sandboxed to /workspace) can ground
+      # a how-to answer in them instead of failing "not a file".
+      - ${ACC_SHARE_DIR:-../..}/docs:/workspace/docs:ro,z
     networks:
       - acc-net
     restart: unless-stopped

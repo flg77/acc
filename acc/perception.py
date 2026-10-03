@@ -564,6 +564,13 @@ def validate_marker(
     """
     target = getattr(marker, "target_role", "") or ""
     kind = getattr(marker, "kind", "") or ""
+    if not target:
+        # parse_proposal_markers keeps the role in ``params`` (route:
+        # target_role; spawn / role_update: role), never as an attribute --
+        # reading only the attribute made this check pass every proposal,
+        # which is how a spawn of role='role' was auto-executed (2026-10-03).
+        params = getattr(marker, "params", None) or {}
+        target = str(params.get("target_role") or params.get("role") or "")
 
     if profile == "workspace":
         if kind == "USE_SKILL" and role is not None:

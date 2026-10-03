@@ -40,16 +40,19 @@ class TestBacktickForm:
     """Today's failure mode — markers wrapped in single backticks."""
 
     def test_backtick_spawn(self) -> None:
-        # Reproduces the lighthouse trace verbatim.
-        text = "I propose `PROPOSE_SPAWN:role:research_agent:investigation`"
-        got = parse_proposal_markers(text)
+        got = parse_proposal_markers(
+            "I propose `PROPOSE_SPAWN:research_agent:cluster-1:investigation`"
+        )
         assert len(got) == 1
         assert got[0].kind == "spawn"
-        # The marker is grammatically valid (3 colon-sep parts after
-        # PROPOSE_SPAWN); the parser pulls role=role, cluster=research_agent.
-        # The role-existence validator will then reject "role" downstream.
-        assert got[0].params["role"] == "role"
-        assert got[0].params["cluster_id"] == "research_agent"
+        assert got[0].params == {"role": "research_agent", "cluster_id": "cluster-1"}
+
+    def test_backtick_spawn_with_placeholder_role_is_dropped(self) -> None:
+        # The lighthouse trace's `PROPOSE_SPAWN:role:research_agent:...` names
+        # the literal role "role": template, not intent.  Dropped at parse
+        # time rather than left to the downstream roster check.
+        text = "I propose `PROPOSE_SPAWN:role:research_agent:investigation`"
+        assert parse_proposal_markers(text) == []
 
     def test_backtick_route(self) -> None:
         got = parse_proposal_markers(
@@ -122,3 +125,67 @@ class TestNormalizationIdempotence:
         once = _normalize_marker_delimiters("`PROPOSE_ROUTE:r:why`")
         twice = _normalize_marker_delimiters(once)
         assert once == twice
+
+
+class TestPlaceholderMarkersAreDocumentation:
+    """2026-10-03 -- the assistant explained its own marker syntax in
+    backticks and AUTO executed the explanation: a spawn of role='role' in
+    cluster='cluster', and a hand-off to reviewer with reason "reason"."""
+
+    def test_documented_spawn_syntax_is_not_a_proposal(self) -> None:
+        text = "- **Promote** a dormant role: `[PROPOSE_SPAWN:role:cluster:reason]`"
+        assert parse_proposal_markers(text) == []
+
+    def test_real_role_with_placeholder_reason_is_not_a_proposal(self) -> None:
+        text = "3. **Reviewer gate** - `[PROPOSE_ROUTE:reviewer:reason]` with the draft."
+        assert parse_proposal_markers(text) == []
+
+    def test_angle_bracket_template_is_not_a_proposal(self) -> None:
+        text = "[PROPOSE_SPAWN:<role>:<cluster>:why]\n[PROPOSE_ROUTE:<role>:why]"
+        assert parse_proposal_markers(text) == []
+
+    def test_role_update_template_is_not_a_proposal(self) -> None:
+        text = "`[PROPOSE_ROLE_UPDATE:role:field=value;field=value:reason]`"
+        assert parse_proposal_markers(text) == []
+
+    def test_real_markers_alongside_documentation_still_parse(self) -> None:
+        text = (
+            "Syntax: `[PROPOSE_ROUTE:role:reason]`.\n"
+            "[PROPOSE_ROUTE:reviewer:score the draft role before release]"
+        )
+        got = parse_proposal_markers(text)
+        assert len(got) == 1
+        assert got[0].params == {"target_role": "reviewer"}
+
+
+class TestFencedBlocksAreExamples:
+    """A marker shown inside a fenced code block is an illustration for the
+    operator, even with realistic values the placeholder check cannot catch."""
+
+    def test_backtick_fence_is_ignored(self) -> None:
+        text = "Hand it over like this:\n```\n[PROPOSE_ROUTE:reviewer:review the draft]\n```\n"
+        assert parse_proposal_markers(text) == []
+
+    def test_tilde_fence_with_info_string_is_ignored(self) -> None:
+        text = "~~~text\n[PROPOSE_SPAWN:coding_agent:sol-01:write the file]\n~~~"
+        assert parse_proposal_markers(text) == []
+
+    def test_unclosed_fence_runs_to_end(self) -> None:
+        text = "Example:\n```\n[PROPOSE_ROUTE:reviewer:review the draft]"
+        assert parse_proposal_markers(text) == []
+
+    def test_marker_after_closed_fence_still_parses(self) -> None:
+        text = (
+            "Syntax:\n```\n[PROPOSE_ROUTE:analyst:example only]\n```\n"
+            "[PROPOSE_ROUTE:reviewer:score the draft role before release]"
+        )
+        got = parse_proposal_markers(text)
+        assert [p.params for p in got] == [{"target_role": "reviewer"}]
+
+    def test_longer_fence_is_not_closed_by_shorter_one(self) -> None:
+        text = "````\n```\n[PROPOSE_ROUTE:reviewer:nested example]\n```\n````"
+        assert parse_proposal_markers(text) == []
+
+    def test_inline_backtick_marker_stays_live(self) -> None:
+        got = parse_proposal_markers("Delegating: `PROPOSE_ROUTE:coding_agent:code task`")
+        assert [p.params for p in got] == [{"target_role": "coding_agent"}]

@@ -98,6 +98,20 @@ class TestFindFiles:
         names = sorted(Path(p).name for p in out["files"])
         assert names == ["a.py", "c.py"]
 
+    def test_max_depth(self, reg: SkillRegistry, tmp_path: Path) -> None:
+        # The description promised a depth bound the schema did not accept,
+        # so models passed max_depth and failed validation (2026-10-03).
+        (tmp_path / "a.py").write_text("")
+        (tmp_path / "sub" / "deep").mkdir(parents=True)
+        (tmp_path / "sub" / "c.py").write_text("")
+        (tmp_path / "sub" / "deep" / "d.py").write_text("")
+        names = lambda d: sorted(Path(p).name for p in _invoke(  # noqa: E731
+            reg, "find_files",
+            {"root": str(tmp_path), "pattern": "*.py", "max_depth": d})["files"])
+        assert names(0) == ["a.py"]
+        assert names(1) == ["a.py", "c.py"]
+        assert names(2) == ["a.py", "c.py", "d.py"]
+
 
 class TestWhichCmd:
     def test_finds_python(self, reg: SkillRegistry) -> None:

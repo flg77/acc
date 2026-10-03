@@ -11,6 +11,27 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.26.4] — 2026-10-03
+
+**The assistant answers how-to questions from the docs, and no longer acts on markers it is only explaining.**
+
+### Security
+
+- **A marker the assistant writes to *explain* the syntax no longer executes.** Explaining how to promote a role, the assistant wrote `` `[PROPOSE_SPAWN:role:cluster:reason]` ``; the backtick tolerance made it a live marker and AUTO spawned a role named `role`. SPAWN, ROUTE and ROLE_UPDATE markers whose fields are template tokens (`role`, `cluster`, `reason`, `<…>`) are now dropped at parse time, as INFUSE placeholders already were.
+- **Markers inside fenced code blocks are ignored.** A fence is how the assistant shows an example, and an example with realistic values passes the placeholder check. Inline single-backtick markers still count; ROLE_GAP findings, which never auto-execute, still parse inside fences.
+- **The hallucinated-role check runs again.** `validate_marker` read an attribute parsed proposals never carry, so it passed every spawn, route and role update; it now reads the role from the proposal's parameters.
+
+### Fixed
+
+- **The assistant's answer uses what its tools returned.** It opts into `tool_result_turn`; before, its reply was final before any `[SKILL: …]` ran.
+- **The docs the assistant cites are readable.** `docs/` is mounted read-only at `/workspace/docs` for the assistant in the production compose, so `fs_read` resolves them; the role reads the relevant doc before a how-to, quotes commands exactly, and now points at `docs/acc-pkg.md` and `docs/howto-role-infusion.md` for packaging.
+- **The model sees each skill's arguments.** The Available skills block lists them (`(args: root*, pattern, …)`, required starred) instead of only the purpose, so calls stop failing schema validation on guessed names.
+- **`find_files` accepts `max_depth`,** the depth bound its description already promised.
+
+### Operators
+
+- **Base-stack agents need `ACC_LLM_CONTEXT_WINDOW` in `.env`.** `models.yaml` `context_window` reaches only agents synthesized from a collective; without the variable the compose-file agents budget at the 8192 default and drop conversation history. Set it to the window your endpoint serves (200000 for the Anthropic API) when every base agent uses that endpoint.
+
 ## [0.26.3] — 2026-10-03
 
 **The Mode 1 / Mode 2 A/B harness builds plugin backends through the plugin seam.**

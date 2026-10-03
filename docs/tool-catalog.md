@@ -49,7 +49,7 @@ An unbounded tool surface is a governance gap, and these are the servers it appl
 | `du_dir` | Recursive directory size (cross-platform). | `LOW` | — | `{path: string}` | `adapter.DuDirSkill` |
 | `echo` | Round-trip the supplied text — CI smoke test. | `LOW` | — | `{text: string}` | `adapter.EchoSkill` |
 | `env_get` | Read an allowlisted environment variable. | `LOW` | — | `{name: string}` | `adapter.EnvGetSkill` |
-| `find_files` | Find files by glob under a root, bounded depth + count. | `LOW` | — | `{root: string, pattern: string?, max_results: integer?}` | `adapter.FindFilesSkill` |
+| `find_files` | Find files by glob under a root, bounded depth + count. | `LOW` | — | `{root: string, pattern: string?, max_results: integer?, max_depth: integer?}` | `adapter.FindFilesSkill` |
 | `fs_read` | Read a UTF-8 text file from the trusted workspace. | `MEDIUM` | — | `{path: string, max_bytes: integer?}` | `adapter.FsReadSkill` |
 | `fs_write` | Write a UTF-8 text file into the trusted workspace. | `HIGH` | — | `{path: string, content: string, mkdirs: boolean?}` | `adapter.FsWriteSkill` |
 | `git_log_recent` | Run `git log -n N --oneline` in a workspace directory. | `MEDIUM` | — | `{cwd: string, limit: integer?}` | `adapter.GitLogRecentSkill` |

@@ -10,8 +10,11 @@ class FindFilesSkill(Skill):
             raise ValueError(f"find_files: not a directory: {root}")
         pattern = args.get("pattern", "*")
         cap = int(args.get("max_results", 200))
+        max_depth = args.get("max_depth")
         hits: list[str] = []
         for child in root.rglob(pattern):
+            if max_depth is not None and len(child.relative_to(root).parts) - 1 > int(max_depth):
+                continue
             if child.is_file():
                 hits.append(str(child))
                 if len(hits) >= cap:

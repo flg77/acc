@@ -237,6 +237,30 @@ def test_validate_rejects_hallucinated_role():
     assert validate_marker_target(snap, "prompt") is False
 
 
+def test_validate_marker_reads_role_from_parsed_proposal_params():
+    """2026-10-03 -- parsed proposals carry the role in ``params``, not a
+    ``target_role`` attribute.  validate_marker read only the attribute, so
+    it passed every spawn/route and a spawn of role='role' was executed."""
+    from acc.assistant_proposal import parse_proposal_markers
+    from acc.perception import validate_marker
+
+    snap = PerceptionSnapshot(
+        roster={"assistant": ["assistant-1"], "reviewer": ["reviewer-1"]},
+        available_roles=[],
+    )
+    by_target = {
+        (p.kind, p.params.get("target_role") or p.params.get("role")): p
+        for p in parse_proposal_markers(
+            "[PROPOSE_ROUTE:reviewer:score the draft]\n"
+            "[PROPOSE_ROUTE:worker-pool:fan out]\n"
+            "[PROPOSE_SPAWN:worker-pool:sol-01:fan out]"
+        )
+    }
+    assert validate_marker("control", snap, by_target[("route", "reviewer")]) is True
+    assert validate_marker("control", snap, by_target[("route", "worker-pool")]) is False
+    assert validate_marker("control", snap, by_target[("spawn", "worker-pool")]) is False
+
+
 # ---------------------------------------------------------------------------
 # render_currently_available_block — prompt-block shape
 # ---------------------------------------------------------------------------

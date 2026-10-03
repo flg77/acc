@@ -716,6 +716,21 @@ def _posture_overrides() -> "tuple[int | None, float | None]":
     return reserve, margin
 
 
+def _skill_args_hint(schema: Any) -> str:
+    """`` (args: root*, pattern, ...)`` for a skill's input_schema; * = required.
+
+    The block used to show only ``purpose``, so the model guessed argument
+    names and every guess an ``additionalProperties: false`` schema did not
+    know failed validation (2026-10-03: find_files got max_count/max_depth).
+    """
+    props = (schema or {}).get("properties") if isinstance(schema, dict) else None
+    if not props:
+        return ""
+    required = set(schema.get("required") or [])
+    names = [f"{name}*" if name in required else name for name in props]
+    return f" (args: {', '.join(names)})"
+
+
 def _resolve_context_budget(system_tokens: int) -> "Any | None":
     """The budget for this process, or ``None`` when budgeting is off.
 
@@ -2407,7 +2422,10 @@ class CognitiveCore:
                     if manifest is None:
                         lines.append(f"  - {sid}")
                     else:
-                        lines.append(f"  - {sid}: {manifest.purpose}")
+                        lines.append(
+                            f"  - {sid}: {manifest.purpose}"
+                            + _skill_args_hint(getattr(manifest, "input_schema", None))
+                        )
                 parts.append("\n".join(lines))
 
         # Phase 4.3 — Available MCP servers block.  Same gating as skills.

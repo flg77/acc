@@ -350,6 +350,34 @@ _INFUSE_PLACEHOLDER_NAMES = frozenset({
 })
 
 
+# Placeholder fields for the other marker kinds.  The assistant explains its
+# own syntax to the operator ("promote a role with
+# `[PROPOSE_SPAWN:role:cluster:reason]`"), and the backtick tolerance below
+# turns that explanation into a live marker -- which AUTO then executes
+# (2026-10-03: a spawn of role='role' in cluster='cluster', and a real
+# hand-off to reviewer whose reason was the word "reason").  A marker whose
+# role, cluster or reason is a template token is documentation, not intent.
+_MARKER_PLACEHOLDER_TOKENS = frozenset({
+    "role", "target_role", "role_name", "cluster", "cluster_id",
+    "reason", "why", "fields", "field=value", "field=value;field=value",
+})
+
+
+def _is_placeholder(value: str) -> bool:
+    v = value.strip().lower()
+    return v in _MARKER_PLACEHOLDER_TOKENS or (v.startswith("<") and v.endswith(">"))
+
+
+def _skip_placeholder_marker(kind: str, *values: str) -> bool:
+    if not any(_is_placeholder(v) for v in values):
+        return False
+    logger.warning(
+        "assistant_proposal: %s marker echoed a template placeholder %r - "
+        "skipping (documentation, not a proposal)", kind, values,
+    )
+    return True
+
+
 # OpenSpec `20260602-role-proposal-assistant-blindspots` Phase 1.1 — marker-form
 # tolerance.  Today's lighthouse trace shows the small Assistant LLM
 # emitting a backtick-wrapped PROPOSE_SPAWN marker rather than the
@@ -363,6 +391,28 @@ _RE_BACKTICK_MARKER = re.compile(
 _RE_BARE_LINE_MARKER = re.compile(
     r"(?m)^(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE|INFUSE):[^\n\[\]`]+)$"
 )
+
+
+# Fenced code blocks (``` or ~~~, optionally with an info string) are
+# examples, never intent.  A reply that shows the operator a realistic marker
+# -- "```\n[PROPOSE_ROUTE:reviewer:review the draft]\n```" -- passes the
+# placeholder check above, so without this AUTO executes the illustration.
+# An unclosed fence runs to the end of the text: the safe reading of a
+# truncated reply.  Inline single-backtick markers stay live (the small-LLM
+# drift form below); only block fences are documentation.
+_RE_FENCED_BLOCK = re.compile(
+    r"(?ms)^[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n.*?(?:^[ \t]{0,3}\1[`~]*[ \t]*$|\Z)"
+)
+
+
+def _strip_fenced_blocks(text: str) -> str:
+    stripped = _RE_FENCED_BLOCK.sub("", text)
+    if stripped != text and "PROPOSE_" in text and "PROPOSE_" not in stripped:
+        logger.info(
+            "assistant_proposal: ignored PROPOSE_* marker(s) inside a fenced "
+            "code block (example, not a proposal)",
+        )
+    return stripped
 
 
 def _normalize_marker_delimiters(text: str) -> str:
@@ -393,6 +443,9 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
     - backtick-wrapped (small-LLM drift): see ``_RE_BACKTICK_MARKER``
     - bare ``PROPOSE_*:...`` on its own line
 
+    Markers inside fenced code blocks are ignored: a fence is how the
+    assistant shows the operator an example, and an example must not run.
+
     Field semantics:
     - Spawn ``params``: ``{"role": str, "cluster_id": str}``.
     - Role-update ``params``: ``{"role": str, "fields": {key: value, ...}}``;
@@ -403,9 +456,12 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
     """
     if not text:
         return []
-    text = _normalize_marker_delimiters(text)
+    raw_text = text
+    text = _normalize_marker_delimiters(_strip_fenced_blocks(text))
     out: list[AssistantProposal] = []
     for role, cluster_id, reason in _RE_SPAWN.findall(text):
+        if _skip_placeholder_marker(PROPOSAL_SPAWN, role, cluster_id, reason):
+            continue
         out.append(AssistantProposal(
             kind=PROPOSAL_SPAWN,
             params={"role": role.strip(), "cluster_id": cluster_id.strip()},
@@ -414,6 +470,8 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
             rationale=reason.strip(),
         ))
     for role, fields_blob, reason in _RE_ROLE_UPDATE.findall(text):
+        if _skip_placeholder_marker(PROPOSAL_ROLE_UPDATE, role, fields_blob, reason):
+            continue
         fields: dict[str, str] = {}
         for kv in fields_blob.split(";"):
             kv = kv.strip()
@@ -430,6 +488,8 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
             rationale=reason.strip(),
         ))
     for target_role, reason in _RE_ROUTE.findall(text):
+        if _skip_placeholder_marker(PROPOSAL_ROUTE, target_role, reason):
+            continue
         out.append(AssistantProposal(
             kind=PROPOSAL_ROUTE,
             params={"target_role": target_role.strip()},
@@ -482,7 +542,9 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
         from acc.assistant.gap_analysis import (  # noqa: PLC0415
             parse_role_gap_markers,
         )
-        for finding in parse_role_gap_markers(text):
+        # Raw text: a finding is informational (_NEVER_AUTOEXEC) and its JSON
+        # payload is exactly what a model fences, so fences do not hide it.
+        for finding in parse_role_gap_markers(raw_text):
             kind_label = finding.gap_kind.replace("_", " ")
             best = finding.best_match_role or "no match"
             out.append(AssistantProposal(

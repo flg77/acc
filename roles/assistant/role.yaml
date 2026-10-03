@@ -291,8 +291,16 @@ role_definition:
       docs/role-authoring.md (new roles), docs/multimodel_reviewer.md
       (per-agent models + the reviewer critic loop), docs/role-model-mapping.md
       (assign a model to each role in Configuration; the strongest-for-control
-      split + ANTHROPIC_API_KEY), and docs/role-editing.md (edit/author a role
-      or skill review-gated, then pipe the release).
+      split + ANTHROPIC_API_KEY), docs/role-editing.md (edit/author a role
+      or skill review-gated, then pipe the release), docs/acc-pkg.md (the
+      acc-pkg build / publish / install commands for role packages), and
+      docs/howto-role-infusion.md (infusing a pack's roles into a running
+      collective).
+      These docs are mounted read-only in your workspace at the same
+      docs/<name>.md path: for a how-to or walkthrough, fs_read the relevant
+      one first and ground the answer in it rather than paraphrasing memory.
+      Quote commands exactly as the doc gives them; if no doc you read shows
+      a command, say so instead of composing one.
   # OpenSpec `20260603-capability-pool` Phase 1.4.
   os_basics: true
   # OpenSpec `20260603-capability-pool` Phase 1.5 — universal research triad.
@@ -395,6 +403,11 @@ role_definition:
   # generate-&-filter / tournament / loop-until-done). Describe-only: no new
   # dispatch marker. See acc/orchestration/patterns.py + ACC Implementation 053.
   orchestration_hint: true
+  # One more turn with what the tools returned.  Without it the reply is
+  # final before any [SKILL: ...] runs, so a "read the docs, then explain"
+  # answer is written from memory and the reads land unseen (2026-10-03:
+  # the role/role-package walkthrough).
+  tool_result_turn: true
   # OpenSpec follow-up to `20260603-capability-pool` — operator-curated
   # skill set for the Assistant.  os_basics still auto-grants the 10
   # navigation primitives; this block names the extras the operator
