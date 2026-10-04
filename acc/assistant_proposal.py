@@ -77,11 +77,23 @@ PROPOSAL_ROLE_GAP = "role_gap"  # Proposal 019 PR-OP4 — a finding, not a mutat
 # context it was distilled in into another.  Structurally a ROLE_UPDATE: it
 # changes what agents will say next, so it is approved, never applied.
 PROPOSAL_PUBLISH = "publish"
+# `20261003-assistant-orchestrated-infusion` Phase 2 -- container lifecycle for
+# specialist pool workers.  One marker (`PROPOSE_LIFECYCLE`), one kind per
+# action, so the (mode x kind) dispatch table holds a row for each: starting
+# a worker and stopping one are different decisions.
+PROPOSAL_LIFECYCLE_SCALE = "lifecycle_scale"
+PROPOSAL_LIFECYCLE_STOP = "lifecycle_stop"
+PROPOSAL_LIFECYCLE_PAUSE = "lifecycle_pause"
+PROPOSAL_LIFECYCLE_RESUME = "lifecycle_resume"
+PROPOSAL_LIFECYCLE_KINDS: frozenset[str] = frozenset({
+    PROPOSAL_LIFECYCLE_SCALE, PROPOSAL_LIFECYCLE_STOP,
+    PROPOSAL_LIFECYCLE_PAUSE, PROPOSAL_LIFECYCLE_RESUME,
+})
 
 PROPOSAL_KINDS: frozenset[str] = frozenset({
     PROPOSAL_SPAWN, PROPOSAL_ROLE_UPDATE, PROPOSAL_ROUTE, PROPOSAL_INFUSE,
     PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH,
-})
+}) | PROPOSAL_LIFECYCLE_KINDS
 
 
 # Default risk classification per kind.  Operators / Cat-A evaluator
@@ -94,6 +106,10 @@ DEFAULT_RISK_LEVEL: dict[str, str] = {
     PROPOSAL_INFUSE: "HIGH",         # filesystem state; reversible only by uninstall
     PROPOSAL_ROLE_GAP: "LOW",        # informational finding; no mutation on its own
     PROPOSAL_PUBLISH: "HIGH",        # moves information across a context boundary
+    PROPOSAL_LIFECYCLE_SCALE: "MEDIUM",   # starts a pre-created pool worker
+    PROPOSAL_LIFECYCLE_STOP: "MEDIUM",    # idle workers only; busy ones are refused
+    PROPOSAL_LIFECYCLE_PAUSE: "LOW",      # idle workers only; memory kept in RAM
+    PROPOSAL_LIFECYCLE_RESUME: "MEDIUM",
 }
 
 
@@ -188,6 +204,10 @@ class AssistantProposal:
 # `20260902-assistant-autonomy-prompt-pane-approvals` Phase 1.1.
 _ACCEPT_EDITS_AUTOEXEC: frozenset[str] = frozenset({
     PROPOSAL_ROUTE, PROPOSAL_SPAWN, PROPOSAL_INFUSE,
+    # Lifecycle (`20261003-assistant-orchestrated-infusion` design §1.3):
+    # pausing and resuming an idle specialist is housekeeping; starting one
+    # more worker (scale) or stopping one changes capacity and stays queued.
+    PROPOSAL_LIFECYCLE_PAUSE, PROPOSAL_LIFECYCLE_RESUME,
 })
 
 
@@ -242,6 +262,10 @@ _DISPATCH_SUBJECTS_OF: dict[str, tuple[str, ...]] = {
     PROPOSAL_INFUSE:      ("assistant_proposal", "task_assign"),
     PROPOSAL_ROLE_GAP:    ("assistant_proposal",),
     PROPOSAL_PUBLISH:     ("assistant_proposal",),
+    PROPOSAL_LIFECYCLE_SCALE:  ("lifecycle_intent",),
+    PROPOSAL_LIFECYCLE_STOP:   ("lifecycle_intent",),
+    PROPOSAL_LIFECYCLE_PAUSE:  ("lifecycle_intent",),
+    PROPOSAL_LIFECYCLE_RESUME: ("lifecycle_intent",),
 }
 
 
@@ -308,6 +332,7 @@ def decide_dispatch(operating_mode: str, kind: str, *, operator_mode: str | None
 #   [PROPOSE_ROLE_UPDATE:<role>:<field=value;field=value>:<reason>]
 #   [PROPOSE_ROUTE:<target_role>:<reason>]
 #   [PROPOSE_INFUSE:<@scope/name@constraint>:<reason>]      (Stage 1.4)
+#   [PROPOSE_LIFECYCLE:<scale|start|stop|pause|resume>:<role>:<reason>]
 _RE_SPAWN = re.compile(
     r"\[PROPOSE_SPAWN:([^:\]]+):([^:\]]*):([^\]]+)\]"
 )
@@ -330,6 +355,9 @@ _RE_ROUTE = re.compile(
 # and the intent was lost.  A missing constraint now means "any version"
 # (_INFUSE_DEFAULT_CONSTRAINT) and the resolver picks the newest match —
 # which is what an unversioned request means anyway.
+_RE_LIFECYCLE = re.compile(
+    r"\[PROPOSE_LIFECYCLE:([^:\]]+):([^:\]]+):([^\]]+)\]"
+)
 _RE_INFUSE = re.compile(
     r"\[PROPOSE_INFUSE:(@[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9_-]*(?:@[^\s:\]]+)?):([^\]]+)\]"
 )
@@ -360,6 +388,7 @@ _INFUSE_PLACEHOLDER_NAMES = frozenset({
 _MARKER_PLACEHOLDER_TOKENS = frozenset({
     "role", "target_role", "role_name", "cluster", "cluster_id",
     "reason", "why", "fields", "field=value", "field=value;field=value",
+    "action", "scale|start|stop|pause|resume",
 })
 
 
@@ -386,10 +415,10 @@ def _skip_placeholder_marker(kind: str, *values: str) -> bool:
 # to the canonical shape so the parser + downstream `validate_marker`
 # still catch hallucinated role names.
 _RE_BACKTICK_MARKER = re.compile(
-    r"`(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE|INFUSE):[^`\n]+)`"
+    r"`(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE|INFUSE|LIFECYCLE):[^`\n]+)`"
 )
 _RE_BARE_LINE_MARKER = re.compile(
-    r"(?m)^(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE|INFUSE):[^\n\[\]`]+)$"
+    r"(?m)^(PROPOSE_(?:SPAWN|ROLE_UPDATE|ROUTE|INFUSE|LIFECYCLE):[^\n\[\]`]+)$"
 )
 
 
@@ -494,6 +523,25 @@ def parse_proposal_markers(text: str) -> list[AssistantProposal]:
             kind=PROPOSAL_ROUTE,
             params={"target_role": target_role.strip()},
             summary=f"Route to {target_role.strip()}",
+            rationale=reason.strip(),
+        ))
+    # `20261003-assistant-orchestrated-infusion` Phase 2 -- PROPOSE_LIFECYCLE.
+    for action_raw, role, reason in _RE_LIFECYCLE.findall(text):
+        if _skip_placeholder_marker("lifecycle", action_raw, role, reason):
+            continue
+        from acc.lifecycle import normalise_action  # noqa: PLC0415
+        action = normalise_action(action_raw)
+        if not action:
+            logger.warning(
+                "assistant_proposal: PROPOSE_LIFECYCLE action %r is not one of "
+                "scale/start/stop/pause/resume - skipping", action_raw,
+            )
+            continue
+        out.append(AssistantProposal(
+            kind=f"lifecycle_{action}",
+            params={"action": action, "role": role.strip()},
+            summary=f"{action.capitalize()} {role.strip()}"
+                    + (" (start one pool worker)" if action == "scale" else ""),
             rationale=reason.strip(),
         ))
     # Stage 1.4 — PROPOSE_INFUSE.  First group is "@scope/name@constraint";
@@ -602,6 +650,8 @@ async def dispatch_approved_proposal(
             return await _dispatch_role_update(signaling, cid, proposal)
         if proposal.kind == PROPOSAL_ROUTE:
             return await _dispatch_route(signaling, cid, proposal)
+        if proposal.kind in PROPOSAL_LIFECYCLE_KINDS:
+            return await _dispatch_lifecycle(signaling, cid, proposal)
         if proposal.kind == PROPOSAL_INFUSE:
             return await _dispatch_infuse(signaling, cid, proposal)
         if proposal.kind == PROPOSAL_ROLE_GAP:
@@ -880,6 +930,9 @@ async def _dispatch_spawn(signaling, cid: str, p: AssistantProposal) -> bool:
     payload = {
         "trigger": "assistant_proposal",
         "proposal_id": p.proposal_id,
+        # The prompt that asked for the role, so the arbiter's
+        # reconcile_result lands on that task's card and thread.
+        "task_id": p.task_id,
         "role": p.params.get("role", ""),
         "cluster_id": p.params.get("cluster_id", ""),
         "ts": time.time(),
@@ -888,6 +941,33 @@ async def _dispatch_spawn(signaling, cid: str, p: AssistantProposal) -> bool:
     logger.info(
         "assistant_proposal: spawn dispatched — role=%r cluster=%r",
         payload["role"], payload["cluster_id"],
+    )
+    return True
+
+
+async def _dispatch_lifecycle(signaling, cid: str, p: AssistantProposal) -> bool:
+    """Publish an approved lifecycle intent for the arbiter to sign.
+
+    The intent carries no authority of its own: the broker obeys only the
+    arbiter-signed ``lifecycle.request``.  Publishing here means "the
+    operating mode (or the operator) approved this"; whether it happens, and
+    why not, comes back as a ``lifecycle_result`` outcome.
+    """
+    from acc.signals import subject_lifecycle_intent  # noqa: PLC0415
+    payload = {
+        "signal_type": "LIFECYCLE_INTENT",
+        "proposal_id": p.proposal_id,
+        "task_id": p.task_id,
+        "action": p.params.get("action", ""),
+        "role": p.params.get("role", ""),
+        "cluster_id": p.params.get("cluster_id", ""),
+        "rationale": p.rationale,
+        "ts": time.time(),
+    }
+    await signaling.publish(subject_lifecycle_intent(cid), payload)
+    logger.info(
+        "assistant_proposal: lifecycle intent dispatched — action=%s role=%r",
+        payload["action"], payload["role"],
     )
     return True
 
@@ -1120,8 +1200,25 @@ async def _dispatch_route(signaling, cid: str, p: AssistantProposal) -> bool:
     gets the full prompt.  Today the receiver re-reads from the task
     record (Redis is the source of truth).
     """
+    from acc.review import handover_block, handover_content  # noqa: PLC0415
     from acc.signals import SIG_TASK_ASSIGN, subject_task_assign  # noqa: PLC0415
     target_role = p.params.get("target_role", "")
+    # `20261003-assistant-orchestrated-infusion` Phase 4.  The route used to
+    # carry no content field at all, so the receiving agent dropped it as an
+    # empty task (``_task_has_content``): no hand-off was ever worked on.  It
+    # now carries the brief and the original request as ``content``, and a
+    # ``handover`` block the specialist echoes on its completion so the
+    # assistant can review the answer -- whoever dispatched the route.
+    block = handover_block(
+        handover_id=p.proposal_id,
+        origin_agent=p.agent_id,
+        role=target_role,
+        task_id=p.task_id or p.proposal_id,
+        goal=p.goal_text,
+        brief=p.rationale,
+        round_=int(p.params.get("review_round") or 0),
+        operating_mode=str(p.params.get("operating_mode") or ""),
+    )
     payload = {
         "signal_type": SIG_TASK_ASSIGN,
         "trigger": "assistant_proposal",
@@ -1129,6 +1226,8 @@ async def _dispatch_route(signaling, cid: str, p: AssistantProposal) -> bool:
         "task_id": p.task_id or p.proposal_id,
         "target_role": target_role,
         "collective_id": cid,
+        "content": handover_content(block, critique=str(p.params.get("critique") or "")),
+        "handover_block": block,
         "rationale": p.rationale,
         # N4 — mark this as a HANDOVER so the receiving role knows it was
         # activated by an assistant handover (not ordinary work dispatch) and
@@ -1204,6 +1303,11 @@ __all__ = [
     "PROPOSAL_ROUTE",
     "PROPOSAL_INFUSE",
     "PROPOSAL_KINDS",
+    "PROPOSAL_LIFECYCLE_KINDS",
+    "PROPOSAL_LIFECYCLE_SCALE",
+    "PROPOSAL_LIFECYCLE_STOP",
+    "PROPOSAL_LIFECYCLE_PAUSE",
+    "PROPOSAL_LIFECYCLE_RESUME",
     "DEFAULT_RISK_LEVEL",
     "DISPATCH_PLAN",
     "DISPATCH_QUEUE",

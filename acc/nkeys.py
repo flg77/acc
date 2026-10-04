@@ -34,9 +34,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 class NKeyError(ValueError):
     """An NKey string is malformed, truncated, or not the expected kind."""
 
-# The eight NKey identities (six agent roles + the operator surface +
-# the edge leaf-node link).  Order is stable so generated key sets and
-# rendered configs are reproducible.
+# The nine NKey identities (six agent roles + the operator surface +
+# the edge leaf-node link + the standalone lifecycle broker).  Order is
+# stable so generated key sets and rendered configs are reproducible; the
+# broker is appended last so existing seed files keep their positions.
 NKEY_IDENTITIES: tuple[str, ...] = (
     "arbiter",
     "ingester",
@@ -46,6 +47,7 @@ NKEY_IDENTITIES: tuple[str, ...] = (
     "observer",
     "tui",
     "leaf",
+    "lifecycle_broker",
 )
 
 _PREFIX_USER = 20 << 3  # 'U' role prefix

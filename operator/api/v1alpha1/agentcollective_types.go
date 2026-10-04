@@ -81,6 +81,38 @@ type AgentCollectiveSpec struct {
 	// overwritten regardless of this flag.
 	// +optional
 	DisableAssistant *bool `json:"disableAssistant,omitempty"`
+
+	// Lifecycle lets the collective's assistant start, stop and pause its
+	// specialist roles (OpenSpec 20261003-assistant-orchestrated-infusion,
+	// phase 6).  When enabled, the operator runs an acc-lifecycle-broker
+	// Deployment whose ServiceAccount may get and patch THIS AgentCollective
+	// only; the broker obeys arbiter-signed requests and changes nothing but
+	// spec.agents[].replicas (and a paused-replicas annotation).  Control
+	// roles (arbiter, assistant, compliance_officer) are never changed, and a
+	// collective with spec.scaling enabled is left to KEDA.
+	// +optional
+	Lifecycle *LifecycleSpec `json:"lifecycle,omitempty"`
+}
+
+// LifecycleSpec configures the collective's lifecycle broker.
+type LifecycleSpec struct {
+	// Enabled runs the broker.  Off by default.
+	// +kubebuilder:default=false
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// VerifyKey names the Secret key holding the arbiter's base64 Ed25519
+	// public key (the ACC_ARBITER_VERIFY_KEY the agents verify ROLE_ASSIGN
+	// with).  Without it the broker refuses every request.
+	// +optional
+	VerifyKey *corev1.SecretKeySelector `json:"verifyKey,omitempty"`
+
+	// MaxReplicas caps how far the broker may scale any one role.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=3
+	// +optional
+	MaxReplicas int32 `json:"maxReplicas,omitempty"`
 }
 
 // KagentiSpec opts a collective in to Kagenti's AgentCard auto-discovery

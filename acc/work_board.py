@@ -266,9 +266,28 @@ def project_board(
             text = f"installed {_get(out, 'name', '')}@{_get(out, 'version', '')}"
         elif trig == "proposal_dispatch_failed":
             text = f"refused: {_first_line(_get(out, 'reason', ''), 60)}"
+        elif trig == "review_accepted":
+            text = f"reviewed: {_get(out, 'role', '')} accepted"
+        elif trig == "review_refine":
+            text = f"refining with {_get(out, 'role', '')} (round {_get(out, 'next_round', '')})"
+        elif trig == "review_escalated":
+            text = f"review escalated: {_first_line(_get(out, 'reason', ''), 60)}"
+        elif trig == "handover_parked":
+            text = f"waiting for {_get(out, 'role', '')}"
+        elif trig == "handover_released":
+            text = f"handed to {_get(out, 'role', '')}"
+        elif trig == "handover_dropped":
+            text = f"hand-off dropped: {_get(out, 'reason', '')}"
+        elif trig == "lifecycle_result":
+            verb = f"{_get(out, 'action', '')} {_get(out, 'role', '')}".strip()
+            text = verb if _get(out, "ok", False) else f"{verb} refused: {_get(out, 'reason', '')}"
         elif trig == "reconcile_result":
             unmet = list(_get(out, "unmet", []) or [])
-            text = f"unmet: {', '.join(unmet)}" if unmet else "spawned"
+            from acc.worker_reconcile import REASON_NO_SIGNING_KEY  # noqa: PLC0415
+            if unmet and _get(out, "reason", "") == REASON_NO_SIGNING_KEY:
+                text = f"not spawned (no arbiter signing key): {', '.join(unmet)}"
+            else:
+                text = f"unmet: {', '.join(unmet)}" if unmet else "spawned"
         else:
             continue
         items[target] = _replace(items[target], outcome=text)

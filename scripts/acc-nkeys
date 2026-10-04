@@ -9,7 +9,7 @@ mints the NKey Secret and projects per-pod seeds; on a standalone
 Subcommands
 -----------
 
-  generate     Mint the eight NKey identities, write each seed to a
+  generate     Mint the nine NKey identities, write each seed to a
                0600 file (seed-<identity>) and the public keys to
                public_keys.json, under --out-dir.
 
@@ -133,7 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    gen = sub.add_parser("generate", help="mint the eight NKey identities")
+    gen = sub.add_parser("generate", help="mint the nine NKey identities")
     gen.add_argument("--out-dir", default="./nkeys",
                      help="directory for seed-* files (default: ./nkeys)")
     gen.add_argument("--force", action="store_true",

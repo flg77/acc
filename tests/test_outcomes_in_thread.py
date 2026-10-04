@@ -12,7 +12,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from acc.tui.outcomes import WORKER_POOL_HINT, outcome_key, outcome_lines
+from acc.tui.outcomes import (
+    NO_SIGNING_KEY_HINT,
+    WORKER_POOL_HINT,
+    outcome_key,
+    outcome_lines,
+)
 from tests.test_prompt_screen_pilot import _PromptHarness, _StubObserver
 
 
@@ -43,6 +48,19 @@ def test_outcome_lines_by_trigger():
         "· r: already active (2 running)",
     ]
     assert outcome_lines({"trigger": "something_else"}) == []
+
+
+def test_lifecycle_outcomes_read_as_sentences():
+    ok = outcome_lines({
+        "trigger": "lifecycle_result", "ok": True, "action": "pause", "role": "devops_engineer",
+        "ops": [{"op": "pause", "container": "acc-worker-1"}], "skipped_busy": ["acc-worker-2"],
+    })
+    assert ok == ["✓ pause devops_engineer: pause acc-worker-1 (left busy: acc-worker-2)"]
+    refused = outcome_lines({
+        "trigger": "lifecycle_result", "ok": False, "action": "scale",
+        "role": "devops_engineer", "reason": "pool_exhausted",
+    })
+    assert refused[0].startswith("✗ scale devops_engineer: every pool worker is already running")
 
 
 def test_outcome_key_dedupes_on_trigger_proposal_ts():
@@ -114,6 +132,45 @@ def test_arbiter_publishes_reconcile_result_for_a_named_role_with_no_worker():
     assert notice["signal_type"] == "ASSISTANT_PROPOSAL_OUTCOME"
     assert notice["unmet"] == ["product_security_advisor"] and notice["assigned"] == []
     assert notice["proposal_id"] == "p-1"
+
+
+def test_arbiter_without_signing_key_says_so_instead_of_staying_silent():
+    """2026-10-03: with no ACC_ARBITER_SIGNING_KEY the arbiter returned before
+    publishing anything, so the assistant routed the task to a role no agent
+    held and the operator saw nothing.  It now reports the spawn as not done,
+    and why, on the task that asked for it."""
+    from tests.test_worker_reconcile import _arbiter, _dormant  # noqa: PLC0415
+
+    arb = _arbiter(None, roster=_dormant(1))
+    arb.config.security.arbiter_signing_key = ""
+    trigger = {"trigger": "assistant_proposal", "proposal_id": "p-1",
+               "task_id": "t-1", "role": "devops_engineer", "cluster_id": "default"}
+    arb._absorb_reconcile_trigger(trigger)
+    asyncio.run(arb._run_worker_reconcile(trigger=trigger))
+    payloads = [c.args[1] for c in arb.backends.signaling.publish.await_args_list]
+    assert not [p for p in payloads if "target_agent_id" in p]  # nothing signed
+    (notice,) = [p for p in payloads if p.get("trigger") == "reconcile_result"]
+    assert notice["reason"] == "no_signing_key"
+    assert notice["unmet"] == ["devops_engineer"] and notice["assigned"] == []
+    assert notice["task_id"] == "t-1" and notice["proposal_id"] == "p-1"
+
+
+def test_arbiter_without_signing_key_stays_quiet_on_a_bare_nudge():
+    from tests.test_worker_reconcile import _arbiter  # noqa: PLC0415
+
+    arb = _arbiter(None, roster=[])
+    arb.config.security.arbiter_signing_key = ""
+    asyncio.run(arb._run_worker_reconcile(trigger={}))
+    assert arb.backends.signaling.publish.await_args_list == []
+
+
+def test_no_signing_key_outcome_names_the_key_not_the_pool():
+    lines = outcome_lines({
+        "trigger": "reconcile_result", "role": "devops_engineer",
+        "assigned": [], "unmet": ["devops_engineer"], "reason": "no_signing_key",
+    })
+    assert lines == [f"✗ spawn devops_engineer: {NO_SIGNING_KEY_HINT}"]
+    assert "ACC_ARBITER_SIGNING_KEY" in NO_SIGNING_KEY_HINT
 
 
 def test_bare_nudge_with_nothing_to_do_publishes_no_result():

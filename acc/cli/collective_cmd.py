@@ -65,7 +65,11 @@ def register(sub: argparse._SubParsersAction) -> None:
     )
     synth_p.add_argument(
         "--image",
-        default="localhost/acc-agent-core:0.2.0",
+        # Compose interpolation, the base compose's own pattern: a synthesized
+        # overlay runs the stack's tag instead of a stale literal (found
+        # 2026-10-03: an overlay synthesized outside acc-deploy.sh pinned
+        # acc-agent-core:0.2.0 next to a 0.26.x stack).
+        default="${ACC_IMAGE_PREFIX:-localhost}/acc-agent-core:${ACC_VERSION:-0.2.0}",
         help="Image to bake into every synthesized service.",
     )
     synth_p.set_defaults(func=_cmd_synthesize)

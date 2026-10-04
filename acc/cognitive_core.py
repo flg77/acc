@@ -845,6 +845,12 @@ class CognitiveCore:
         self._collective_id = collective_id
         self._llm = llm
         self._vector = vector
+        #: `20261003-assistant-orchestrated-infusion` Phase 5 -- True when the
+        #: vector store is the ROLE's (a promoted pool worker): every row in it
+        #: was written by this role, so a sibling worker's episodes are this
+        #: role's memory, not someone else's history.  Scope filtering is
+        #: unchanged either way.
+        self._shared_role_memory = False
         self._redis = redis_client
         self._role_label = role_label
         self._peer_collectives: list[str] = peer_collectives or []
@@ -3053,7 +3059,7 @@ class CognitiveCore:
                 # filter for fresh boots (no prior episodes) by being
                 # lenient when the agent_id field is absent.
                 row_aid = str(row.get("agent_id", "") or "")
-                if row_aid and row_aid != self._agent_id:
+                if row_aid and row_aid != self._agent_id and not self._shared_role_memory:
                     continue
                 # Same-agent was the only filter here, which is the right
                 # axis for one operator and the wrong one for two: same

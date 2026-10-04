@@ -10,7 +10,7 @@ These tests turn that silent gap into a red CI run:
 
 * every ``subject_*`` helper in ``acc/signals.py`` must be matched by
   at least one role's publish or subscribe glob;
-* the matrix must parse and have the expected eight identities;
+* the matrix must parse and have the expected nine identities;
 * the NATS wildcard matcher behaves to spec.
 """
 
@@ -25,7 +25,7 @@ from acc import nats_permissions, signals
 
 _EXPECTED_IDENTITIES = {
     "arbiter", "ingester", "analyst", "synthesizer", "coding_agent",
-    "observer", "tui", "leaf",
+    "observer", "tui", "leaf", "lifecycle_broker",
 }
 
 # Sample arguments by parameter name — every acc/signals.py subject
@@ -74,7 +74,7 @@ class TestMatrixShape:
         matrix = nats_permissions.load_permission_matrix()
         assert isinstance(matrix, dict) and matrix
 
-    def test_eight_identities(self):
+    def test_nine_identities(self):
         matrix = nats_permissions.load_permission_matrix()
         assert set(matrix) == _EXPECTED_IDENTITIES
 

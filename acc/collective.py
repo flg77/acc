@@ -544,6 +544,11 @@ def _dormant_service(
             # self-author role.yaml; writes stay gated by the role-authoring
             # boundary + operator_mode, the mount only enables them.
             "${ACC_SHARE_DIR:-../..}/roles:/app/roles:z",
+            # `20261003-assistant-orchestrated-infusion` Phase 2 -- a promoted
+            # specialist works in the same trusted workspace as the base
+            # agents (fs_read / fs_write), with the docs read-only inside it.
+            "${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z",
+            "${ACC_SHARE_DIR:-../..}/docs:/workspace/docs:ro,z",
         ],
         "networks": ["acc-net"],
         "restart": "unless-stopped",

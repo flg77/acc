@@ -50,6 +50,7 @@ func (r *CollectiveReconciler) Reconcile(ctx context.Context, corpus *accv1alpha
 	kedaRec := &KEDAScaledObjectReconciler{Client: r.Client, Scheme: r.Scheme}
 	kserveRec := &KServeReconciler{Client: r.Client, Scheme: r.Scheme}
 	spiffeRec := &SpiffeReconciler{Client: r.Client, Scheme: r.Scheme}
+	lifecycleRec := &LifecycleBrokerReconciler{Client: r.Client, Scheme: r.Scheme}
 
 	anyProgressing := false
 	allReady := true
@@ -89,6 +90,12 @@ func (r *CollectiveReconciler) Reconcile(ctx context.Context, corpus *accv1alpha
 		_, err = kedaRec.ReconcileCollective(ctx, corpus, collective)
 		if err != nil {
 			return reconcilers.SubResult{}, fmt.Errorf("collective %s keda: %w", ref.Name, err)
+		}
+
+		// Lifecycle broker (spec.lifecycle; removed with its RBAC when
+		// disabled) — OpenSpec 20261003-assistant-orchestrated-infusion.
+		if err := lifecycleRec.ReconcileCollective(ctx, corpus, collective); err != nil {
+			return reconcilers.SubResult{}, fmt.Errorf("collective %s lifecycle broker: %w", ref.Name, err)
 		}
 
 		// SPIFFE ClusterSPIFFEID (skipped if spiffe disabled or SPIRE

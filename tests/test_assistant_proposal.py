@@ -29,6 +29,10 @@ from acc.assistant_proposal import (
     DISPATCH_PLAN,
     DISPATCH_QUEUE,
     PROPOSAL_INFUSE,
+    PROPOSAL_LIFECYCLE_PAUSE,
+    PROPOSAL_LIFECYCLE_RESUME,
+    PROPOSAL_LIFECYCLE_SCALE,
+    PROPOSAL_LIFECYCLE_STOP,
     PROPOSAL_PUBLISH,
     PROPOSAL_ROLE_GAP,
     PROPOSAL_ROLE_UPDATE,
@@ -190,6 +194,13 @@ _TABLE = {
     PROPOSAL_ROLE_UPDATE: (DISPATCH_EXECUTE, DISPATCH_QUEUE,   DISPATCH_QUEUE),
     PROPOSAL_ROLE_GAP:    (DISPATCH_QUEUE,   DISPATCH_QUEUE,   DISPATCH_QUEUE),
     PROPOSAL_PUBLISH:     (DISPATCH_QUEUE,   DISPATCH_QUEUE,   DISPATCH_QUEUE),
+    # `20261003-assistant-orchestrated-infusion` design §1.3: capacity changes
+    # (scale, stop) wait in ACCEPT_EDITS; pausing / resuming an idle
+    # specialist does not.  ASK_PERMISSIONS asks for every one.
+    PROPOSAL_LIFECYCLE_SCALE:  (DISPATCH_EXECUTE, DISPATCH_QUEUE,   DISPATCH_QUEUE),
+    PROPOSAL_LIFECYCLE_STOP:   (DISPATCH_EXECUTE, DISPATCH_QUEUE,   DISPATCH_QUEUE),
+    PROPOSAL_LIFECYCLE_PAUSE:  (DISPATCH_EXECUTE, DISPATCH_EXECUTE, DISPATCH_QUEUE),
+    PROPOSAL_LIFECYCLE_RESUME: (DISPATCH_EXECUTE, DISPATCH_EXECUTE, DISPATCH_QUEUE),
 }
 
 
@@ -233,6 +244,36 @@ def test_dispatch_publishes_on_correct_subject(kind, expected_subject_part):
     signaling.publish.assert_awaited_once()
     subject = signaling.publish.await_args.args[0]
     assert subject.endswith(expected_subject_part), subject
+
+
+def test_lifecycle_dispatch_publishes_an_intent_not_a_request():
+    """The dispatcher announces an approved intent; only the arbiter signs the
+    request the broker obeys, so a dispatcher cannot act on containers."""
+    signaling = MagicMock()
+    signaling.publish = AsyncMock()
+    p = AssistantProposal(
+        kind=PROPOSAL_LIFECYCLE_SCALE, params={"action": "scale", "role": "devops_engineer"},
+        collective_id="sol-01", agent_id="assistant-1", task_id="t-9",
+    )
+    assert asyncio.run(dispatch_approved_proposal(signaling, p)) is True
+    subject, payload = signaling.publish.await_args.args
+    assert subject == "acc.sol-01.lifecycle.intent"
+    assert payload["action"] == "scale" and payload["role"] == "devops_engineer"
+    assert payload["task_id"] == "t-9" and "signature" not in payload
+
+
+def test_spawn_trigger_carries_the_originating_task():
+    """The arbiter echoes task_id on its reconcile_result, so the outcome --
+    spawned, or not and why -- lands on the prompt that asked for the role."""
+    signaling = MagicMock()
+    signaling.publish = AsyncMock()
+    p = AssistantProposal(
+        kind=PROPOSAL_SPAWN, params={"role": "devops_engineer", "cluster_id": "default"},
+        collective_id="sol-01", agent_id="assistant-1", task_id="t-42",
+    )
+    assert asyncio.run(dispatch_approved_proposal(signaling, p)) is True
+    payload = signaling.publish.await_args.args[1]
+    assert payload["task_id"] == "t-42" and payload["role"] == "devops_engineer"
 
 
 def test_dispatch_returns_false_on_missing_collective():

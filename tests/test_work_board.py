@@ -123,6 +123,15 @@ class TestProjection:
         )
         assert item.outcome == "unmet: product_security_advisor"
 
+    def test_spawn_refused_for_missing_signing_key_says_why(self):
+        (item,) = project_board(
+            signal_flow_log=[{"ts": 1.0, "signal_type": "TASK_ASSIGN", "task_id": "t1", "target_role": "assistant"}],
+            oversight_recent_items=[{"task_id": "t1", "status": "AUTO_APPROVED", "approver_id": "policy:AUTO"}],
+            assistant_outcomes=[{"task_id": "t1", "trigger": "reconcile_result",
+                                 "unmet": ["devops_engineer"], "reason": "no_signing_key"}],
+        )
+        assert item.outcome == "not spawned (no arbiter signing key): devops_engineer"
+
     def test_cluster_members_have_their_cluster_as_parent(self):
         (m,) = project_board(cluster_topology={"cl-1": {
             "cluster_id": "cl-1", "target_role": "coding_agent",

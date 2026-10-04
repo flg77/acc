@@ -248,6 +248,16 @@ class TestRolesToCompose:
         assert "acc-packages:/var/lib/acc/packages:U,z" in svc["volumes"]
         assert overlay["volumes"].get("acc-packages", "MISSING") is None
 
+    def test_worker_pool_agents_get_the_workspace_and_docs(self):
+        """A promoted specialist writes its report to the trusted workspace
+        and reads the docs there (20261003-assistant-orchestrated-infusion)."""
+        overlay = roles_to_compose(
+            CollectiveSpec(collective_id="sol-01", worker_pool=1, agents=[])
+        )
+        svc = overlay["services"]["acc-worker-1"]
+        assert "${ACC_WORKSPACE_HOST_DIR:-../../workspaces}:/workspace:z" in svc["volumes"]
+        assert "${ACC_SHARE_DIR:-../..}/docs:/workspace/docs:ro,z" in svc["volumes"]
+
     def test_purpose_threaded_as_env_var(self):
         spec = CollectiveSpec(
             collective_id="sol-01",

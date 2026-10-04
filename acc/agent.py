@@ -1180,6 +1180,30 @@ class Agent:
                 ", ".join(sorted({str(getattr(p, "kind", "?")) for p in _deferred})),
             )
 
+        # ---- Phase 3 (20261003-assistant-orchestrated-infusion): a route to a
+        # role this same reply spawns waits until the role is held, instead of
+        # going to a role no agent holds yet.  It keeps its execute-or-queue
+        # classification and is released through it.
+        parked = []
+        if any(getattr(p, "kind", "") == "spawn" for p in [*executed, *queued]):
+            from acc.handover import pair_spawn_and_route  # noqa: PLC0415
+            from acc.operating_modes import normalise as _norm_mode  # noqa: PLC0415
+            executed, queued, parked = pair_spawn_and_route(
+                executed, queued,
+                operating_mode=_norm_mode(task_payload.get("operating_mode") or getattr(
+                    getattr(self, "_active_role", None), "default_operating_mode", "AUTO")),
+                task_id=str(task_payload.get("task_id") or ""),
+                deadline_s=float(os.environ.get("ACC_HANDOVER_DEADLINE_S", "") or 120),
+                queued_deadline_s=float(os.environ.get("ACC_HANDOVER_QUEUED_DEADLINE_S", "") or 1800),
+            )
+        for h in parked:
+            self._handover_store_for(collective_id).put(h)
+            logger.info(
+                "handover: parked route %s to %r until the role is held (deadline %.0fs)",
+                h.key, h.role, h.deadline - h.parked_at,
+            )
+            await self._publish_handover_outcome("handover_parked", h)
+
         # ---- EXECUTE branch (AUTO / ACCEPT_EDITS auto-execute set) ----
         for p in executed:
             ok = False
@@ -1287,6 +1311,313 @@ class Agent:
                         "assistant_proposal: queue submit failed for %s",
                         getattr(p, "proposal_id", "?"),
                     )
+
+    # ------------------------------------------------------------------
+    # Phase 3 -- spawn, then hand over
+    # ------------------------------------------------------------------
+
+    def _handover_store_for(self, collective_id: str):
+        store = getattr(self, "_handover_store", None)
+        if store is None:
+            from acc.handover import HandoverStore  # noqa: PLC0415
+            store = HandoverStore(collective_id=collective_id, redis=getattr(self, "_redis", None))
+            self._handover_store = store
+        return store
+
+    async def _publish_handover_outcome(self, trigger: str, h, **extra) -> None:
+        from acc.signals import subject_assistant_proposal  # noqa: PLC0415
+        try:
+            await self.backends.signaling.publish(
+                subject_assistant_proposal(self.config.agent.collective_id),
+                {
+                    "signal_type": "ASSISTANT_PROPOSAL_OUTCOME",
+                    "trigger": trigger,
+                    "task_id": h.task_id,
+                    "proposal_id": h.key,
+                    "role": h.role,
+                    "ts": time.time(),
+                    **extra,
+                },
+            )
+        except Exception:  # noqa: BLE001 -- a notice must not break the flow
+            logger.debug("handover: outcome publish failed", exc_info=True)
+
+    async def _apply_handover_decision(self, d) -> None:
+        """Carry out one decision from :mod:`acc.handover`."""
+        from acc.assistant_proposal import (  # noqa: PLC0415
+            DISPATCH_EXECUTE,
+            DISPATCH_QUEUE,
+            PROPOSAL_LIFECYCLE_SCALE,
+            AssistantProposal,
+            decide_dispatch,
+            dispatch_approved_proposal,
+        )
+        from acc.handover import DROP, RELEASE, SCALE  # noqa: PLC0415
+
+        cid = self.config.agent.collective_id
+        store = self._handover_store_for(cid)
+        h = d.handover
+        if h.key not in {x.key for x in store.all()}:
+            return  # already released / dropped by an earlier event
+
+        if d.action == RELEASE:
+            store.remove(h.key)
+            route = AssistantProposal.from_payload(h.route)
+            if h.dispatch == "execute" and self._may_dispatch_proposal(route.kind):
+                ok = await dispatch_approved_proposal(self.backends.signaling, route, self._redis)
+                await self._record_auto_approved(route, {"task_id": h.task_id}, ok)
+            else:
+                await self._queue_assistant_proposal(route, cid)
+            logger.info("handover: released route %s to %r (%s)", h.key, h.role, h.dispatch)
+            await self._publish_handover_outcome("handover_released", h, dispatch=h.dispatch)
+        elif d.action == DROP:
+            store.remove(h.key)
+            logger.warning("handover: dropped route %s to %r: %s", h.key, h.role, d.reason)
+            await self._publish_handover_outcome("handover_dropped", h, reason=d.reason)
+        elif d.action == SCALE:
+            h.scale_requested = True
+            store.put(h)
+            scale = AssistantProposal(
+                kind=PROPOSAL_LIFECYCLE_SCALE,
+                params={"action": "scale", "role": h.role},
+                summary=f"Scale {h.role} (start one pool worker)",
+                rationale=f"spawn of {h.role} found no dormant worker; a hand-off is waiting",
+                collective_id=cid, agent_id=self.agent_id, task_id=h.task_id,
+            )
+            decision = decide_dispatch(h.operating_mode, scale.kind)
+            if decision == DISPATCH_EXECUTE and self._may_dispatch_proposal(scale.kind):
+                ok = await dispatch_approved_proposal(self.backends.signaling, scale, self._redis)
+                await self._record_auto_approved(scale, {"task_id": h.task_id}, ok)
+            elif decision in (DISPATCH_EXECUTE, DISPATCH_QUEUE):
+                await self._queue_assistant_proposal(scale, cid)
+            logger.info("handover: asked for one more worker for %r (%s)", h.role, decision)
+            await self._publish_handover_outcome("handover_waiting", h, scale=decision)
+
+    async def _handover_loop(self) -> None:
+        """Assistant only: release, drop or wait on parked hand-offs."""
+        if self.config.agent.role != "assistant":
+            return
+        from acc.handover import expired, on_heartbeat, on_outcome  # noqa: PLC0415
+        from acc.signals import subject_assistant_proposal, subject_heartbeat  # noqa: PLC0415
+
+        cid = self.config.agent.collective_id
+        store = self._handover_store_for(cid)
+        restored = store.load()
+        if restored:
+            logger.info("handover: %d parked hand-off(s) restored", restored)
+
+        async def _decode(msg: object) -> dict:
+            try:
+                data = json.loads(_payload_bytes(msg))
+            except (json.JSONDecodeError, TypeError):
+                return {}
+            return data if isinstance(data, dict) else {}
+
+        async def _on_heartbeat(msg: object) -> None:
+            if store.all():
+                for d in on_heartbeat(await _decode(msg), store.all()):
+                    await self._apply_handover_decision(d)
+
+        async def _on_outcome(msg: object) -> None:
+            if store.all():
+                for d in on_outcome(await _decode(msg), store.all()):
+                    await self._apply_handover_decision(d)
+
+        try:
+            await self.backends.signaling.subscribe(subject_heartbeat(cid), _on_heartbeat)
+            await self.backends.signaling.subscribe(subject_assistant_proposal(cid), _on_outcome)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("handover: subscription error: %s", exc)
+            return
+        while not self._stop_event.is_set():
+            for d in expired(store.all(), time.time()):
+                await self._apply_handover_decision(d)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass
+
+    # ------------------------------------------------------------------
+    # Phase 4 -- the review turn
+    # ------------------------------------------------------------------
+
+    def _review_max_rounds(self) -> int:
+        try:
+            return max(0, int(os.environ.get("ACC_REVIEW_MAX_ROUNDS", "") or 2))
+        except ValueError:
+            return 2
+
+    def _review_task_for(self, complete: dict) -> dict | None:
+        """The assistant task that reviews one specialist completion, or None
+        when the completion is not a hand-off this assistant sent."""
+        from acc.review import review_content  # noqa: PLC0415
+        from acc.signals import SIG_TASK_ASSIGN  # noqa: PLC0415
+
+        block = complete.get("handover_block")
+        if not isinstance(block, dict) or not block.get("id"):
+            return None
+        if str(block.get("origin_agent") or "") != self.agent_id:
+            return None
+        if str(complete.get("agent_id") or "") == self.agent_id:
+            return None  # never review our own completion
+        content = review_content(
+            block,
+            specialist_agent=str(complete.get("agent_id") or ""),
+            result=str(complete.get("output") or ""),
+            notes=[str(n) for n in (complete.get("notes_for_assistant") or [])],
+            max_rounds=self._review_max_rounds(),
+        )
+        if complete.get("blocked"):
+            content += (
+                "\n\nNote: the specialist's turn was blocked "
+                f"({complete.get('block_reason') or 'no reason given'})."
+            )
+        payload = {
+            "signal_type": SIG_TASK_ASSIGN,
+            "task_id": str(block.get("task_id") or block["id"]),
+            "collective_id": self.config.agent.collective_id,
+            "target_role": self.config.agent.role,
+            "target_agent_id": self.agent_id,
+            "from_agent": str(complete.get("agent_id") or ""),
+            "task_type": "review",
+            "content": content,
+            "review": {**block, "specialist_agent": str(complete.get("agent_id") or "")},
+            "ts": time.time(),
+        }
+        if block.get("operating_mode"):
+            payload["operating_mode"] = block["operating_mode"]
+        return payload
+
+    async def _act_on_review(self, result, data: dict) -> None:
+        """Carry out the verdict of a review turn (``acc.review``)."""
+        from acc.assistant_proposal import (  # noqa: PLC0415
+            DISPATCH_EXECUTE,
+            DISPATCH_QUEUE,
+            PROPOSAL_ROUTE,
+            AssistantProposal,
+            decide_dispatch,
+            dispatch_approved_proposal,
+        )
+        from acc.operating_modes import normalise as _norm_mode  # noqa: PLC0415
+        from acc.review import (  # noqa: PLC0415
+            NEXT_DONE,
+            NEXT_REFINE,
+            next_step,
+            parse_verdict,
+        )
+
+        review = data.get("review") or {}
+        cid = self.config.agent.collective_id
+        rnd = int(review.get("round") or 0)
+        verdict = parse_verdict(getattr(result, "output", "") or "")
+        step = next_step(verdict, rnd, self._review_max_rounds())
+        note = {
+            "signal_type": "ASSISTANT_PROPOSAL_OUTCOME",
+            "task_id": str(data.get("task_id") or ""),
+            "proposal_id": str(review.get("id") or ""),
+            "role": str(review.get("role") or ""),
+            "round": rnd,
+            "ts": time.time(),
+        }
+
+        async def _announce(trigger: str, **extra) -> None:
+            from acc.signals import subject_assistant_proposal  # noqa: PLC0415
+            try:
+                await self.backends.signaling.publish(
+                    subject_assistant_proposal(cid), {**note, "trigger": trigger, **extra},
+                )
+            except Exception:  # noqa: BLE001
+                logger.debug("review: outcome publish failed", exc_info=True)
+
+        if step == NEXT_DONE:
+            logger.info("review: accepted %s from %s (round %d)", note["proposal_id"], note["role"], rnd)
+            await _announce("review_accepted")
+            return
+
+        if step == NEXT_REFINE:
+            mode = _norm_mode(review.get("operating_mode") or data.get("operating_mode") or getattr(
+                getattr(self, "_active_role", None), "default_operating_mode", "AUTO"))
+            route = AssistantProposal(
+                kind=PROPOSAL_ROUTE,
+                params={"target_role": note["role"], "review_round": rnd + 1,
+                        "critique": verdict.text, "operating_mode": mode},
+                summary=f"Refine with {note['role']} (round {rnd + 1})",
+                rationale=str(review.get("brief") or ""),
+                goal_text=str(review.get("goal") or ""),
+                collective_id=cid, agent_id=self.agent_id, task_id=note["task_id"],
+            )
+            decision = decide_dispatch(mode, route.kind)
+            if decision == DISPATCH_EXECUTE and self._may_dispatch_proposal(route.kind):
+                ok = await dispatch_approved_proposal(self.backends.signaling, route, self._redis)
+                await self._record_auto_approved(route, data, ok)
+            elif decision in (DISPATCH_EXECUTE, DISPATCH_QUEUE):
+                await self._queue_assistant_proposal(route, cid)
+            logger.info("review: refine %s with %s, round %d (%s)", note["proposal_id"], note["role"], rnd + 1, decision)
+            await _announce("review_refine", critique=verdict.text[:500], next_round=rnd + 1, dispatch=decision)
+            return
+
+        # Escalate: a refine past the limit, or the assistant asked for one.
+        if verdict.kind == "refine" and rnd >= self._review_max_rounds():
+            why = f"{self._review_max_rounds()} refinements did not settle it" + (
+                f"; last critique: {verdict.text}" if verdict.text else "")
+        elif verdict.kind == "refine":
+            why = "the assistant asked for a refinement without saying what to fix"
+        else:
+            why = verdict.text or "the assistant asked for a decision"
+        queue = self._oversight_queue
+        oversight_id = ""
+        if queue is not None:
+            try:
+                oversight_id = await queue.submit(
+                    task_id=f"review-{note['proposal_id']}",
+                    risk_level="MEDIUM",
+                    summary=f"Review of {note['role']}'s answer escalated: {why}"[:300],
+                    role_id=self.config.agent.role,
+                    # The decision panel shows these lines (capped at the
+                    # heartbeat): what was asked, what was briefed, why it
+                    # stopped, and the assistant's own read of the answer.
+                    evidence=[
+                        f"request: {str(review.get('goal') or '')[:240]}",
+                        f"brief to {note['role']}: {str(review.get('brief') or '')[:240]}",
+                        f"why escalated: {why[:240]}",
+                        f"assistant's review: {(getattr(result, 'output', '') or '')[:240]}",
+                    ],
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("review: escalation submit failed")
+        logger.warning("review: escalated %s (%s)", note["proposal_id"], why)
+        await _announce("review_escalated", reason=why[:500], oversight_id=oversight_id)
+
+    async def _review_loop(self) -> None:
+        """Assistant only: review each hand-off result that comes back to it."""
+        if self.config.agent.role != "assistant":
+            return
+        from acc.signals import subject_task_complete  # noqa: PLC0415
+
+        cid = self.config.agent.collective_id
+
+        async def _on_complete(msg: object) -> None:
+            try:
+                data = json.loads(_payload_bytes(msg))
+            except (json.JSONDecodeError, TypeError):
+                return
+            if not isinstance(data, dict):
+                return
+            task = self._review_task_for(data)
+            handler = getattr(self, "_local_task_handler", None)
+            if task is None or handler is None:
+                return
+            logger.info(
+                "review: %s answered hand-off %s (round %s) — reviewing",
+                data.get("agent_id"), task["review"].get("id"), task["review"].get("round"),
+            )
+            # Off the subscription callback: a review is a full LLM turn.
+            asyncio.create_task(handler(json.dumps(task).encode()))
+
+        try:
+            await self.backends.signaling.subscribe(subject_task_complete(cid), _on_complete)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("review: subscription error: %s", exc)
 
     async def _maybe_dispatch_assistant_proposal(
         self,
@@ -1945,6 +2276,11 @@ class Agent:
                 # because the heartbeat ITSELF keeps flowing.
                 "dormant": bool(getattr(stress, "dormant", False)),
                 "dormant_at_ts": float(getattr(stress, "dormant_at_ts", 0.0)),
+                # `20261003-assistant-orchestrated-infusion` Phase 2 -- the
+                # lifecycle broker refuses to stop or pause a worker with a
+                # task in flight, and the idle policy reads the last finish.
+                "tasks_in_flight": int(getattr(self, "_tasks_in_flight", 0) or 0),
+                "last_task_done_ts": float(getattr(self, "_last_task_done_ts", 0.0) or 0.0),
                 "oversight_pending_count": stress.oversight_pending_count,
                 # Arbiter-only: full pending-item list for TUI rendering.
                 # Other roles publish [] (cheap, omitted on the wire).
@@ -2232,6 +2568,9 @@ class Agent:
             # proposal logs + continues; the main TASK_COMPLETE flow
             # never stalls on a dispatch hiccup.
             await self._handle_assistant_proposals(result, data, collective_id)
+            # Phase 4 -- a review turn's verdict: accept, refine, escalate.
+            if isinstance(data.get("review"), dict):
+                await self._act_on_review(result, data)
 
             # Phase 4.4 — Capability dispatch.  Parse [SKILL:...] /
             # [MCP:...] markers from result.output and run each through
@@ -2491,10 +2830,23 @@ class Agent:
             _steered = list(getattr(result, "steer_used", []) or [])
             if _steered:
                 complete_body["steer_used"] = _steered
+            # `20261003-assistant-orchestrated-infusion` Phase 4 -- a hand-off
+            # comes back to the assistant that sent it: echo its block, say
+            # which role answered, and lift the notes left for the assistant.
+            _hblock = data.get("handover_block")
+            _hnotes: list[str] = []
+            if isinstance(_hblock, dict) and _hblock.get("id"):
+                from acc.review import extract_notes  # noqa: PLC0415
+                _hnotes = extract_notes(result.output or "")
+                complete_body["handover_block"] = _hblock
+                complete_body["role"] = self.config.agent.role
+                complete_body["notes_for_assistant"] = _hnotes
             complete_payload = json.dumps(complete_body).encode()
             await self.backends.signaling.publish(
                 subject_task_complete(collective_id), complete_payload
             )
+            if _hnotes:
+                await self._send_notes_to_assistant(_hblock, _hnotes, data)
 
             # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 6 —
             # feed the reward harness one task observation so SIP-P2's
@@ -2553,6 +2905,7 @@ class Agent:
                 await _handle_task_body(msg, turn)
             finally:
                 self._tasks_in_flight = max(0, int(getattr(self, "_tasks_in_flight", 1) or 1) - 1)
+                self._last_task_done_ts = time.time()
                 turn.close()
 
         # Phase 6 -- a follow-up message becomes a task through this same
@@ -3173,6 +3526,14 @@ class Agent:
         # live core's llm too.
         self._reresolve_role_model(self.config.agent.role)
 
+        # 2c. `20261003-assistant-orchestrated-infusion` Phase 5 -- the role's
+        # memory, not this container's.  Before the core is built, so the new
+        # core (and the reflection loop, which reads self.backends.vector at
+        # call time) write to the role's store.
+        self._switch_to_role_memory(
+            self.config.agent.role, str(payload.get("cluster_id", "") or ""),
+        )
+
         # 3. build CognitiveCore if not present (dormant boot path).
         if self._cognitive_core is None:
             # The registries were built in __init__ -- for a pack-role agent
@@ -3214,6 +3575,10 @@ class Agent:
             # role dir onto the core.  No overlay files → core untouched →
             # legacy prompt unchanged.
             self._apply_overlay(self._cognitive_core, self.config.agent.role)
+            # Phase 5 -- a core built on the role's store reads the role's
+            # episodes, whichever pool worker wrote them.
+            if getattr(self, "_role_memory_path", ""):
+                self._cognitive_core._shared_role_memory = True
 
         # 4. operator-supplied tags propagate via env so the heartbeat
         # carries them per PR-D.
@@ -3230,6 +3595,48 @@ class Agent:
             "role_assign: promoted (agent_id=%s new_role=%s cluster_id=%r purpose=%r)",
             self.agent_id, self.config.agent.role, cluster_id, purpose,
         )
+
+    def _switch_to_role_memory(self, role: str, cluster_id: str = "") -> str:
+        """Open the role-keyed vector store for a promoted worker (Phase 5).
+
+        Returns the path now in use, or ``""`` when nothing changed: the
+        feature is off (``ACC_ROLE_MEMORY=0``), the backend is not LanceDB
+        (Milvus collections and turbovec are left as they are, and logged),
+        or the store could not be opened -- in which case the worker keeps its
+        own store rather than failing the promotion.
+        """
+        from acc.role_memory import role_memory_enabled, role_memory_path  # noqa: PLC0415
+
+        if not role_memory_enabled() or not role or role == "dormant":
+            return ""
+        try:
+            from acc.backends.vector_lancedb import LanceDBBackend  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            return ""
+        current = self.backends.vector
+        if not isinstance(current, LanceDBBackend):
+            logger.info(
+                "role_memory: %s backend keeps per-worker memory (role-keyed memory "
+                "is LanceDB only)", type(current).__name__,
+            )
+            return ""
+        path = role_memory_path(getattr(current, "_path", ""), role, cluster_id)
+        if path == getattr(current, "_path", None):
+            return ""
+        try:
+            os.makedirs(path, exist_ok=True)
+            role_store = LanceDBBackend(path)
+        except Exception:  # noqa: BLE001 -- never fail a promotion over memory
+            logger.exception("role_memory: could not open %s; keeping the worker's store", path)
+            return ""
+        self.backends.vector = role_store
+        self._role_memory_path = path
+        core = getattr(self, "_cognitive_core", None)
+        if core is not None and hasattr(core, "_vector"):
+            core._vector = role_store
+            core._shared_role_memory = True
+        logger.info("role_memory: %s now remembers as %r at %s", self.agent_id, role, path)
+        return path
 
     def _reresolve_role_model(self, role: str) -> None:
         """Re-bind a (typically just-promoted) agent to its ``role_models``
@@ -3375,9 +3782,91 @@ class Agent:
             await self.backends.signaling.subscribe(
                 subject_roster_snapshot(collective_id), _handle_roster_snapshot,
             )
+            # `20261003-assistant-orchestrated-infusion` Phase 2 -- approved
+            # lifecycle intents in, signed requests out; and when the broker
+            # has started a pool worker, assign the waiting role onto it.
+            from acc.signals import (  # noqa: PLC0415
+                subject_assistant_proposal,
+                subject_lifecycle_intent,
+            )
+
+            async def _on_lifecycle_intent(msg: object) -> None:
+                try:
+                    data = json.loads(_payload_bytes(msg))
+                except (json.JSONDecodeError, TypeError):
+                    return
+                if isinstance(data, dict):
+                    await self._handle_lifecycle_intent(data)
+
+            async def _on_proposal_outcome(msg: object) -> None:
+                try:
+                    data = json.loads(_payload_bytes(msg))
+                except (json.JSONDecodeError, TypeError):
+                    return
+                if (isinstance(data, dict)
+                        and data.get("trigger") == "lifecycle_result"
+                        and data.get("action") == "scale"
+                        and data.get("ok")):
+                    await self._run_worker_reconcile()
+
+            await self.backends.signaling.subscribe(
+                subject_lifecycle_intent(collective_id), _on_lifecycle_intent,
+            )
+            await self.backends.signaling.subscribe(
+                subject_assistant_proposal(collective_id), _on_proposal_outcome,
+            )
             await self._stop_event.wait()
         except Exception as exc:
             logger.error("worker_reconcile: subscription error: %s", exc)
+
+    async def _handle_lifecycle_intent(self, intent: dict) -> None:
+        """Validate an approved lifecycle intent, sign it, publish the request.
+
+        `20261003-assistant-orchestrated-infusion` Phase 2.  The arbiter is
+        the authority between "approved" and "done": it refuses an action
+        outside the vocabulary or a role it cannot resolve, and signs the
+        rest with the same key as ROLE_ASSIGN, so the broker obeys nothing
+        the arbiter did not issue.  Every refusal is published on the task
+        that asked -- never a log line only.
+        """
+        from acc.lifecycle import (  # noqa: PLC0415
+            REASON_UNKNOWN_ROLE,
+            LifecycleRefused,
+            normalise_action,
+            publish_lifecycle_result,
+            sign_request,
+        )
+        from acc.signals import subject_lifecycle_request  # noqa: PLC0415
+
+        cid = self.config.agent.collective_id
+        role = str(intent.get("role") or "").strip()
+        try:
+            if not normalise_action(intent.get("action", "")):
+                raise LifecycleRefused("unknown_action", repr(intent.get("action")))
+            if not role or self._role_definition_for(role) is None:
+                raise LifecycleRefused(REASON_UNKNOWN_ROLE, repr(role))
+            request = sign_request(
+                collective_id=cid,
+                action=intent.get("action", ""),
+                role=role,
+                cluster_id=str(intent.get("cluster_id") or ""),
+                proposal_id=str(intent.get("proposal_id") or ""),
+                task_id=str(intent.get("task_id") or ""),
+                approver_id=self.agent_id,
+                private_key_b64=getattr(self.config.security, "arbiter_signing_key", ""),
+            )
+        except LifecycleRefused as exc:
+            logger.warning("lifecycle: intent refused (%s) %s", exc.reason, intent)
+            await publish_lifecycle_result(
+                self.backends.signaling, cid, intent,
+                ok=False, reason=exc.reason, detail=exc.detail, by="arbiter",
+            )
+            return
+        await self.backends.signaling.publish(subject_lifecycle_request(cid), request)
+        logger.info(
+            "lifecycle: signed request %s action=%s role=%r",
+            request["request_id"], request["action"], role,
+        )
 
     async def _run_worker_reconcile(self, trigger: dict | None = None) -> None:
         """Diff ``collective.yaml`` against the roster; publish signed
@@ -3403,6 +3892,19 @@ class Agent:
             logger.warning(
                 "worker_reconcile: no arbiter_signing_key configured — "
                 "cannot sign ROLE_ASSIGN; workers stay dormant",
+            )
+            # Say so to whoever asked.  Returning silently left the assistant
+            # believing its spawn had worked: it routed the task to a role no
+            # agent held, and the operator saw nothing (2026-10-03).
+            from acc.worker_reconcile import (  # noqa: PLC0415
+                REASON_NO_SIGNING_KEY,
+                ReconcileResult,
+            )
+            role = str((trigger or {}).get("role") or "").strip()
+            await self._publish_reconcile_result(
+                ReconcileResult(unmet=[role] if role else []),
+                trigger,
+                reason=REASON_NO_SIGNING_KEY,
             )
             return
 
@@ -3443,9 +3945,15 @@ class Agent:
                     payload.get("target_agent_id"),
                 )
 
-    async def _publish_reconcile_result(self, result, trigger: dict | None) -> None:
+    async def _publish_reconcile_result(
+        self, result, trigger: dict | None, *, reason: str = "",
+    ) -> None:
         """Best-effort ``reconcile_result`` outcome (1.5).  Silent for a bare
-        manual nudge that had nothing to do."""
+        manual nudge that had nothing to do.
+
+        ``reason`` names why nothing could be assigned when the cause is not
+        pool exhaustion (``acc.worker_reconcile.REASON_NO_SIGNING_KEY``); ``""`` keeps the old
+        meaning of ``unmet``: no free dormant worker."""
         named_role = bool(trigger and str(trigger.get("role") or "").strip())
         if not (result.assignments or result.unmet or named_role):
             return
@@ -3457,7 +3965,9 @@ class Agent:
                     "signal_type": "ASSISTANT_PROPOSAL_OUTCOME",
                     "trigger": "reconcile_result",
                     "proposal_id": str((trigger or {}).get("proposal_id") or ""),
+                    "task_id": str((trigger or {}).get("task_id") or ""),
                     "role": str((trigger or {}).get("role") or ""),
+                    "reason": reason,
                     "assigned": [
                         {"role": a.role, "target_agent_id": a.target_agent_id,
                          "cluster_id": a.cluster_id}
@@ -4266,6 +4776,46 @@ class Agent:
         ``domain_id`` when one is assigned, else universal."""
         role = getattr(self, "_active_role", None)
         return str(getattr(role, "domain_id", "") or "").strip()
+
+    async def _send_notes_to_assistant(self, block: dict, notes: list[str], data: dict) -> int:
+        """Phase 4 -- a specialist's notes, as lessons meant for exactly the
+        assistant that handed it the task (``target_agent_id``), so they reach
+        its memory under the specialist's attribution.  Best-effort."""
+        if not self._peer_lessons_enabled():
+            return 0
+        try:
+            from acc.identity import ceiling_of as _ceiling_of  # noqa: PLC0415
+            from acc.lessons import Lesson  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            return 0
+        cid = self.config.agent.collective_id
+        sent = 0
+        for note in notes:
+            try:
+                lesson = Lesson(
+                    collective_id=cid,
+                    from_agent=self.agent_id,
+                    role_label=self.config.agent.role,
+                    kind="note",
+                    ceiling=_ceiling_of(data),
+                    trigger=f"hand-off {str(block.get('id', ''))[:8]} from {block.get('origin_agent', '')}",
+                    summary=note,
+                    target_agent_id=str(block.get("origin_agent") or ""),
+                )
+                body = lesson.model_dump()
+                await self.backends.signaling.publish(
+                    # Empty domain_tag = every receptor accepts it; the
+                    # target_agent_id narrows it to the one assistant.
+                    subject_knowledge_share(cid, "general"),
+                    json.dumps(body).encode(),
+                )
+                self._store_lesson(cid, lesson.lesson_id, body)
+                sent += 1
+            except Exception:  # noqa: BLE001
+                logger.debug("handover: note-to-assistant publish failed", exc_info=True)
+        if sent:
+            logger.info("handover: sent %d note(s) to %s", sent, block.get("origin_agent"))
+        return sent
 
     async def _publish_lessons(self, notes: list) -> int:
         """Lift each reflected note onto ``acc.{cid}.knowledge.{tag}`` as a
@@ -5447,6 +5997,9 @@ class Agent:
                 # Tracks the roster from HEARTBEATs + reacts to a
                 # collective.reconcile trigger.  No-ops on non-arbiters.
                 self._subscribe_worker_reconcile(),
+                # 20261003-assistant-orchestrated-infusion Phase 3.
+                self._handover_loop(),
+                self._review_loop(),
                 self._subscribe_config_reload(),
                 self._subscribe_bridge_results(),
                 self._subscribe_centroid_updates(),

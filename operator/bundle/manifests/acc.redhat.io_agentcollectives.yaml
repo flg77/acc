@@ -572,6 +572,57 @@ spec:
                       stamps no Kagenti label.
                     type: boolean
                 type: object
+              lifecycle:
+                description: |-
+                  Lifecycle lets the collective's assistant start, stop and pause its
+                  specialist roles (OpenSpec 20261003-assistant-orchestrated-infusion,
+                  phase 6).  When enabled, the operator runs an acc-lifecycle-broker
+                  Deployment whose ServiceAccount may get and patch THIS AgentCollective
+                  only; the broker obeys arbiter-signed requests and changes nothing but
+                  spec.agents[].replicas (and a paused-replicas annotation).  Control
+                  roles (arbiter, assistant, compliance_officer) are never changed, and a
+                  collective with spec.scaling enabled is left to KEDA.
+                properties:
+                  enabled:
+                    default: false
+                    description: Enabled runs the broker.  Off by default.
+                    type: boolean
+                  maxReplicas:
+                    default: 3
+                    description: MaxReplicas caps how far the broker may scale any
+                      one role.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  verifyKey:
+                    description: |-
+                      VerifyKey names the Secret key holding the arbiter's base64 Ed25519
+                      public key (the ACC_ARBITER_VERIFY_KEY the agents verify ROLE_ASSIGN
+                      with).  Without it the broker refuses every request.
+                    properties:
+                      key:
+                        description: The key of the secret to select from.  Must be
+                          a valid secret key.
+                        type: string
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      optional:
+                        description: Specify whether the Secret or its key must be
+                          defined
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
+                type: object
               llm:
                 description: LLM configures the language model backend for this collective.
                 properties:

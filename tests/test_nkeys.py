@@ -41,10 +41,10 @@ class TestNKeyGeneration:
         seeds = {nkeys.generate_user_nkey()[0] for _ in range(20)}
         assert len(seeds) == 20
 
-    def test_identity_keys_cover_all_eight(self):
+    def test_identity_keys_cover_all_nine(self):
         keys = nkeys.generate_identity_keys()
         assert set(keys) == set(nkeys.NKEY_IDENTITIES)
-        assert len(nkeys.NKEY_IDENTITIES) == 8
+        assert len(nkeys.NKEY_IDENTITIES) == 9
         for ident, pair in keys.items():
             assert pair["seed"].startswith("SU")
             assert pair["public"].startswith("U")
@@ -59,7 +59,7 @@ class TestAuthorizationRendering:
         for identity in nkeys.NKEY_IDENTITIES:
             assert f"# {identity}" in block
             assert pubs[identity] in block
-        assert block.count("nkey:") == 8
+        assert block.count("nkey:") == len(nkeys.NKEY_IDENTITIES)
 
     def test_partial_key_set_renders_subset(self):
         keys = nkeys.generate_identity_keys()

@@ -260,8 +260,24 @@ func (r *NATSReconciler) reconcileNKeySecret(
 	} else if err != nil {
 		return nil, fmt.Errorf("get nkey secret: %w", err)
 	}
-	// NOTE: the existing-Secret branch deliberately does nothing — the
-	// seeds are never rewritten once minted.
+	// The seeds are never rewritten once minted.  An identity added to the
+	// list after the Secret was created (lifecycle_broker, 20261003) gets a
+	// seed appended; every existing seed stays byte-for-byte as it was.
+	if missing := missingSeedKeys(secret.Data); len(missing) > 0 {
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
+		}
+		for _, identity := range missing {
+			seed, _, genErr := nkeygen.GenerateUserNKey()
+			if genErr != nil {
+				return nil, fmt.Errorf("generate nkey for %s: %w", identity, genErr)
+			}
+			secret.Data["seed-"+identity] = []byte(seed)
+		}
+		if updErr := r.Client.Update(ctx, secret); updErr != nil {
+			return nil, fmt.Errorf("append nkey seeds %v: %w", missing, updErr)
+		}
+	}
 
 	// Re-derive the public keys from whatever seeds the Secret holds.
 	publicKeys := map[string]string{}
@@ -277,4 +293,16 @@ func (r *NATSReconciler) reconcileNKeySecret(
 		publicKeys[identity] = pub
 	}
 	return publicKeys, nil
+}
+
+// missingSeedKeys lists the identities with no seed in data (append-only
+// top-up of an existing NKey Secret).
+func missingSeedKeys(data map[string][]byte) []string {
+	var missing []string
+	for _, identity := range templates.NKeyIdentities() {
+		if _, ok := data["seed-"+identity]; !ok {
+			missing = append(missing, identity)
+		}
+	}
+	return missing
 }

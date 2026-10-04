@@ -374,6 +374,28 @@ def subject_collective_reconcile(collective_id: str) -> str:
     return f"acc.{collective_id}.collective.reconcile"
 
 
+def subject_lifecycle_intent(collective_id: str) -> str:
+    """Return the NATS subject for an approved container-lifecycle intent.
+
+    `20261003-assistant-orchestrated-infusion` Phase 2.  Published by
+    whichever identity dispatches an approved ``PROPOSE_LIFECYCLE`` (the
+    assistant under AUTO, the arbiter after a console approval).  Carries
+    no authority: the arbiter validates it, signs it and republishes it on
+    :func:`subject_lifecycle_request`, the only subject the broker obeys.
+    """
+    return f"acc.{collective_id}.lifecycle.intent"
+
+
+def subject_lifecycle_request(collective_id: str) -> str:
+    """Return the NATS subject for an arbiter-signed lifecycle request.
+
+    Published by the arbiter only; consumed by the lifecycle broker
+    (``acc.lifecycle_broker``), which verifies the signature against
+    ``ACC_ARBITER_VERIFY_KEY`` before it touches a container.
+    """
+    return f"acc.{collective_id}.lifecycle.request"
+
+
 def subject_config_reload(collective_id: str) -> str:
     """Return the NATS subject for `config.reload` signals.
 

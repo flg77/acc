@@ -30,11 +30,15 @@ import (
 var natsPermissionsYAML []byte
 
 // nkeyIdentities is the stable, ordered identity list (six agent roles
-// + the operator surface + the edge leaf link).  Order fixes the
+// + the operator surface + the edge leaf link + the lifecycle broker).  Order fixes the
 // rendered authorization block so golden tests are deterministic.
 var nkeyIdentities = []string{
 	"arbiter", "ingester", "analyst", "synthesizer",
 	"coding_agent", "observer", "tui", "leaf",
+	// 20261003-assistant-orchestrated-infusion phase 6: the collective's
+	// lifecycle broker (spec.lifecycle).  Appended so existing seeds keep
+	// their places.
+	"lifecycle_broker",
 }
 
 // permMatrix mirrors the shape of nats_permissions.yaml.  The top-level

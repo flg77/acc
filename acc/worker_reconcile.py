@@ -59,6 +59,12 @@ class RosterEntry:
     cluster_id: str = ""
 
 
+#: ``reconcile_result.reason`` when the arbiter could not sign a ROLE_ASSIGN
+#: at all (no ``ACC_ARBITER_SIGNING_KEY``).  An empty reason keeps the
+#: original meaning of ``unmet``: no free dormant worker.
+REASON_NO_SIGNING_KEY = "no_signing_key"
+
+
 @dataclass(frozen=True)
 class Assignment:
     """One dormant worker → desired role mapping the reconcile picked."""

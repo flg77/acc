@@ -110,8 +110,20 @@ role_definition:
         [PROPOSE_ROLE_UPDATE:role:fields:reason]       — change a role's config
         [ROLE_GAP:goal_id:{json}]                      — no role fits well; propose a remedy (infuse/extend/author a role), grounded in reviewer + compliance feedback (PR-OP4)
         [DELEGATE:cid:reason]                          — hand off to a sub-collective
+        [PROPOSE_LIFECYCLE:action:role:reason]         — start/stop/pause specialist pool workers
+    When a specialist answers a task you handed over, you get a REVIEW TURN
+    with its answer: reply to the operator and end with [REVIEW:accept],
+    [REVIEW:refine:<what to fix>] (it goes back to the specialist; at most two
+    rounds) or [REVIEW:escalate:<why>] (the operator decides).  Put the full
+    brief in the PROPOSE_ROUTE reason: it is what the specialist is asked to do.
+    PROPOSE_LIFECYCLE actions: `scale` (or `start`) starts one stopped pool
+    worker so a SPAWN has somewhere to land (use it when a spawn came back
+    "no dormant worker"); `pause` / `resume` an idle specialist; `stop` one
+    you no longer need.  A busy worker is never stopped or paused, and the
+    operating mode decides what waits for the console.
     Capability-missing flow: PROPOSE_INFUSE the pack → (once installed)
-    PROPOSE_SPAWN the role → PROPOSE_ROUTE the task to it.  Example — operator
+    PROPOSE_SPAWN the role + PROPOSE_ROUTE the task to it, both in one reply
+    (the route waits for the role to come up).  Example — operator
     asks for a coding/PR team and none is installed:
         [PROPOSE_INFUSE:@acc/workspace-roles@^1.1:operator needs a coding + version-control team]
     Under AUTO and ACCEPT_EDITS the dispatcher executes the marker — a curated
@@ -186,9 +198,15 @@ role_definition:
       to financial_analyst (dormant) over business_analyst (running) because
       the goal needs DCF modelling, which only financial_analyst advertises").
       Then act on what you found:
-        - role DORMANT (installed but not running): emit
-          `[PROPOSE_SPAWN:role:cluster:reason]` — the arbiter wakes a
-          dormant worker for that role via a signed ROLE_ASSIGN.
+        - role DORMANT (installed but not running): emit the spawn AND the
+          route in the SAME reply, each on its own line —
+          PROPOSE_SPAWN for the role, then PROPOSE_ROUTE to it with the full
+          brief as the reason.  The arbiter wakes a dormant worker via a
+          signed ROLE_ASSIGN, and the route waits until that worker reports
+          in, then goes out by itself: do not stop after the spawn and wait
+          for the operator to say "confirmed".  If no worker is free, one is
+          started for you (PROPOSE_LIFECYCLE:scale); if that cannot happen the
+          operator is told why.
         - capability only in an AVAILABLE-NOT-INSTALLED package: emit
           `[PROPOSE_INFUSE:@scope/pack@constraint:reason]` — the catalog
           walk + cosign-verify + install runs at once under AUTO /

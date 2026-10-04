@@ -97,6 +97,11 @@ roles:
       # four proposal kinds were undispatchable under NKeys.
       - acc.*.collective.reconcile
       - acc.*.assistant.*
+      # `20261003-assistant-orchestrated-infusion` Phase 2 -- the arbiter
+      # dispatches approved lifecycle intents and is the only identity that
+      # signs and publishes the requests the broker obeys.
+      - acc.*.lifecycle.intent
+      - acc.*.lifecycle.request
       - acc.*.route.request
       - acc.*.heartbeat
       - acc.*.register
@@ -129,6 +134,20 @@ roles:
     # heartbeat/register; reuse the worker set.
     publish: *worker_publish
     subscribe: *worker_subscribe
+
+  lifecycle_broker:
+    # `20261003-assistant-orchestrated-infusion` Phase 2 -- the host-side
+    # broker that starts / stops / pauses specialist pool workers on an
+    # arbiter-signed request.  It hears requests and heartbeats (to know
+    # which worker holds which role and whether it is busy), and may only
+    # announce what it did.  Standalone podman only: on a cluster the ACC
+    # operator is the broker, so the operator does not mint this identity.
+    publish:
+      - acc.*.assistant.*
+      - acc.*.alert
+    subscribe:
+      - acc.*.lifecycle.request
+      - acc.*.heartbeat
 
   tui:
     # The TUI/CLI operator surface: read-only on the bus EXCEPT for

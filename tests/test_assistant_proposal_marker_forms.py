@@ -189,3 +189,31 @@ class TestFencedBlocksAreExamples:
     def test_inline_backtick_marker_stays_live(self) -> None:
         got = parse_proposal_markers("Delegating: `PROPOSE_ROUTE:coding_agent:code task`")
         assert [p.params for p in got] == [{"target_role": "coding_agent"}]
+
+
+class TestLifecycleMarker:
+    """`20261003-assistant-orchestrated-infusion` Phase 2."""
+
+    def test_each_action_becomes_its_own_kind(self) -> None:
+        got = parse_proposal_markers(
+            "[PROPOSE_LIFECYCLE:scale:devops_engineer:spawn found no dormant worker]\n"
+            "[PROPOSE_LIFECYCLE:pause:research_synthesizer:idle for 20 minutes]"
+        )
+        assert [(p.kind, p.params) for p in got] == [
+            ("lifecycle_scale", {"action": "scale", "role": "devops_engineer"}),
+            ("lifecycle_pause", {"action": "pause", "role": "research_synthesizer"}),
+        ]
+
+    def test_start_is_scale(self) -> None:
+        (p,) = parse_proposal_markers("[PROPOSE_LIFECYCLE:start:devops_engineer:needed now]")
+        assert p.kind == "lifecycle_scale"
+
+    def test_unknown_action_is_dropped(self) -> None:
+        assert parse_proposal_markers("[PROPOSE_LIFECYCLE:delete:devops_engineer:cleanup]") == []
+
+    def test_documented_syntax_is_not_a_proposal(self) -> None:
+        assert parse_proposal_markers("`[PROPOSE_LIFECYCLE:action:role:reason]`") == []
+
+    def test_fenced_example_is_not_a_proposal(self) -> None:
+        text = "```\n[PROPOSE_LIFECYCLE:stop:devops_engineer:done with the audit]\n```"
+        assert parse_proposal_markers(text) == []

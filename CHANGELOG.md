@@ -11,6 +11,33 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.27.0] — 2026-10-04
+
+**The assistant can bring a specialist up, hand it the task, and review its answer — without an operator re-prompt.** OpenSpec `20261003-assistant-orchestrated-infusion`.
+
+### Fixed
+
+- **A hand-off now delivers the work.** A `PROPOSE_ROUTE` hand-off carried no content field, so the receiving agent dropped it as an empty task: no hand-off had ever been worked on. The route now carries the assistant's brief and the operator's original request.
+- **A spawn the arbiter cannot do is reported, not swallowed.** Without `ACC_ARBITER_SIGNING_KEY` the arbiter returned silently and the assistant routed the task to a role no agent held. It now reports the refusal on the task that asked, and the Prompt pane and work board name the missing key.
+
+### Added
+
+- **Container lifecycle for specialists (`PROPOSE_LIFECYCLE`).** The assistant may `scale` (or `start`), `stop`, `pause` and `resume` specialist workers. It decides; it never executes: the arbiter signs each approved request, and a lifecycle broker (`acc-lifecycle-broker`, `python -m acc.lifecycle_broker`) carries it out. The broker accepts a closed vocabulary, touches only the collective's pool workers, never the control plane, refuses busy workers, and is rate-limited and replay-guarded. On podman, `scale` starts a pre-created stopped pool worker; it never creates a container. One proposal kind per action in the dispatch table: AUTO runs all, ACCEPT_EDITS runs pause and resume, ASK_PERMISSIONS asks for every one. A new NATS identity, `lifecycle_broker`.
+- **Spawn, then hand over.** A route to a role that the same reply spawns waits until the role reports ACTIVE, then goes out through its own execute-or-queue path, so the operator no longer has to say "confirmed". If no worker is free, one is started; if the role cannot come up (no signing key, a refused scale, the deadline), the hand-off is dropped and the thread says why.
+- **The review turn.** A specialist's answer comes back to the assistant that handed it the task, framed as untrusted input. The assistant ends with `[REVIEW:accept]`, `[REVIEW:refine:<critique>]` (back to the specialist, at most `ACC_REVIEW_MAX_ROUNDS`, default 2) or `[REVIEW:escalate:<why>]` (a console decision with evidence). Specialists can leave `[NOTE_FOR_ASSISTANT: …]` notes, delivered to the assistant as lessons.
+- **Memory that belongs to the role.** A promoted pool worker remembers into `lancedb/roles/<role>` on the shared volume, so a role keeps its memory across stop, start and re-infusion (`ACC_ROLE_MEMORY=0` turns it off). Who may read a memory is unchanged.
+- **Cluster parity.** The broker's Kubernetes runtime patches only `spec.agents[].replicas` of its own AgentCollective (pause and resume keep the count in an annotation; control roles and KEDA-scaled collectives are refused). The operator's new `AgentCollective.spec.lifecycle` runs it with a Role limited to `get` and `patch` on that one object (requires operator 0.2.29).
+
+### Changed
+
+- Heartbeats carry `tasks_in_flight` and `last_task_done_ts`.
+- Synthesized pool workers mount `/workspace` and the read-only docs, and the synthesize CLI's default image follows `ACC_VERSION`.
+
+### Operators
+
+- **Spawns need the arbiter keypair and a dormant pool.** `ACC_ARBITER_SIGNING_KEY` (arbiter) and `ACC_ARBITER_VERIFY_KEY` (every agent and the broker), plus a pool from `./acc-deploy.sh apply <spec with worker_pool: N>`. Leave spare pool workers stopped for `scale` to start.
+- **The podman broker is not wired into `acc-deploy.sh` yet.** It needs the rootless podman API socket; whether it runs as a compose service or a host process is still an operator decision.
+
 ## [0.26.4] — 2026-10-03
 
 **The assistant answers how-to questions from the docs, and no longer acts on markers it is only explaining.**
