@@ -11,6 +11,16 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.27.1] — 2026-10-05
+
+**Pool workers are promoted, and only pool workers.** Found by the first live dormant pool.
+
+### Fixed
+
+- **A pool worker now stays `DORMANT` until it is promoted.** The heartbeat loop flipped every agent to `ACTIVE`, pool workers included, so the arbiter's reconcile never saw a free worker and every spawn went unmet.
+- **An agent that already holds a role is never reassigned.** The reconcile treated any agent reporting `DORMANT` as a free worker, and signed a `ROLE_ASSIGN` for the running coding agent. A free worker is now one whose role is `dormant`.
+- **Workers read the verify key the docs tell you to set.** `ACC_ARBITER_VERIFY_KEY` lands in `security.arbiter_verify_key`, which the role-assign check never read, so every worker configured as `docs/worker_pool_setup.md` describes rejected its assignment ("verify_key not configured"). Pool promotion from that variable had never worked. This fix ships only together with the two above: on its own it would have let the arbiter reassign a dozing agent.
+
 ## [0.27.0] — 2026-10-04
 
 **The assistant can bring a specialist up, hand it the task, and review its answer — without an operator re-prompt.** OpenSpec `20261003-assistant-orchestrated-infusion`.

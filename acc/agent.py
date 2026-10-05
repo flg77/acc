@@ -2150,7 +2150,11 @@ class Agent:
         # Pack-role boot-and-wait: a DORMANT-pending-pack agent stays DORMANT
         # (the heartbeat keeps flowing per the Knative-style watcher invariant)
         # until its package lands — don't flip it ACTIVE here.
-        if not self._dormant_pending_pack:
+        # A pool worker (role "dormant"/empty) stays DORMANT until a signed
+        # ROLE_ASSIGN promotes it: the arbiter picks free workers by that state,
+        # and flipping it ACTIVE here hid every pool worker from the reconcile
+        # (found 2026-10-05, the first live pool on the workstation stack).
+        if not self._dormant_pending_pack and self.config.agent.role not in ("", "dormant"):
             self.state = STATE_ACTIVE
 
         while True:
@@ -3417,6 +3421,14 @@ class Agent:
         security = getattr(cfg, "security", None)
         if security is None:
             return ""
+        # ``security.arbiter_verify_key`` is where ACC_ARBITER_VERIFY_KEY lands
+        # (acc.config env map) and what docs/worker_pool_setup.md tells the
+        # operator to set.  This resolver only read the ed25519 block below,
+        # so a worker configured as documented rejected every assignment with
+        # "verify_key not configured" (found 2026-10-05).
+        key = getattr(security, "arbiter_verify_key", "")
+        if isinstance(key, str) and key.strip():
+            return key.strip()
         ed = getattr(security, "ed25519", None)
         if ed is not None:
             key = getattr(ed, "verify_key", "") or getattr(ed, "verify_key_b64", "")

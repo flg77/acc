@@ -59,6 +59,9 @@ class RosterEntry:
     cluster_id: str = ""
 
 
+#: The role a pool worker reports until it is assigned one.
+POOL_ROLES: frozenset[str] = frozenset({"", "dormant"})
+
 #: ``reconcile_result.reason`` when the arbiter could not sign a ROLE_ASSIGN
 #: at all (no ``ACC_ARBITER_SIGNING_KEY``).  An empty reason keeps the
 #: original meaning of ``unmet``: no free dormant worker.
@@ -148,9 +151,15 @@ def compute_assignments(spec, roster: list[RosterEntry]) -> ReconcileResult:
         else:
             remaining_slots.append((role, cluster_id, purpose))
 
-    # 3. assign remaining slots to dormant workers, lowest id first.
+    # 3. assign remaining slots to free POOL workers, lowest id first.
+    #    A pool worker is an agent whose ROLE is "dormant" (or empty): it was
+    #    started to be assigned.  State alone is not enough -- an agent that
+    #    already holds a role can report DORMANT too (a pack role waiting for
+    #    its package), and treating it as free signed a ROLE_ASSIGN that would
+    #    have turned the running coding agent into devops_engineer
+    #    (2026-10-05).  An agent with a role is never reassigned here.
     dormant = sorted(
-        (r for r in roster if r.state == "DORMANT"),
+        (r for r in roster if r.state == "DORMANT" and r.role in POOL_ROLES),
         key=lambda r: r.agent_id,
     )
     assignments: list[Assignment] = []

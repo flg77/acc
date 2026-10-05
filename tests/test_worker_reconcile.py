@@ -353,3 +353,76 @@ def test_arbiter_signing_key_config_field():
     assert sec.arbiter_signing_key == ""
     sec2 = SecurityConfig(arbiter_signing_key="abc123==")
     assert sec2.arbiter_signing_key == "abc123=="
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-05: the first live pool on the workstation stack
+# ---------------------------------------------------------------------------
+
+
+class TestOnlyPoolWorkersAreAssigned:
+    """A signed ROLE_ASSIGN went to coding-1 -- the running coding agent,
+    reporting DORMANT -- while the four pool workers reported ACTIVE.  The
+    agent only refused because of a second bug (the verify key below)."""
+
+    def test_an_agent_with_a_role_is_never_reassigned_even_when_dormant(self):
+        from acc.collective import AgentSpec, CollectiveSpec
+
+        spec = CollectiveSpec(collective_id="sol-01", agents=[AgentSpec(role="devops_engineer")])
+        roster = [
+            RosterEntry("coding-1", "coding_agent", "DORMANT"),
+            RosterEntry("analyst-1", "analyst", "DORMANT"),
+        ]
+        result = compute_assignments(spec, roster)
+        assert result.assignments == [] and result.unmet == ["devops_engineer"]
+
+    def test_a_pool_worker_is_chosen_over_a_dormant_agent_with_a_role(self):
+        from acc.collective import AgentSpec, CollectiveSpec
+
+        spec = CollectiveSpec(collective_id="sol-01", agents=[AgentSpec(role="devops_engineer")])
+        roster = [RosterEntry("coding-1", "coding_agent", "DORMANT"), *_dormant(1)]
+        (a,) = compute_assignments(spec, roster).assignments
+        assert a.target_agent_id == "worker-00" and a.role == "devops_engineer"
+
+
+def test_pool_worker_stays_dormant_through_its_heartbeat_loop():
+    """The heartbeat loop flipped every agent ACTIVE, pool workers included,
+    which hid them from the reconcile above."""
+    import inspect
+
+    from acc.agent import Agent
+
+    src = inspect.getsource(Agent._heartbeat_loop)
+    assert 'self.config.agent.role not in ("", "dormant")' in src
+
+
+def test_verify_key_comes_from_acc_arbiter_verify_key():
+    """ACC_ARBITER_VERIFY_KEY maps to security.arbiter_verify_key; the
+    resolver only read security.ed25519, so every worker configured as the
+    docs say rejected its assignment: "verify_key not configured"."""
+    from types import SimpleNamespace
+
+    from acc.agent import Agent
+    from acc.config import SecurityConfig
+
+    _priv, pub = generate_keypair_b64()
+    a = SimpleNamespace(config=SimpleNamespace(security=SecurityConfig(arbiter_verify_key=pub)))
+    assert Agent._resolve_role_assign_verify_key(a) == pub
+
+
+def test_a_documented_worker_verifies_and_promotes_end_to_end():
+    """Signed by the arbiter's key, verified with the key the worker reads
+    from ACC_ARBITER_VERIFY_KEY."""
+    from types import SimpleNamespace
+
+    from acc.agent import Agent
+    from acc.config import SecurityConfig
+    from acc.role_assign import sign_role_assign, verify_role_assign
+
+    priv, pub = generate_keypair_b64()
+    payload = sign_role_assign(
+        approver_id="arbiter-1", target_agent_id="worker-1",
+        role_definition={"name": "devops_engineer", "purpose": "p"}, private_key_b64=priv,
+    )
+    worker = SimpleNamespace(config=SimpleNamespace(security=SecurityConfig(arbiter_verify_key=pub)))
+    verify_role_assign(payload, verify_key_b64=Agent._resolve_role_assign_verify_key(worker))
