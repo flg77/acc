@@ -1,0 +1,3 @@
+---
+# acc-build-host has no handlers — a package install and a user need no service
+# bounce; systemd-binfmt is restarted inline. Kept for the galaxy-role layout.

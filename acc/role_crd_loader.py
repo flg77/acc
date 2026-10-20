@@ -47,6 +47,7 @@ Proposal reference
 
 from __future__ import annotations
 
+from acc import api_group
 import asyncio
 import logging
 import os
@@ -113,7 +114,7 @@ class KubernetesCRDClient:
     """
 
     # CRD group / version / plural — matches operator/api/v1alpha1.
-    _GROUP = "acc.redhat.io"
+    _GROUP = api_group.GROUP
     _VERSION = "v1alpha1"
     _PLURAL = "agentcollectives"
 

@@ -1,4 +1,4 @@
-// The navigation: eight questions instead of seventeen screens
+// The navigation: nine questions instead of seventeen screens
 // (webgui/design-system/shell/app-shell.html).
 //
 // A section is a question a person asks; its tabs are the screens that answer
@@ -26,6 +26,12 @@ import { PromptPage } from "../pages/work/Prompt";
 import { CatalogsPage } from "../pages/packages/Catalogs";
 import { MarketplacePage } from "../pages/packages/Marketplace";
 import { CredentialsPage } from "../pages/settings/Credentials";
+import { ConflictsPage } from "../pages/knowledge/Conflicts";
+import { ContributionsPage } from "../pages/knowledge/Contributions";
+import { KnowledgeMapPage } from "../pages/knowledge/KnowledgeMap";
+import { LearningsPage } from "../pages/knowledge/Learnings";
+import { LineagePage } from "../pages/knowledge/Lineage";
+import { MemoryPage } from "../pages/knowledge/Memory";
 
 export interface Tab {
   key: string;
@@ -71,6 +77,19 @@ export const SECTIONS: Section[] = [
       { key: "prompt", label: "Prompt", element: <PromptPage /> },
       { key: "board", label: "Board", element: <BoardPage /> },
       { key: "comms", label: "Comms", element: <CommsPage /> },
+    ],
+  },
+  {
+    path: "knowledge",
+    label: "Knowledge",
+    question: "What do the agents remember, what did they learn, and why?",
+    tabs: [
+      { key: "memory", label: "Memory", element: <MemoryPage /> },
+      { key: "learnings", label: "Learnings", element: <LearningsPage /> },
+      { key: "lineage", label: "Lineage", element: <LineagePage /> },
+      { key: "contributions", label: "My contributions", element: <ContributionsPage /> },
+      { key: "map", label: "Knowledge map", element: <KnowledgeMapPage /> },
+      { key: "conflicts", label: "Conflicts", element: <ConflictsPage /> },
     ],
   },
   {

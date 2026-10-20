@@ -75,14 +75,17 @@ class TestRole:
         assert RoleDefinitionConfig().chat_surface is True
         assert RoleDefinitionConfig().curate_interval_s == 0
 
-    def test_known_to_the_operator_but_not_a_control_pack_role(self):
-        """A built-in role the operator's catalogue knows; deliberately NOT in
+    def test_an_in_tree_role_the_image_serves_but_not_a_control_pack_role(self):
+        """A built-in role the image's index lists (OR-14: the operator asks
+        the image, it no longer carries a catalogue); deliberately NOT in
         CONTROL_ROLES, which resolve only from the signed @acc/control-roles
         pack (rebuilding that fixture needs the signing key)."""
+        from acc import roles_index
         from acc.pkg.role_resolution import CONTROL_ROLES
         assert "hub_curator" not in CONTROL_ROLES
-        known = (ROOT / "operator" / "internal" / "rolecatalogue" / "known_roles.txt").read_text(encoding="utf-8").split()
-        assert "hub_curator" in known
+        idx = roles_index.build_index(roles_root=ROOT / "roles", skills_root=ROOT / "skills",
+                                      mcps_root=ROOT / "mcps", with_packages=False)
+        assert "hub_curator" in roles_index.role_names(idx)
         assert (ROOT / "roles" / "hub_curator" / "role.yaml").is_file()
 
     def test_task_loop_drops_tasks_for_a_role_without_a_chat_surface(self):

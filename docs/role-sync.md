@@ -235,7 +235,7 @@ This proposal explicitly does **not** address:
 - Proposal 010 in the operator's Obsidian vault:
   `ACC Implementation/010 - Bi-directional file-CRD sync for role definitions.md`
 - `acc/config.py:RoleSyncConfig` — the config surface (PR-1)
-- `operator/internal/filewatch/` — Go-side file watcher (PR-2)
+- `internal/filewatch/` (in `flg77/acc-operator`) — Go-side file watcher (PR-2)
 - `acc/role_crd_loader.py` — Python-side CRD projector (PR-3)
 - `acc/role_sync_conflict.py` — mirror-mode conflict detector (PR-4)
 - `acc/tui/role_sync_listener.py` — TUI badge state (PR-5)

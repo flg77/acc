@@ -1,0 +1,83 @@
+# mcps/feast/mcp.yaml — Feast feature server as MCP tools (streamable-http).
+#
+# Upstream: github.com/feast-dev/feast — the feature server's built-in MCP
+#   support (feast[mcp], feast/infra/mcp_servers), Apache-2.0. On OpenShift AI
+#   this is the Feature Store operator's online feature server.
+#
+# Backlog 019 A4: the GPU capacity advisor reads per-deployment features
+# (utilisation aggregates, demand forecasts) that Feast materialises. READ
+# ONLY: the same server also exposes push / write / materialize, which are
+# denied here — an agent reads features, it never writes them.
+
+purpose:        "Feast feature store — read online feature values for entities (read-only)."
+version:        "0.1.0"
+
+# Feast mounts fastapi-mcp after its routes; with `mcp_transport: http` it
+# serves MCP streamable HTTP at /mcp (with the default `sse` it serves SSE,
+# which ACC does not speak).
+transport:      "streamable-http"
+url:            "http://acc-mcp-feast:6566/mcp"   # operator points this at the online feature server
+timeout_s:      30
+api_key_env:    ""          # set when the feature server enforces auth (Feast oidc/kubernetes auth: a bearer token)
+
+# Tool names are FastAPI operation ids (fastapi-mcp default), measured against
+# feast 0.66.0. Bounded on purpose: Feast adds endpoints between releases.
+allowed_tools:
+  - "get_online_features_get_online_features_post"
+  - "health_health_get"
+denied_tools:
+  # writes — never from an agent
+  - "push_push_post"
+  - "write_to_online_store_write_to_online_store_post"
+  - "materialize_materialize_post"
+  - "materialize_incremental_materialize_incremental_post"
+  # demo chat endpoints, not data
+  - "chat_chat_post"
+  - "chat_ui_chat_get"
+
+tools:
+  - name: "get_online_features_get_online_features_post"
+    summary: "Online feature values per entity row. Give entities ({join_key: [values]}) and either feature_service or features (\"view:feature\")."
+    args: ["entities", "feature_service", "features", "full_feature_names"]
+  - name: "health_health_get"
+    summary: "Feature server liveness."
+    args: []
+
+requires_actions:
+  - "use_external_api"
+risk_level:     "LOW"
+# Declared, not inferred: fastapi-mcp names every POST tool "..._post", which
+# the gate's name table reads as "acts on the operator's behalf". These tools
+# read or compute only (writes are denied above), so neither category applies.
+system_access:  false
+acts_on_behalf: false
+domain_id:      "feature_store"
+tags:           ["feast", "features", "rhoai", "capacity", "advisor"]
+
+description: |
+  Reads online features from a Feast feature server through its built-in MCP
+  endpoint. The response is Feast's column-oriented JSON: `results[j]` is the
+  j-th requested feature (the join key first), with `values[i]` and
+  `statuses[i]` for entity row i — a status other than PRESENT (e.g.
+  NOT_FOUND) means the store has no value for that row.
+
+  Enable MCP on the feature server (feature_store.yaml, feast[mcp] installed):
+
+    feature_server:
+      type: mcp
+      enabled: true
+      mcp_enabled: true
+      mcp_transport: http        # streamable HTTP at /mcp — required for ACC
+
+  Deploy (operator): expose the online feature server as Service
+  `acc-mcp-feast` port 6566 (an ExternalName/selector Service in front of the
+  Feature Store's online server), or overlay `url` with its address.
+
+  Operator vet checklist:
+    * Read-only by manifest: push / write_to_online_store / materialize /
+      materialize_incremental are denied; a new upstream tool is not allowed
+      until it is listed in allowed_tools.
+    * Vector search tools (search, vector_stores) are not allowed; add them
+      to allowed_tools only if a role needs document retrieval from Feast.
+    * If the feature server enforces auth, set api_key_env to the variable
+      holding the bearer token.

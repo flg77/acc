@@ -1,0 +1,24 @@
+# features/capacity_advisor.yaml — the GPU capacity advisor's capabilities.
+#
+# Backlog 019 A3-A5 + the ConfigIQ sizing port, ahead of proposal 057: read
+# metrics (Thanos/Prometheus) and features (Feast), size a model's GPU
+# footprint, and stop/start a served model under human oversight. Thin-REST
+# skills (in-process, no pip extra, each fails closed when its endpoint is not
+# configured) plus two MCP servers deployed as Services (Feast, ConfigIQ
+# AISimulators). How-to: docs/howto-gpu-capacity-advisor.md.
+id: capacity_advisor
+summary: "GPU capacity advisor — PromQL + Feast reads, vLLM sizing (+ ConfigIQ AISimulators MCP), governed model stop/start."
+extras: []
+enables:
+  skills: [prometheus_query, gpu_capacity_estimate, ocp_model_control]
+  mcps: [aisimulators, feast]
+  actions: [control_model_serving]
+sidecars: []              # aisimulators and feast run as their own Services (acc-mcp-*)
+requires_env: []          # each skill fails closed without its own endpoint
+optional_env:
+  ACC_PROMETHEUS_URL: "Thanos/Prometheus base URL — enables prometheus_query"
+  ACC_PROMETHEUS_TOKEN: "bearer token (default: the pod's service-account token)"
+  ACC_PROMETHEUS_CA_FILE: "CA bundle (default: the in-cluster service CA)"
+  ACC_PROMETHEUS_QUERY_ALLOWLIST: "';'-separated regexes a query must fully match"
+  ACC_OCP_CONTROL_NAMESPACES: "comma-separated namespaces ocp_model_control may act in (unset = none)"
+  ACC_KUBERNETES_API_URL: "API server (default: the in-cluster Service)"

@@ -1,0 +1,35 @@
+---
+# smoke — verify. The host can do what the pipelines will ask of it: the tools,
+# the user, the chroots, the sub-ids, rootless podman, the keyring, the space.
+# Runs files/verify-build-host.sh AS the build user and asserts it passes.
+# Ephemeral: it builds nothing and writes nothing but a temp file.
+
+- name: Smoke — verify the host as the build user
+  ansible.builtin.script:
+    cmd: >-
+      verify-build-host.sh
+      --user {{ acc_build_host_user }}
+      --build-root {{ acc_build_host_build_root }}
+      --gnupghome {{ acc_build_host_gnupghome }}
+      --min-free-gb {{ acc_build_host_min_free_gb }}
+      --chroots "{{ (acc_build_host_mock_chroots + (acc_build_host_mock_chroots_aarch64 if acc_build_host_aarch64 else [])) | join(' ') }}"
+      {{ ('--fingerprint ' ~ acc_build_host_key_fingerprint) if acc_build_host_key_fingerprint else '' }}
+      {{ ('--channel-key-url ' ~ acc_build_host_channel_key_url) if acc_build_host_channel_key_url else '' }}
+  become: true
+  become_user: "{{ acc_build_host_user }}"
+  register: _acc_build_host_smoke
+  changed_when: false
+  failed_when: false
+
+- name: Smoke — report
+  ansible.builtin.debug:
+    msg: "{{ _acc_build_host_smoke.stdout_lines }}"
+
+- name: Smoke — every check must pass
+  ansible.builtin.assert:
+    that:
+      - _acc_build_host_smoke.rc == 0
+    fail_msg: >-
+      verify-build-host.sh failed on {{ inventory_hostname }} (exit {{ _acc_build_host_smoke.rc }});
+      the FAIL lines above say what is missing. A key that is absent or whose
+      fingerprint differs is the usual first failure: packaging/build-host/HOWTO.md §3.

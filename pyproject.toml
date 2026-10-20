@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-cell-corpus"
-version = "0.27.1"
+version = "0.28.0"
 description = "Biologically-inspired distributed AI agent governance framework"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -76,6 +76,19 @@ dev = [
     # The compat endpoint's round trip (tests/test_compat_usage_and_poll.py)
     # is only a proof with the real client library; without it the test skips.
     "openai>=1.40,<4",
+    # acc.lib.rdf writes RDF by hand; tests/rdf/test_rdf_roundtrip.py proves a
+    # standard parser reads it back as the same graph (skips without it).
+    "rdflib>=7,<8",
+    # The knowledge-store tests (tests/rdf/test_kg_store.py) skip without it.
+    "pyoxigraph>=0.5,<0.6",
+]
+rdf = [
+    # acc/lib/rdf is dependency-free; rdflib reads its output back (RDF-01)
+    # and checks SPARQL before the store runs it (RDF-04).
+    "rdflib>=7,<8",
+    # The per-collective knowledge store (RDF-04): embedded Oxigraph, binary
+    # wheels (abi3) for x86_64 Linux and Windows, no server.
+    "pyoxigraph>=0.5,<0.6",
 ]
 tui = [
     "textual>=0.80,<1.0",

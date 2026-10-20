@@ -1,0 +1,99 @@
+# mcps/aisimulators/mcp.yaml — ConfigIQ's AISimulators API as MCP tools (streamable-http).
+#
+# Upstream: github.com/redhat-performance/configiq — services/aisimulators
+#   * Red Hat Performance team, Apache-2.0. The REST service behind
+#     configiq.xyz; built on redhat-performance/aisimulate (NVIDIA
+#     AIConfigurator lineage) and its measured kernel-performance databases.
+#   * Self-hosted: services/aisimulators/Containerfile (linux/amd64, port 7860).
+#
+# The GPU capacity advisor's latency half (backlog 019 / proposal 057):
+# SLA-aware TP/PP/replica search and TTFT/TPOT prediction, which the in-image
+# gpu_capacity_estimate skill deliberately does not attempt. Pure computation
+# over a workload description — reads nothing from the cluster, changes nothing.
+
+purpose:        "ConfigIQ AISimulators — SLA-aware GPU sizing, TTFT/TPOT prediction and KV-cache memory estimates for LLM serving."
+version:        "0.1.0"
+
+# MCP streamable HTTP, served by configiq.mcp.mount() at /mcp/http alongside
+# the existing SSE endpoint at /mcp (which ACC does not speak). ConfigIQ as
+# released serves SSE only — see "Upstream prerequisite" below.
+transport:      "streamable-http"
+url:            "http://acc-mcp-aisimulators:7860/mcp/http"   # operator deploys the consumed server
+timeout_s:      120          # /recommend searches TP/PP/batch combinations; it is not instant
+api_key_env:    ""           # in-cluster Service; front it with a gateway + key if exposed
+
+# Tool names are FastAPI operation ids (fastapi-mcp default):
+# <handler>_<path>_<method>.  Bounded on purpose: an empty list would let the
+# upstream grow the agent's tool surface silently.
+allowed_tools:
+  - "post_recommend_recommend_post"
+  - "post_predict_predict_post"
+  - "post_memory_memory_post"
+  - "get_systems_systems_get"
+  - "get_models_models_get"
+  - "get_backends_backends_get"
+denied_tools:
+  - "get_metrics_metrics_get"        # Prometheus exposition — operator telemetry, not a tool
+  - "post_predict_estimate_post"     # deprecated alias of /predict
+
+tools:
+  - name: "post_recommend_recommend_post"
+    summary: "Best GPU/TP/PP/replica configs for a workload under TTFT/TPOT SLAs."
+    args: ["model_path", "system", "backend", "isl", "osl", "ttft", "tpot",
+           "target_concurrency", "target_request_rate", "top_n", "model_config"]
+  - name: "post_predict_predict_post"
+    summary: "TTFT, TPOT, throughput and memory for one fixed configuration."
+    args: ["model_path", "system", "backend", "tp_size", "pp_size", "batch_size", "isl", "osl"]
+  - name: "post_memory_memory_post"
+    summary: "Per-GPU memory breakdown and KV-cache capacity (tokens) for a configuration."
+    args: ["model_path", "system", "backend", "tp_size", "pp_size", "max_num_tokens",
+           "max_batch_size", "memory_fraction_value", "kvcache_quant_mode", "model_config"]
+  - name: "get_systems_systems_get"
+    summary: "GPU systems with perf data (pass include=specs for memory/bandwidth)."
+    args: ["include"]
+  - name: "get_models_models_get"
+    summary: "Models with built-in configs (include=specs for geometry)."
+    args: ["include"]
+  - name: "get_backends_backends_get"
+    summary: "Serving backends (vllm, sglang, trtllm), versions and memory-fraction semantics."
+    args: []
+
+requires_actions:
+  - "use_external_api"
+risk_level:     "LOW"
+# Declared, not inferred: fastapi-mcp names every POST tool "..._post", which
+# the gate's name table reads as "acts on the operator's behalf". These tools
+# read or compute only (writes are denied above), so neither category applies.
+system_access:  false
+acts_on_behalf: false
+domain_id:      "capacity_planning"
+tags:           ["capacity", "gpu", "vllm", "sizing", "configiq", "advisor"]
+
+description: |
+  ConfigIQ's AISimulators service exposed as MCP tools: `/recommend`
+  (SLA-driven configuration search), `/predict` (latency + throughput for a
+  given TP/PP/batch), `/memory` (KV-cache capacity), plus the system/model/
+  backend catalogues. Complements the in-image `gpu_capacity_estimate` skill,
+  which only does memory arithmetic: use that first for a quick fit check, and
+  this server when the question is "how many GPUs to meet a latency SLA".
+
+  Deploy (operator):
+    Build services/aisimulators/Containerfile from redhat-performance/configiq
+    with the `mcp` extra, run it as Service `acc-mcp-aisimulators` port 7860.
+
+  Upstream prerequisite — as of configiq 1cd8145 (2026-10-02) the released
+  service is NOT usable from ACC as-is, for two reasons:
+    1. It mounts MCP with fastapi-mcp `mount_sse("/mcp")` only; ACC speaks
+       streamable HTTP, not SSE.
+    2. It mounts BEFORE /recommend, /predict, /memory, /models and /systems
+       are declared (api_service/app.py), and fastapi-mcp snapshots the routes
+       at construction — so only get_backends is exposed.
+  The upstream fix (configiq branch fix/mcp-expose-all-routes-and-streamable-http)
+  keeps SSE at /mcp, adds streamable HTTP at /mcp/http, and mounts after the
+  last route; verified with ACC's client against the real patched service.
+
+  Operator vet checklist:
+    * In-cluster only; it makes outbound calls to huggingface.co when a
+      `model_path` is not a built-in model and no `model_config` is passed —
+      allow that egress or pass `model_config` (the HF config.json).
+    * No credentials, no cluster access; LOW risk.

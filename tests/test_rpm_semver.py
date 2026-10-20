@@ -110,7 +110,10 @@ def test_the_spec_and_build_script_use_the_mapping():
     spec = (ROOT / "packaging" / "rpm" / "acc.spec").read_text(encoding="utf-8")
     build = (ROOT / "packaging" / "rpm" / "build.sh").read_text(encoding="utf-8")
     assert "Release:        %{acc_release}%{?dist}" in spec
-    assert "%{!?acc_release: %global acc_release 1}" in spec
+    # the committed default is NOT a release: build.sh pins the real one into the
+    # SRPM copy, and an unpinned spec sorts below everything (0.0.0-0.unpinned)
+    assert "%{!?acc_release: %global acc_release 0.unpinned}" in spec
+    assert "pin acc_release \"$RPM_RELEASE\"" in build
     # the wheel keeps the project version even when the RPM Version differs
     assert "agentic_cell_corpus-%{acc_wheel_version}-py3-none-any.whl" in spec
     assert 'version.py" "$VERSION" "$ROOT"' in build

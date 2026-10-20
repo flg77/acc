@@ -18,7 +18,7 @@ import pytest
 from acc import deploy, deployment
 
 NS = "wksp-user2"
-PREFIX = f"/apis/acc.redhat.io/v1alpha1/namespaces/{NS}/"
+PREFIX = f"/apis/acc.ic3networks.com/v1alpha1/namespaces/{NS}/"
 
 _LLM_ENV = [
     {"name": "ACC_LLM_BACKEND", "value": "openai_compat"},

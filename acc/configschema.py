@@ -370,6 +370,15 @@ ENV_KEYS: tuple[Key, ...] = tuple(
         ("ACC_PEER_LESSONS", False, "Publish and render peer lessons (default 1; 0 = off)."),
         # PA-09 Phase 1: the key set a receiver verifies a signed ask against.
         ("ACC_NKEY_PUBLIC_KEYS_PATH", False, "public_keys.json for sender verification (default: beside the seed)."),
+        # RDF-01: the key person IRIs are an HMAC under.  Whoever holds it can
+        # test a guess against a pseudonym, so it is a secret like a credential.
+        ("ACC_RDF_PERSON_KEY", True, "Key for pseudonymous person IRIs in RDF output (unset = blank nodes)."),
+        # RDF-02: the signed pack whose taxonomy/domains.yaml an UNBOUND
+        # collective (a hub, or standalone) uses for receptor matching and
+        # publishes for its bound instances; a bound instance ignores it.
+        ("ACC_DOMAIN_TAXONOMY", False, "Taxonomy pack (@scope/name) for SKOS receptor matching; hubs and standalone collectives only."),
+        # RDF-04: where a collective's knowledge store lives (one dir per collective).
+        ("ACC_KG_PATH", False, "Root of the knowledge stores (default ~/.acc/kg); one store per collective under it."),
     )
 )
 

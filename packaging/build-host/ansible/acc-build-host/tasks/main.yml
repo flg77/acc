@@ -1,0 +1,31 @@
+---
+# main.yml — role entrypoint. Validates the requested operation and the target,
+# then dispatches to tasks/<operation>.yml. One var (acc_build_host_operation)
+# drives every verb from the CLI or an AAP Job Template survey.
+- name: Validate the requested operation
+  ansible.builtin.assert:
+    that:
+      - acc_build_host_operation in _acc_build_host_valid_ops
+    fail_msg: >-
+      Unknown acc_build_host_operation '{{ acc_build_host_operation }}'.
+      Valid operations: {{ _acc_build_host_valid_ops | join(', ') }}.
+
+- name: Preflight — the build host is an EL host (mock, rpm-sign, dnf)
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] | default('') == 'RedHat'
+    fail_msg: >-
+      acc-build-host provisions an RPM build host with mock and dnf, but
+      {{ inventory_hostname }} is not a RedHat-family host
+      (os_family={{ ansible_facts['os_family'] | default('unknown') }}).
+
+- name: Resolve the operator's authorized keys (file wins over the list)
+  ansible.builtin.set_fact:
+    _acc_build_host_keys: >-
+      {{ (lookup('ansible.builtin.file', acc_build_host_authorized_keys_file | expanduser).splitlines()
+          | select('match', '^(ssh|ecdsa)-') | list)
+         if (acc_build_host_authorized_keys_file | length > 0)
+         else acc_build_host_authorized_keys }}
+
+- name: "Run operation — {{ acc_build_host_operation }}"
+  ansible.builtin.include_tasks: "{{ acc_build_host_operation }}.yml"

@@ -112,6 +112,11 @@ _SCHEMAS: dict[str, pa.Schema] = {
         pa.field("scope", pa.utf8()),
         # What in the source episodes contradicted the lesson, if anything.
         pa.field("dissent", pa.utf8()),
+        # The information rule: the highest ceiling among the sources.  Without
+        # it a row read back from this table could not say who may read it, so
+        # only the Redis copy (6 h TTL) or the ledger carried the label.  "" =
+        # written before the column existed, and reads as CRITICAL (the note rule).
+        pa.field("ceiling", pa.utf8()),
         # Kept and still written: derived from source_ids, so existing readers
         # are unaffected.
         pa.field("source_count", pa.int64()),
@@ -159,6 +164,9 @@ _BACKFILL: dict[str, str] = {
     # as the operator's own and stays private, rather than being assumed shared.
     "tier": "'private'",
     "dissent": "''",
+    # Blank, not a guessed level: a blank ceiling reads as CRITICAL everywhere
+    # (`memory_reflection.note_ceiling`), so an old note is never under-labelled.
+    "ceiling": "''",
     "source_ids": "'[]'",
     "source_requesters": "'[]'",
 }

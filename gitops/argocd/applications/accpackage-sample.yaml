@@ -36,7 +36,7 @@ spec:
 # The catalog list — declarative drop-in for /etc/acc/catalogs.yaml.
 # The operator's AccCatalog controller renders these into a per-namespace
 # `acc-catalogs` ConfigMap mounted at /etc/acc/catalogs.yaml inside ACC pods.
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AccCatalog
 metadata:
   name: acc-canonical
@@ -51,7 +51,7 @@ spec:
     subjectPattern: "^https://github\\.com/flg77/acc-ecosystem/"
   priority: 100
 ---
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AccCatalog
 metadata:
   name: corp-internal
@@ -68,7 +68,7 @@ spec:
 ---
 # Declarative install state — bumps from ^1.2 to ^1.3 in Git
 # trigger reconcile.  AllowUnsigned is set in dev only.
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AccPackageInstall
 metadata:
   name: coding-roles
@@ -78,7 +78,7 @@ spec:
   constraint: "^1.2"
   targetCorpus: dev-corpus
 ---
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AccPackageInstall
 metadata:
   name: research-roles

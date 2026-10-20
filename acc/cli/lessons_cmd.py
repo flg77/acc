@@ -1,7 +1,7 @@
 """``acc-cli lessons`` — what the collective's agents have told each other.
 
     acc-cli lessons list [--limit N] [--json]
-    acc-cli lessons show <id>
+    acc-cli lessons show <id> [--as turtle|ntriples|jsonld]
     acc-cli lessons trace <id>
     acc-cli lessons send --to <agent_id> --text "…" [--role R] [--scope S] [--ceiling C]
 
@@ -49,6 +49,8 @@ def register(sub: argparse._SubParsersAction) -> None:
     sh.add_argument("lesson_id")
     sh.add_argument("--collective", default="")
     sh.add_argument("--json", action="store_true")
+    sh.add_argument("--as", dest="as_rdf", choices=("turtle", "ntriples", "jsonld"), default="",
+                    help="Print the lesson as RDF (persons pseudonymous under ACC_RDF_PERSON_KEY).")
     sh.set_defaults(func=_cmd_show)
 
     tr = sp.add_parser("trace", help="A lesson and every task whose prompt rendered it.")
@@ -169,6 +171,13 @@ def _cmd_show(args: argparse.Namespace) -> int:
         return EXIT_NOT_FOUND
     if args.json:
         print(json.dumps(lesson, indent=2))
+        return EXIT_OK
+    if getattr(args, "as_rdf", ""):
+        from acc.cli.rdf_cmd import persons_from_env, render  # noqa: PLC0415
+        from acc.lib.rdf import lesson_to_graph  # noqa: PLC0415
+
+        lesson.setdefault("collective_id", cid)
+        sys.stdout.write(render(lesson_to_graph(lesson, persons=persons_from_env()), args.as_rdf))
         return EXIT_OK
     print(_line(lesson))
     for key in ("from_agent", "trigger", "expected_outcome", "confidence", "target_agent_id"):

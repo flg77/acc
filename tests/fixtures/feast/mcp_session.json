@@ -1,0 +1,38 @@
+{
+  "_provenance": "Recorded from feast 0.66.0 `feast serve` (mcp_transport: http) via ACC's MCPClient, 2026-10-03; feature service capacity_v1 over view deployment_usage.",
+  "tools_list": [
+    "get_online_features_get_online_features_post",
+    "search_search_post",
+    "list_vector_stores_v1_vector_stores_get",
+    "get_vector_store_v1_vector_stores__vector_store_id__get",
+    "vector_store_search_v1_vector_stores__vector_store_id__search_post",
+    "push_push_post",
+    "write_to_online_store_write_to_online_store_post",
+    "health_health_get",
+    "chat_ui_chat_get",
+    "chat_chat_post",
+    "materialize_materialize_post",
+    "materialize_incremental_materialize_incremental_post"
+  ],
+  "call": {
+    "name": "get_online_features_get_online_features_post",
+    "arguments": {
+      "entities": {
+        "model_deployment": [
+          "flg1/diffusiongemma-26b-a4b",
+          "flg1/unknown"
+        ]
+      },
+      "feature_service": "capacity_v1"
+    }
+  },
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\n  \"results\": [\n    {\n      \"values\": [\n        \"flg1/diffusiongemma-26b-a4b\",\n        \"flg1/unknown\"\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"1970-01-01T00:00:00Z\",\n        \"1970-01-01T00:00:00Z\"\n      ]\n    },\n    {\n      \"values\": [\n        12,\n        null\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"NOT_FOUND\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T05:54:07Z\",\n        \"1970-01-01T00:00:00Z\"\n      ]\n    },\n    {\n      \"values\": [\n        0.42,\n        null\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"NOT_FOUND\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T05:54:07Z\",\n        \"1970-01-01T00:00:00Z\"\n      ]\n    }\n  ],\n  \"metadata\": {\n    \"feature_names\": [\n      \"model_deployment\",\n      \"requests_per_min\",\n      \"gpu_util_p95_1h\"\n    ]\n  }\n}"
+      }
+    ],
+    "isError": false
+  }
+}

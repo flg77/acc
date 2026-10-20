@@ -649,3 +649,149 @@ export function openSnapshotStream(
     ws?.close();
   };
 }
+
+// --- knowledge (20260928-rdf-provenance-and-memory-views, RDF-07) -----------
+//
+// Every view is built server-side for the session principal (acc/memory_views.py):
+// an operator sees every note under their ceiling, anyone else the notes they are
+// a source of. Nothing here filters, and nothing hidden is counted for a viewer.
+
+export type Tier = "private" | "shared" | "hub";
+
+export type NoteRow = {
+  note_id: string;
+  collective: string;
+  role: string;
+  tier: Tier;
+  where: string;
+  ceiling: string;
+  summary: string;
+  dissent: string;
+  people: number;
+  episodes: number;
+  published_at: number;
+  mine: boolean;
+  /** From the durable note table; the 6 h hot cache no longer holds it. */
+  stored_only?: boolean;
+};
+
+export type MemoryView = {
+  collectives: string[];
+  tiers: Record<Tier, NoteRow[]>;
+  available: boolean;
+  above_your_ceiling?: number;
+};
+
+export type LessonRow = {
+  lesson_id: string;
+  role: string;
+  kind: string;
+  domain: string;
+  scope: string;
+  ceiling: string;
+  summary: string;
+  dissent: string;
+  confidence: number;
+  ts: number;
+  addressed: boolean;
+  adopted_by: string[];
+  used_by_tasks: number;
+  outcomes: Record<string, number>;
+  mine: boolean;
+};
+
+export type LearningsView = { collective: string; lessons: LessonRow[]; available: boolean };
+
+export type LineageNode = {
+  id: string;
+  kind: "note" | "episodes" | "proposal" | "copy" | "approval" | "tasks" | "invalidated";
+  label: string;
+  tier?: Tier;
+  ceiling?: string;
+  role?: string;
+  scope?: string;
+  dissent?: string;
+  destination?: string;
+  people?: number;
+  count?: number;
+  who?: string;
+  verdicts?: Record<string, number>;
+};
+
+/** Any node the knowledge graph component draws (lineage or map). */
+export type GraphNode = {
+  id: string;
+  kind: string;
+  label: string;
+  tier?: Tier;
+  ceiling?: string;
+  people?: number;
+  dissent?: string;
+};
+
+export type GraphView = { nodes: GraphNode[]; edges: { source: string; target: string; kind: string }[] };
+
+export type LineageView = {
+  note: string;
+  nodes: LineageNode[];
+  edges: { source: string; target: string; kind: string }[];
+  above_your_ceiling?: number;
+};
+
+export type ContributionRow = {
+  note_id: string;
+  role: string;
+  ceiling: string;
+  summary: string;
+  published_to: string[];
+  in_hub: boolean;
+  instances: number;
+  used_by_tasks: number;
+};
+
+export type ContributionsView = { notes: ContributionRow[]; instances: number; erased?: number };
+
+const knowledge = (cid: string, rest: string) =>
+  `/api/knowledge/${encodeURIComponent(cid)}/${rest}`;
+
+export const fetchMemory = (cid: string) => getJSON<MemoryView>(knowledge(cid, "memory"));
+
+export const fetchLearnings = (cid: string, limit = 50) =>
+  getJSON<LearningsView>(knowledge(cid, `learnings?limit=${limit}`));
+
+export const fetchLineage = (cid: string, noteId: string) =>
+  getJSON<LineageView>(knowledge(cid, `lineage/${encodeURIComponent(noteId)}`));
+
+export const fetchContributions = (cid: string) =>
+  getJSON<ContributionsView>(knowledge(cid, "contributions"));
+
+// --- knowledge map + conflicts (over the named-graph store, #516) ------------
+
+export type StoreGraph = { name: string; ceiling: string; triples: number; scope: string; source: string; modified: string };
+
+export type MapNode = GraphNode & { attributes?: Record<string, string[]> };
+
+export type MapView = {
+  available: boolean;
+  graphs: StoreGraph[];
+  concepts: { iri: string; label: string; broader: string }[];
+  focus: string;
+  nodes: MapNode[];
+  edges: { source: string; target: string; kind: string; graph: string }[];
+  above_your_ceiling?: number;
+};
+
+export type Conflict = {
+  subject: string;
+  subject_label: string;
+  predicate: string;
+  predicate_label: string;
+  values: { value: string; graph: string; ceiling: string; source: string }[];
+};
+
+export type ConflictsView = { available: boolean; conflicts: Conflict[] };
+
+export const fetchKnowledgeMap = (cid: string, focus = "") =>
+  getJSON<MapView>(knowledge(cid, focus ? `map?focus=${encodeURIComponent(focus)}` : "map"));
+
+export const fetchConflicts = (cid: string) => getJSON<ConflictsView>(knowledge(cid, "conflicts"));

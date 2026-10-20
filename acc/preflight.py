@@ -879,3 +879,112 @@ def report(results: list[Result]) -> dict[str, Any]:
         "counts": counts,
         "results": [r.as_dict() for r in results],
     }
+
+
+# ---------------------------------------------------------------------------
+# The channel: is what this host runs what its channel currently publishes?
+# (20261004-public-release-channels, Phase 6)
+# ---------------------------------------------------------------------------
+
+#: Enabled dnf repository ids that carry ACC: the COPR project, the internal
+#: Satellite channel and its mirror on acc1 (packaging/rpm/README.md).
+_CHANNEL_REPO_MARKERS = ("flg77:acc", "acc-spearhead", "acc-mirror")
+
+
+def _run(argv: list[str], timeout: float) -> tuple[int, str, str] | None:
+    """Run a command; ``None`` when it cannot run at all (absent, timed out)."""
+    import shutil  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    if not shutil.which(argv[0]):
+        return None
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed argv, no shell
+            argv, capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _bootc_host() -> bool:
+    """An image-mode (bootc / ostree) host: the package set is the image."""
+    return os.path.exists("/run/ostree-booted")
+
+
+@register("channel")
+def check_channel(ctx: Context) -> Iterable[Result]:
+    """Whether this host's ACC is current with the channel it came from.
+
+    Three ways ACC is installed, three answers:
+
+    * **image mode** (bootc): the image is the unit of upgrade; with
+      ``--probe``, ``bootc upgrade --check`` asks the registry.
+    * **a package** (``rpm -q acc``): ``dnf check-update acc`` — against the
+      metadata cache without ``--probe``, refreshing it with.  A host with no
+      enabled repository carrying ACC was installed by file: there is no
+      channel to be behind, and the row says so instead of "current".
+    * **a wheel or a checkout**: no channel.
+
+    Behind is reported as DRIFTED — what is installed is not what the channel
+    says a host on it runs — and never sets the exit code.  Nothing here
+    reaches the network unless ``--probe`` was passed.
+    """
+    name = "channel"
+    if _bootc_host():
+        if not ctx.probe_endpoints:
+            yield Result(name, Severity.OK, "image mode (bootc); --probe asks the registry for a newer image")
+            return
+        out = _run(["bootc", "upgrade", "--check"], timeout=max(ctx.timeout_s, 60.0))
+        if out is None:
+            yield Result(name, Severity.DEGRADED, "image mode, but `bootc upgrade --check` could not run")
+            return
+        rc, stdout, stderr = out
+        text = (stdout + stderr).strip()
+        if rc != 0:
+            yield Result(name, Severity.DEGRADED, "image mode; bootc could not check for an update",
+                         detail=_first_clause(text) if text else f"exit {rc}")
+        elif "no update" in text.lower() or "no changes" in text.lower():
+            yield Result(name, Severity.OK, "image mode; current")
+        else:
+            yield Result(name, Severity.DRIFTED, "image mode; a newer image is published — `bootc upgrade` applies it",
+                         detail=_first_clause(text) if text else "")
+        return
+
+    installed = _run(["rpm", "-q", "--qf", "%{VERSION}-%{RELEASE}", "acc"], timeout=ctx.timeout_s)
+    if installed is None or installed[0] != 0:
+        yield Result(name, Severity.OK, "not a packaged install (wheel or checkout); no channel")
+        return
+    installed_evr = installed[1].strip()
+
+    cache = [] if ctx.probe_endpoints else ["-C"]      # -C: the metadata cache only, no network
+    repos = _run(["dnf", "-q", *cache, "repolist", "--enabled"], timeout=max(ctx.timeout_s, 30.0))
+    if repos is None:
+        yield Result(name, Severity.OK, f"acc {installed_evr} installed; dnf not available to ask the channel")
+        return
+    enabled = repos[1].lower()
+    if not any(marker in enabled for marker in _CHANNEL_REPO_MARKERS):
+        yield Result(name, Severity.OK, f"acc {installed_evr} installed by file; no channel configured, upgrades are manual",
+                     detail="dnf copr enable flg77/acc, or the Satellite / acc1 .repo (docs/INSTALL.md)")
+        return
+
+    check = _run(["dnf", "-q", *cache, "check-update", "acc"], timeout=max(ctx.timeout_s, 120.0))
+    if check is None:
+        yield Result(name, Severity.DEGRADED, "dnf check-update could not run")
+        return
+    rc, stdout, stderr = check
+    if rc == 0:
+        yield Result(name, Severity.OK, f"acc {installed_evr} is current with the channel")
+    elif rc == 100:
+        available = ""
+        for line in stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[0].startswith("acc."):
+                available = parts[1]
+                break
+        yield Result(name, Severity.DRIFTED,
+                     f"behind: the channel has acc {available or 'a newer release'} (installed {installed_evr}); `dnf upgrade acc`")
+    else:
+        hint = "" if ctx.probe_endpoints else " (metadata cache only; --probe refreshes it)"
+        yield Result(name, Severity.DEGRADED, f"the channel could not be asked{hint}",
+                     detail=_first_clause(stderr or stdout) if (stderr or stdout).strip() else f"dnf exit {rc}")

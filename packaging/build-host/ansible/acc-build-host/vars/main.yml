@@ -1,0 +1,45 @@
+---
+# acc-build-host — internal constants. Not meant to be overridden per run.
+_acc_build_host_valid_ops: [status, provision, smoke, teardown]
+
+# What the host installs. mock + its configs for the chroots, qemu-user-static for
+# the aarch64 rows, podman for the signer container and the image builds,
+# copr-cli for the public leg (release-copr.sh runs on the workstation, but the
+# host can trigger builds too), rpm-sign for sign-rpms-standalone.sh, and the
+# toolchain build.sh needs (python3.12 + pip, rpm-build, systemd-rpm-macros, gcc).
+_acc_build_host_packages:
+  - mock
+  - mock-core-configs
+  - podman
+  - copr-cli
+  - rpm-sign
+  - rpm-build
+  - rpmdevtools
+  - createrepo_c
+  - systemd-rpm-macros
+  - python3.12
+  - python3.12-pip
+  - python3.12-devel
+  - gcc
+  - make
+  - git
+  - gnupg2
+  - rsync
+  - tar
+  - curl
+_acc_build_host_packages_aarch64:
+  - qemu-user-static-aarch64
+
+# The commands the smoke check must find on the host.
+_acc_build_host_required_bins:
+  - mock
+  - podman
+  - copr-cli
+  - rpmsign
+  - rpmbuild
+  - createrepo_c
+  - git
+  - gpg
+  - python3.12
+  - make
+_acc_build_host_mock_config_dir: /etc/mock

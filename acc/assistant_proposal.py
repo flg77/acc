@@ -621,6 +621,7 @@ async def dispatch_approved_proposal(
     *,
     approver_tier: str = "",
     approvals: list[dict] | None = None,
+    oversight_id: str = "",
 ) -> bool:
     """Publish the actual mutation that fulfils ``proposal``.
 
@@ -659,7 +660,7 @@ async def dispatch_approved_proposal(
         if proposal.kind == PROPOSAL_PUBLISH:
             return await _dispatch_publish(
                 signaling, cid, proposal, redis_client, approver_tier=approver_tier,
-                approvals=approvals,
+                approvals=approvals, oversight_id=oversight_id,
             )
     except Exception:
         logger.exception(
@@ -711,8 +712,13 @@ def build_publish_proposal(
     agent_id: str = "",
     k: int | None = None,
     override_by: str = "",
+    source_collective: str = "",
 ) -> "AssistantProposal":
     """A proposal to let one note cross from its context into another.
+
+    *source_collective* is where the note lives, when that is not the
+    collective the proposal is queued in (the hub curator queues in the hub);
+    it defaults to *collective_id* and is carried for the ledger.
 
     The summary names **both** contexts and the number of distinct people
     behind the note, because that is what an approver has to weigh: an approver
@@ -763,6 +769,7 @@ def build_publish_proposal(
             # Phase 2b -- how many distinct operator-tier people must approve.
             "required_approvals": required_approvals,
             "source_ids": [str(i) for i in (getattr(note, "source_ids", None) or [])],
+            "source_collective": source_collective or collective_id,
             "source_requesters": requesters,
             "source_people": people,
             "destination_scope": destination_scope,
@@ -781,9 +788,58 @@ def build_publish_proposal(
     )
 
 
+def _approval_trail(approvals: list[dict] | None, approver: str, approver_tier: str) -> list[dict]:
+    """``[{approver_id, approver_tier, ts_ms}]`` -- who decided, at which tier.
+    A decision that arrived without the queue's list is one approval: the
+    approver the dispatcher was given."""
+    rows = [
+        {"approver_id": str(a.get("approver_id") or ""),
+         "approver_tier": str(a.get("approver_tier") or ""),
+         "ts_ms": a.get("ts_ms")}
+        for a in (approvals or []) if isinstance(a, dict) and a.get("approver_id")
+    ]
+    return rows or [{"approver_id": approver, "approver_tier": str(approver_tier or ""), "ts_ms": None}]
+
+
+def record_publish_proposed(p: AssistantProposal, oversight_id: str, redis_client: Any = None) -> None:
+    """The ledger row for a queued publish proposal (RDF-03 Phase 2a).
+
+    Without it the first durable trace of a publication was the approval:
+    who proposed it, when, and on which episodes was only in a Redis row
+    deleted when the proposal is claimed.  Never raises; other kinds and an
+    unqueued proposal (no oversight id) write nothing.
+    """
+    if p.kind != PROPOSAL_PUBLISH or not oversight_id:
+        return
+    params = p.params or {}
+    try:
+        from acc import refinements  # noqa: PLC0415
+        refinements.record(
+            "propose", redis_client=redis_client, collective_id=p.collective_id,
+            agent_id=p.agent_id, role_label=str(params.get("role_label") or ""),
+            trigger="publish_proposal_queued",
+            evidence={
+                "proposal_id": p.proposal_id, "oversight_id": oversight_id,
+                "proposed_by": str(p.operator_id or p.agent_id or ""),
+                "source_ids": [str(i) for i in (params.get("source_ids") or [])],
+                "source_requesters": [str(r) for r in (params.get("source_requesters") or [])],
+                "required_approvals": int(params.get("required_approvals") or 1),
+                "quorum_override_by": str(params.get("quorum_override_by") or ""),
+            },
+            target={"store": "shared_notes", "id": str(params.get("note_id") or ""),
+                    "destination": str(params.get("destination_scope") or ""),
+                    "source_collective": str(params.get("source_collective") or p.collective_id)},
+            ceiling=str(params.get("ceiling") or ""),
+            scope=str(params.get("source_scope") or ""),
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("assistant_proposal: propose ledger write failed", exc_info=True)
+
+
 async def _dispatch_publish(
     signaling, cid: str, p: AssistantProposal, redis_client: Any = None,
     approver_tier: str = "", approvals: list[dict] | None = None,
+    oversight_id: str = "",
 ) -> bool:
     """Make an approved note readable in the destination a human named.
 
@@ -876,18 +932,28 @@ async def _dispatch_publish(
         ceiling=str(params.get("ceiling") or "CRITICAL"),
         source_requesters=[str(r) for r in (params.get("source_requesters") or [])],
         note_id=str(params.get("note_id") or ""),
+        source_ids=[str(i) for i in (params.get("source_ids") or [])],
     )
-    # `20260923-lessons-that-travel` Phase 2 -- the ledger row.
+    # `20260923-lessons-that-travel` Phase 2 -- the ledger row.  RDF-03 Phase
+    # 2a: every approver with their tier (not only the last one), the
+    # oversight row and the episodes the note rests on -- the oversight row
+    # holding them expires in a day -- and whether the destination took it.
+    # Written either way: "a person approved this crossing" is the fact.
     try:
         from acc import refinements  # noqa: PLC0415
         refinements.record(
             "hub_promote" if destination.startswith("hub:") else "publish",
             redis_client=redis_client, collective_id=cid, agent_id=p.agent_id,
             role_label=role_label, trigger="publish_proposal_approved",
-            evidence={"proposal_id": p.proposal_id,
-                      "source_requesters": [str(r) for r in (params.get("source_requesters") or [])]},
+            evidence={"proposal_id": p.proposal_id, "oversight_id": oversight_id,
+                      "approvals": _approval_trail(approvals, approver, approver_tier),
+                      "source_ids": [str(i) for i in (params.get("source_ids") or [])],
+                      "source_requesters": [str(r) for r in (params.get("source_requesters") or [])],
+                      "quorum_override_by": str(params.get("quorum_override_by") or "")},
             target={"store": "shared_notes", "id": str(params.get("note_id") or ""),
-                    "destination": destination, "destination_collective": dest_cid or cid},
+                    "destination": destination, "destination_collective": dest_cid or cid,
+                    "source_collective": str(params.get("source_collective") or cid),
+                    "written": bool(ok)},
             approver=approver, ceiling=str(params.get("ceiling") or ""),
             scope=str(params.get("source_scope") or ""),
         )
@@ -1318,6 +1384,7 @@ __all__ = [
     "dispatch_approved_proposal",
     "PROPOSAL_PUBLISH",
     "build_publish_proposal",
+    "record_publish_proposed",
     "QuorumNotMet",
     "publish_proposal_pending",
 ]

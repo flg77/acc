@@ -22,6 +22,7 @@ introduce a container shape the operator did not deploy.
 
 from __future__ import annotations
 
+from acc import api_group
 import base64
 import json
 import time
@@ -411,7 +412,7 @@ REASON_AUTOSCALED = "autoscaled"
 CONTROL_ROLES: frozenset[str] = frozenset({"arbiter", "assistant", "compliance_officer"})
 
 #: The annotation that remembers a paused role's replica count.
-PAUSED_ANNOTATION = "acc.redhat.io/paused-replicas"
+PAUSED_ANNOTATION = api_group.annotation("paused-replicas")
 
 DEFAULT_MAX_REPLICAS = 3
 

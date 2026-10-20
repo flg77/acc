@@ -167,6 +167,37 @@ models:
     api_key_env: "MAAS_QWEN3_A3B_API_KEY"
     label: "MaaS Qwen3 A3B (MoE worker) [PLACEHOLDER]"
 
+  # ── RHOAI Models-as-a-Service (llm-d / KServe LLMInferenceService) ──────
+  # RHOAI MaaS publishes each model under its own path on the MaaS gateway:
+  #   https://maas.apps.<cluster-domain>/<namespace>/<model-name>/v1
+  # Keyed → openai_compat + api_key_env. Mint the key in the RHOAI dashboard
+  # (or via the MaaS API) and put it in .env as MAAS_RHOAI_API_KEY (NOT here).
+  # On a cluster, deliver this registry with AgentCollective
+  # spec.modelRegistry and the key with an extraEnv secretKeyRef.
+  # PITFALL: MaaS API keys need RHOAI >= 3.5.1 when the user is in a group
+  # whose name contains a space — older releases mint a key that 401s.
+  # PLACEHOLDERS: replace <cluster-domain>/<namespace> with your gateway.
+  - model_id: maas-diffusiongemma
+    backend: openai_compat
+    model: "diffusiongemma-26b-a4b"
+    base_url: "https://maas.apps.REPLACE-ME/REPLACE-ME/diffusiongemma-26b-a4b/v1"
+    api_key_env: "MAAS_RHOAI_API_KEY"
+    label: "RHOAI MaaS DiffusionGemma 26B-A4B [PLACEHOLDER]"
+  - model_id: maas-minimax-m27
+    backend: openai_compat
+    model: "minimax-m27"
+    base_url: "https://maas.apps.REPLACE-ME/REPLACE-ME/minimax-m27/v1"
+    api_key_env: "MAAS_RHOAI_API_KEY"
+    label: "RHOAI MaaS MiniMax M2.7 (FP8, llm-d) [PLACEHOLDER]"
+  # The capacity advisor's explainer (proposal 057 Q6: granite runs on the
+  # Gaudi2 cluster's MaaS). Same RHOAI MaaS path shape, its own gateway host.
+  - model_id: maas-granite-8b
+    backend: openai_compat
+    model: "granite-8b"
+    base_url: "https://maas.apps.REPLACE-ME/REPLACE-ME/granite-8b/v1"
+    api_key_env: "MAAS_GAUDI_API_KEY"
+    label: "RHOAI MaaS Granite 8B on Gaudi2 (explainer) [PLACEHOLDER]"
+
 # ── Role → model mapping (B6, proposal 044) ────────────────────────────────
 # The ONE visible source of truth for which model each ROLE runs on.  Each
 # value is a model_id from the `models:` list above.  An agent resolves its

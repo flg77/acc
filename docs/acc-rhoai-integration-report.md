@@ -44,9 +44,9 @@ proposals follow.
 | Config validation (`deploy_mode: rhoai`) | ✅ | `acc/config.py` L481-490 requires `vector_db.milvus_uri` + LLM URL |
 | Vector DB abstraction | ✅ | `acc/backends/vector_milvus.py` — pure config, no leaky URLs |
 | LLM backends | ✅ | `vllm`, `llama_stack`, `openai_compat`, `anthropic` — all RHOAI-friendly via configurable `base_url` |
-| KServe `InferenceService` ref | ✅ | `operator/api/v1alpha1/agentcollective_types.go` L170-195 (LLMSpec.VLLM) |
+| KServe `InferenceService` ref | ✅ | `api/v1alpha1/agentcollective_types.go` (in `flg77/acc-operator`) L170-195 (LLMSpec.VLLM) |
 | Kafka audit bridge | ✅ | `acc/audit.py` L159-242 (KafkaAuditBackend) + offline Redis queue fallback |
-| RHOAI / KServe prerequisite probe | ✅ | `operator/internal/reconcilers/prerequisites.go` detects RHOAI + KServe + KEDA |
+| RHOAI / KServe prerequisite probe | ✅ | `internal/reconcilers/prerequisites.go` (in `flg77/acc-operator`) detects RHOAI + KServe + KEDA |
 | Cat-A WASM policy | ✅ | `regulatory_layer/category_a/constitutional_rhoai.rego` compiled to WASM |
 | Role-sync (CRD ↔ files) | ✅ | proposal 010 just landed; `role_source: crd` is the rhoai default |
 | **Signaling on Kafka** | ❌ | `acc/config.py` L35: `SignalingBackendChoice = Literal["nats"]` — NATS only |
@@ -156,7 +156,7 @@ Kagenti's signature verification + NetworkPolicy controller +
 A2A `/.well-known/agent-card.json` discovery without ACC
 reinventing them.
 
-Scope: new `operator/internal/reconcilers/kagenti/` package; honours
+Scope: new `internal/reconcilers/kagenti/` (in `flg77/acc-operator`) package; honours
 the same `targetRef` pattern Kagenti's operator uses.  Optional —
 gated by detecting the `agentcard.kagenti.io` CRD.
 

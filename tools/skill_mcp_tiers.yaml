@@ -2,6 +2,12 @@
 # without re-running the classifier OR keeping a note in this header
 # describing the override.  Source of truth: brainstorm Q3a tier policy.
 #
+# Override (2026-10-03, proposal 057): gpu_capacity_estimate,
+# ocp_model_control and prometheus_query (skills) and aisimulators and feast (MCPs) are hand-added
+# as core_baseline -- they ship in the image (acc/pkg/manifest.py
+# CORE_BASELINE_*) and the in-tree capacity_advisor role uses them. The
+# classifier was NOT re-run: it rewrites the earlier hand classification.
+#
 # Tiers:
 #   core_baseline   — ships with ACC core; never packaged.
 #   bundle_in_role  — used by exactly one movable role; travels in pack.
@@ -47,14 +53,20 @@ skills:
   tier: bundle_in_role
   used_by:
   - coding_agent
+- name: gpu_capacity_estimate
+  tier: core_baseline
 - name: market_sizer
   tier: bundle_in_role
   used_by:
   - research_economist
+- name: ocp_model_control
+  tier: core_baseline
 - name: plan_outline
   tier: bundle_in_role
   used_by:
   - research_planner
+- name: prometheus_query
+  tier: core_baseline
 - name: report_drafter
   tier: own_pack
   used_by:
@@ -83,6 +95,8 @@ skills:
   used_by:
   - coding_agent_tester
 mcps:
+- name: aisimulators
+  tier: core_baseline
 - name: arxiv
   tier: core_baseline
 - name: echo_server
@@ -95,6 +109,8 @@ mcps:
   - coding_agent_reviewer
   - coding_agent_tester
   suggested_pack: '@acc/mcp-shared'
+- name: feast
+  tier: core_baseline
 - name: web_browser_harness
   tier: own_pack
   used_by:

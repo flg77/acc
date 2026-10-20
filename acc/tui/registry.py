@@ -32,7 +32,7 @@ PROFILE_ENV = "ACC_TUI_PROFILE"
 #: on the strip and where the TUI starts.  It changes nothing about what
 #: agents may do, what is gated, or what Compliance records, and it is not an
 #: auth boundary.  ``operator`` is today's TUI, byte for byte.
-_USER_SCREENS = frozenset({"prompt", "board", "compliance"})
+_USER_SCREENS = frozenset({"prompt", "board", "compliance", "memory"})
 _START_SCREEN = {PROFILE_OPERATOR: "soma", PROFILE_USER: "prompt"}
 
 
@@ -98,6 +98,11 @@ SCREENS: tuple[ScreenSpec, ...] = (
     # my task doing" is a user question).  Overflow (the 1..9 keys are full),
     # LAST so the leader digits 0 = Marketplace, 1 = Catalogs keep meaning.
     ScreenSpec("board", "Board", f"{_S}.board", "BoardScreen", receives_snapshot=True),
+    # `20260928-rdf-provenance-and-memory-views` -- memory, learnings, lineage,
+    # contributions.  Both profiles: "what has it learned from me" is a user
+    # question, and the view model narrows a non-operator to their own notes.
+    # Overflow, appended LAST so the existing leader digits keep meaning.
+    ScreenSpec("memory", "Memory", f"{_S}.memory", "MemoryScreen", receives_snapshot=True),
 )
 assert all(s.name in _USER_SCREENS or PROFILE_USER not in s.profiles for s in SCREENS)
 
@@ -130,11 +135,18 @@ def start_screen(profile: str | None = None) -> str:
 
 def hidden_specs(profile: str | None = None) -> list[ScreenSpec]:
     """Screens NOT on this profile's strip — the Ctrl+A leader's digit list
-    (its index IS the digit).  For ``operator`` that is exactly the two
-    overflow panes, so the leader is unchanged there."""
+    (its index IS the digit).  For ``operator`` that is exactly the overflow
+    panes, in declaration order, so the leader is unchanged there.
+
+    The leader has ten digits.  The profile's own screens come first, so the
+    ones it is *for* always get one (on ``user``: Board and Memory before the
+    operator console); anything past the tenth is still one ``Ctrl+P`` away.
+    """
     p = normalise_profile(profile or active_profile())
     on_strip = {s.name for s in strip_specs(p)}
-    return [s for s in SCREENS if s.name not in on_strip]
+    hidden = [s for s in SCREENS if s.name not in on_strip]
+    return ([s for s in hidden if p in s.profiles]
+            + [s for s in hidden if p not in s.profiles])
 
 #: Legacy push_screen() names that must keep working.
 ALIASES: dict[str, str] = {"dashboard": "soma", "infuse": "nucleus"}

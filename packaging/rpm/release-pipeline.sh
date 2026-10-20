@@ -6,6 +6,13 @@
 #   packaging/rpm/release-pipeline.sh v0.15.0 --no-client   # skip the client check
 #   packaging/rpm/release-pipeline.sh v0.15.0 --dry-run     # say what would happen
 #   packaging/rpm/release-pipeline.sh v0.15.0 --unsigned    # only into a channel with NO key yet
+#   packaging/rpm/release-pipeline.sh v0.15.0 --public     # ... and then the PUBLIC
+#                                        channel: the COPR build from the
+#                                        mirror's tag (release-copr.sh) and the
+#                                        GitHub Release with COPR's packages
+#                                        (release-github.sh).  Needs the promote
+#                                        to have put the tag on the mirror.
+#                                        20261004-public-release-channels, Phase 4.
 #   packaging/rpm/release-pipeline.sh v0.15.0 --standalone-key   # sign with the
 #                                        plain build-host key instead of OpenBao
 #                                        (packaging/rpm/sign-rpms-standalone.sh;
@@ -36,19 +43,23 @@ shift || true
 DRY_RUN=0
 CHECK_CLIENT=1
 SIGN=1
+PUBLIC=0
 SIGN_METHOD="${SIGN_METHOD:-openbao}"    # openbao | standalone
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --no-client) CHECK_CLIENT=0 ;;
         --unsigned) SIGN=0 ;;
+        --public) PUBLIC=1 ;;
         --standalone-key) SIGN_METHOD=standalone ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
     esac
 done
 
-BUILD_HOST="${BUILD_HOST:-lighthouse}"
-BUILD_ROOT="${BUILD_ROOT:-/git/ml/agentic}"
+# The dedicated build host (20261004-public-release-channels, Phase 3; the
+# acc-build-host role under packaging/build-host/). lighthouse builds nothing.
+BUILD_HOST="${BUILD_HOST:-acc-build}"
+BUILD_ROOT="${BUILD_ROOT:-/srv/acc-build}"
 VERIFY_HOST="${VERIFY_HOST:-acc1}"
 PIP_CACHE="${PIP_CACHE:-$BUILD_ROOT/pip-cache}"
 TMPDIR_REMOTE="${TMPDIR_REMOTE:-$BUILD_ROOT/tmp}"
@@ -62,7 +73,7 @@ run() {
 
 # --------------------------------------------------------------- 0. the tag
 if [[ -z "$TAG" ]]; then
-    echo "usage: $0 <tag> [--no-client] [--dry-run]" >&2
+    echo "usage: $0 <tag> [--no-client] [--dry-run] [--public] [--unsigned] [--standalone-key]" >&2
     echo "   e.g. $0 v0.15.0" >&2
     exit 2
 fi
@@ -250,6 +261,24 @@ else
     echo "   the channel now carries a package no host has been upgraded from."
 fi
 
-say "done"
+say "the Satellite channel is done"
 echo "acc $VERSION-$RELEASE_N is in the channel:"
 echo "  https://$SAT_HOST.ic3net.internal/pulp/content/ic3net_internal/Library/custom/ACC/acc-spearhead/"
+
+# ------------------------------------------------------- 7. the public channel
+# Only after the Satellite channel is proven: a public build of a release the
+# lab's own client could not run is not a release.  The two scripts carry
+# their own dry-run, so a dry run narrates all three legs.
+if [[ $PUBLIC == 1 ]]; then
+    pub_args=()
+    [[ $DRY_RUN == 1 ]] && pub_args+=(--dry-run)
+    say "public channel: COPR from the mirror's tag"
+    bash "$HERE/release-copr.sh" "$TAG" "${pub_args[@]}"
+    say "public channel: the GitHub Release"
+    bash "$HERE/release-github.sh" "$TAG" "${pub_args[@]}"
+else
+    say "done"
+    echo "The public channel is a separate leg: $0 $TAG --public"
+    echo "(after acc-promote has put $TAG on the mirror), or the two scripts on their own:"
+    echo "  packaging/rpm/release-copr.sh $TAG && packaging/rpm/release-github.sh $TAG"
+fi

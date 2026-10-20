@@ -9,7 +9,7 @@
 # regulatory_layer/category_a/kernel_events.rego (K-001/K-002).
 
 - macro: acc_agent_pod
-  condition: (k8s.pod.label.acc.redhat.io/agent-role exists)
+  condition: (k8s.pod.label.acc.ic3networks.com/agent-role exists)
 
 # K-001 — exec of a binary outside the ACC agent image's known paths.
 - rule: ACC agent unexpected exec

@@ -24,7 +24,7 @@ the `acc` namespace, wrapped in an ArgoCD `Application`.
 
 | Sub-task | Status |
 |---|---|
-| API types (`acc.redhat.io/v1alpha1/AccPackageInstall`, `AccCatalog`) | Shipped |
+| API types (`acc.ic3networks.com/v1alpha1/AccPackageInstall`, `AccCatalog`) | Shipped |
 | DeepCopy + scheme registration | Shipped (hand-written; replace on next `make generate`) |
 | Sample ArgoCD `Application` + CR manifests | Shipped (this folder) |
 | Reconcilers under `operator/internal/controller/` | **Deferred** — Stage 1.6b. The exec-into-pod logic + leader election + status patching is multi-day Go work; ships separately so the API surface lands now for downstream tools to import |

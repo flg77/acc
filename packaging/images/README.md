@@ -6,6 +6,7 @@ Two pipelines, both taking a **release tag** and neither pushing anything.
 |---|---|---|
 | `build-images.sh <tag>` | every component image, from the source at that tag | the components each carry a hand-picked dependency surface |
 | `build-agent-rpm.sh <tag>` | `acc-agent-core` from the **released RPM** in the channel | one provenance chain for the one component whose weight already matches (IN-11, 2026-09-10) |
+| `build-images.sh <tag> --with-bootc` | `acc-bootc`, the **bootable edge image** (`container/Containerfile.bootc`): the released RPM from the channel in a Fedora bootc base | the edge profile's lifecycle is `bootc upgrade`, not `dnf` (Phase 6 of `20261004-public-release-channels`); needs the package in the channel first, `ACC_BOOTC_REPO_URL=` takes the lab mirror |
 
 ```bash
 packaging/images/build-images.sh v0.17.2                      # the eight code images
@@ -14,7 +15,8 @@ packaging/images/build-images.sh v0.17.2 --with-sidecars --with-infra
 packaging/images/build-images.sh v0.17.2 --dry-run            # say what would happen
 ```
 
-`BUILD_HOST` (default `lighthouse`), `BUILD_ROOT` (`/git/ml/agentic`) and
+`BUILD_HOST` (default `acc-build`, the dedicated build host — Phase 3 of
+`20261004-public-release-channels`, `packaging/build-host/`), `BUILD_ROOT` (`/srv/acc-build`) and
 `ACC_IMAGE_PREFIX` (`quay.io/flg77/acc_images`) select where it builds and how the
 images are named.
 

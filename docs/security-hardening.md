@@ -139,8 +139,8 @@ export ACC_REDIS_PASSWORD=$(openssl rand -hex 32)
 **Files to change:**
 - `acc/config.py` — Add `ACC_NATS_NKEY_SEED` to `_ENV_MAP`
 - `acc/agent.py` — Pass `nkeys_seed=` to `nats.connect()`
-- `operator/internal/reconcilers/infra/nats.go` — Render per-role NKey user config into NATS ConfigMap
-- `operator/internal/reconcilers/collective/agent_deployment.go` — Mount NKey Secret into pods
+- `internal/reconcilers/infra/nats.go` (in `flg77/acc-operator`) — Render per-role NKey user config into NATS ConfigMap
+- `internal/reconcilers/collective/agent_deployment.go` (in `flg77/acc-operator`) — Mount NKey Secret into pods
 
 **Note:** Phase 0c can only be properly scoped now that ACC-9 (cross-collective bridge) has defined the full bridge subject schema (`acc.bridge.{from}.{to}.delegate`, etc.). The permission matrix above includes bridge subjects.
 
@@ -190,12 +190,12 @@ without the default-deny (a safe canary) before `mode: enforce`.
   assurance.
 
 **Files (delivered by proposal 014):**
-- `operator/internal/reconcilers/security/networkpolicy.go` — the sub-reconciler
-- `operator/internal/reconcilers/security/networkpolicy_rules.go` — Tier 1 rule builders
-- `operator/internal/reconcilers/security/fqdn_egress.go` — Tier 2 backends
-- `operator/internal/reconcilers/security/l7_policy.go` — Tier 3 Cilium L7
-- `operator/internal/util/discovery.go` — Cilium / OVN capability detection
-- `operator/api/v1alpha1/agentcorpus_types.go` — `NetworkPolicySpec`
+- `internal/reconcilers/security/networkpolicy.go` (in `flg77/acc-operator`) — the sub-reconciler
+- `internal/reconcilers/security/networkpolicy_rules.go` (in `flg77/acc-operator`) — Tier 1 rule builders
+- `internal/reconcilers/security/fqdn_egress.go` (in `flg77/acc-operator`) — Tier 2 backends
+- `internal/reconcilers/security/l7_policy.go` (in `flg77/acc-operator`) — Tier 3 Cilium L7
+- `internal/util/discovery.go` (in `flg77/acc-operator`) — Cilium / OVN capability detection
+- `api/v1alpha1/agentcorpus_types.go` (in `flg77/acc-operator`) — `NetworkPolicySpec`
 
 ---
 
@@ -217,7 +217,7 @@ Example: `spiffe://acc.corp/acc/my-corpus/sol-01/analyst/9c1d`
 - Registration entries: one per `(namespace, serviceAccountName, podLabel)` tuple
 - SVIDs rotate automatically (default 1-hour TTL)
 
-**Stable `agent_id`:** The operator stamps `acc.redhat.io/agent-id: {role}-{4-char-hex}` on each agent Deployment. Agents read `ACC_AGENT_ID` from a `fieldRef` label injection. This gives stable identity across pod restarts — a breaking change from the current random UUID.
+**Stable `agent_id`:** The operator stamps `acc.ic3networks.com/agent-id: {role}-{4-char-hex}` on each agent Deployment. Agents read `ACC_AGENT_ID` from a `fieldRef` label injection. This gives stable identity across pod restarts — a breaking change from the current random UUID.
 
 **NATS TLS with SVID:**
 ```
@@ -234,10 +234,10 @@ tls {
 - Adds per-role ACL (`requirepass` stays on port 6379 for backward compat)
 
 **Files to create:**
-- `operator/internal/reconcilers/security/spire.go` — Creates `SpiffeID` CRs or calls SPIRE Server API
-- `operator/internal/reconcilers/infra/nats.go` — TLS config generation (extend existing file)
-- `operator/internal/reconcilers/infra/redis.go` — TLS config + port 6380 (extend existing file)
-- `operator/internal/reconcilers/collective/agent_deployment.go` — `spiffe-helper` sidecar injection
+- `internal/reconcilers/security/spire.go` (in `flg77/acc-operator`) — Creates `SpiffeID` CRs or calls SPIRE Server API
+- `internal/reconcilers/infra/nats.go` (in `flg77/acc-operator`) — TLS config generation (extend existing file)
+- `internal/reconcilers/infra/redis.go` (in `flg77/acc-operator`) — TLS config + port 6380 (extend existing file)
+- `internal/reconcilers/collective/agent_deployment.go` (in `flg77/acc-operator`) — `spiffe-helper` sidecar injection
 - `acc/agent.py` — Read stable `ACC_AGENT_ID`; mTLS NATS connect
 
 **Prerequisite:** SPIRE Server + DaemonSet installed. The operator detects via `spire.spiffe.io/v1alpha1` API group. If absent, `SpireReady=False` condition is set; operator falls back to NKeys only (Phase 0c).

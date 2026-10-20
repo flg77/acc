@@ -1,9 +1,9 @@
 """The agent's RoleStore resolves roles from ``ACC_ROLES_ROOT``.
 
 On the operator path the roles tree is delivered as ConfigMaps at
-``/etc/acc/roles`` and ``ACC_ROLES_ROOT`` points there; the agent image has no
-``/app/roles``.  ``RoleStore`` used to be built with its cwd-relative default
-(``roles``), so every role not served by an installed pack — the CONTROL roles
+``/etc/acc/roles`` and ``ACC_ROLES_ROOT`` points there; the agent image had no
+``/app/roles`` until D-033 baked one, and the env var still wins over it.
+``RoleStore`` used to be built with its cwd-relative default (``roles``), so every role not served by an installed pack — the CONTROL roles
 included — fell back to the generic default and booted DORMANT forever
 (found on bb3, 2026-09-27, PB-13 Part D).  The rest of the agent already
 resolves ``ACC_ROLES_ROOT`` via ``resolve_manifest_root``; RoleStore must too.

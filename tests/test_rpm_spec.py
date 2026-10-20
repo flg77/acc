@@ -193,3 +193,55 @@ def test_the_image_pipeline_verifies_what_it_built():
     assert "--user 12345:0" in script                       # an arbitrary UID
     assert "import acc.agent" in script                     # it actually imports
     assert "podman push" in script and "yours" in script     # the push stays operator-only
+
+
+# ---------------------------------------------------------------------------
+# the SRPM is self-contained: COPR and mock rebuild it with no --define
+# (20261004-public-release-channels, Phase 1)
+# ---------------------------------------------------------------------------
+
+def test_the_spec_carries_its_version_and_build_sh_pins_it():
+    """rpmbuild's --define does not survive into an SRPM.  The version globals
+    live in a marked block of the spec; build.sh rewrites that block in the
+    copy it puts in the SRPM; an unpinned spec can never look like a release."""
+    spec = _read("acc.spec"); build = _read("build.sh")
+    block = spec[spec.index("## acc-version-begin"):spec.index("## acc-version-end")]
+    for macro in ("acc_version", "acc_wheel_version", "acc_release"):
+        assert f"%{{!?{macro}: %global {macro} " in block, macro
+    assert "%global acc_release 0.unpinned}" in block            # sorts below every release
+    assert "%global acc_version 0.0.0}" in block
+    for macro in ("acc_version", "acc_wheel_version", "acc_release"):
+        assert f"pin {macro} " in build, macro
+        assert f'--define "{macro} ' not in build, f"{macro} must be pinned into the spec, not passed"
+    assert "--srpm-only" in build and "rpmbuild -bs" in build
+
+
+def test_the_spec_picks_its_interpreter_where_it_is_built():
+    """RHEL 9 needs python3.12 from AppStream; RHEL 10 and Fedora ship 3.12+
+    as python3.  The choice is made from %{?rhel} in the chroot that builds,
+    and the venv's pythonX.Y is read inside %install -- never by a parse-time
+    %(...) that would run before the BuildRequires are installed."""
+    spec = _read("acc.spec")
+    assert "%if 0%{?rhel} == 9" in spec
+    assert "%{!?acc_python: %global acc_python python3.12}" in spec
+    assert "%{!?acc_python_pkg: %global acc_python_pkg python3.12}" in spec
+    assert "%{!?acc_python: %global acc_python python3}" in spec
+    assert "acc_pyver" not in spec
+    assert not re.search(r"%global \w+ %\(", spec), "no parse-time shell expansion in the spec"
+    assert 'PYVER="$(%{acc_python} -c' in spec
+    assert spec.count("python$PYVER") >= 5
+    assert "BuildRequires:  gcc" in spec and "BuildRequires:  %{acc_python_pkg}-devel" in spec
+
+
+def test_the_copr_makefile_drives_the_same_srpm_path():
+    makefile = (ROOT / ".copr" / "Makefile").read_text(encoding="utf-8")
+    assert re.search(r"^srpm:", makefile, re.M)
+    assert "packaging/rpm/build.sh --srpm-only --outdir" in makefile
+    assert '"$(outdir)"' in makefile                             # COPR passes outdir=
+    assert "enable-net" in makefile                              # the network constraint is stated
+    matrix = _read("mock-matrix.sh")
+    assert "--enable-network" in matrix and "--forcearch" in matrix
+    assert "rhel+epel-9-aarch64" in matrix                        # the edge profile's ARM targets
+    readme = _read("README.md")
+    assert "dnf copr enable" in readme and ".copr/Makefile" in readme
+    assert "--enable-net on" in readme

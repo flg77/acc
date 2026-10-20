@@ -117,31 +117,21 @@ def forget_person(
     k: int = QUORUM_DEFAULT,
     dry_run: bool = False,
     hub_collective_id: str = "",
+    operator: str = "",
 ) -> ForgetReport:
     """Erase *person*'s episodes and reconcile the notes drawn from them.
 
     *hub_collective_id*: the hub this collective publishes into
     (`20260906-enterprise-brain-hub-scope`); a demoted or deleted note is
     pulled from the hub's enterprise tier too.
+
+    *operator*: who ran the erasure, recorded as the ledger row's approver.
     """
     who = person_of(person)
     report = ForgetReport(person=who)
     if not who:
         report.unsupported = "no person given"
         return report
-    if not dry_run:
-        # `20260923-lessons-that-travel` Phase 2 -- erasure is a refinement
-        # too (the one that cannot be rolled back; the ledger says so).
-        try:
-            from acc import refinements  # noqa: PLC0415
-            refinements.record(
-                "forget", redis_client=redis_client, collective_id=collective_id,
-                trigger="memory forget --apply",
-                target={"store": "memory_notes", "id": who},
-            )
-        except Exception:  # noqa: BLE001
-            pass
-
     missing = [name for name in _REQUIRED if not hasattr(vector, name)]
     if missing:
         report.unsupported = (
@@ -183,7 +173,48 @@ def forget_person(
         report.notes_demoted, report.notes_rebuilt,
         " (dry run)" if dry_run else "",
     )
+    if not dry_run:
+        _record_forget(report, redis_client, collective_id, operator)
     return report
+
+
+def _record_forget(
+    report: ForgetReport, redis_client: Any, collective_id: str, operator: str = "",
+) -> None:
+    """The ledger row for an erasure -- written after the work, from what it
+    did (`20260923-lessons-that-travel` Phase 2; RDF-03 Phase 2a).
+
+    Before, the row was written first and named only the person, so an
+    erasure the backend could not perform was recorded as done and a done
+    one did not say what it touched.  The note ids are the reconciliation
+    the rest of the lineage needs; nothing else about the remaining people
+    is copied into the ledger.
+    """
+    by_event: dict[str, list[str]] = {}
+    for event in report.journal:
+        note_id = str(event.get("note_id") or "")
+        if note_id:
+            by_event.setdefault(str(event.get("event")), []).append(note_id)
+    try:
+        from acc import refinements  # noqa: PLC0415
+        refinements.record(
+            "forget", redis_client=redis_client, collective_id=collective_id,
+            trigger="memory forget --apply",
+            evidence={
+                "episodes_removed": report.episodes_removed,
+                "notes_deleted": by_event.get("note_deleted", []),
+                "notes_demoted": by_event.get("note_demoted", []),
+                "notes_rebuilt": by_event.get("note_rebuilt", []),
+                "unpublished_from": list(report.unpublished_from),
+            },
+            target={"store": "memory_notes", "id": report.person},
+            # Who ran it (`20260928-rdf-provenance-and-memory-views`): an
+            # erasure is irreversible, so the row names the operator who
+            # decided it, as every other ledger change does.
+            approver=operator,
+        )
+    except Exception:  # noqa: BLE001
+        logger.debug("memory_forget: ledger write failed", exc_info=True)
 
 
 def _reconcile_note(

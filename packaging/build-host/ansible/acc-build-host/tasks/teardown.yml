@@ -1,0 +1,56 @@
+---
+# teardown — DELETE. Guarded: confirm=YES. Default: stop lingering and remove the
+# work trees, keep the user, the pip cache and the KEY. wipe_data removes the user
+# and its home too — and refuses while the keyring holds a secret key unless
+# wipe_key=YES, because a channel whose key is gone can never be signed for again.
+
+- name: Teardown — refuse without confirm=YES
+  ansible.builtin.assert:
+    that: confirm | default('') == 'YES'
+    fail_msg: "Refusing — re-run with -e confirm=YES"
+
+- name: Teardown — does the keyring hold a secret key?
+  ansible.builtin.command: "gpg --homedir {{ acc_build_host_gnupghome }} --batch --list-secret-keys --with-colons"
+  register: _acc_build_host_secret
+  changed_when: false
+  failed_when: false
+  become: true
+  become_user: "{{ acc_build_host_user }}"
+
+- name: Teardown — refuse to wipe a host that still holds the signing key
+  ansible.builtin.assert:
+    that:
+      - not (wipe_data | bool) or ('sec:' not in _acc_build_host_secret.stdout) or (wipe_key | default('') == 'YES')
+    fail_msg: >-
+      {{ acc_build_host_gnupghome }} holds a secret key. Move it first
+      (packaging/build-host/HOWTO.md §3), or say -e wipe_key=YES to destroy it
+      knowingly — every host that trusts the channel will then need a new key.
+
+- name: Teardown — stop lingering
+  ansible.builtin.command: "loginctl disable-linger {{ acc_build_host_user }}"
+  args:
+    removes: "/var/lib/systemd/linger/{{ acc_build_host_user }}"
+
+- name: Teardown — the work trees (never the pip cache, never the key)
+  ansible.builtin.shell: |
+    set -e
+    shopt -s nullglob
+    rm -rf {{ acc_build_host_build_root }}/acc-rpm-* {{ acc_build_host_build_root }}/acc-images-* {{ acc_build_host_build_root }}/acc-image-* {{ acc_build_host_build_root }}/tmp/*
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: Teardown — the user and its home (wipe_data)
+  ansible.builtin.user:
+    name: "{{ acc_build_host_user }}"
+    state: absent
+    remove: true
+  when: wipe_data | bool
+
+- name: Teardown — the sub-id lines (wipe_data)
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    regexp: "^{{ acc_build_host_user }}:"
+    state: absent
+  loop: [/etc/subuid, /etc/subgid]
+  when: wipe_data | bool

@@ -1,0 +1,27 @@
+---
+galaxy_info:
+  role_name: acc_build_host
+  namespace: ic3net
+  author: flg
+  description: >-
+    The dedicated ACC release build host: mock chroots (x86_64 and aarch64 under
+    qemu), rootless podman, the build user, the channel signing keyring and the
+    operator's ssh access — CRUD + verify, runnable from the ansible CLI or as AAP
+    Controller Job Templates. 20261004-public-release-channels, Phase 3.
+  company: nomiras
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: EL
+      versions:
+        - "9"
+        - "10"
+  galaxy_tags:
+    - acc
+    - rpm
+    - mock
+    - build
+    - day2
+
+# No external role or collection dependencies — the role uses only ansible.builtin.
+dependencies: []

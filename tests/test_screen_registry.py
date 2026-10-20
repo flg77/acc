@@ -107,7 +107,7 @@ def test_operator_strip_is_unchanged():
         "1 Soma", "2 Nucleus", "3 Compliance", "4 Comms", "5 Performance",
         "6 Ecosystem", "7 Prompt", "8 Configuration", "9 Diagnostics",
     ]
-    assert [s.label for s in registry.overflow_specs()] == ["Marketplace", "Catalogs", "Board"]
+    assert [s.label for s in registry.overflow_specs()] == ["Marketplace", "Catalogs", "Board", "Memory"]
 
 
 @pytest.mark.asyncio

@@ -71,3 +71,15 @@ def test_checker_flags_unregistered_model(checker, tmp_path):
     )
     findings = checker._validate(tmp_path)
     assert any("gpt-9-imaginary" in e for e in findings.errors)
+
+
+@pytest.mark.parametrize("model_id", ["maas-diffusiongemma", "maas-minimax-m27"])
+def test_checker_accepts_rhoai_maas_models(checker, tmp_path, model_id):
+    """Backlog 019 A6: a collective naming an RHOAI MaaS registry entry checks clean."""
+    ok = tmp_path / "collective.maas.yaml"
+    ok.write_text(
+        f"collective_id: maas\nagents:\n  - role: assistant\n    model: {model_id}\n",
+        encoding="utf-8",
+    )
+    findings = checker._validate(tmp_path)
+    assert not findings.errors, findings.errors

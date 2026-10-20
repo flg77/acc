@@ -14,7 +14,7 @@ metadata:
   name: acc-agent-execve
 spec:
   # Trace process execution.  The bridge filters to ACC agent pods by
-  # the acc.redhat.io/agent-role label; kernel_events.rego K-001 then
+  # the acc.ic3networks.com/agent-role label; kernel_events.rego K-001 then
   # flags binaries outside the agent image's known paths.
   kprobes:
     - call: "sys_execve"

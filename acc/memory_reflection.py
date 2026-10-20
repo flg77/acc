@@ -346,6 +346,7 @@ def persist_notes(notes: list[MemoryNote], vector: Any) -> int:
         "scope": n.scope,
         "tier": n.tier,
         "dissent": n.dissent,
+        "ceiling": n.ceiling,
         "source_count": int(n.source_count),
         "confidence": float(n.confidence),
         "embedding": n.embedding or [0.0] * 384,
@@ -391,6 +392,9 @@ def write_hot_cache(
             "source_requesters": list(n.source_requesters),
             "ceiling": n.ceiling or "CRITICAL", "scope": n.scope,
             "dissent": n.dissent,
+            # RDF-03 Phase 2a: the episodes the note rests on, so a proposal
+            # built from the cache (`acc-cli memory propose`) still names them.
+            "source_ids": list(n.source_ids),
         } for n in in_scope[:top_n]])
         try:
             redis_client.set(key, payload)
@@ -497,6 +501,7 @@ def publish_note(
     ceiling: str = "",
     source_requesters: list[str] | None = None,
     note_id: str = "",
+    source_ids: list[str] | None = None,
     ttl_s: int = 21600,
 ) -> bool:
     """Make one note readable in *destination*.
@@ -527,6 +532,10 @@ def publish_note(
         entry["source_requesters"] = [str(r) for r in source_requesters]
     if note_id:
         entry["note_id"] = str(note_id)
+    # RDF-03 Phase 2a: the episode lineage survives publication, so the
+    # curator's hub proposal names the episodes too, not ``[]``.
+    if source_ids:
+        entry["source_ids"] = [str(i) for i in source_ids]
     try:
         redis_client.set(key, json.dumps([*existing, entry]))
         redis_client.expire(key, ttl_s)

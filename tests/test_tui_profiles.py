@@ -51,7 +51,7 @@ def test_operator_profile_is_the_whole_console():
         "soma", "nucleus", "compliance", "comms", "performance",
         "ecosystem", "prompt", "configuration", "diagnostics",
     ]
-    assert [s.name for s in hidden_specs(PROFILE_OPERATOR)] == ["marketplace", "catalogs", "board"]
+    assert [s.name for s in hidden_specs(PROFILE_OPERATOR)] == ["marketplace", "catalogs", "board", "memory"]
     assert start_screen(PROFILE_OPERATOR) == "soma"
 
 
@@ -59,7 +59,7 @@ def test_user_profile_is_prompt_and_compliance():
     assert [s.name for s in strip_specs(PROFILE_USER)] == ["compliance", "prompt"]
     hidden = [s.name for s in hidden_specs(PROFILE_USER)]
     assert "soma" in hidden and "marketplace" in hidden and "prompt" not in hidden
-    assert len(hidden) == 10   # 9 operator screens + the keyless Board
+    assert len(hidden) == 11   # 9 operator screens + the keyless Board and Memory
     assert start_screen(PROFILE_USER) == "prompt"
 
 
@@ -105,7 +105,7 @@ async def test_user_profile_strip_and_start_screen(monkeypatch):
         assert isinstance(app.screen, PromptScreen)              # opens on Prompt
         bar = app.screen.query_one(NavigationBar)
         labels = [str(b.label) for b in bar.query(Button)]
-        assert labels == ["3 Compliance", "7 Prompt", "Board"]
+        assert labels == ["3 Compliance", "7 Prompt", "Board", "Memory"]
         # Every other screen is one chord away: the leader lists them...
         entries = dict(app.screen._leader_entries())
         assert "Go to Soma" in entries.values()
@@ -134,10 +134,10 @@ async def test_operator_profile_is_unchanged(monkeypatch):
         assert labels == [
             "1 Soma", "2 Nucleus", "3 Compliance", "4 Comms", "5 Performance",
             "6 Ecosystem", "7 Prompt", "8 Configuration", "9 Diagnostics",
-            "Marketplace", "Catalogs", "Board",
+            "Marketplace", "Catalogs", "Board", "Memory",
         ]
         digits = [k for k, _ in app.screen._leader_entries() if k.isdigit()]
-        assert digits == ["0", "1", "2"]                         # Marketplace, Catalogs, Board
+        assert digits == ["0", "1", "2", "3"]                    # Marketplace, Catalogs, Board, Memory
 
 
 def test_cli_flag_sets_the_env(monkeypatch):

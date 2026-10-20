@@ -1,0 +1,83 @@
+# skills/ocp_model_control/skill.yaml — stop / start a served model on OpenShift AI.
+#
+# Backlog 019 A5: the one ACTING capability of the GPU capacity advisor.
+# system_access: true -> every call goes to the HumanOversightQueue in every
+# operating mode but PLAN (where nothing dispatches). The namespace allowlist
+# lives in the deployment, not in the model's arguments, and the service
+# account should hold a namespaced Role only.
+
+purpose:        "Stop or start a KServe LLMInferenceService / InferenceService (serving.kserve.io/stop) in an allowed namespace."
+version:        "0.1.0"
+adapter_class:  "OcpModelControlSkill"
+risk_level:     "HIGH"
+system_access:  true
+# Every call is decided by a human; with no oversight queue the dispatcher
+# refuses it rather than letting it run ungated.
+requires_oversight: true
+requires_actions:
+  - "control_model_serving"
+domain_id:      "platform_operations"
+tags:           ["openshift", "kserve", "rhoai", "llm-d", "capacity", "advisor"]
+# The decision panel runs this first: a server-side dry run (dryRun=All) that
+# proves the object exists and RBAC allows the patch, and changes nothing.
+preview_args:
+  dry_run: true
+
+input_schema:
+  type: object
+  properties:
+    action:
+      type: string
+      enum: [stop, start]
+    namespace:
+      type: string
+      pattern: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+      maxLength: 63
+    name:
+      type: string
+      pattern: "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+      maxLength: 253
+    kind:
+      type: string
+      enum: [LLMInferenceService, InferenceService]
+    reason:
+      type: string
+      minLength: 1
+      maxLength: 500
+      description: "Why — recorded on the object as an annotation and shown to the approver."
+    dry_run:
+      type: boolean
+  required: [action, namespace, name, reason]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    action: { type: string }
+    kind: { type: string }
+    namespace: { type: string }
+    name: { type: string }
+    dry_run: { type: boolean }
+    stopped: { type: boolean }
+  required: [action, kind, namespace, name, dry_run, stopped]
+
+description: |
+  Merge-patches the serving.kserve.io/stop annotation ("true" to stop, "false"
+  to start) on the named object through the Kubernetes API, with the pod's
+  service-account token, and records the reason in
+  acc.ic3networks.com/model-control-reason. Configure:
+
+    ACC_OCP_CONTROL_NAMESPACES  REQUIRED, comma-separated allowlist; empty or
+                                unset refuses every call (fail-closed)
+    ACC_KUBERNETES_API_URL      optional; default the in-cluster API Service
+    ACC_KUBERNETES_TOKEN        optional; default the pod's service-account token
+    ACC_KUBERNETES_CA_FILE      optional; default the in-cluster CA
+
+  Grant the service account a Role (not a ClusterRole) in each allowed
+  namespace: get + patch on llminferenceservices / inferenceservices in
+  serving.kserve.io. See docs/howto-gpu-capacity-advisor.md.
+
+  Gate: requires_oversight + system_access -> asked in AUTO, ACCEPT_EDITS and
+  ASK_PERMISSIONS; in PLAN nothing dispatches; with no oversight queue the
+  call is refused. HIGH + requires_actions control_model_serving: a role must
+  grant both, or the call is escalated as a question.

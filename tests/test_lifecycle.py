@@ -269,7 +269,7 @@ def test_cluster_pause_remembers_the_count_and_resume_restores_it():
     p = plan_cluster(_req("pause"), cr, {})
     assert {"op": "replace", "path": "/spec/agents/0/replicas", "value": 0} in p.patch
     ann = [o for o in p.patch if o["path"].startswith("/metadata/annotations")][0]
-    assert ann["path"] == "/metadata/annotations/acc.redhat.io~1paused-replicas"
+    assert ann["path"] == "/metadata/annotations/acc.ic3networks.com~1paused-replicas"
     assert json.loads(ann["value"]) == {"devops_engineer": 2}
     paused_cr = _cr([{"role": "devops_engineer", "replicas": 0}],
                     annotations={PAUSED_ANNOTATION: ann["value"]})

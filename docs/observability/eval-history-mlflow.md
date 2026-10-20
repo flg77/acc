@@ -69,7 +69,7 @@ The operator's OTel collector already supports an MLflow `/v1/traces` fan-out â€
 set it on the AgentCorpus:
 
 ```yaml
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AgentCorpus
 metadata:
   name: my-corpus

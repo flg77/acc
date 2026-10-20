@@ -3,7 +3,7 @@
 #
 #   packaging/images/build-agent-rpm.sh v0.15.0
 #   packaging/images/build-agent-rpm.sh v0.15.0 --dry-run
-#   ACC_REPO_URL=<baseurl> BUILD_HOST=lighthouse packaging/images/build-agent-rpm.sh v0.15.0
+#   ACC_REPO_URL=<baseurl> BUILD_HOST=acc-build packaging/images/build-agent-rpm.sh v0.15.0
 #
 # ONE image is built this way, on purpose.  The RPM vendors a single dependency
 # set; the other images each carry a hand-picked one -- the web GUI installs ten
@@ -33,8 +33,8 @@ for arg in "$@"; do
     esac
 done
 
-BUILD_HOST="${BUILD_HOST:-lighthouse}"
-BUILD_ROOT="${BUILD_ROOT:-/git/ml/agentic}"
+BUILD_HOST="${BUILD_HOST:-acc-build}"          # the dedicated build host (Phase 3)
+BUILD_ROOT="${BUILD_ROOT:-/srv/acc-build}"
 ACC_REPO_URL="${ACC_REPO_URL:-http://rpm.ic3net.internal:8080/acc-spearhead/}"
 IMAGE_PREFIX="${ACC_IMAGE_PREFIX:-quay.io/flg77/acc_images}"
 

@@ -97,6 +97,8 @@ def _build_parser() -> argparse.ArgumentParser:
         trace_cmd,
         memory_cmd,
         lessons_cmd,
+        kg_cmd,
+        rdf_cmd,
         refine_cmd,
         msg_cmd,
         workspace_cmd,
@@ -131,6 +133,8 @@ def _build_parser() -> argparse.ArgumentParser:
     trace_cmd.register(sub)
     memory_cmd.register(sub)
     lessons_cmd.register(sub)
+    kg_cmd.register(sub)
+    rdf_cmd.register(sub)
     refine_cmd.register(sub)
     msg_cmd.register(sub)
     sessions_cmd.register(sub)

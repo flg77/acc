@@ -103,16 +103,16 @@ metadata:
   namespace: openshift-marketplace
 spec:
   sourceType: grpc
-  image: quay.io/<your-org>/acc-operator-bundle:0.2.0
+  image: quay.io/<your-org>/acc-operator-index:0.3.0
   displayName: "ACC Operator"
-  publisher: "Red Hat AI Dev"
+  publisher: "Agentic Cell Corpus (community)"
 EOF
 
-# Install via OperatorHub UI or:
-kubectl apply -f operator/bundle/manifests/acc-operator.subscription.yaml
+# Install via the OperatorHub UI, or with an OperatorGroup + Subscription against this CatalogSource
+# (see the operator's docs/install.md, method C).
 ```
 
-See [`docs/operator-install-local.md`](operator-install-local.md) for all three installation methods.
+See [`docs/operator.md`](operator.md): the operator and its install guide live in `flg77/acc-operator`.
 
 ---
 
@@ -341,7 +341,7 @@ status:
 ### Check agent pods
 
 ```bash
-kubectl get pods -n acc-system -l acc.redhat.io/collective-id=sol-prod-01
+kubectl get pods -n acc-system -l acc.ic3networks.com/collective-id=sol-prod-01
 # NAME                                    READY   STATUS    RESTARTS
 # sol-prod-01-ingester-<hash>              1/1     Running   0
 # sol-prod-01-analyst-<hash>              1/1     Running   0
@@ -384,7 +384,7 @@ With `upgradePolicy.requireApproval: true`, the operator pauses before upgrading
 
 ```bash
 kubectl annotate agentcorpus my-corpus -n acc-system \
-  acc.redhat.io/approve-upgrade=0.2.1
+  acc.ic3networks.com/approve-upgrade=0.2.1
 ```
 
 ### OLM Automatic Upgrades
@@ -408,7 +408,7 @@ metadata:
 spec:
   type: LoadBalancer
   selector:
-    acc.redhat.io/component: nats
+    acc.ic3networks.com/component: nats
   ports:
     - name: leaf
       port: 7422
@@ -419,7 +419,7 @@ spec:
 
 ## See Also
 
-- [`docs/operator-install-local.md`](operator-install-local.md) — Detailed operator installation (Kustomize, OLM, CatalogSource)
+- [`docs/operator.md`](operator.md) — The operator moved to `flg77/acc-operator`; its install guide is there
 - [`docs/IMPLEMENTATION_SPEC_v0.2.0.md`](IMPLEMENTATION_SPEC_v0.2.0.md) — RHOAI integration design document
 - [`docs/howto-role-infusion.md`](howto-role-infusion.md) — Configuring agent roles and behaviour
 - [`docs/howto-edge.md`](howto-edge.md) — Connecting edge nodes to this datacenter hub

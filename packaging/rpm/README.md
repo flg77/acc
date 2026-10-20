@@ -64,7 +64,149 @@ https://sat1.ic3net.internal/pulp/content/ic3net_internal/Library/custom/ACC/acc
 Clients consume it through a `.repo` file pointing at that URL; the script prints
 one.
 
-## Signing — every package, with its channel's key
+## COPR — the public channel, built from the mirror's tag
+
+`20261004-public-release-channels`, Phase 1. COPR is the builder for the public
+channel: it clones the public mirror at a release tag, makes the SRPM with
+`.copr/Makefile`, and rebuilds that SRPM in every chroot the project serves —
+`epel-9`, `epel-10`, `fedora-42`, `fedora-43`, each for `x86_64` **and
+`aarch64`** (the edge profile's ARM boards, which lighthouse cannot build for).
+COPR signs with its own per-project key, so a client needs nothing but:
+
+```bash
+sudo dnf copr enable flg77/acc
+sudo dnf install acc
+sudo dnf upgrade acc            # every later release
+```
+
+### What makes the SRPM rebuildable anywhere
+
+An SRPM is rebuilt with **no `--define`** on the command line, by COPR and by
+mock alike, so nothing the build host knew may be needed:
+
+- **The version is in the spec.** `build.sh` rewrites the
+  `## acc-version-begin … end` block of the spec copy it puts in the SRPM,
+  pinning `acc_version`, `acc_wheel_version` and `acc_release` from
+  `version.py`. The defaults in the committed spec are `0.0.0-0.unpinned`,
+  which sorts below everything: an unpinned spec cannot impersonate a release.
+- **The interpreter is chosen where the package is built.** `%if 0%{?rhel} == 9`
+  selects `python3.12`; RHEL 10 and Fedora use `python3`. The venv's
+  `pythonX.Y` is read inside `%install`, never by a parse-time `%(...)` — the
+  spec is parsed before its BuildRequires are installed, and on a fresh chroot
+  the interpreter is not there yet.
+- **A tree that is not the tagged commit builds a snapshot** (`0.<stamp>.g<sha>`),
+  as on the build host. A COPR clone that has lost its tags therefore produces
+  a package that sorts below the release, not one that pretends to be it.
+
+```bash
+packaging/rpm/build.sh --srpm-only --outdir dist/srpm   # the SRPM, pinned
+make -f .copr/Makefile srpm outdir=dist/srpm             # the same, as COPR calls it
+packaging/rpm/mock-matrix.sh                             # rebuild it in every chroot
+CHROOTS="rhel+epel-9-x86_64" packaging/rpm/mock-matrix.sh dist/srpm/acc-*.src.rpm
+```
+
+`mock-matrix.sh` ends every row with the checks `release-pipeline.sh` runs on
+the build host's output (no CUDA, the two-package layout, the runtime
+requirement). The aarch64 rows run under `qemu-user-static` on an x86_64 host:
+slow, but unattended.
+
+### Network during the build — the trade-off taken
+
+`%install` builds the venv with `pip` from PyPI and the PyTorch CPU index, and a
+COPR builder has no network by default. Two ways out:
+
+| | network-enabled project | vendored wheels in the SRPM |
+|---|---|---|
+| how | `copr-cli modify flg77/acc --enable-net on`; `mock --enable-network` | `pip download` into a `Source1` tarball; `pip install --no-index` |
+| reproducible from the SRPM alone | no — the same property the Satellite package has today | yes |
+| cost | none | ~1 GB of source per release, one wheel set per architecture |
+
+**Phase 1 takes the first.** The second is the recorded follow-up if COPR ever
+restricts network builds or reproducibility becomes a requirement; nothing in
+the spec's layout changes for it, only where the wheels come from.
+
+### Creating the project (operator, Phase 2)
+
+The project is declared in `packaging/rpm/copr-project.sh` — the chroots, the
+network setting, the package's SCM source, how many builds are kept — and
+created or updated from that declaration, so a rebuilt project comes out the
+same and a change is a diff. The API token is the operator's
+(`~/.config/copr`); `status` needs none.
+
+```bash
+packaging/rpm/copr-project.sh status             # what COPR has, from its public API
+packaging/rpm/copr-project.sh create --dry-run    # the copr-cli calls it would make
+packaging/rpm/copr-project.sh create             # the project + the acc package
+packaging/rpm/copr-project.sh update             # an existing project, brought to the file
+packaging/rpm/release-copr.sh v0.27.0            # the first build: a mirror tag carrying .copr/Makefile
+```
+
+The source stays the **mirror**: a spearhead build never reaches a public
+repository, and the mirror's curated commit is what the tag names there.
+
+## The build host — `acc-build`
+
+`20261004-public-release-channels`, Phase 3 (D2). Every script here that
+builds or signs does it over ssh on **`acc-build`** (`BUILD_HOST`), under
+`/srv/acc-build` (`BUILD_ROOT`), as the unprivileged `acc-build` user: a VM
+provisioned by the `acc-build-host` role (`packaging/build-host/ansible/`,
+written for lab-gitops' role standard) with mock chroots for EL9, EL10 and
+Fedora on x86_64 **and aarch64** (under `qemu-user-static`), rootless podman,
+the pip cache, and the keyring the standalone key was **moved** into.
+`packaging/build-host/HOWTO.md` is the runbook: the VM, the role, the key move,
+the proof, and retiring lighthouse — which serves models and builds nothing.
+
+```bash
+ssh acc-build bash -s < packaging/build-host/ansible/acc-build-host/files/verify-build-host.sh
+BUILD_HOST=somewhere-else packaging/rpm/release-pipeline.sh v0.27.0     # another host, same contract
+```
+
+## The release routine — one tag, both channels
+
+`20261004-public-release-channels`, Phase 4. One tag produces the Satellite
+package, the COPR package and the GitHub Release, in this order and for these
+reasons:
+
+| leg | command | what it needs | what it proves |
+|---|---|---|---|
+| 1. spearhead → Satellite | `release-pipeline.sh v<v>` | the tag here, the build host, the channel key | acc1 upgrades from the channel; `rpm -q` and `acc --version` agree |
+| 2. promote | `acc-promote` (operator, outside this repo) | tests green | the curated commit and `v<v>` on the mirror `flg77/acc`, minus the withheld paths |
+| 3. mirror tag → COPR | `release-copr.sh v<v>` | the tag **on the mirror**, `copr-cli` | COPR builds every chroot from the public tree; the build id lands in `dist/copr/<v>.build-id` |
+| 4. COPR build → GitHub Release | `release-github.sh v<v>` | the build id, `gh`, `cosign` | the Release on the mirror carries COPR's SRPM and RPMs, `SHA256SUMS` + a keyless signature, and the CHANGELOG section as its notes |
+
+`release-pipeline.sh v<v> --public` runs legs 1, 3 and 4 in one go; the
+promote stays a deliberate step in between, which is why the script says so
+and stops rather than pushing anything public itself. `--dry-run` narrates all
+three legs.
+
+```bash
+packaging/rpm/release-pipeline.sh v0.27.0 --standalone-key         # leg 1
+acc-promote                                                          # leg 2 (operator)
+packaging/rpm/release-pipeline.sh v0.27.0 --standalone-key --public # legs 1 (again, idempotent), 3, 4
+#   or, after leg 1 has run once:
+packaging/rpm/release-copr.sh v0.27.0 && packaging/rpm/release-github.sh v0.27.0
+```
+
+What ties the public artefacts to the tag:
+
+- **COPR builds the mirror's tag**, not anything from here: `release-copr.sh`
+  refuses to start when the mirror has no such tag.
+- **The Release attaches what COPR built**, fetched from the build's result
+  directories and checked (`rpm -qp` must say the release's version) — never
+  rebuilt locally. A reader can compare the Release's SRPM with COPR's.
+- **The notes are the CHANGELOG section at the tag** (`changelog_notes.py`);
+  a version without a section is refused.
+- **The operator is not here.** It left for `flg77/acc-operator` (OR-11) and
+  releases its own bundle, catalog and install manifests from there.
+- **`SHA256SUMS` is signed keyless** (`cosign sign-blob --bundle`), the
+  mechanism family packs already use; `--no-sign` exists so an unsigned
+  Release is a choice, never an accident. Verify with
+  `cosign verify-blob --bundle SHA256SUMS.sigstore.json --certificate-identity <signer> --certificate-oidc-issuer <issuer> SHA256SUMS`.
+
+Later (4.5): a COPR webhook on the mirror for tag pushes makes leg 3
+automatic; it is deliberately not wired until the routine has run by hand for
+two releases.
+
 
 Each channel has **one** GPG signing key, made once by lab-gitops
 `ansible/satellite-content/playbooks/channels.yml`, which keeps the private half
@@ -77,7 +219,7 @@ The release pipeline signs both packages before it publishes them:
 ```bash
 export BAO_TOKEN=…                                  # never committed, never echoed
 packaging/rpm/release-pipeline.sh v0.16.0           # … verify → SIGN → fetch → publish → prove
-packaging/rpm/sign-rpms.sh ic3net_internal/ACC/acc-spearhead lighthouse:<dir>   # on its own
+packaging/rpm/sign-rpms.sh ic3net_internal/ACC/acc-spearhead acc-build:<dir>    # on its own
 ```
 
 `sign-rpms.sh` reads the key from the vault into memory and pipes it over ssh into
@@ -101,26 +243,28 @@ sudo rpm --import https://sat1.ic3net.internal/katello/api/v2/repositories/<id>/
 Signed repository metadata (`repo_gpgcheck=1`) is not available: `hammer` exposes
 no metadata-signing option for custom yum repositories on this Satellite.
 
-### The standalone key — what actually signs `acc-spearhead` today (2026-09-22)
+### The standalone key — what actually signs `acc-spearhead` today (2026-09-22; moved to `acc-build` in Phase 3)
 
 The OpenBao path above is what `channels.yml` is *built* to do; it was never
 run, because it needs a `BAO_TOKEN` under the `ops` policy and setting that up
 was more than the operator wanted right now. Instead, `ic3net_internal/ACC/acc-spearhead`
 is signed with a **plain key**: generated once with `gpg --gen-key` directly on
-the build host (lighthouse, `GNUPGHOME=/home/flg/.acc-rpm-gpg`, RSA 4096, no
-expiry, UID `ACC Release Signer <hostmaster@ic3net.internal>`), its public half
+the build host of the time (lighthouse, `GNUPGHOME=/home/flg/.acc-rpm-gpg`, RSA 4096, no
+expiry, UID `ACC Release Signer <hostmaster@ic3net.internal>`) and since Phase 3
+**moved, not regenerated**, to `acc-build:/srv/acc-build/.acc-rpm-gpg`
+(`packaging/build-host/HOWTO.md` §3), its public half
 registered as the Satellite content credential `acc-spearhead-signing` (id 7)
 and wired onto the `ACC` product and the `acc-spearhead` repository.
 
 ```bash
 packaging/rpm/release-pipeline.sh v0.22.0 --standalone-key
-packaging/rpm/sign-rpms-standalone.sh lighthouse:<dir>            # on its own
+packaging/rpm/sign-rpms-standalone.sh acc-build:<dir>             # on its own
 ```
 
 **The trade-off, plainly**: `sign-rpms.sh` never lets the private key touch a
 disk and signs inside a network-less container with a tmpfs keyring;
 `sign-rpms-standalone.sh` signs with a key that sits in an ordinary directory
-on lighthouse, protected by filesystem permissions and nothing else. If that
+on the build host, protected by filesystem permissions and nothing else. If that
 stops being enough, `channels.yml` already exists and does the harder version
 — switching needs no code change here, only pointing the Satellite's content
 credential at the OpenBao-held key instead of this one.

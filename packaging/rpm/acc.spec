@@ -16,6 +16,16 @@
 # Build: packaging/rpm/build.sh (builds the wheel, then rpmbuild -ba).
 # The wheel is Source0 -- the RPM packages a release artefact, it does not
 # re-run the Python build.
+#
+# `20261004-public-release-channels` (Phase 1): the SRPM is SELF-CONTAINED.
+# COPR and mock rebuild it in every chroot with no --define on the command
+# line, so the version, the release and the interpreter choice all live in
+# the spec: build.sh pins the three version globals into the spec copy it
+# puts in the SRPM (the `acc-version` block below), and the interpreter is
+# chosen from %%{?rhel} at build time.  %%install reaches PyPI and the PyTorch
+# CPU index, so a COPR project building this needs network enabled
+# (`copr-cli modify --enable-net on`); the vendored-wheels alternative is
+# recorded in packaging/rpm/README.md.
 
 # The standard directories, pinned: a build host may carry decorated macros
 # (lighthouse: _prefix=/app) and this package lives at the FHS places only.
@@ -28,16 +38,34 @@
 %global _sharedstatedir /var/lib
 %global _localstatedir /var
 %global acc_venv /usr/lib/acc/venv
-# The interpreter command and the package that provides it: RHEL 10 and
-# Fedora ship 3.12 as `python3`; RHEL 9 needs the `python3.12` module.
-# Override with --define "acc_python python3.12" --define "acc_python_pkg python3.12".
+# The three version globals.  build.sh REWRITES this block in the spec copy
+# that goes into SOURCES/SPECS, so the SRPM carries its version and needs no
+# --define to rebuild; a --define on the command line still wins.  The
+# defaults here are deliberately not a release: a spec built without being
+# pinned produces `0.0.0-0.unpinned`, which sorts below everything and can
+# never impersonate a release in a channel.
 # The wheel keeps the project version; the RPM Version may differ for a
 # pre-release (0.15.0-rc.1 -> Version 0.15.0, Release 0.rc.1).
+## acc-version-begin
+%{!?acc_version: %global acc_version 0.0.0}
 %{!?acc_wheel_version: %global acc_wheel_version %{acc_version}}
-%{!?acc_release: %global acc_release 1}
+%{!?acc_release: %global acc_release 0.unpinned}
+## acc-version-end
+# The interpreter command and the package that provides it, chosen where the
+# package is BUILT (a mock or COPR chroot, not the host that made the SRPM):
+# RHEL 10 and Fedora ship 3.12+ as `python3`; RHEL 9 needs the `python3.12`
+# AppStream package.  --define "acc_python …" --define "acc_python_pkg …"
+# still overrides, as build.sh does on a RHEL 9 build host.
+%if 0%{?rhel} == 9
+%{!?acc_python: %global acc_python python3.12}
+%{!?acc_python_pkg: %global acc_python_pkg python3.12}
+%else
 %{!?acc_python: %global acc_python python3}
 %{!?acc_python_pkg: %global acc_python_pkg python3}
-%{!?acc_pyver: %global acc_pyver %(%{acc_python} -c 'import sys; print("%d.%d" % sys.version_info[:2])')}
+%endif
+# The venv's `pythonX.Y` is asked of the interpreter inside %install, not of a
+# parse-time %%(...) expansion: the spec is parsed before its BuildRequires are
+# installed, and on a fresh chroot the interpreter is not there yet.
 %global __brp_mangle_shebangs %{nil}
 %global _build_id_links none
 %global debug_package %{nil}
@@ -56,6 +84,8 @@ Source3:        acc.tmpfiles.conf
 # Not noarch: the vendored venv carries compiled wheels (pydantic-core, lancedb, ...).
 BuildRequires:  %{acc_python_pkg}
 BuildRequires:  %{acc_python_pkg}-pip
+BuildRequires:  %{acc_python_pkg}-devel
+BuildRequires:  gcc
 BuildRequires:  systemd-rpm-macros
 Requires:       %{name}-runtime = %{version}-%{release}
 Requires:       podman
@@ -101,6 +131,8 @@ The full `acc` package adds the host layer on top of this one.
 # nothing to build: the wheel is the release artefact
 
 %install
+# The `pythonX.Y` the venv is laid out under, from the interpreter that builds it.
+PYVER="$(%{acc_python} -c 'import sys; print("%%d.%%d" %% sys.version_info[:2])')"
 # A virtualenv at its FINAL path, built inside the buildroot.  --copies keeps
 # it independent of the build host's layout; the shebangs are rewritten to
 # the final interpreter path so the buildroot prefix never leaks into them.
@@ -114,7 +146,7 @@ The full `acc` package adds the host layer on top of this one.
 %{buildroot}%{acc_venv}/bin/python -m pip install --no-cache-dir --no-compile     --index-url https://download.pytorch.org/whl/cpu torch
 %{buildroot}%{acc_venv}/bin/python -m pip install --no-cache-dir --no-compile "%{SOURCE0}[tui]"
 # No CUDA may have slipped in behind the CPU build.
-if [ -d %{buildroot}%{acc_venv}/lib/python%{acc_pyver}/site-packages/nvidia ]; then
+if [ -d %{buildroot}%{acc_venv}/lib/python$PYVER/site-packages/nvidia ]; then
     echo "ERROR: the venv carries CUDA wheels -- the CPU torch pin did not hold" >&2
     exit 1
 fi
@@ -122,7 +154,7 @@ fi
 find %{buildroot}%{acc_venv}/bin -type f -exec sed -i "s|%{buildroot}||g" {} +
 sed -i "s|%{buildroot}||g" %{buildroot}%{acc_venv}/pyvenv.cfg
 # no pip inside the shipped venv: the package is the only writer
-rm -rf %{buildroot}%{acc_venv}/bin/pip* %{buildroot}%{acc_venv}/lib/python%{acc_pyver}/site-packages/pip*
+rm -rf %{buildroot}%{acc_venv}/bin/pip* %{buildroot}%{acc_venv}/lib/python$PYVER/site-packages/pip*
 
 # Bytecode belongs to the package, and is CHECKED-HASH.
 #
@@ -135,7 +167,7 @@ rm -rf %{buildroot}%{acc_venv}/bin/pip* %{buildroot}%{acc_venv}/lib/python%{acc_
 # upgrade replaces them -- and `checked-hash` means a stale cache that survives
 # anyway is revalidated against the source it claims to cache, not against a
 # clock.  `-s`/`-p` keep the buildroot out of the embedded file names.
-%{buildroot}%{acc_venv}/bin/python -m compileall -q -f     --invalidation-mode checked-hash     -s %{buildroot} -p /     %{buildroot}%{acc_venv}/lib/python%{acc_pyver}/site-packages >/dev/null || :
+%{buildroot}%{acc_venv}/bin/python -m compileall -q -f     --invalidation-mode checked-hash     -s %{buildroot} -p /     %{buildroot}%{acc_venv}/lib/python$PYVER/site-packages >/dev/null || :
 
 # commands
 install -d %{buildroot}%{_bindir}
@@ -145,11 +177,11 @@ done
 
 # the data trees: /usr/share/acc is the tree the wheel ships (one copy)
 install -d %{buildroot}%{_datadir}
-ln -s %{acc_venv}/lib/python%{acc_pyver}/site-packages/acc/_share %{buildroot}%{_datadir}/acc
+ln -s %{acc_venv}/lib/python$PYVER/site-packages/acc/_share %{buildroot}%{_datadir}/acc
 ln -s %{_datadir}/acc/acc-deploy.sh %{buildroot}%{_bindir}/acc-deploy
 
 # the operator's configuration: the templates, renamed; secrets stay empty
-SHARE=%{buildroot}%{acc_venv}/lib/python%{acc_pyver}/site-packages/acc/_share
+SHARE=%{buildroot}%{acc_venv}/lib/python$PYVER/site-packages/acc/_share
 install -d %{buildroot}%{_sysconfdir}/acc
 for f in acc-config.yaml models.yaml collective.yaml catalogs.yaml; do
     install -m 0644 "$SHARE/$f.example" %{buildroot}%{_sysconfdir}/acc/$f
@@ -235,6 +267,11 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -R %{_sharedstatedir}/
 %{_tmpfilesdir}/acc.conf
 
 %changelog
+* Sun Oct 04 2026 ACC <flg@nomiras.com> - %{acc_version}-%{acc_release}
+- Self-contained SRPM for COPR and mock: the version globals are pinned into
+  the spec by build.sh, the interpreter is chosen from %%{?rhel} at build time,
+  the venv's python version is read inside %%install (20261004-public-release-channels).
+
 * Wed Sep 09 2026 ACC <flg@nomiras.com> - %{acc_version}-%{acc_release}
 - First package: the host commands, the data trees, /etc/acc, /var/lib/acc,
   acc-stack.service as the unprivileged acc user (proposal 055, IN-06).

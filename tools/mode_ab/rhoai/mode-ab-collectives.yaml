@@ -38,7 +38,7 @@
 #    delete them at cleanup.
 #  * RHOAI's MLflow API sits under /mlflow (/mlflow/api/3.0/mlflow/traces/search).
 ---
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AccPackageInstall
 metadata:
   name: research-roles
@@ -48,12 +48,12 @@ spec:
   constraint: "^1.0"
   targetCorpus: CORPUS
 ---
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AgentCollective
 metadata:
   name: m1-ab
   namespace: NAMESPACE
-  labels: { acc.redhat.io/experiment: m1-04 }
+  labels: { acc.ic3networks.com/experiment: m1-04 }
 spec:
   collectiveId: m1-ab
   corpusRef: { name: CORPUS }
@@ -81,12 +81,12 @@ spec:
     - { role: research_critic, replicas: 1, extraEnv: *mode1 }
     - { role: research_competitor, replicas: 1, extraEnv: *mode1 }
 ---
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AgentCollective
 metadata:
   name: m2-ab
   namespace: NAMESPACE
-  labels: { acc.redhat.io/experiment: m1-04 }
+  labels: { acc.ic3networks.com/experiment: m1-04 }
 spec:
   collectiveId: m2-ab
   corpusRef: { name: CORPUS }

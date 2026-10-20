@@ -58,7 +58,7 @@ def create_app():
     from acc.webgui import (
         auth, routes_action, routes_auth,
     routes_attachments, routes_config, routes_governance, routes_read,
-        routes_roles, routes_secrets, routes_trace, ws,
+        routes_knowledge, routes_roles, routes_secrets, routes_trace, ws,
     )
 
     nats_url = os.environ.get("ACC_NATS_URL", _DEFAULT_NATS_URL)
@@ -106,6 +106,10 @@ def create_app():
     app.include_router(routes_config.router)  # each endpoint gates its own auth
     app.include_router(routes_secrets.router)  # UX-07 -- each endpoint gates its own auth
     app.include_router(routes_roles.router)  # Stage 2.4 — each endpoint gates its own auth
+    # `20260928-rdf-provenance-and-memory-views` -- memory, learnings, lineage,
+    # contributions.  Each endpoint gates its own auth (viewer); the view model
+    # applies the visibility policy.
+    app.include_router(routes_knowledge.router)
     # HG-24 — the OpenAI-compatible surface. Mounted ONLY when keys are
     # configured: an endpoint that exists and 401s still advertises that ACC is
     # listening, and this is the surface most likely to be probed by something

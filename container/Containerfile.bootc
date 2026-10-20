@@ -1,0 +1,110 @@
+# container/Containerfile.bootc -- ACC as a bootable image for the edge profile.
+#
+# 20261004-public-release-channels, Phase 6 (IN-08 named bootc; this is where
+# it lands).  The edge node does not install a package: it boots an image
+# that carries the released `acc` RPM, the stack unit enabled and
+# deploy_mode=edge.  Lifecycle is bootc's -- atomic, transactional, with a
+# rollback -- which is what an edge box with intermittent connectivity wants:
+#
+#   sudo bootc switch quay.io/flg77/acc_images:acc-bootc-<version>   # once
+#   sudo bootc upgrade                                               # every release
+#   sudo bootc rollback                                              # the previous image is kept
+#
+# Built by packaging/images/build-images.sh <tag> --with-bootc on the build
+# host, or by hand:
+#
+#   podman build -f container/Containerfile.bootc \
+#       --build-arg ACC_VERSION=0.27.0 \
+#       -t quay.io/flg77/acc_images:acc-bootc-0.27.0 container
+#
+# Base: Fedora bootc by default; the EL line with
+#   --build-arg BASE_IMAGE=quay.io/centos-bootc/centos-bootc:stream10 --build-arg ACC_REPO_FAMILY=epel
+#
+# Where the package comes from: the public COPR project (D3 in the proposal)
+# by default -- the repo file is written here rather than through
+# `dnf copr enable`, so no dnf plugin is needed in the base image.  Inside the
+# lab, before the COPR project exists or for a spearhead build,
+#   --build-arg ACC_REPO_URL=http://rpm.ic3net.internal:8080/acc-spearhead/
+# takes the acc1 mirror instead (gpgcheck=0: the mirror serves no key).
+#
+# What the image does NOT carry: secrets (/etc/acc/acc.env is empty, as the
+# RPM ships it; /etc persists across upgrades on a bootc host, fill it on the
+# node), and the stack's container images -- the first `acc-stack` start
+# pulls them, so the first boot needs network.  ACC_BOUND_IMAGES=1 binds them
+# to the host image instead (bootc "logically bound images"): bootc pulls them
+# with every upgrade, so an offline edge node has them before the stack
+# starts.  Off by default because every image the compose names must then
+# exist in the registry or the upgrade fails.
+
+ARG BASE_IMAGE=quay.io/fedora/fedora-bootc:42
+FROM ${BASE_IMAGE}
+
+ARG ACC_VERSION
+ARG COPR_PROJECT=flg77/acc
+ARG ACC_REPO_FAMILY=fedora
+ARG ACC_REPO_URL=
+ARG ACC_PROFILE=
+ARG ACC_BOUND_IMAGES=0
+
+LABEL name="acc-bootc" \
+      vendor="Agentic Cell Corpus (Community)" \
+      version="${ACC_VERSION}" \
+      summary="Agentic Cell Corpus -- bootable edge node image" \
+      description="A bootc image carrying the released acc RPM with the stack unit enabled and deploy_mode=edge. Switch once, bootc upgrade per release." \
+      io.openshift.tags="ai,agents,edge,bootc"
+
+# 1. the repository: COPR, or a plain yum repository given by URL
+RUN set -euo pipefail; \
+    if [ -n "${ACC_REPO_URL}" ]; then \
+        printf '[acc]\nname=ACC packages\nbaseurl=%s\nenabled=1\ngpgcheck=0\n' "${ACC_REPO_URL}" > /etc/yum.repos.d/acc.repo; \
+    else \
+        base="https://download.copr.fedorainfracloud.org/results/${COPR_PROJECT}"; \
+        printf '[copr:copr.fedorainfracloud.org:%s]\nname=Copr repo for %s\nbaseurl=%s/%s-$releasever-$basearch/\ntype=rpm-md\nskip_if_unavailable=False\ngpgcheck=1\ngpgkey=%s/pubkey.gpg\nrepo_gpgcheck=0\nenabled=1\nenabled_metadata=1\n' \
+            "$(echo "${COPR_PROJECT}" | tr / :)" "${COPR_PROJECT}" "${base}" "${ACC_REPO_FAMILY}" "${base}" \
+            > /etc/yum.repos.d/acc-copr.repo; \
+    fi; \
+    if [ "${ACC_REPO_FAMILY}" = epel ]; then dnf -y install epel-release; fi
+
+# 2. the package, pinned to the release this image is (the RPM pulls podman and
+#    podman-compose; %pre creates the acc user with its sub-uid range, %post
+#    enables lingering so the session-less unit can run rootless podman)
+RUN set -euo pipefail; \
+    dnf -y install "acc${ACC_VERSION:+-${ACC_VERSION}}"; \
+    dnf clean all; rm -rf /var/cache/dnf /var/cache/libdnf5; \
+    installed="$(rpm -q --qf '%{VERSION}' acc)"; \
+    [ -z "${ACC_VERSION}" ] || [ "${installed}" = "${ACC_VERSION}" ] || { echo "installed acc ${installed}, expected ${ACC_VERSION}" >&2; exit 1; }
+
+# 3. the edge posture: deploy_mode=edge in the image's /etc/acc/acc-config.yaml
+#    (a one-line change that keeps the template's comments), the stack unit
+#    enabled, and optionally a named feature profile (profiles/edge.yaml trims
+#    the collective for a constrained node).  /etc is persistent on a bootc
+#    host and merged on upgrade, so what the node's operator edits survives.
+RUN set -euo pipefail; \
+    ACC_HOME=/etc/acc acc-cli config set deploy_mode edge; \
+    if [ -n "${ACC_PROFILE}" ]; then ACC_HOME=/etc/acc acc-cli profile apply "${ACC_PROFILE}"; fi; \
+    systemctl enable acc-stack.service
+
+# 4. optional: bind the stack's container images to the host image
+RUN set -euo pipefail; \
+    if [ "${ACC_BOUND_IMAGES}" = 1 ]; then \
+        mkdir -p /usr/lib/bootc/bound-images.d; \
+        ACC_IMAGE_PREFIX=quay.io/flg77/acc_images ACC_VERSION="${ACC_VERSION}" \
+        /usr/lib/acc/venv/bin/python - <<'PYEOF'; \
+import os, re, pathlib
+compose = pathlib.Path("/usr/share/acc/container/production/podman-compose.yml").read_text()
+prefix, version = os.environ["ACC_IMAGE_PREFIX"], os.environ["ACC_VERSION"]
+seen = set()
+for ref in re.findall(r"^\s*image:\s*(\S+)", compose, re.M):
+    ref = re.sub(r"\$\{ACC_IMAGE_PREFIX:-[^}]*\}", prefix, ref)
+    ref = re.sub(r"\$\{ACC_VERSION:-[^}]*\}", version, ref)
+    if "${" in ref or ref in seen:
+        continue
+    seen.add(ref)
+    name = re.sub(r"[^a-z0-9.-]+", "-", ref.rsplit("/", 1)[-1].lower())
+    pathlib.Path(f"/usr/lib/bootc/bound-images.d/{name}.image").write_text(f"[Image]\nImage={ref}\n")
+print(f"bound {len(seen)} images")
+PYEOF
+    fi
+
+# 5. bootc's own checks on the finished image
+RUN bootc container lint

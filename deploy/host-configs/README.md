@@ -65,3 +65,11 @@ constant; edit there if your test repos live elsewhere.
   time.
 * `~/.claude/skills/acc-llm-test-history/` — skill that drives
   tests + appends to the history archive.
+
+## lighthouse builds nothing
+
+Since Phase 3 of `20261004-public-release-channels` the release RPMs and images
+are built on the dedicated build host `acc-build` (`packaging/build-host/`);
+lighthouse serves the models these host configs describe and takes no part in
+a release. The work trees and the signing keyring it used to hold are gone
+(`packaging/build-host/HOWTO.md` §5).

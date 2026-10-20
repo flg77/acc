@@ -175,6 +175,88 @@ app = create_app()
 
 from acc.webgui.observers import ObserverHub  # noqa: E402
 
+# --- the Knowledge section (20260928-rdf-provenance-and-memory-views) --------
+# A fake Redis holding note caches and one lesson, and a ledger with a note
+# published into the hub by two operators: enough for every Knowledge tab.
+import json as _json  # noqa: E402
+
+from acc.memory_views import Sources  # noqa: E402
+from acc.webgui import routes_knowledge  # noqa: E402
+
+
+class _KnowledgeRedis:
+    _note = {"summary": "DTI above 43% needs a compensating factor.", "note_id": "n-dti-43",
+             "source_requesters": ["webgui:dev:localhost", "slack:U7"], "ceiling": "HIGH",
+             "scope": "local", "dissent": "one region applies 45%", "source_ids": ["e1", "e2"]}
+    store = {
+        f"acc:{CID}:memory_notes:mortgage_underwriter:local": _json.dumps([_note]),
+        "acc:hub-e2e:memory_notes_shared:mortgage_underwriter:enterprise": _json.dumps([{**_note, "at": 1.0}]),
+        f"acc:{CID}:lesson:L-dti": _json.dumps({
+            "lesson_id": "L-dti", "role_label": "mortgage_underwriter", "domain_tag": "credit-policy",
+            "ceiling": "HIGH", "source_requesters": ["webgui:dev:localhost"], "ts": 2.0, "confidence": 0.9,
+            "summary": "DTI above 43% needs a compensating factor."}),
+    }
+
+    def get(self, key):
+        return self.store.get(key)
+
+    def keys(self, pattern):
+        return [k for k in self.store if k.startswith(pattern.rstrip("*"))]
+
+    def zrevrange(self, key, start, end):
+        return ["L-dti"] if key == f"acc:{CID}:lessons" else []
+
+    def scard(self, key):
+        return 3 if key == f"acc:{CID}:lesson:L-dti:used" else 0
+
+
+_LEDGER = [
+    {"kind": "note", "collective_id": CID, "agent_id": "a1", "role_label": "mortgage_underwriter",
+     "evidence": {"source_episode_ids": ["e1", "e2"], "source_requesters": ["webgui:dev:localhost", "slack:U7"],
+                  "dissent": "one region applies 45%"},
+     "target": {"store": "memory_notes", "id": "n-dti-43"}, "ceiling": "HIGH", "scope": "local",
+     "refinement_id": "r1", "ts": 1.0},
+    {"kind": "hub_promote", "collective_id": CID, "agent_id": "a1", "role_label": "mortgage_underwriter",
+     "evidence": {"proposal_id": "p1", "source_ids": ["e1", "e2"],
+                  "source_requesters": ["webgui:dev:localhost", "slack:U7"],
+                  "approvals": [{"approver_id": "k8s:user/olga", "approver_tier": "operator"},
+                                {"approver_id": "k8s:user/pete", "approver_tier": "operator"}]},
+     "target": {"store": "shared_notes", "id": "n-dti-43", "destination": "hub:hub-e2e",
+                "destination_collective": "hub-e2e"},
+     "ceiling": "HIGH", "scope": "local", "refinement_id": "r2", "ts": 2.0},
+]
+
+
+
+def _knowledge_store(collective_id):
+    """A tiny named-graph store (#516): a taxonomy and two regions disagreeing."""
+    try:
+        from acc.kg import KnowledgeStore
+        from acc.lib.rdf.graph import Graph
+        from acc.lib.rdf.terms import ACC, RDF, SKOS, Literal, lit
+    except Exception:  # noqa: BLE001 -- no pyoxigraph: the map shows "no store"
+        return None
+    store = KnowledgeStore(collective_id, in_memory=True)
+    tax = Graph()
+    for iri, label in (("urn:acc:domain:lending", "Lending"), ("urn:acc:domain:mortgage", "Mortgage")):
+        tax.add(iri, RDF.type, SKOS.Concept)
+        tax.add(iri, SKOS.prefLabel, Literal(label, lang="en"))
+    tax.add("urn:acc:domain:mortgage", SKOS.broader, "urn:acc:domain:lending")
+    store.put("taxonomy", tax, ceiling="LOW", scope="taxonomy", source="pack @acc/lending-taxonomy")
+    for name, value in (("shared-low", "43%"), ("shared-medium", "45%")):
+        g = Graph()
+        g.add("urn:acc:collective:%s:fact:dti-cap" % collective_id, ACC.dtiLimit, lit(value))
+        g.add("urn:acc:collective:%s:fact:dti-cap" % collective_id, ACC.domain, "urn:acc:domain:mortgage")
+        store.put(name, g, ceiling=name.split("-")[1].upper(), scope="shared", source=f"region {name}")
+    return store
+
+
+app.dependency_overrides[routes_knowledge.get_store] = _knowledge_store
+
+app.dependency_overrides[routes_knowledge.get_sources] = lambda collective_id: Sources(
+    redis=_KnowledgeRedis(), collective_id=collective_id, hub_collective_id="hub-e2e",
+    ledger_rows=lambda cid: [r for r in _LEDGER if r["collective_id"] == cid])
+
 _real_latest = ObserverHub.latest
 ObserverHub.latest = (
     lambda self, cid: {"agents": AGENTS, "collective_id": CID, **_EXTRA}

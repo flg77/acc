@@ -72,6 +72,9 @@ class SkillManifest(BaseModel):
         acts_on_behalf: Gate category -- the skill acts in the
             operator's name towards the outside (sends, posts,
             publishes).  Same gating and fallback as ``system_access``.
+        requires_oversight: Every call needs a human decision -- gated
+            in every mode that dispatches, refused when there is no
+            oversight queue to ask.
         description: Long-form documentation (Markdown).  Surfaced in
             TUI's Ecosystem screen detail panel (Phase 4.4).
         tags: Free-form labels for filtering (e.g. ``["code", "shell"]``).
@@ -105,6 +108,12 @@ class SkillManifest(BaseModel):
     # every call is asked as a question (all modes but PLAN).  None = the name
     # decides; an exec skill's command text is checked whatever this says.
     destructive: bool | None = None
+    # Every call needs a human decision: it is gated in every mode that
+    # dispatches, and with no oversight queue to ask it is refused instead of
+    # running ungated.  For acting skills whose effect is disruptive without
+    # deleting data (stopping a served model), where ``destructive`` would put
+    # the wrong words in the question.
+    requires_oversight: bool = False
 
     # `20260913-preview-in-the-panel` (UX-03 Phase 2) -- arguments that turn
     # this call into a dry run, merged into the call at gate time so the

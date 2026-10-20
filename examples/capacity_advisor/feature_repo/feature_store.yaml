@@ -1,0 +1,20 @@
+# Feast repo for the GPU capacity advisor (proposal 057 step 2), local form.
+# On the dgx cluster the FeatureStore CR in flg1 renders the equivalent
+# (project gpu_capacity, offline files on a PVC, online SQLite -> Redis).
+project: gpu_capacity
+registry: data/registry.db
+provider: local
+online_store:
+  type: sqlite
+  path: data/online.db
+offline_store:
+  type: file
+entity_key_serialization_version: 3
+# The advisor reads through Feast's MCP endpoint; streamable HTTP is required
+# for ACC (the default `sse` is not something ACC speaks).
+feature_server:
+  type: mcp
+  enabled: true
+  mcp_enabled: true
+  mcp_server_name: feast-gpu-capacity
+  mcp_transport: http

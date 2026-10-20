@@ -1,0 +1,106 @@
+{
+  "_provenance": "Recorded from feast 0.66.0 `feast serve` over examples/capacity_advisor/feature_repo (sample data) by the capacity_advisor role's wakeup_prefetch through ACC's MCPClient, 2026-10-03.",
+  "calls": [
+    {
+      "args": {
+        "entities": {
+          "cluster": [
+            "dgx"
+          ]
+        },
+        "features": [
+          "gpu_queue:pending_gpu_pods",
+          "gpu_queue:pending_gpus_requested",
+          "gpu_queue:oldest_pending_min",
+          "gpu_queue:deployment_ids"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"results\": [\n    {\n      \"values\": [\n        \"dgx\"\n      ],\n      \"statuses\": [\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"1970-01-01T00:00:00Z\"\n      ]\n    },\n    {\n      \"values\": [\n        [\n          \"flg1/diffusiongemma-26b-a4b\",\n          \"llm/minimax-m27-tm\",\n          \"flg1/granite-8b\"\n        ]\n      ],\n      \"statuses\": [\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        1\n      ],\n      \"statuses\": [\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        7.0\n      ],\n      \"statuses\": [\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        1\n      ],\n      \"statuses\": [\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\"\n      ]\n    }\n  ],\n  \"metadata\": {\n    \"feature_names\": [\n      \"cluster\",\n      \"deployment_ids\",\n      \"pending_gpus_requested\",\n      \"oldest_pending_min\",\n      \"pending_gpu_pods\"\n    ]\n  }\n}"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "args": {
+        "entities": {
+          "gpu_node": [
+            "arw-dgx-w10",
+            "arw-dgx-w11"
+          ]
+        },
+        "features": [
+          "gpu_node_stats:gpus_alloc",
+          "gpu_node_stats:gpus_used",
+          "gpu_node_stats:util_avg_5m",
+          "gpu_node_stats:fb_used_gb"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"results\": [\n    {\n      \"values\": [\n        \"arw-dgx-w10\",\n        \"arw-dgx-w11\"\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"1970-01-01T00:00:00Z\",\n        \"1970-01-01T00:00:00Z\"\n      ]\n    },\n    {\n      \"values\": [\n        41.0,\n        12.0\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        480.0,\n        40.0\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        8,\n        3\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        8,\n        3\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    }\n  ],\n  \"metadata\": {\n    \"feature_names\": [\n      \"gpu_node\",\n      \"util_avg_5m\",\n      \"fb_used_gb\",\n      \"gpus_alloc\",\n      \"gpus_used\"\n    ]\n  }\n}"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "args": {
+        "entities": {
+          "model_deployment": [
+            "flg1/diffusiongemma-26b-a4b",
+            "llm/minimax-m27-tm",
+            "flg1/granite-8b"
+          ]
+        },
+        "features": [
+          "model_usage:gpus_held",
+          "model_usage:req_running",
+          "model_usage:req_waiting",
+          "model_usage:tokens_5m",
+          "model_usage:minutes_since_last_req",
+          "model_usage:stopped"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"results\": [\n    {\n      \"values\": [\n        \"flg1/diffusiongemma-26b-a4b\",\n        \"llm/minimax-m27-tm\",\n        \"flg1/granite-8b\"\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"1970-01-01T00:00:00Z\",\n        \"1970-01-01T00:00:00Z\",\n        \"1970-01-01T00:00:00Z\"\n      ]\n    },\n    {\n      \"values\": [\n        false,\n        false,\n        true\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        1,\n        4,\n        1\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        0,\n        3,\n        0\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        95.0,\n        0.5,\n        240.0\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        0,\n        1,\n        0\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        0,\n        52000,\n        0\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    }\n  ],\n  \"metadata\": {\n    \"feature_names\": [\n      \"model_deployment\",\n      \"stopped\",\n      \"gpus_held\",\n      \"req_running\",\n      \"minutes_since_last_req\",\n      \"req_waiting\",\n      \"tokens_5m\"\n    ]\n  }\n}"
+          }
+        ],
+        "isError": false
+      }
+    },
+    {
+      "args": {
+        "entities": {
+          "model_deployment": [
+            "flg1/diffusiongemma-26b-a4b",
+            "llm/minimax-m27-tm",
+            "flg1/granite-8b"
+          ]
+        },
+        "features": [
+          "model_predictions:idle_score",
+          "model_predictions:demand_next_60m"
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"results\": [\n    {\n      \"values\": [\n        \"flg1/diffusiongemma-26b-a4b\",\n        \"llm/minimax-m27-tm\",\n        \"flg1/granite-8b\"\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"1970-01-01T00:00:00Z\",\n        \"1970-01-01T00:00:00Z\",\n        \"1970-01-01T00:00:00Z\"\n      ]\n    },\n    {\n      \"values\": [\n        0.0,\n        4.0,\n        0.0\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    },\n    {\n      \"values\": [\n        0.86,\n        0.02,\n        0.9\n      ],\n      \"statuses\": [\n        \"PRESENT\",\n        \"PRESENT\",\n        \"PRESENT\"\n      ],\n      \"event_timestamps\": [\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\",\n        \"2026-10-03T08:43:36Z\"\n      ]\n    }\n  ],\n  \"metadata\": {\n    \"feature_names\": [\n      \"model_deployment\",\n      \"demand_next_60m\",\n      \"idle_score\"\n    ]\n  }\n}"
+          }
+        ],
+        "isError": false
+      }
+    }
+  ]
+}

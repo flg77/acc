@@ -141,7 +141,7 @@ htpasswd -D acc-webgui.htpasswd bob
 - `acc/webgui/auth.py` — config + loader + verifier.
 - `acc/webgui/routes_auth.py` — `POST /api/login` endpoint.
 - `container/production/podman-compose.yml` — bind mount + env wiring.
-- `operator/config/samples/acc_webgui_deployment.yaml` — the
+- `config/samples/acc_webgui_deployment.yaml` in `flg77/acc-operator` — the
   Kubernetes counterpart (uses a Secret-mounted file under
   `/etc/acc-webgui/htpasswd` instead of the host bind).
 - `.gitignore` — the `acc-webgui.htpasswd` + `*.htpasswd` patterns

@@ -1459,3 +1459,94 @@ unchanged.
 replies on both backends plus the object and prose shapes. A new backend that
 parses replies as JSON must check for a dict before treating the result as
 one. Proven on bb3 on 2026-10-03: the same prompt passes on 0.26.1.
+
+## D-032 — The operator leaves the spearhead; its API group becomes `acc.ic3networks.com`
+
+**Status:** ACCEPTED 2026-10-04 (OpenSpec `20261004-operator-release-split`, OR-01).
+**Date:** 2026-10-04
+**Context:** the operator (0.2.28) lives in `operator/` + `console-plugin/`, is
+built by ssh to a lab host, embeds the spearhead root trees, pushes to a
+private registry and installs from a private catalog. Its API group is
+`acc.redhat.io`, its module path `redhat-ai-dev`, its image label
+`vendor="Red Hat"`, while the CSV says it is not a Red Hat product. The goal is
+one release that needs no lab host and lists on operatorhub.io and in the
+OpenShift OperatorHub, for Kubernetes and OpenShift alike.
+
+**Decision:**
+1. **Two repositories.** Private `flg77/acc-spearhead-operator` (the
+   operator's history via subtree split, plus `console-plugin/` and the two
+   parity tests) and public **`flg77/acc-operator`** (curated squash per
+   release, the `flg77/acc` discipline, with the operator's own
+   `MIRROR-WITHHELD.md`). The public name is `acc-operator`: it is what the
+   CSV links and the listing show; `mirror` stays the remote name.
+2. **The API group is renamed to `acc.ic3networks.com`** before the first
+   public bundle, across operator, console plugin, the seven runtime modules
+   and the runtime rules that name it. Module path, `PROJECT` domain and the
+   vendor label follow.
+3. **One bundle** for both platforms: the console plugin is created by the
+   operator on `console.openshift.io/v1` discovery, not shipped as a bundle
+   object.
+4. **Pin and fetch**: `make sync-manifests` copies the runtime trees from a
+   pinned public `flg77/acc` tag; roles-from-image is the maturity path.
+5. **Public Quay organisation**, cosign keyless, GitHub Actions on hosted
+   runners; the lab hosts stop being a release prerequisite.
+6. **Versions decouple**: first public bundle 0.3.0, channel `alpha`,
+   semver-mode, no `replaces`; the private 0.2.x line is reinstalled, not
+   upgraded.
+
+**Rationale:** a CRD group cannot change in place, so the rename is cheap only
+now; a single public repo was cheaper but the tree carries lab material; two
+bundles would double every release; the lab build chain is why nobody else can
+build or install the operator.
+
+**Consequences:** `acc-spearhead/operator/` is frozen once the split branch
+is pushed (`operator/MOVED.md`); every CR on bb3 and lighthouse is re-created
+once under the new group (OR-04); `acc-promote` learns a second pair;
+20–28 engineer-days to 0.3.0 and 10–20 % of the maintainer's week afterwards
+(the proposal's acceptance section).
+
+## D-033 — The agent image is the source of roles, skills and MCP servers; the operator asks it, and embeds nothing
+
+**Status:** ACCEPTED 2026-10-05 (OpenSpec `20261004-operator-release-split`, OR-14, decision D2 of its proposal).
+**Date:** 2026-10-05
+**Context:** the operator embeds the pinned runtime's `roles/`, `skills/` and
+`mcps/` trees (`make sync-manifests`, `//go:embed`), delivers them as three
+ConfigMaps per corpus mounted at `/etc/acc/{roles,skills,mcps}`, and validates
+`AgentCollective` roles against a compile-time list generated from the same
+copy. Every runtime release that adds a role therefore needs an operator
+release, and the operator's build needs the runtime's source. The source-built
+agent image baked `skills/` and `mcps/` but not `roles/` (the compose mounted a
+checkout's tree); the RPM image baked all three under `/usr/share/acc`.
+
+**Decision:**
+1. **Both agent-core images bake the three trees** and set `ACC_ROLES_ROOT`,
+   `ACC_SKILLS_ROOT` and `ACC_MCPS_ROOT` at them (`/app/…` on the source-built
+   image, `/usr/share/acc/…` on the RPM image). The compose's mount of a
+   checkout's `roles/` over `/app/roles` stays the developer loop.
+2. **The image says what it serves.** `python3 -m acc.roles_index` prints a
+   small, versioned JSON index: the runtime version, the three roots, every role
+   with its `role_definition.version`, whether it is a CONTROL role and its
+   source (`in-tree` or `<pack>@<version>`, the installed packages under
+   `ACC_PACKAGES_ROOT` included), and the skill and MCP ids. The image builds
+   run it and bake the result at `$ACC_ROLES_INDEX`, so a tree that does not
+   parse fails the build, and `cat "$ACC_ROLES_INDEX"` answers without Python.
+3. **The operator stops embedding** (its release after this runtime ships): no
+   `sync-manifests` of the trees, no manifest ConfigMaps, no `ACC_*_ROOT` set on
+   agent pods; the webhook's role catalogue comes from the index of the corpus's
+   image, and a corpus whose index is not known yet is validated warn-only. The
+   compatibility table gains a floor: that operator needs a runtime that ships
+   the index.
+
+**Rationale:** the trees are runtime content and already leave core as packs;
+a copy in the operator was the one reason an operator release had to follow a
+runtime release. Asking the image keeps the typo check meaningful without a
+compile-time list, and the command is the contract, not a path: the two image
+flavours keep their own layouts. The index lists packs too so the same command
+describes a running agent.
+
+**Consequences:** `acc.roles_index` is a public contract (`schema: 1`; a field
+changing meaning bumps it, a new field does not). `tests/test_roles_index.py`
+pins the index and both Containerfiles. An operator older than 0.4 keeps
+working against this image: its ConfigMap mount and `ACC_ROLES_ROOT` override
+the baked tree. `tests/test_role_store_roles_root.py` (D-029) still pins that
+an agent reads `ACC_ROLES_ROOT` wherever it points.

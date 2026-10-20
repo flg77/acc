@@ -3,7 +3,7 @@
 # channel's key, which lives only in OpenBao.
 #
 #   BAO_TOKEN=… packaging/rpm/sign-rpms.sh ic3net_internal/ACC/acc-spearhead \
-#       lighthouse:/git/ml/agentic/acc-rpm-0.16.0/dist/rpm/RPMS/x86_64
+#       acc-build:/srv/acc-build/acc-rpm-0.27.0/dist/rpm/RPMS/x86_64
 #
 # The channel and its key are created ONCE by lab-gitops
 # `ansible/satellite-content/playbooks/channels.yml`, which keeps the private key

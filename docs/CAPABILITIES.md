@@ -75,6 +75,7 @@ to ignore the page.
 |---|---|
 | `acc-cli memory notes [--scope]` | The durable lessons a given context would read. Scoped: a channel's memory approximates its scrollback. |
 | `acc-cli memory forget --person <id> [--apply]` | Remove a person's episodes and reconcile the notes drawn from them. **Dry run by default.** A note with no sources left is deleted; one below quorum is demoted *and* unpublished; one still above quorum is rebuilt. Erasure touches memory only — the audit record of the request survives it. |
+| `acc-cli memory export --okf <dir> [--force]` | The Memory view as an OKF bundle you can open as an Obsidian vault. It contains one page per note (ceiling, people as a count, dissent, the tiers it reached) plus role and tier pages linked with `[[wikilinks]]`. It is built for whoever runs it, so it holds only what they may see. |
 | `acc-cli lessons list/show/trace <id>/send --to <agent> [--kind role_patch --set F=V]` | What agents told each other: every reflected note also rides `KNOWLEDGE_SHARE` as a typed `Lesson` (scope, ceiling, sources, dissent intact) and lands **once** in a peer's next prompt as `PEER_LESSONS`. `trace` joins a lesson to the tasks whose prompt rendered it and how they ended (a blocked task or a BAD / NEEDS_REVISE verdict lowers the lesson's confidence, GOOD raises it). A `role_patch` lesson is never applied: it becomes a `role_update` proposal in the oversight queue with the lesson as its evidence. A role also keeps a peer's note in its shared tier, after probation — on by default (D-028); `accept_peer_lessons: false` in a role's signed definition opts it out. `ACC_PEER_LESSONS=0` turns every direction off. |
 | `acc-cli refine list/show/trace <id>/rollback <id> [--apply]` | The refinement ledger: one row for every durable change to what an agent knows or is — a reflected note, an adopted peer note, a published or hub-promoted note, a signed role update (which fields moved, from what to what), an approved learned rule, an erasure, an outcome — with its trigger, evidence, approver and ceiling. `trace` tells one note / lesson / role's whole story. `rollback` **is a dry run by default**: it revokes a note from every cache and the table, or queues a `role_update` proposal restoring the old values — a person approves the revert the way they approved the change. Erasures and rules are refused with the manual path named. |
 | `acc-cli msg send <agent> --text … [--steer\|--follow-up\|--auto]` / `msg tail <agent>` / `msg show <id>` | Say something to one running agent on its inbox (`acc.{cid}.agent.{id}.inbox`; only the arbiter and the operator surface may publish there). `steer` lands in the prompt of the task in flight as `OPERATOR_STEERING`, right before the task and the last thing the context budget evicts; `follow_up` becomes a new task for that agent, run **as the sender** (tier and ceiling inherited). A steer that finds nothing in flight is delivered as a follow-up and the receipt says so. |
@@ -136,7 +137,7 @@ bundle (signature + certificate + Rekor entry), keypair verification uses
 
 ## 2. TUI — `acc-tui`
 
-Textual. Thirteen screens; the navigation bar moves between them. `acc-tui
+Textual. Fourteen screens; the navigation bar moves between them. `acc-tui
 --profile user|operator` (`ACC_TUI_PROFILE`) chooses the strip: `operator` is
 every screen, `user` is Prompt · Board · Compliance with the rest one `Ctrl+A`
 chord away. A profile is a view choice — nothing about what may be done differs.
@@ -150,6 +151,7 @@ chord away. A profile is a view choice — nothing about what may be done differ
 | **Catalogs** | Catalog sources and priority | `n` new, `d` delete, `r` refresh, `+`/`-` priority |
 | **Compliance** | Governance, oversight queue, proposals, **decision history** (one row per decision, `By` = approver or `policy:<mode>`) | `a` approve, `r` reject, `g`/`o`/`p` focus |
 | **Board** | Work in flight — PLAN steps (with their fanned-out members folded under them), direct cluster members, single tasks, the gate that blocks a step — under QUEUED · RUNNING · BLOCKED · DONE · FAILED; cold-starts from the arbiter heartbeat. A non-operator sees the items they asked for (same on Compliance, Comms and the Web GUI) | `c` cancel, `r` retry, `a` reassign, `g` go to the gate, `Enter` detail |
+| **Memory** | What the agents remember (notes per tier: private · shared · hub, with ceiling, people, dissent), what they learned (lessons, adoption, use, outcomes), one note's **lineage** as a tree, and **my contributions** (in instances and tasks, never people). An operator sees every note under their ceiling; anyone else their own. In-process beside the collective, or through the Web GUI with `ACC_WEBGUI_URL` | `r` refresh, `enter` lineage |
 | **Diagnostics** | Golden-prompt suite; **`h` runs the same health checks as `acc-cli doctor`** | `r` run, `a` run all, `e` edit, `h` health |
 | **Configuration** | Role→model mapping, live backends | — |
 | **Performance** | Throughput and latency | — |
@@ -187,6 +189,8 @@ GUI error.
 | `GET /models` | The model registry. |
 | `GET /episodes/search` | Search durable episodes. |
 | `GET /audit` | Audit records. |
+| `GET /api/knowledge/{collective_id}/memory\|learnings\|lineage/{note}\|contributions` | Memory, learnings, a note's lineage (`?format=jsonld`), my contributions — built for the session user (an operator sees every note under their ceiling, anyone else their own; nothing hidden is counted). |
+| `GET /api/knowledge/{collective_id}/map[?focus=<iri>]` · `/conflicts` | The knowledge store (#516) as you may read it: graphs, the domain tree, a node's neighbourhood; and two graphs disagreeing about the same thing, with both claims shown. The store binds the ceiling, and a non-operator sees no provenance graph and no person. |
 | `WS /ws/{collective_id}` | Live updates. |
 
 ### Governance

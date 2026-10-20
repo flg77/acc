@@ -141,10 +141,15 @@ COPY --from=builder /app/models /app/models
 WORKDIR /app
 COPY acc/ /app/acc/
 COPY regulatory_layer/ /app/regulatory_layer/
-# Skills + MCP manifests are NOT mounted by the compose (unlike roles/), so they
-# must be baked in — otherwise the agent boots with an empty skill/MCP registry
-# and every advertised capability (shell_exec, python_exec, fs_write,
-# git_status, catalog_query, …) fails at runtime with SkillNotFoundError.
+# The image is the source of the roles, skills and MCP trees (OR-14, D-033):
+# the operator mounts nothing and embeds nothing, and a runtime release that
+# adds a role needs no operator release.  Skills + MCPs were always baked --
+# without them the agent boots with an empty registry and every advertised
+# capability (shell_exec, python_exec, fs_write, git_status, catalog_query, …)
+# fails with SkillNotFoundError.  roles/ joins them; the compose still mounts a
+# checkout's roles/ over /app/roles for the developer loop, and an operator
+# older than 0.4 still mounts its ConfigMaps and points ACC_ROLES_ROOT at them.
+COPY roles/ /app/roles/
 COPY skills/ /app/skills/
 COPY mcps/ /app/mcps/
 # models.yaml — the model registry + role→model map (B6, proposal 044).  Like
@@ -160,6 +165,12 @@ COPY mcps/ /app/mcps/
 # does the same (ACC_MODELS_PATH=/usr/share/acc/models.yaml.example).
 COPY models.yaml.example /app/models.yaml
 COPY container/production/entrypoint.sh /app/entrypoint.sh
+
+# What this image serves, written at build time (OR-14): the operator and a
+# human ask `cat $ACC_ROLES_INDEX` instead of embedding a copy of the trees, and
+# a roles tree that does not parse fails the build here, not the first agent.
+RUN ACC_ROLES_ROOT=/app/roles ACC_SKILLS_ROOT=/app/skills ACC_MCPS_ROOT=/app/mcps \
+    python3 -m acc.roles_index --out /app/roles.index
 
 # cosign — the agent shells out to `cosign` to verify .accpkg signatures
 # during an AccPackageInstall; without it any signed pack fails with
@@ -184,8 +195,10 @@ ENV SENTENCE_TRANSFORMERS_HOME=/app/models \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
     ACC_CONFIG_PATH=/app/acc-config.yaml \
+    ACC_ROLES_ROOT=/app/roles \
     ACC_SKILLS_ROOT=/app/skills \
     ACC_MCPS_ROOT=/app/mcps \
+    ACC_ROLES_INDEX=/app/roles.index \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 

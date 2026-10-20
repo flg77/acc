@@ -107,7 +107,7 @@ The raw equivalent is `podman-compose --profile webgui up -d`.
 ### edge (MicroShift / K3s)
 
 ```bash
-kubectl apply -f operator/config/samples/acc_webgui_deployment.yaml
+kubectl apply -f https://raw.githubusercontent.com/flg77/acc-operator/v0.3.0/config/samples/acc_webgui_deployment.yaml
 kubectl create secret generic acc-webgui-auth -n acc-corpus \
   --from-literal=operator_token=$(openssl rand -hex 24)
 kubectl port-forward svc/acc-webgui 8080:8080 -n acc-corpus
@@ -192,6 +192,20 @@ The screens that gained TUI-parity surfaces in the latest cycle:
   diagnostics.
 - **Prompt** — composing is **Enter-to-send** (Shift+Enter inserts a
   newline); the explicit Send button is gone, matching the TUI.
+
+- **Knowledge** (`20260928-rdf-provenance-and-memory-views`) — what the agents
+  remember and learned, and why. **Memory**: the notes per tier (private,
+  shared, enterprise hub) with ceiling, how many people each rests on and
+  dissent. **Learnings**: the lessons agents passed on, who adopted them, how
+  many tasks used them and how those ended. **Lineage**: one note's provenance
+  as a graph (episodes → note → proposals → copies ← approvals → tasks), drawn
+  from the PROV-O projection of the refinement ledger, with the same nodes as a
+  table. **My contributions**: your notes and how far they travelled, counted
+  in instances and tasks, never people. The server builds each view for the
+  session user: an operator sees every note under their ceiling, anyone else
+  only the notes they are a source of, and what is hidden is not counted
+  (`GET /api/knowledge/{cid}/memory|learnings|lineage/{note}|contributions`;
+  `?format=jsonld` on a lineage).
 
 Read endpoints require the **viewer** role; gap-scan and proposal
 decisions require **operator**.

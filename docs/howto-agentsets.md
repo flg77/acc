@@ -11,7 +11,7 @@ This guide shows how to author role-specific agentsets, spawn them, swap between
 them, and — the point of it all — wire teams that **work a problem together**.
 
 > Schema mirrors the K8s operator's `AgentCollectiveSpec`
-> (`operator/api/v1alpha1/agentcollective_types.go`), so an agentset you design
+> (`api/v1alpha1/agentcollective_types.go` (in `flg77/acc-operator`)), so an agentset you design
 > here lifts to RHOAI later. Per-agent models come from `models.yaml`
 > (see [`docs/multimodel_reviewer.md`](multimodel_reviewer.md) for endpoints +
 > API keys).

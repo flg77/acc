@@ -24,6 +24,7 @@ NATS publish.
 
 from __future__ import annotations
 
+from acc import api_group
 import abc
 import asyncio
 import json
@@ -34,8 +35,8 @@ from typing import Any, AsyncIterator
 logger = logging.getLogger("acc.runtime_evidence_bridge")
 
 # The label every ACC agent pod carries (operator: util.AgentLabels).
-_AGENT_ROLE_LABEL = "acc.redhat.io/agent-role"
-_COLLECTIVE_LABEL = "acc.redhat.io/collective-id"
+_AGENT_ROLE_LABEL = api_group.label("agent-role")
+_COLLECTIVE_LABEL = api_group.label("collective-id")
 
 # Normalised hook names.
 HOOK_EXECVE = "execve"
@@ -205,7 +206,7 @@ def normalise(raw: dict, source: str) -> dict | None:
     return {
         "pod_name": pod["pod_name"],
         "pod_uid": pod["pod_uid"],
-        "agent_id": labels.get("acc.redhat.io/agent-id", pod["pod_name"]),
+        "agent_id": labels.get(api_group.label("agent-id"), pod["pod_name"]),
         "collective_id": collective_id,
         "hook": hook,
         "source": source,

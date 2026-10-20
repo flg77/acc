@@ -10,7 +10,7 @@ A capability the model can invoke that appears in no inventory is an ungoverned 
 
 | Skills | MCP servers | MCP servers with an unbounded tool surface |
 |---|---|---|
-| 55 | 12 | **5** |
+| 58 | 14 | **5** |
 
 ## What the model is actually told
 
@@ -54,6 +54,7 @@ An unbounded tool surface is a governance gap, and these are the servers it appl
 | `fs_write` | Write a UTF-8 text file into the trusted workspace. | `HIGH` | — | `{path: string, content: string, mkdirs: boolean?}` | `adapter.FsWriteSkill` |
 | `git_log_recent` | Run `git log -n N --oneline` in a workspace directory. | `MEDIUM` | — | `{cwd: string, limit: integer?}` | `adapter.GitLogRecentSkill` |
 | `git_status` | Run `git status --short` in a workspace directory. | `MEDIUM` | — | `{cwd: string}` | `adapter.GitStatusSkill` |
+| `gpu_capacity_estimate` | Estimate GPU memory, KV-cache capacity and tensor-parallel size for serving a model with vLLM. | `LOW` | — | `{model_config: object, gpu: string, max_model_len: integer?, tensor_parallel_size: integer?, gpu_memory_utilization: number?, kv_cache_dtype: string?, weight_bytes_per_param: number?, num_parameters: integer?, avg_tokens_per_request: integer?, target_concurrency: integer?, max_num_batched_tokens: integer?}` | `adapter.GpuCapacityEstimateSkill` |
 | `grep_text` | Search for a literal pattern in a file (line-by-line). | `LOW` | — | `{path: string, pattern: string, max_matches: integer?}` | `adapter.GrepTextSkill` |
 | `head_text` | Read the first N lines of a UTF-8 text file (cross-platform). | `LOW` | — | `{path: string, lines: integer?}` | `adapter.HeadTextSkill` |
 | `hostname` | Report the local host name (cross-platform). | `LOW` | — | `object` | `adapter.HostnameSkill` |
@@ -62,9 +63,11 @@ An unbounded tool surface is a governance gap, and these are the servers it appl
 | `market_sizer` | Market-size marker — round-trips TAM/SAM/SOM estimates. | `LOW` | — | `{text: string}` | `adapter.StubResearchSkill` |
 | `mattermost_post` | Create a post in a Mattermost channel via the REST API /api/v4/posts. | `MEDIUM` | `send_message` | `{channel_id: string, text: string}` | `adapter.MattermostPostSkill` |
 | `mkdir_p` | Create a directory tree (mkdir -p / md, cross-platform). | `MEDIUM` | — | `{path: string}` | `adapter.MkdirPSkill` |
+| `ocp_model_control` | Stop or start a KServe LLMInferenceService / InferenceService (serving.kserve.io/stop) in an allowed namespace. | `HIGH` | `control_model_serving` | `{action: string, namespace: string, name: string, kind: string?, reason: string, dry_run: boolean?}` | `adapter.OcpModelControlSkill` |
 | `okf` | Produce & self-check OKF-conformant knowledge (pure text ops). | `LOW` | — | `{op: string, frontmatter: object?, body: string?, text: string?, path_hint: string?}` | `adapter.OkfSkill` |
 | `okf_transform` | Read, validate, query, write & convert OKF bundles in the workspace. | `HIGH` | — | `{op: string, path: string?, rel_path: string?, frontmatter: object?, body: string?, type: string?, tags: array?, limit: integer?, vault: string?, dest: string?, now: string?}` | `adapter.OkfTransformSkill` |
 | `plan_outline` | Plan-outline marker — round-trips the LLM's research outline. | `LOW` | — | `{text: string}` | `adapter.StubResearchSkill` |
+| `prometheus_query` | Run a read-only PromQL query (instant or range) against the cluster's Thanos/Prometheus. | `LOW` | — | `{query: string, mode: string?, time: string?, start: string?, end: string?, step: string?, max_series: integer?, max_points: integer?, timeout_s: number?}` | `adapter.PrometheusQuerySkill` |
 | `pwd` | Report the agent's current working directory. | `LOW` | — | `object` | `adapter.PwdSkill` |
 | `python_exec` | Run a Python snippet in an isolated subprocess and return stdout/stderr. | `HIGH` | `execute_shell` | `{code: string, cwd: string?, timeout_s: integer?}` | `adapter.PythonExecSkill` |
 | `read_json` | Read + parse a JSON file (cross-platform). | `LOW` | — | `{path: string, max_bytes: integer?}` | `adapter.ReadJsonSkill` |
@@ -94,8 +97,10 @@ An unbounded tool surface is a governance gap, and these are the servers it appl
 
 | Server | Purpose (model-visible) | Risk | Transport | Tool surface | Requires actions |
 |---|---|---|---|---|---|
+| `aisimulators` | ConfigIQ AISimulators — SLA-aware GPU sizing, TTFT/TPOT prediction and KV-cache memory estimates for LLM serving. | `LOW` | `streamable-http` | `post_recommend_recommend_post`, `post_predict_predict_post`, `post_memory_memory_post`, `get_systems_systems_get`, `get_models_models_get`, `get_backends_backends_get`<br>denied: `get_metrics_metrics_get`, `post_predict_estimate_post` | `use_external_api` |
 | `arxiv` | arxiv read-only — search papers, fetch metadata + PDFs. | `LOW` | `stdio` | **unbounded** _(whatever the server advertises)_ | — |
 | `echo_server` | Smoke-test MCP server: round-trip a single 'echo' tool. | `LOW` | `http` | `echo` | — |
+| `feast` | Feast feature store — read online feature values for entities (read-only). | `LOW` | `streamable-http` | `get_online_features_get_online_features_post`, `health_health_get`<br>denied: `push_push_post`, `write_to_online_store_write_to_online_store_post`, `materialize_materialize_post`, `materialize_incremental_materialize_incremental_post`, `chat_chat_post`, `chat_ui_chat_get` | `use_external_api` |
 | `github_api` | GitHub REST API — repo browse, issues, PRs, code search. | `MEDIUM` | `stdio` | `search_repositories`, `search_issues`, `search_pull_requests`, `search_code`, `get_file_contents`, `list_commits`, `get_issue`, `get_pull_request`, `list_issues`, `list_pull_requests`<br>denied: `create_or_update_file`, `delete_file`, `create_issue`, `create_pull_request` | `use_external_api` |
 | `google_workspace` | Read Google Workspace (Calendar, Gmail, Drive, Sheets) on the operator's behalf via a consumed MCP server, authenticated per-operator with brokered OAuth 2.1. Read-first: mutating tools are denied in this slice. | `MEDIUM` | `http` | `calendar_list_events`, `calendar_get_event`, `gmail_search`, `gmail_get_message`, `drive_list_files`, `drive_get_file`, `sheets_read_range`<br>denied: `gmail_send`, `drive_delete`, `sheets_write_range`, `calendar_delete_event` | — |
 | `rss_fetch` | RSS / Atom feed read — fetch + parse feed entries. | `LOW` | `stdio` | **unbounded** _(whatever the server advertises)_ | — |

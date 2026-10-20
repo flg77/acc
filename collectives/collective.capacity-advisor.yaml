@@ -1,0 +1,38 @@
+# collectives/collective.capacity-advisor.yaml
+# =============================================================================
+# GPU capacity advisor (proposal 057) — one advisor, one reviewer, on RHOAI MaaS.
+#
+#   capacity_advisor  wakes every 15 min with the cluster's Feast features
+#                     already read (role wakeup_prefetch), reports idle GPUs and
+#                     waiting demand, and proposes at most one stop/start per
+#                     wake-up through ocp_model_control — held for a
+#                     capacity-admins approver (requires_oversight).
+#                     Model: DiffusionGemma, the decision model (057 G3).
+#   reviewer          the explainer (057 Q6: granite on Gaudi2). It reviews
+#                     PLANs routed to it; the wake-up proposal itself is gated
+#                     by the human approval, not by the reviewer.
+#
+# Deployment-side settings (NOT in this file, never in git):
+#   ACC_OCP_CONTROL_NAMESPACES   flg1 + the capacity-admins projects (057 Q2)
+#   MAAS_RHOAI_API_KEY           key for the dgx MaaS (maas-diffusiongemma)
+#   MAAS_GAUDI_API_KEY           key for the Gaudi2 MaaS (maas-granite-8b)
+#   the feast / aisimulators MCP Services (docs/howto-gpu-capacity-advisor.md)
+# On OpenShift: AgentCollective spec.modelRegistry + agents[].model carry the
+# model ids below; keys arrive through extraEnv secretKeyRef or secretMount.
+# =============================================================================
+collective_id: capacity
+
+agents:
+  - role: capacity_advisor
+    cluster_id: capacity
+    model: maas-diffusiongemma
+    agent_id_prefix: advisor
+    purpose: "Watch dgx GPU capacity; propose freeing idle allowlisted
+      deployments or starting stopped ones, for capacity-admins approval."
+
+  - role: reviewer
+    cluster_id: capacity
+    model: maas-granite-8b
+    agent_id_prefix: explainer
+    purpose: "Explain and challenge the advisor's recommendations before a
+      capacity-admin acts on them."

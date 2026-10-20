@@ -1,0 +1,12 @@
+# acc-build-host inventory — the ONE build host.
+#
+# The role runs on it over SSH with become (the first run as a user that can
+# sudo; the role then creates the unprivileged build user the pipelines use).
+# In AAP the inventory + a Machine credential come from the Controller.
+all:
+  children:
+    build_hosts:
+      vars:
+        ansible_user: "{{ lookup('ansible.builtin.env', 'ACC_SSH_USER') | default('flg', true) }}"
+      hosts:
+        acc-build.ic3net.internal:

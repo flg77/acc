@@ -1,0 +1,11 @@
+---
+# smoke — thin wrapper: one AAP Job Template target. Same as
+#   ansible-playbook ../site.yml -e acc_build_host_operation=smoke
+- name: acc-build-host — smoke
+  hosts: "{{ acc_build_host_targets | default('build_hosts') }}"
+  become: true
+  gather_facts: true
+  roles:
+    - role: acc-build-host
+      vars:
+        acc_build_host_operation: smoke

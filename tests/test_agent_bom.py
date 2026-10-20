@@ -35,7 +35,7 @@ def _bom(**spec_over) -> dict:
     }
     spec.update(spec_over)
     return {
-        "apiVersion": "acc.redhat.io/v1alpha1",
+        "apiVersion": "acc.ic3networks.com/v1alpha1",
         "kind": "AgentBOM",
         "metadata": {"name": "coding-helper"},
         "spec": spec,

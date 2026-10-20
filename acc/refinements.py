@@ -12,7 +12,12 @@ One record per change, ``kind`` in :data:`KINDS`:
 
 * ``note`` — reflection distilled a note (the wire form is a ``Lesson``).
 * ``adopt`` — a peer's lesson entered this role's shared tier (Phase 4).
+* ``propose`` — a note was put up for publication (a publish proposal was
+  queued); the ``publish`` / ``hub_promote`` row that may follow names it by
+  ``evidence.proposal_id``.
 * ``publish`` / ``hub_promote`` — a person moved a note across a context.
+  ``evidence.approvals`` lists every approver with their tier;
+  ``target.written`` says whether the destination took the note.
 * ``role_patch`` — a signed ``ROLE_UPDATE`` was applied.
 * ``rule`` — a learned Cat-B/C rule was approved.
 * ``forget`` — a person was erased.
@@ -40,7 +45,7 @@ from typing import Any
 
 logger = logging.getLogger("acc.refinements")
 
-KINDS = ("note", "adopt", "publish", "hub_promote", "role_patch", "rule", "forget",
+KINDS = ("note", "adopt", "propose", "publish", "hub_promote", "role_patch", "rule", "forget",
          "outcome", "rollback")
 
 #: Redis mirror TTL.  Longer than the lessons' 7 days: a rollback may be asked

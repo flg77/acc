@@ -228,8 +228,10 @@ async def test_the_decision_handler_dispatches_only_on_the_second_operator(monke
     redis.setex(f"acc:hub-01:assistant_proposal_meta:{oid}", 60, json.dumps({"kind": p.kind}))
     seen: list[dict] = []
 
-    async def fake_dispatch(signaling, proposal, redis_client, *, approver_tier="", approvals=None):
-        seen.append({"tier": approver_tier, "approvals": list(approvals or [])})
+    async def fake_dispatch(signaling, proposal, redis_client, *, approver_tier="", approvals=None,
+                            oversight_id=""):
+        seen.append({"tier": approver_tier, "approvals": list(approvals or []),
+                     "oversight_id": oversight_id})
         return True
 
     monkeypatch.setattr("acc.assistant_proposal.dispatch_approved_proposal", fake_dispatch)
@@ -251,5 +253,6 @@ async def test_the_decision_handler_dispatches_only_on_the_second_operator(monke
     assert seen == []                                                          # waiting for another person
     await decide("webgui:bob", "operator")
     assert len(seen) == 1 and [a["approver_id"] for a in seen[0]["approvals"]] == ["system:alice", "webgui:bob"]
+    assert seen[0]["oversight_id"] == oid                                      # RDF-03 2a: the ledger row names it
     await decide("webgui:bob", "operator")                                     # the fan-out replay
     assert len(seen) == 1                                                      # the claim already consumed it

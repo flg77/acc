@@ -2,9 +2,8 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12-blue)](pyproject.toml)
-[![Go](https://img.shields.io/badge/Go-1.23-00ADD8)](operator/go.mod)
-[![OLM Maturity](https://img.shields.io/badge/OLM-Level_3_Seamless_Upgrades-green)](operator/bundle/manifests/acc-operator.clusterserviceversion.yaml)
-[![OpenShift](https://img.shields.io/badge/OpenShift-4.14%2B-red)](docs/operator-install-local.md)
+[![Operator](https://img.shields.io/badge/operator-flg77%2Facc--operator-00ADD8)](https://github.com/flg77/acc-operator)
+[![OpenShift](https://img.shields.io/badge/OpenShift-4.14%2B-red)](docs/operator.md)
 
 A biologically-grounded runtime for **autonomous agent collectives** that operates under
 **bounded agency** — the same codebase runs on a single Podman pod on a laptop, an edge node
@@ -176,39 +175,32 @@ See [`docs/howto-standalone.md`](docs/howto-standalone.md) for the full setup gu
 
 ### Edge — MicroShift / K3s
 
+The operator lives in [`flg77/acc-operator`](https://github.com/flg77/acc-operator). On any cluster with OLM:
+
 ```bash
-# Install CRDs + operator (no OLM / webhook required)
-kubectl apply -f operator/config/crd/bases/
-kubectl apply -f operator/config/rbac/
-kubectl apply -f operator/config/manager/manager.yaml
-
-# Create edge corpus (NATS leaf node, Redis eviction, no KEDA/OTel)
-kubectl apply -f operator/config/samples/acc_v1alpha1_agentcorpus_edge.yaml
-
+kubectl create namespace acc-system
+operator-sdk run bundle quay.io/flg77/acc-operator-bundle:0.3.0 -n acc-system --timeout 10m
+# then a corpus with `deployMode: edge` (NATS leaf node, Redis eviction, no KEDA/OTel)
 kubectl get agentcorpus -n acc-system -w
 ```
 
-See [`docs/howto-edge.md`](docs/howto-edge.md) for hub connectivity, disconnected operation, and bridge delegation setup.
+See [`docs/howto-edge.md`](docs/howto-edge.md) for the edge corpus spec, hub connectivity, disconnected operation, and bridge delegation setup, and [`docs/operator.md`](docs/operator.md) for the operator's own install guide.
 
 ### RHOAI — OpenShift
 
 ```bash
-# Build and push operator image
-cd operator/
-export IMG=quay.io/<your-org>/acc-operator:0.2.0
-podman build -f Containerfile -t $IMG . && podman push $IMG
-
-# Install via Kustomize
-make install && make deploy IMG=$IMG
+# Install the operator from OperatorHub (community catalog, channel candidate-v0) or from the bundle:
+oc new-project acc-system
+operator-sdk run bundle quay.io/flg77/acc-operator-bundle:0.3.0 -n acc-system --timeout 10m
 
 # Create Category-A governance WASM ConfigMap
-kubectl create configmap acc-cat-a-wasm \
+oc create configmap acc-cat-a-wasm \
   --from-file=category_a.wasm=/path/to/category_a.wasm -n acc-system
 
-# Apply a sample corpus (rhoai mode, Milvus + vLLM)
-kubectl apply -f operator/config/samples/acc_v1alpha1_agentcorpus_rhoai.yaml
+# Apply a sample corpus (rhoai mode, Milvus + vLLM) from the operator repository
+oc apply -n acc-system -f https://raw.githubusercontent.com/flg77/acc-operator/v0.3.0/config/samples/acc_v1alpha1_agentcorpus_rhoai.yaml
 
-kubectl get agentcorpus -n acc-system -w
+oc get agentcorpus -n acc-system -w
 ```
 
 See [`docs/howto-rhoai.md`](docs/howto-rhoai.md) for the full operator setup, CRD reference, and KEDA/Gatekeeper/OTel wiring.
@@ -566,7 +558,6 @@ agentic-cell-corpus/
 │   ├── cognitive_core.py       # CognitiveCore: 7-step pipeline, Cat-A/B/C, delegation
 │   ├── role_store.py           # RoleStore: 4-tier load, ROLE_UPDATE hot-reload, Ed25519
 │   └── signals.py              # NATS subject naming (intra-collective + bridge subjects)
-├── operator/                   # Go Operator (controller-runtime v0.19, Operator SDK v1.36)
 │   ├── api/v1alpha1/           # AgentCorpus + AgentCollective CRDs (standalone/edge/rhoai)
 │   ├── internal/
 │   │   ├── reconcilers/        # 11+ sub-reconcilers (NATS leaf, Redis eviction, OPA, ...)
@@ -584,8 +575,7 @@ agentic-cell-corpus/
 │   ├── howto-rhoai.md             # OpenShift operator, CRD reference, GPU inference
 │   ├── howto-role-infusion.md     # Role definition, 4-tier load, hot-reload, signing
 │   ├── value-proposition.md       # Why ACC vs LangChain/CrewAI/AutoGen/Haystack
-│   ├── operator-install-local.md  # Operator deployment guide (3 methods)
-│   ├── operator-certification.md  # Red Hat OperatorHub certification roadmap
+│   ├── operator.md                # The operator moved to flg77/acc-operator; pointers to its docs
 │   ├── CHANGELOG.md
 │   └── IMPLEMENTATION_SPEC_v0.2.0.md  # RHOAI integration design
 ├── openspec/                   # Planning artifacts (proposals, designs, task lists)
@@ -650,8 +640,7 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 | [`docs/memory_reflection.md`](docs/memory_reflection.md) | Self-reflective memory: the out-of-band consolidation loop, `memory_notes`, the hot-path read |
 | [`docs/prompt_caching.md`](docs/prompt_caching.md) | Stable cacheable prefix, per-backend cache hints, Performance-pane cache metrics |
 | [`docs/golden_prompts_scheduling.md`](docs/golden_prompts_scheduling.md) | Golden-prompt suite schema, the CLI/TUI runner, the scheduled history runner + cron recipe |
-| [`docs/operator-agentset-guide.md`](docs/operator-agentset-guide.md) | Instantiating agentsets via the ACC operator: mapping `collective.yaml` → `AgentCollective` CRD, worked CRs, current CRD gaps |
-| [`docs/operator-standalone-parity.md`](docs/operator-standalone-parity.md) | Standalone-vs-operator feature drift, the no-conflict strategy, the tracked parity closers |
+| [`docs/operator.md`](docs/operator.md) | The operator lives in [`flg77/acc-operator`](https://github.com/flg77/acc-operator): where its install guide, `AgentCollective` guide, parity contract and catalog docs went |
 | [`docs/spiffe.md`](docs/spiffe.md) | SPIFFE workload identity: prerequisites, config, the `ed25519 → spiffe` migration, v0.5.0 default-flip plan |
 | [`docs/spiffe-edge.md`](docs/spiffe-edge.md) | SPIFFE at the edge: nested / federated / ed25519 topologies, offline survival, the compatibility matrix |
 | [`docs/nats-nkeys.md`](docs/nats-nkeys.md) | NATS NKey authentication: per-role identities, the publish/subscribe permission matrix, per-deploy-mode setup |
@@ -660,8 +649,6 @@ Optional prerequisites (detected at runtime, graceful degradation when absent): 
 | [`docs/role-sync.md`](docs/role-sync.md) | Bi-directional `roles/<id>/role.yaml` ↔ `AgentCollective` CRD sync; the three `role_source` modes |
 | [`docs/security-hardening.md`](docs/security-hardening.md) | Complete security architecture: Cat-A/B/C Rego rules, Phase 0a–4 implementation plan |
 | [`docs/value-proposition.md`](docs/value-proposition.md) | Comparison with LangChain, CrewAI, AutoGen, Haystack |
-| [`docs/operator-install-local.md`](docs/operator-install-local.md) | Detailed operator deployment (Kustomize, OLM bundle, CatalogSource) |
-| [`docs/operator-certification.md`](docs/operator-certification.md) | Red Hat OperatorHub certification roadmap |
 | [`docs/IMPLEMENTATION_SPEC_v0.2.0.md`](docs/IMPLEMENTATION_SPEC_v0.2.0.md) | RHOAI 3 integration design: compatibility matrix, dual-mode pattern |
 | [`docs/ACCv3.md`](docs/ACCv3.md) | ACC v3 design paper: sovereign edge-first architecture, biological grounding |
 
@@ -673,7 +660,8 @@ ACC is developed as a small family of repositories:
 
 | Repository | What it is |
 |---|---|
-| [`flg77/acc`](https://github.com/flg77/acc) | **This repo** — the ACC runtime, operator, TUI/WebGUI, and the `acc-pkg` package toolchain. |
+| [`flg77/acc`](https://github.com/flg77/acc) | **This repo** — the ACC runtime, TUI/WebGUI, and the `acc-pkg` package toolchain. |
+| [`flg77/acc-operator`](https://github.com/flg77/acc-operator) | The Kubernetes / OpenShift operator: installs and runs the runtime from `AgentCorpus`, `AgentCollective`, `AccCatalog` and `AccPackageInstall`; on operatorhub.io and the OpenShift community catalog. |
 | [`flg77/acc-ecosystem`](https://github.com/flg77/acc-ecosystem) | Public package registry serving the `@acc/*` family packs — discover roles, and publish your own. |
 | [`flg77/acc-podman-desktop`](https://github.com/flg77/acc-podman-desktop) | Podman Desktop extension — bring up and govern an ACC collective from the desktop, alongside Podman AI Lab. |
 | [`flg77/acc-web-project`](https://github.com/flg77/acc-web-project) | The project website — intro, operations guide, the `/roles` marketplace, and the roadmap (links to this runtime). |

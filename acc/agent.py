@@ -391,10 +391,32 @@ def _nkey_config_of(obj) -> "Any | None":
     return getattr(security, "nkey", None)
 
 
+def _domain_taxonomy_of(agent: Any) -> Any:
+    """The agent's domain taxonomy (RDF-02), or ``None`` -- never raises, so a
+    taxonomy problem can only ever fall back to exact receptor matching."""
+    try:
+        holder = getattr(agent, "_taxonomy_holder", None)
+        if holder is None:
+            from acc.domain_taxonomy import TaxonomyHolder, resolve  # noqa: PLC0415
+            cfg = agent.config.agent
+            hub = str(getattr(cfg, "hub_collective_id", "") or "")
+            holder = TaxonomyHolder(
+                lambda: resolve(collective_id=cfg.collective_id, hub_collective_id=hub,
+                                redis_client=getattr(agent, "_redis", None)),
+                bound=bool(hub),
+            )
+            agent._taxonomy_holder = holder
+        return holder.get()
+    except Exception:  # noqa: BLE001
+        logger.debug("domain taxonomy: unavailable", exc_info=True)
+        return None
+
+
 def _receptor_allows(
     signal_type: str,
     domain_tag: str,
     domain_receptors: list[str],
+    taxonomy: Any = None,
 ) -> bool:
     """Return True when the agent should process the signal (ACC-11 receptor model).
 
@@ -431,6 +453,10 @@ def _receptor_allows(
         domain_tag: The ``domain_tag`` field from the payload (may be empty).
         domain_receptors: The receiving agent's ``domain_receptors`` list from its
             :class:`~acc.config.RoleDefinitionConfig`.
+        taxonomy: RDF-02 -- the collective's domain taxonomy
+            (:class:`acc.lib.rdf.taxonomy.Taxonomy`).  With one, a receptor
+            hears its domain and every narrower one (``lending`` hears
+            ``mortgage``); without one, the match is exact, as before.
 
     Returns:
         ``True`` when the signal should be processed; ``False`` for silent drop.
@@ -443,6 +469,8 @@ def _receptor_allows(
         return True          # universal receptor — responds to all
     if not domain_tag:
         return True          # universal ligand — processed by all
+    if taxonomy is not None:
+        return any(taxonomy.matches(r, domain_tag) for r in domain_receptors)
     return domain_tag in domain_receptors
 
 
@@ -1113,6 +1141,8 @@ class Agent:
                 logger.exception(
                     "assistant_proposal: redis cache failed for %s", oversight_id,
                 )
+        from acc.assistant_proposal import record_publish_proposed  # noqa: PLC0415
+        record_publish_proposed(p, oversight_id, redis)
         try:
             from acc.assistant_proposal import publish_proposal_pending  # noqa: PLC0415
             await publish_proposal_pending(self.backends.signaling, p)
@@ -1296,6 +1326,8 @@ class Agent:
                                 "assistant_proposal: redis cache failed for %s",
                                 oversight_id,
                             )
+                    from acc.assistant_proposal import record_publish_proposed  # noqa: PLC0415
+                    record_publish_proposed(p, oversight_id, redis)
                     # Announce on the bus so the Compliance screen
                     # snapshot consumer picks up the pending row.
                     await publish_proposal_pending(
@@ -1787,6 +1819,7 @@ class Agent:
             ok = await dispatch_approved_proposal(
                 self.backends.signaling, proposal, self._redis,
                 approver_tier=approver_tier, approvals=approvals,
+                oversight_id=oversight_id,
             )
             logger.info(
                 "assistant_proposal: approved + dispatched kind=%s "
@@ -4908,7 +4941,8 @@ class Agent:
             return "not-addressed", lesson
         role = getattr(self, "_active_role", None)
         receptors = list(getattr(role, "domain_receptors", []) or [])
-        if not _receptor_allows(SIG_KNOWLEDGE_SHARE, lesson.domain_tag, receptors):
+        if not _receptor_allows(SIG_KNOWLEDGE_SHARE, lesson.domain_tag, receptors,
+                                _domain_taxonomy_of(self)):
             return "no-receptor", lesson
         if lesson.kind == "role_patch":
             # Phase 3 -- never applied on receipt; it becomes a proposal a
@@ -4954,6 +4988,7 @@ class Agent:
                 dissent=lesson.evidence.dissent, ceiling=lesson.ceiling or "CRITICAL",
                 source_requesters=list(lesson.source_requesters),
                 note_id=lesson.lesson_id,
+                source_ids=list(lesson.evidence.source_episode_ids),
             )
             if ok:
                 refinements.record(
@@ -5731,7 +5766,7 @@ class Agent:
                 try:
                     proposal = build_publish_proposal(
                         c.note(), hub_destination(hub), collective_id=hub,
-                        agent_id=self.agent_id,
+                        agent_id=self.agent_id, source_collective=c.collective_id,
                     )
                 except QuorumNotMet:
                     continue
@@ -5878,7 +5913,9 @@ class Agent:
         agent so peers ignore it. Fire-and-forget.
         """
         cid = self.config.agent.collective_id
-        mode = getattr(self._active_role, "default_operating_mode", "AUTO") or "AUTO"
+        role = self._active_role
+        mode = getattr(role, "default_operating_mode", "AUTO") or "AUTO"
+        content = await self._wakeup_content(role)
         payload = {
             "signal_type": "TASK_ASSIGN",
             "task_id": uuid.uuid4().hex,
@@ -5889,8 +5926,8 @@ class Agent:
             "task_type": "WAKEUP_SCAN",
             # Set both fields (like the TUI channel) — ``content`` is what
             # CognitiveCore reads; ``task_description`` is the legacy field.
-            "task_description": self._WAKEUP_PROMPT,
-            "content": self._WAKEUP_PROMPT,
+            "task_description": content,
+            "content": content,
             "operating_mode": mode,
             "priority": "LOW",
             "iteration_n": 0,
@@ -5902,6 +5939,23 @@ class Agent:
             "proactive_wakeup: published self-check (mode=%s) for %s",
             mode, self.agent_id,
         )
+
+    async def _wakeup_content(self, role) -> str:
+        """The self-check's task content: the role's own scan (``wakeup_prompt``)
+        or the generic one, plus the results of its declared read-only
+        prefetch (proposal 057). A failed prefetch never stops the wake-up --
+        the model is told its data is missing instead."""
+        prompt = (getattr(role, "wakeup_prompt", "") or "").strip() or self._WAKEUP_PROMPT
+        markers = list(getattr(role, "wakeup_prefetch", None) or [])
+        if not markers or self._cognitive_core is None:
+            return prompt
+        from acc.capability_dispatch import run_wakeup_prefetch  # noqa: PLC0415
+        try:
+            block = await run_wakeup_prefetch(markers, self._cognitive_core, role)
+        except Exception:  # noqa: BLE001
+            logger.exception("proactive_wakeup: prefetch failed")
+            block = "Prefetch failed: the declared reads did not run; do not act on missing data."
+        return prompt + "\n\n" + block if block else prompt
 
     async def _maybe_start_a2a_server(self):
         """Start the A2A inbound HTTP/JSON-RPC server (OpenSpec
@@ -5991,6 +6045,10 @@ class Agent:
             # a role that opts in (index_knowledge_packs: true).  No-op for every
             # other role; idempotent per (pack, collective).
             await self._maybe_index_knowledge_packs()
+            # RDF-02 -- resolve the domain taxonomy now: a hub publishes its
+            # pack for the instances bound to it, and a bound instance logs
+            # which hub vocabulary its receptors will use.
+            _domain_taxonomy_of(self)
             # Run heartbeat, task, role-update, bridge-result, centroid,
             # (arbiter only) oversight-decision and plan-orchestration
             # loops concurrently.  Non-arbiter agents' plan / oversight

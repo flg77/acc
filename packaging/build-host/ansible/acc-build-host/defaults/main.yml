@@ -1,0 +1,73 @@
+---
+# acc-build-host — overridable defaults (per run / per AAP survey).
+# Internal constants (the valid-ops list, the tool list) live in vars/main.yml.
+#
+# PURPOSE: the dedicated ACC release build host (`acc-build`), so lighthouse goes
+# back to being the inference box (20261004-public-release-channels, Phase 3, D2).
+# The host builds the spearhead RPM for the Satellite channel in mock chroots,
+# signs it with the channel key, and builds the release images; the operator's
+# workstation drives it over ssh (packaging/rpm/release-pipeline.sh,
+# packaging/images/build-images.sh). Host/runtime tier of the CRUD-role standard
+# (docs/STANDARD-ansible-crud-roles.md) — sibling of ansible/acc-distribute.
+
+# Which CRUD operation the role runs. One of: status | provision | smoke | teardown.
+acc_build_host_operation: status
+
+# The inventory group the plays target.
+acc_build_host_targets: build_hosts
+
+# ---- The build user: owns every work tree, the pip cache and the signing key.
+# The operator's ssh config points `Host acc-build` at this user; nothing on the
+# host runs the builds as root.
+acc_build_host_user: acc-build
+acc_build_host_home: /srv/acc-build
+# BUILD_ROOT for the pipelines: the work trees (acc-rpm-<v>, acc-images-<v>),
+# the pip cache and the tmp dir live directly under it.
+acc_build_host_build_root: "{{ acc_build_host_home }}"
+# rootless podman: the sub-uid / sub-gid range the user owns.
+acc_build_host_subid_start: 200000
+acc_build_host_subid_count: 65536
+# The standalone signing key's keyring (packaging/rpm/sign-rpms-standalone.sh).
+# The role creates the directory (0700) and never writes a key into it: the key
+# is MOVED here from lighthouse by hand (packaging/build-host/HOWTO.md), so the
+# hosts that trust the channel keep trusting it.
+acc_build_host_gnupghome: "{{ acc_build_host_home }}/.acc-rpm-gpg"
+# The fingerprint the key is expected to have (from the Satellite's served
+# public key); "" = status/smoke report the key's presence and skip the check.
+acc_build_host_key_fingerprint: ""
+# Where the channel's public key is served, for the fingerprint comparison
+# (the Satellite content credential; see packaging/rpm/README.md).
+acc_build_host_channel_key_url: ""
+
+# ---- The operator's ssh public keys (authorized_keys of the build user).
+# A list of key strings, or read from a file at run time:
+#   -e acc_build_host_authorized_keys_file=~/.ssh/id_rsa.pub
+acc_build_host_authorized_keys: []
+acc_build_host_authorized_keys_file: ""
+
+# ---- The mock chroots the host must be able to build (packaging/rpm/mock-matrix.sh).
+# The aarch64 rows run under qemu-user-static: slow, but unattended.
+acc_build_host_mock_chroots:
+  - rhel+epel-9-x86_64
+  - rhel+epel-10-x86_64
+  - fedora-42-x86_64
+acc_build_host_aarch64: true
+acc_build_host_mock_chroots_aarch64:
+  - rhel+epel-9-aarch64
+  - rhel+epel-10-aarch64
+  - fedora-42-aarch64
+
+# ---- Sizing the smoke asserts (a venv with CPU torch is ~2.5 GB; six chroots
+# and the image builds want far more).
+acc_build_host_min_free_gb: 100
+
+# ---- Guards (standard knob vocabulary)
+# provision MUTATES the host only with apply=true; apply=false reports the plan.
+apply: false
+# Run smoke at the end of a provision (forced when apply=true).
+smoke: false
+# teardown needs confirm=YES; wipe_data also removes the user, its home and the
+# work trees — and refuses while the keyring holds a key unless wipe_key=YES.
+confirm: ""
+wipe_data: false
+wipe_key: ""

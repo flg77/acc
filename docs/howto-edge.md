@@ -57,6 +57,55 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
 Use the standalone Podman setup with `deploy_mode: edge` in `acc-config.yaml`. The NATS leaf node configuration is applied via the rendered NATS config template — in Podman mode you manage `nats.conf` directly.
 
+### Option D — Image mode (bootc): switch once, `bootc upgrade` per release
+
+The edge profile's intended lifecycle. The node does not install a package;
+it boots an image that carries the released `acc` RPM with the stack unit
+enabled and `deploy_mode: edge` — built by `container/Containerfile.bootc`
+from the public channel and published as
+`quay.io/flg77/acc_images:acc-bootc-<version>`. Upgrades are atomic and keep
+the previous image for a rollback, and a node that was offline simply picks
+up the latest image when it next can.
+
+```bash
+# any bootc host (Fedora bootc, CentOS/RHEL image mode) becomes an ACC edge node:
+sudo bootc switch quay.io/flg77/acc_images:acc-bootc-0.27.0
+sudo systemctl reboot
+
+# first boot: /etc persists across upgrades, so the node's own settings live there
+sudo -e /etc/acc/acc.env                 # the secrets the image deliberately does not carry
+sudo usermod -aG acc $USER               # /var/lib/acc is shared through group acc
+sudo systemctl status acc-stack          # the stack pulls its container images on first start
+acc-cli doctor                           # the `channel` row says image mode; --probe asks the registry
+
+# every later release
+sudo bootc upgrade                       # or `bootc upgrade --check` first
+sudo bootc rollback                      # the previous image, if the new one misbehaves
+```
+
+Build the image yourself — the Fedora base by default, the EL line with the
+CentOS bootc base, or from the lab mirror instead of COPR:
+
+```bash
+podman build -f container/Containerfile.bootc --build-arg ACC_VERSION=0.27.0 \
+    -t quay.io/flg77/acc_images:acc-bootc-0.27.0 container
+podman build -f container/Containerfile.bootc --build-arg ACC_VERSION=0.27.0 \
+    --build-arg BASE_IMAGE=quay.io/centos-bootc/centos-bootc:stream10 --build-arg ACC_REPO_FAMILY=epel \
+    -t quay.io/flg77/acc_images:acc-bootc-el10-0.27.0 container
+podman build -f container/Containerfile.bootc --build-arg ACC_VERSION=0.27.0 \
+    --build-arg ACC_REPO_URL=http://rpm.ic3net.internal:8080/acc-spearhead/ -t acc-bootc:lab container
+```
+
+`--build-arg ACC_BOUND_IMAGES=1` binds the stack's container images to the
+host image (bootc *logically bound images*): `bootc upgrade` then pulls them
+with the host image, so a node with no connectivity at stack start already
+has them. Off by default, because every image the compose names must then
+exist in the registry or the upgrade fails. `--build-arg ACC_PROFILE=edge`
+applies the `edge` feature profile (`profiles/edge.yaml`) at build time.
+
+A bootc host has no `dnf upgrade`: the image is the unit of change. To change
+what the node runs, change the image and `bootc upgrade`.
+
 ### Optional — SPIFFE workload identity
 
 Edge deployments can opt into SPIFFE workload identity for
@@ -71,23 +120,22 @@ default; SPIFFE is opt-in per site.  See
 
 ## Step 1 — Install the ACC Operator (MicroShift / K3s)
 
+The operator lives in [`flg77/acc-operator`](https://github.com/flg77/acc-operator); its
+install guide covers OperatorHub, the bundle image, your own catalog and a kustomize deploy.
+The shortest path on an edge cluster is OLM plus the public bundle:
+
 ```bash
-# Install CRDs
-kubectl apply -f operator/config/crd/bases/
-
-# Install RBAC
-kubectl apply -f operator/config/rbac/
-
-# Install the operator deployment
-kubectl apply -f operator/config/manager/manager.yaml
+operator-sdk olm install --version 0.31.0       # once per cluster
+kubectl create namespace acc-system
+operator-sdk run bundle quay.io/flg77/acc-operator-bundle:0.3.0 -n acc-system --timeout 10m
 
 # Verify the operator is running
 kubectl get pods -n acc-system
-# NAME                              READY   STATUS    RESTARTS
-# acc-operator-controller-manager-... 1/1   Running   0
+# NAME                                 READY   STATUS    RESTARTS
+# acc-operator-controller-manager-...  1/1     Running   0
 ```
 
-> **Note:** No OLM or webhook registration is required at edge. The operator runs in CRD-only mode without defaulting/validation webhooks (no cert-manager dependency).
+> **Note:** OLM issues the admission webhooks' certificates. A kustomize deploy without OLM (`make install deploy` in the operator repository) needs a certificate source you provide; see the operator's `docs/install.md`.
 
 ---
 

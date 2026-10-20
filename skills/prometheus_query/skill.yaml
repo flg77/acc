@@ -1,0 +1,78 @@
+# skills/prometheus_query/skill.yaml — read-only PromQL against Thanos/Prometheus.
+#
+# Backlog 019 A3: the GPU capacity advisor reads GPU requests and vLLM
+# metrics. Read-only, size-capped; an optional operator allowlist narrows
+# which queries an agent may run.
+
+purpose:        "Run a read-only PromQL query (instant or range) against the cluster's Thanos/Prometheus."
+version:        "0.1.0"
+adapter_class:  "PrometheusQuerySkill"
+risk_level:     "LOW"
+system_access:  false
+domain_id:      "observability"
+tags:           ["metrics", "prometheus", "thanos", "openshift", "capacity", "advisor"]
+
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      minLength: 1
+      maxLength: 4000
+    mode:
+      type: string
+      enum: [instant, range]
+    time:
+      type: string
+      description: "Instant evaluation time (RFC 3339 or unix seconds); default now."
+    start:
+      type: string
+      description: "Range start (RFC 3339 or unix seconds). Required for mode=range."
+    end:
+      type: string
+      description: "Range end; default now."
+    step:
+      type: string
+      pattern: "^[0-9]+(\\.[0-9]+)?(ms|s|m|h|d|w|y)?$"
+      description: "Range resolution, e.g. 60s or 5m. Required for mode=range."
+    max_series:
+      type: integer
+      minimum: 1
+      maximum: 500
+    max_points:
+      type: integer
+      minimum: 1
+      maximum: 2000
+      description: "Range samples kept per series (the most recent)."
+    timeout_s:
+      type: number
+      minimum: 1
+      maximum: 120
+  required: [query]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    result_type: { type: string }
+    series: { type: array }
+    series_count: { type: integer }
+    truncated: { type: boolean }
+    warnings: { type: array }
+  required: [result_type, series, series_count, truncated]
+
+description: |
+  GET <ACC_PROMETHEUS_URL>/api/v1/query (or /query_range). Configure:
+
+    ACC_PROMETHEUS_URL       e.g. https://thanos-querier.openshift-monitoring.svc:9091
+    ACC_PROMETHEUS_TOKEN     bearer token (env or mounted Secret); default: the
+                             pod's service-account token
+    ACC_PROMETHEUS_CA_FILE   CA bundle; default: the in-cluster service CA
+    ACC_PROMETHEUS_QUERY_ALLOWLIST
+                             optional; newline- or ';'-separated regexes, a query
+                             must fully match one of them
+
+  The service account needs read access to metrics (on OpenShift the
+  cluster-monitoring-view ClusterRole, or a namespace-scoped
+  monitoring-rules-view grant with the tenancy port 9092). Results are capped
+  at max_series series (default 50) and max_points samples per series.

@@ -90,6 +90,7 @@ ENV ACC_SHARE=/usr/share/acc \
     ACC_SKILLS_ROOT=/usr/share/acc/skills \
     ACC_MCPS_ROOT=/usr/share/acc/mcps \
     ACC_ROLES_ROOT=/usr/share/acc/roles \
+    ACC_ROLES_INDEX=/usr/share/acc/roles.index \
     ACC_REGULATORY_ROOT=/usr/share/acc/regulatory_layer \
     ACC_MODELS_PATH=/usr/share/acc/models.yaml.example \
     ACC_STATE=/app/data \
@@ -100,6 +101,10 @@ ENV ACC_SHARE=/usr/share/acc \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH=/usr/lib/acc/venv/bin:$PATH
+
+# What this image serves (OR-14, D-033), from the package's own trees; see the
+# source-built image for why.  /usr/share/acc is the package's share tree.
+RUN python3 -m acc.roles_index --out /usr/share/acc/roles.index
 
 USER 1001
 WORKDIR /app

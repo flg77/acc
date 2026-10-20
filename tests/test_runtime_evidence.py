@@ -31,8 +31,8 @@ _AGENT_POD = {
                 "pod_uid": "uid-123",
                 "namespace": "acc-ns",
                 "pod_labels": {
-                    "acc.redhat.io/agent-role": "analyst",
-                    "acc.redhat.io/collective-id": "sol-01",
+                    "acc.ic3networks.com/agent-role": "analyst",
+                    "acc.ic3networks.com/collective-id": "sol-01",
                 },
             },
         }
@@ -94,8 +94,8 @@ class TestNormalise:
                 "name": "analyst-9c1d",
                 "pod_uid": "uid-123",
                 "labels": {
-                    "acc.redhat.io/agent-role": "analyst",
-                    "acc.redhat.io/collective-id": "sol-01",
+                    "acc.ic3networks.com/agent-role": "analyst",
+                    "acc.ic3networks.com/collective-id": "sol-01",
                 },
             },
         }
@@ -108,8 +108,8 @@ class TestNormalise:
             "_acc_normalized": {
                 "hook": "openat",
                 "pod_labels": {
-                    "acc.redhat.io/agent-role": "analyst",
-                    "acc.redhat.io/collective-id": "sol-01",
+                    "acc.ic3networks.com/agent-role": "analyst",
+                    "acc.ic3networks.com/collective-id": "sol-01",
                 },
                 "pod_name": "analyst-9c1d",
                 "pod_uid": "uid-9",
@@ -134,8 +134,8 @@ class TestAdapters:
             "deployment": {
                 "name": "analyst-9c1d", "id": "uid-5",
                 "labels": {
-                    "acc.redhat.io/agent-role": "analyst",
-                    "acc.redhat.io/collective-id": "sol-01",
+                    "acc.ic3networks.com/agent-role": "analyst",
+                    "acc.ic3networks.com/collective-id": "sol-01",
                 },
             },
             "processViolation": {"name": "/usr/bin/nc"},
@@ -155,8 +155,8 @@ class TestAdapters:
                 "proc.name": "nc",
                 "k8s.pod.name": "analyst-9c1d",
                 "k8s.pod.uid": "uid-7",
-                "k8s.pod.label.acc.redhat.io/agent-role": "analyst",
-                "k8s.pod.label.acc.redhat.io/collective-id": "sol-01",
+                "k8s.pod.label.acc.ic3networks.com/agent-role": "analyst",
+                "k8s.pod.label.acc.ic3networks.com/collective-id": "sol-01",
             },
         }
         shaped = FalcoAdapter._shape(alert)

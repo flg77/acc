@@ -1,0 +1,105 @@
+---
+# provision — CREATE + UPDATE. Idempotent; re-run after a change. MUTATES the host
+# only with apply=true; apply=false prints the plan and changes nothing.
+
+- name: Provision — the plan
+  ansible.builtin.debug:
+    msg:
+      - "host          : {{ inventory_hostname }}"
+      - "packages      : {{ (_acc_build_host_packages + (_acc_build_host_packages_aarch64 if acc_build_host_aarch64 else [])) | join(' ') }}"
+      - "build user    : {{ acc_build_host_user }} (home {{ acc_build_host_home }}, groups mock, sub-ids {{ acc_build_host_subid_start }}+{{ acc_build_host_subid_count }}, lingering)"
+      - "directories   : {{ acc_build_host_build_root }}/{pip-cache,tmp}  {{ acc_build_host_gnupghome }} (0700, EMPTY — the key is moved by hand)"
+      - "ssh keys      : {{ _acc_build_host_keys | length }} authorized key(s) for {{ acc_build_host_user }}"
+      - "mock chroots  : {{ (acc_build_host_mock_chroots + (acc_build_host_mock_chroots_aarch64 if acc_build_host_aarch64 else [])) | join(' ') }}"
+      - "apply         : {{ apply | bool }}{{ '' if apply | bool else '  (DRY RUN — nothing changes; re-run with -e apply=true)' }}"
+
+- name: Provision — nothing more without apply=true
+  ansible.builtin.meta: end_host
+  when: not (apply | bool)
+
+- name: Provision — packages
+  ansible.builtin.dnf:
+    name: "{{ _acc_build_host_packages + (_acc_build_host_packages_aarch64 if acc_build_host_aarch64 else []) }}"
+    state: present
+
+- name: Provision — the build user
+  ansible.builtin.user:
+    name: "{{ acc_build_host_user }}"
+    comment: "ACC release build host user"
+    home: "{{ acc_build_host_home }}"
+    create_home: true
+    shell: /bin/bash
+    groups: [mock]
+    append: true
+
+- name: Provision — sub-uid / sub-gid range for rootless podman
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    regexp: "^{{ acc_build_host_user }}:"
+    line: "{{ acc_build_host_user }}:{{ acc_build_host_subid_start }}:{{ acc_build_host_subid_count }}"
+    create: true
+    mode: "0644"
+  loop: [/etc/subuid, /etc/subgid]
+
+- name: Provision — lingering, so rootless podman has a session bus without a login
+  ansible.builtin.command: "loginctl enable-linger {{ acc_build_host_user }}"
+  args:
+    creates: "/var/lib/systemd/linger/{{ acc_build_host_user }}"
+
+- name: Provision — directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ acc_build_host_user }}"
+    group: "{{ acc_build_host_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ acc_build_host_build_root }}", mode: "0755" }
+    - { path: "{{ acc_build_host_build_root }}/pip-cache", mode: "0755" }
+    - { path: "{{ acc_build_host_build_root }}/tmp", mode: "0755" }
+    - { path: "{{ acc_build_host_gnupghome }}", mode: "0700" }
+
+# ansible.builtin only, like ansible/acc-distribute: no collection to install
+# before the role runs, in an AAP execution environment or on a bare controller.
+- name: Provision — the build user's ~/.ssh
+  ansible.builtin.file:
+    path: "{{ acc_build_host_home }}/.ssh"
+    state: directory
+    owner: "{{ acc_build_host_user }}"
+    group: "{{ acc_build_host_user }}"
+    mode: "0700"
+
+- name: Provision — the operator's ssh keys (one line each, idempotent)
+  ansible.builtin.lineinfile:
+    path: "{{ acc_build_host_home }}/.ssh/authorized_keys"
+    line: "{{ item }}"
+    create: true
+    owner: "{{ acc_build_host_user }}"
+    group: "{{ acc_build_host_user }}"
+    mode: "0600"
+  loop: "{{ _acc_build_host_keys }}"
+  no_log: true
+
+- name: Provision — aarch64 binfmt is registered (qemu-user-static)
+  ansible.builtin.systemd:
+    name: systemd-binfmt
+    state: restarted
+  when: acc_build_host_aarch64 | bool
+
+- name: Provision — every chroot has a mock config
+  ansible.builtin.stat:
+    path: "{{ _acc_build_host_mock_config_dir }}/{{ item }}.cfg"
+  loop: "{{ acc_build_host_mock_chroots + (acc_build_host_mock_chroots_aarch64 if acc_build_host_aarch64 else []) }}"
+  register: _acc_build_host_cfgs
+
+- name: Provision — refuse a chroot mock-core-configs does not know
+  ansible.builtin.assert:
+    that:
+      - _acc_build_host_cfgs.results | rejectattr('stat.exists') | list | length == 0
+    fail_msg: >-
+      No mock config for:
+      {{ _acc_build_host_cfgs.results | rejectattr('stat.exists') | map(attribute='item') | join(', ') }}.
+      mock-core-configs on this host is too old for that release, or the name is wrong.
+
+- name: Provision — smoke (forced on apply)
+  ansible.builtin.include_tasks: smoke.yml

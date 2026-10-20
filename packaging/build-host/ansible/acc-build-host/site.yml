@@ -1,0 +1,13 @@
+---
+# site.yml — single entrypoint. Choose the operation with an extra-var:
+#   ansible-playbook site.yml -e acc_build_host_operation=provision -e apply=true
+#
+# Runs ON the build host (become). AAP Controller: point one Job Template at this
+# playbook and expose acc_build_host_operation (+ apply / confirm / wipe_data) as
+# a survey; the per-verb playbooks in playbooks/ are thin one-template wrappers.
+- name: acc-build-host — the dedicated ACC release build host
+  hosts: "{{ acc_build_host_targets | default('build_hosts') }}"
+  become: true
+  gather_facts: true
+  roles:
+    - role: acc-build-host

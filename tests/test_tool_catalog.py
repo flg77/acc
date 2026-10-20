@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import get_args
 
 import pytest
+
+from acc.mcp.manifest import MCPTransport
 
 from tools.gen_tool_catalog import (
     CompletenessError,
@@ -153,4 +156,5 @@ def test_catalog_records_the_governance_fields(catalog: dict) -> None:
     for m in catalog["mcps"]:
         assert m["purpose"], f"mcp {m['id']} has no model-visible purpose"
         assert m["risk_level"], f"mcp {m['id']} has no risk_level"
-        assert m["transport"] in ("http", "stdio"), m["id"]
+        # Every transport the manifest model accepts (streamable-http: MC-01).
+        assert m["transport"] in get_args(MCPTransport), m["id"]

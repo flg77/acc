@@ -22,6 +22,14 @@ Environment variables (`ACC_CONFIG_PATH`, `ACC_ROLES_ROOT`, `ACC_MODELS_PATH`, �
 keep winning over the rule; a container's `/app/...` is just a home the
 image sets; a developer inside a checkout sees no change.
 
+## As a bootable image (the edge profile)
+
+An edge node boots an image carrying the released RPM instead of installing a
+package: `container/Containerfile.bootc`, published as
+`quay.io/flg77/acc_images:acc-bootc-<version>`. `bootc switch` once, then
+`bootc upgrade` per release, with a rollback. See `docs/howto-edge.md`,
+Option D.
+
 ## From a wheel (workstation, macOS, a container)
 
 ```bash
@@ -77,10 +85,50 @@ The stack runs as the unprivileged `acc` user with rootless Podman (its own
 sub-uid range, lingering enabled). It never gains root: no sudoers entry, no
 capabilities, `NoNewPrivileges`.
 
-### From the channel (hosts on the lab network)
+### From the public channel (COPR)
 
-The internal Satellite is the distribution base; **acc1 mirrors it** so a host
-needs no Satellite subscription and no CA:
+The public channel is a [COPR](https://copr.fedorainfracloud.org/coprs/flg77/acc/)
+project built from the public mirror's release tags, for EL9, EL10 and the
+current Fedora, on **x86_64 and aarch64**. It is signed with COPR's own key,
+which `dnf copr enable` imports, so a host needs nothing else:
+
+```bash
+sudo dnf install -y 'dnf-command(copr)'   # EL: the copr plugin (dnf-plugins-core)
+sudo dnf copr enable flg77/acc
+sudo dnf install acc                      # pulls acc-runtime, podman, podman-compose
+sudo dnf upgrade acc                      # every later release
+```
+
+EL9 takes `python3.12` from AppStream and `podman-compose` from EPEL; enable
+EPEL first (`dnf install epel-release` on CentOS Stream / Alma / Rocky, the
+EPEL repository on RHEL). `acc-cli doctor` has a `channel` row that says
+whether the host is current with the channel.
+
+### By file (a host with no repository access)
+
+Every release on the mirror carries the packages COPR built, with checksums:
+<https://github.com/flg77/acc/releases>. Pick the two for the host's release
+and architecture, verify, install together — dnf resolves `python3.12` and
+`podman-compose` (EPEL on EL9):
+
+```bash
+v=0.27.0; d=el9; a=x86_64
+base=https://github.com/flg77/acc/releases/download/v$v
+curl -fsSLO $base/SHA256SUMS -O $base/acc-runtime-$v-1.$d.$a.rpm -O $base/acc-$v-1.$d.$a.rpm
+sha256sum --check --ignore-missing SHA256SUMS
+sudo dnf install ./acc-runtime-$v-1.$d.$a.rpm ./acc-$v-1.$d.$a.rpm
+```
+
+`SHA256SUMS.sigstore.json` beside it is a keyless cosign signature of the
+checksums: `cosign verify-blob --bundle SHA256SUMS.sigstore.json
+--certificate-identity <the release signer> --certificate-oidc-issuer <issuer>
+SHA256SUMS`. The SRPM is there too, for a rebuild on another release.
+
+### Inside the lab (the Satellite channel)
+
+The spearhead build goes to the internal Satellite, which is the distribution
+base for lab hosts; **acc1 mirrors it** so a host needs no Satellite
+subscription and no CA:
 
 ```bash
 sudo tee /etc/yum.repos.d/acc.repo >/dev/null <<'REPO'
@@ -90,7 +138,7 @@ baseurl=http://rpm.ic3net.internal:8080/acc-spearhead/
 enabled=1
 gpgcheck=0
 REPO
-sudo dnf install acc                  # pulls acc-runtime, podman, podman-compose
+sudo dnf install acc
 ```
 
 Straight from the Satellite instead (`baseurl=https://sat1.ic3net.internal/pulp/content/ic3net_internal/Library/custom/ACC/acc-spearhead/`),
@@ -101,21 +149,11 @@ curl -s -o /tmp/katello-ca.crt http://sat1.ic3net.internal/pub/katello-server-ca
 sudo install -m 0644 /tmp/katello-ca.crt /etc/pki/ca-trust/source/anchors/ && sudo update-ca-trust
 ```
 
-Once the channel carries a signing key, verify every package against the key
-the Satellite serves without credentials: `sudo rpm --import
+The channel carries a signing key; verify every package against the key the
+Satellite serves without credentials: `sudo rpm --import
 https://sat1.ic3net.internal/katello/api/v2/repositories/30/gpg_key_content`,
-then `gpgcheck=1`.
-
-### By file (a host that cannot reach the lab)
-
-The channel carries `el10` packages, which do not install on EL9. Build the
-release for the host's EL in a rootless container (`packaging/rpm/README.md`,
-"Building for another EL release"), copy both files over, and install them
-together — dnf resolves `python3.12` and `podman-compose` (EPEL on EL9):
-
-```bash
-sudo dnf install ./acc-runtime-<version>-1.el9.x86_64.rpm ./acc-<version>-1.el9.x86_64.rpm
-```
+then `gpgcheck=1`. A lab host that cannot reach either (bb3, saturate3) takes
+the Release's files, above.
 
 ### After the install
 
@@ -160,5 +198,7 @@ leaves `/etc/acc` and `/var/lib/acc` in place.
 (`rpm-build`, `systemd-rpm-macros`, `python3.12`); every release is built from
 its tag, published and verified on a real host by
 `packaging/rpm/release-pipeline.sh <tag>`. `packaging/rpm/README.md` has the
-details. Two channels: the internal Satellite for the spearhead build, COPR
-fed from the public mirror.
+details. Two channels: the internal Satellite for the spearhead build, built on
+the dedicated host `acc-build`; COPR, built by COPR from the public mirror's tag
+(`packaging/rpm/copr-project.sh` declares the project, `release-copr.sh` builds
+a release in it, `release-github.sh` puts what it built on the Release).

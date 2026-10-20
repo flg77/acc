@@ -24,6 +24,7 @@ synthetic stream without a live RHACS/Falco.
 
 from __future__ import annotations
 
+from acc import api_group
 import logging
 from typing import AsyncIterator
 
@@ -37,7 +38,7 @@ from acc.runtime_evidence_bridge import (
 
 logger = logging.getLogger("acc.runtime_evidence_adapters")
 
-_AGENT_ROLE_LABEL = "acc.redhat.io/agent-role"
+_AGENT_ROLE_LABEL = api_group.label("agent-role")
 
 
 def _wrap(hook: str, pod_labels: dict, pod_name: str, pod_uid: str,

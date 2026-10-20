@@ -2,11 +2,13 @@
 # packaging/rpm/sign-rpms-standalone.sh -- sign the RPMs in a build-host
 # directory with a plain rpmsign key that lives ONLY on that host.
 #
-#   packaging/rpm/sign-rpms-standalone.sh lighthouse:/git/ml/agentic/acc-rpm-0.21.0/dist/rpm/RPMS/x86_64
+#   packaging/rpm/sign-rpms-standalone.sh acc-build:/srv/acc-build/acc-rpm-0.27.0/dist/rpm/RPMS/x86_64
 #
 # This is the SIMPLER alternative to sign-rpms.sh (the OpenBao / no-network
 # signer-container path): the key is a normal `gpg --gen-key` keyring under
-# GNUPGHOME on the build host itself (default /home/flg/.acc-rpm-gpg), and
+# GNUPGHOME on the build host itself (default /srv/acc-build/.acc-rpm-gpg on
+# acc-build since Phase 3 of 20261004-public-release-channels; it was
+# /home/flg/.acc-rpm-gpg on lighthouse, and the key MOVED), and
 # signing is a plain `rpmsign --addsign` there. Operator decision 2026-09-22:
 # skip OpenBao for this one, because the wiring (channels.yml, BAO_TOKEN) was
 # more than was wanted right now.
@@ -19,7 +21,7 @@
 # switching later needs no code change here, only a different credential on
 # the Satellite side.
 #
-# Env: GNUPGHOME on the BUILD HOST (default /home/flg/.acc-rpm-gpg),
+# Env: GNUPGHOME on the BUILD HOST (default /srv/acc-build/.acc-rpm-gpg),
 # GPG_NAME (default "ACC Release Signer") -- must match a key already
 # present there (packaging/rpm/README.md documents how it was made).
 set -euo pipefail
@@ -28,7 +30,7 @@ TARGET="${1:-}"
 [[ "$TARGET" == *:* ]] || { echo "usage: $0 <build-host>:<directory of RPMs>" >&2; exit 2; }
 HOST="${TARGET%%:*}"
 DIR="${TARGET#*:}"
-REMOTE_GNUPGHOME="${GNUPGHOME:-/home/flg/.acc-rpm-gpg}"
+REMOTE_GNUPGHOME="${GNUPGHOME:-/srv/acc-build/.acc-rpm-gpg}"
 GPG_NAME="${GPG_NAME:-ACC Release Signer}"
 
 say() { printf '\n== %s ==\n' "$*"; }

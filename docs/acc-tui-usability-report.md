@@ -67,7 +67,7 @@ once:
 - **Files** — `roles/<id>/role.yaml`, `roles/<id>/role.md`,
   `acc-config.yaml`.  TUI source of truth.
 - **CRDs** — `AgentCollective.spec.roleDefinition` at
-  `operator/api/v1alpha1/agentcollective_types.go` L57–92.  OpenShift
+  `api/v1alpha1/agentcollective_types.go` (in `flg77/acc-operator`) L57–92.  OpenShift
   Web Console renders auto-generated forms from
   `+kubebuilder:validation:*` annotations.
 - **NATS snapshots** — read-only observability feed consumed by the
@@ -224,7 +224,7 @@ No arrows go *up*.  Edit in OpenShift Web Console → file on disk
 unchanged.  Edit `role.yaml` → CRD unchanged.
 
 Add a "file-mirror" controller in
-`operator/internal/controller/agentcollective_controller.go`: watch
+`internal/controller/agentcollective_controller.go` (in `flg77/acc-operator`): watch
 `roles/<id>/role.yaml` (when running in modes that have filesystem
 access — i.e., not vanilla OpenShift), patch the CRD when files
 change.  Conversely, give `acc/role_loader.py` a CRD-write path

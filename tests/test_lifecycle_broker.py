@@ -225,7 +225,7 @@ def test_kubernetes_scale_patches_only_its_collective():
     out = asyncio.run(b.on_request(_request(keys)))
     assert out["ok"] is True and kube.cr["spec"]["agents"][0]["replicas"] == 2
     (url, _, ctype), = kube.patches
-    assert url == "/apis/acc.redhat.io/v1alpha1/namespaces/acc/agentcollectives/sol-01"
+    assert url == "/apis/acc.ic3networks.com/v1alpha1/namespaces/acc/agentcollectives/sol-01"
     assert ctype == "application/json-patch+json"
     assert out["ops"] == [{"op": "scale", "container": "devops_engineer replicas 1->2"}]
 

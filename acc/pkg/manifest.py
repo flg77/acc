@@ -130,6 +130,12 @@ CORE_BASELINE_SKILLS: frozenset[str] = frozenset(
         "mattermost_post",
         "speech_transcribe",
         "speech_synthesize",
+        # GPU capacity advisor (backlog 019, features/capacity_advisor.yaml):
+        # thin-REST skills in the image, enabled per deployment by their
+        # endpoint env; a pack's advisor role references them, never re-ships.
+        "prometheus_query",
+        "gpu_capacity_estimate",
+        "ocp_model_control",
     }
 )
 
@@ -143,6 +149,10 @@ CORE_BASELINE_MCPS: frozenset[str] = frozenset(
         # for packaging — not bundled in the control-roles pack (043).
         "signal",
         "google_workspace",
+        # GPU capacity advisor: the manifest ships in the image; ConfigIQ's
+        # AISimulators server is a deploy-time service (acc-mcp-aisimulators).
+        "aisimulators",
+        "feast",
     }
 )
 

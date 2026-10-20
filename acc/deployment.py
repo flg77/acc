@@ -25,6 +25,7 @@ and what grants it.
 
 from __future__ import annotations
 
+from acc import api_group
 import dataclasses
 import json
 import os
@@ -36,7 +37,7 @@ from pathlib import Path
 
 from acc.deploy import Environment, environment
 
-GROUP = "acc.redhat.io"
+GROUP = api_group.GROUP
 VERSION = "v1alpha1"
 
 _SA_DIR_DEFAULT = "/var/run/secrets/kubernetes.io/serviceaccount"

@@ -93,7 +93,7 @@ is meant to drive `acc-pkg` resolution + `acc-deploy` across RHOAI / edge / stan
 ### Schema
 
 ```yaml
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AgentBOM
 metadata:
   name: finance-research-desk

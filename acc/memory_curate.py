@@ -49,6 +49,7 @@ class Candidate:
     dissent: str = ""
     note_id: str = ""
     published_at: float = 0.0
+    source_ids: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -64,6 +65,7 @@ class Candidate:
             summary=self.summary, agent_id="", role_label=self.role_label,
             source_requesters=list(self.source_requesters), scope=self.scope,
             dissent=self.dissent, ceiling=self.ceiling, note_id=self.note_id,
+            source_ids=list(self.source_ids),
         )
 
 
@@ -131,5 +133,6 @@ def candidates(
                 people=people, ceiling=str(entry.get("ceiling") or "CRITICAL"),
                 source_requesters=requesters, dissent=str(entry.get("dissent") or ""),
                 note_id=str(entry.get("note_id") or ""), published_at=at,
+                source_ids=[str(i) for i in (entry.get("source_ids") or [])],
             ))
     return out

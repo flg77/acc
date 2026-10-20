@@ -198,6 +198,7 @@ def _cmd_rollback(args: argparse.Namespace) -> int:
             "publish": "acc-cli memory forget --person … or edit the shared tier",
             "hub_promote": "acc-cli memory forget --person … or edit the hub's enterprise tier",
             "outcome": "an observation is not a change",
+            "propose": "reject the proposal: acc-cli oversight reject <oversight_id>",
             "rollback": "a rollback of a rollback: re-apply by hand",
         }.get(str(kind), "no automatic path")
         print(f"refine: cannot roll back a {kind!r} record ({manual})", file=sys.stderr)

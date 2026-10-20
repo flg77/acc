@@ -4,6 +4,7 @@
 #   packaging/images/build-images.sh v0.17.2
 #   packaging/images/build-images.sh v0.17.2 --only agent-core,tui
 #   packaging/images/build-images.sh v0.17.2 --with-sidecars --with-infra
+#   packaging/images/build-images.sh v0.17.2 --with-bootc
 #   packaging/images/build-images.sh v0.17.2 --dry-run
 #
 # IN-11a.  The RPM has had a pipeline since v0.15.0 (`packaging/rpm/release-pipeline.sh`):
@@ -21,6 +22,12 @@
 # is the operator's step (the agent exfil classifier blocks it), and the script
 # prints the commands.
 #
+# `--with-bootc` adds the bootable edge image (container/Containerfile.bootc,
+# Phase 6): the released RPM installed from the public channel into a bootc
+# base, verified by asking the image which `acc` it carries.  It needs the
+# package to be IN the channel first -- so it runs after the RPM pipeline, and
+# ACC_BOOTC_REPO_URL=<yum repo> builds from the lab mirror instead of COPR.
+#
 # `acc-agent-core` ALSO exists as an RPM-based image with its own pipeline
 # (`build-agent-rpm.sh`, IN-11 decision 2026-09-10) -- that one installs the
 # released package instead of copying the source.  Both are release artefacts;
@@ -36,18 +43,20 @@ DRY_RUN=0
 ONLY=""
 WITH_SIDECARS=0
 WITH_INFRA=0
+WITH_BOOTC=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) DRY_RUN=1; shift ;;
         --only) ONLY="${2:-}"; shift 2 ;;
         --with-sidecars) WITH_SIDECARS=1; shift ;;
         --with-infra) WITH_INFRA=1; shift ;;
+        --with-bootc) WITH_BOOTC=1; shift ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
 
-BUILD_HOST="${BUILD_HOST:-lighthouse}"
-BUILD_ROOT="${BUILD_ROOT:-/git/ml/agentic}"
+BUILD_HOST="${BUILD_HOST:-acc-build}"          # the dedicated build host (Phase 3)
+BUILD_ROOT="${BUILD_ROOT:-/srv/acc-build}"
 IMAGE_PREFIX="${ACC_IMAGE_PREFIX:-quay.io/flg77/acc_images}"
 
 # name | containerfile | version | verify
@@ -75,8 +84,14 @@ INFRA_COMPONENTS=(
     "nats|Containerfile.nats|2.10.22|start"
     "redis|Containerfile.redis|7.2|start"
 )
+# The bootable edge image: the released RPM from the channel in a bootc base.
+# verify = bootc (the image's `rpm -q acc` must be the release).
+BOOTC_COMPONENTS=(
+    "bootc|container/Containerfile.bootc|RELEASE|bootc"
+)
 # Built by their own pipeline, or not a release artefact at all.
 # agent-core-rpm : packaging/images/build-agent-rpm.sh (installs the released RPM)
+# the operator  : its own repository, flg77/acc-operator, releases its images
 # flavour        : a per-deployment bake (packs + governance), not a release image
 
 say() { printf '\n== %s ==\n' "$*"; }
@@ -86,7 +101,7 @@ run() {
 }
 
 if [[ -z "$TAG" ]]; then
-    echo "usage: $0 <tag> [--only a,b] [--with-sidecars] [--with-infra] [--dry-run]" >&2
+    echo "usage: $0 <tag> [--only a,b] [--with-sidecars] [--with-infra] [--with-bootc] [--dry-run]" >&2
     exit 2
 fi
 cd "$ROOT"
@@ -100,10 +115,11 @@ WORK="$BUILD_ROOT/acc-images-$VERSION"
 SELECTED=("${CODE_COMPONENTS[@]}")
 [[ $WITH_SIDECARS == 1 ]] && SELECTED+=("${SIDECAR_COMPONENTS[@]}")
 [[ $WITH_INFRA == 1 ]] && SELECTED+=("${INFRA_COMPONENTS[@]}")
+[[ $WITH_BOOTC == 1 ]] && SELECTED+=("${BOOTC_COMPONENTS[@]}")
 if [[ -n "$ONLY" ]]; then
     wanted=",${ONLY},"
     filtered=()
-    for entry in "${CODE_COMPONENTS[@]}" "${SIDECAR_COMPONENTS[@]}" "${INFRA_COMPONENTS[@]}"; do
+    for entry in "${CODE_COMPONENTS[@]}" "${SIDECAR_COMPONENTS[@]}" "${INFRA_COMPONENTS[@]}" "${BOOTC_COMPONENTS[@]}"; do
         [[ "$wanted" == *",${entry%%|*},"* ]] && filtered+=("$entry")
     done
     (( ${#filtered[@]} )) || { echo "ERROR: --only matched no component: $ONLY" >&2; exit 2; }
@@ -136,12 +152,24 @@ for entry in "${SELECTED[@]}"; do
     IFS='|' read -r name containerfile version verify <<<"$entry"
     [[ "$version" == "RELEASE" ]] && version="$VERSION"
     image="$IMAGE_PREFIX:acc-$name-$version"
+    # A production Containerfile builds with the repo root as context; a
+    # containerfile given by path builds with its own directory as context.
+    if [[ "$containerfile" == */* ]]; then
+        cf_path="$containerfile"; context="${containerfile%/*}"
+    else
+        cf_path="container/production/$containerfile"; context="."
+    fi
+
+    extra_args=""
+    if [[ "$verify" == bootc && -n "${ACC_BOOTC_REPO_URL:-}" ]]; then
+        extra_args="--build-arg ACC_REPO_URL='$ACC_BOOTC_REPO_URL'"
+    fi
 
     say "$name  ($containerfile)"
     if ! run ssh "$BUILD_HOST" "cd '$WORK' && podman build \
-        -f container/production/$containerfile \
-        --build-arg ACC_VERSION='$version' \
-        -t '$image' . 2>&1 | tail -15"; then
+        -f $cf_path \
+        --build-arg ACC_VERSION='$version' $extra_args \
+        -t '$image' $context 2>&1 | tail -15"; then
         echo "   BUILD FAILED: $name" >&2
         failed+=("$name (build)")
         continue
@@ -169,6 +197,25 @@ for entry in "${SELECTED[@]}"; do
                 continue
             fi
             echo "   starts"
+            ;;
+        bootc)
+            # The image must carry the release's package: what a node boots is
+            # what the channel says, or the image lies about its version.
+            got="$(ssh "$BUILD_HOST" "podman run --rm --entrypoint rpm '$image' -q --qf '%{VERSION}' acc" 2>/dev/null | tr -d '\r')"
+            if [[ "$got" != "$version" ]]; then
+                echo "   VERIFY FAILED: the image carries acc $got, expected $version" >&2
+                failed+=("$name (carries $got)")
+                continue
+            fi
+            echo "   carries acc $got  (agrees with the tag)"
+            ;;
+        exists)
+            if ! ssh "$BUILD_HOST" "podman image exists '$image'"; then
+                echo "   VERIFY FAILED: $name was not built" >&2
+                failed+=("$name (missing)")
+                continue
+            fi
+            echo "   built"
             ;;
     esac
     size="$(ssh "$BUILD_HOST" "podman images --format '{{.Size}}' '$image'" | head -1)"
@@ -198,3 +245,8 @@ printf '%s' "$pushes"
 echo
 echo "The operator picks them up under spec.imageRepository (default"
 echo "$IMAGE_PREFIX); the compose reads ACC_IMAGE_PREFIX."
+if [[ $WITH_BOOTC == 1 ]]; then
+    echo
+    echo "An edge node switches to the bootable image once, and upgrades from then on:"
+    echo "  sudo bootc switch $IMAGE_PREFIX:acc-bootc-$VERSION     # docs/howto-edge.md, Option D"
+fi

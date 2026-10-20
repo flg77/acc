@@ -21,6 +21,7 @@ unit-tests without a live catalog.
 
 from __future__ import annotations
 
+from acc import api_group
 import re
 from pathlib import Path
 
@@ -127,7 +128,7 @@ class AgentBOM(BaseModel):
     """A signed agent bill of materials; CRD-shaped for a thin operator wrapper."""
 
     model_config = ConfigDict(extra="forbid")
-    apiVersion: str = "acc.redhat.io/v1alpha1"
+    apiVersion: str = api_group.API_VERSION
     kind: str = "AgentBOM"
     metadata: dict = Field(..., description="at least {name: ...}")
     spec: AgentBOMSpec

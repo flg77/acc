@@ -36,7 +36,7 @@ operator-side step needed.
 Per `AgentCollective`:
 
 ```yaml
-apiVersion: acc.redhat.io/v1alpha1
+apiVersion: acc.ic3networks.com/v1alpha1
 kind: AgentCollective
 metadata:
   name: research
@@ -61,7 +61,7 @@ Default off — omitting the field changes nothing for existing collectives.
 
 ## How it's tested
 
-`operator/test/unit/kagenti_label_test.go` covers:
+`test/unit/kagenti_label_test.go` (in `flg77/acc-operator`) covers:
 
 - `KagentiEnabled` predicate (nil collective, nil spec, explicit false, explicit true).
 - `KagentiAgentLabel()` returns exactly `{kagenti.io/type: agent}`.

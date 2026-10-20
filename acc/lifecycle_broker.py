@@ -36,6 +36,7 @@ Environment:
 
 from __future__ import annotations
 
+from acc import api_group
 import asyncio
 import json
 import logging
@@ -116,7 +117,7 @@ class KubernetesRuntime:
     """
 
     SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
-    GROUP_PATH = "/apis/acc.redhat.io/v1alpha1"
+    GROUP_PATH = api_group.API_PATH
 
     def __init__(self, *, name: str, namespace: str = "", api: str = "",
                  max_replicas: int = 3, client: Any = None) -> None:

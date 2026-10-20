@@ -286,6 +286,17 @@ class RoleDefinitionConfig(BaseModel):
     proactive_wakeup: bool = False
     # Self-check cadence in seconds (default 5 min). Clamped to >= 60 at use.
     wakeup_interval_s: int = 300
+    # What the self-check asks (proposal 057).  Empty = the generic assistant
+    # self-check (acc/agent.py::_WAKEUP_PROMPT, which looks for PROPOSE_* work);
+    # a specialist (the capacity advisor) states its own scan here.
+    wakeup_prompt: str = ""
+    # Read-only calls run BEFORE the self-check's LLM turn, written as markers
+    # ("[MCP: feast.get_online_features_... {...}]").  Their results are
+    # appended to the wake-up task, so the one dispatched turn decides with
+    # fresh data -- markers in a tool-result follow-up are never dispatched.
+    # LOW-risk, ungated, non-destructive capabilities only; anything else is
+    # refused (acc.capability_dispatch.run_wakeup_prefetch).
+    wakeup_prefetch: list[str] = Field(default_factory=list)
 
     # OpenSpec `20260603-capability-pool` Phase 1.4 — when ``True``,
     # the ``_grant_os_basics_skills`` validator auto-adds the twelve

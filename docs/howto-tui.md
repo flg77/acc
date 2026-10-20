@@ -524,6 +524,20 @@ pane to answer the gate a Blocked item waits on; `Enter` shows detail
 to Done. Reach it with `Ctrl+A` + its digit or `Ctrl+P`; it is on the `user`
 profile's strip too.
 
+### Memory — what the agents remember, learned, and why
+
+Four tabs (`20260928-rdf-provenance-and-memory-views`), the same views as the
+Web GUI's Knowledge section: **Memory** (the notes per tier — private, shared,
+hub — with ceiling, people and dissent), **Learnings** (lessons, who adopted
+them, how many tasks used them, outcomes), **Lineage** (one note's provenance
+as a tree; `Enter` on a Memory or My-contributions row opens it, or type an id
+prefix) and **My contributions** (your notes and how far they travelled, in
+instances and tasks). An operator sees every note under their ceiling; anyone
+else their own, and nothing hidden is counted. Beside the collective the TUI
+reads Redis and the ledger itself; with `ACC_WEBGUI_URL` (+ `ACC_WEBGUI_TOKEN`)
+it reads the Web GUI's `/api/knowledge` instead. `r` refreshes. On both
+profiles, via `Ctrl+A` + its digit or `Ctrl+P`.
+
 ## WebBridge HTTP Server (REQ-TUI-041)
 
 The WebBridge exposes the active collective's snapshot as a read-only HTTP API, enabling web dashboards or monitoring tools to consume TUI data without a terminal session.
@@ -684,7 +698,7 @@ services:
 Apply the sample deployment:
 
 ```bash
-kubectl apply -f operator/config/samples/acc_tui_deployment.yaml
+kubectl apply -f https://raw.githubusercontent.com/flg77/acc-operator/v0.3.0/config/samples/acc_tui_deployment.yaml
 ```
 
 Attach an interactive terminal:
