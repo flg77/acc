@@ -47,6 +47,8 @@ KIND_GOVERNANCE = "governance"
 KIND_REDTEAM = "redteam"
 KIND_OVERSIGHT = "oversight"
 KIND_PLAN_STEP = "plan_step"
+#: A plan card event: approved, amended, closed (vault 059, `20261018-plan-card`).
+KIND_PLAN = "plan"
 KIND_LESSON = "lesson"
 KIND_AGENT_MESSAGE = "agent_message"
 

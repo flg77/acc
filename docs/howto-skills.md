@@ -236,6 +236,17 @@ broad; side-effecting/execution skills must be role-gated:
   them to `allowed_skills` **and** raising `max_skill_risk_level` — A-017
   rejects otherwise. Keep these to coding / engineering / devops roles;
   don't grant them to business / FSI / research roles.
+- `shell_exec`, `python_exec` and `ssh_exec` run **inside the agent's
+  OpenShell sandbox** and refuse without one (`ACC_SANDBOX_REQUIRED=1` is the
+  default; `deploy/openshell/` sets one up).
+- `ssh_exec` reaches a host when it is one of these:
+  - local, or on the seed list `ACC_SSH_HOST_ALLOWLIST`;
+  - granted once (`host:<name>[:<port>]`: "always allow" on the host question, or `acc-cli grants add`);
+  - listed by the approved plan.
+
+  Any other host is asked about. A granted host is added to the sandbox's
+  network policy, and `identity_file` is a path inside the sandbox. See
+  [security/constraints.md](security/constraints.md).
 
 ## Troubleshooting
 

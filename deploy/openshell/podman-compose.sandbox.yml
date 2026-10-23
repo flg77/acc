@@ -1,0 +1,21 @@
+# podman-compose.sandbox.yml — overlay: the exec agents run code in their
+# OpenShell sandbox (vault proposal 058 Phase 3).  Use with the production file:
+#
+#   podman-compose -f podman-compose.yml -f podman-compose.sandbox.yml up -d acc-agent-coding-agent
+#
+# Prerequisites: deploy/openshell/setup-edge-sandbox.sh has run on this host
+# (bind mounts on, sandbox acc-coding-agent up, client registration written),
+# and the agent image carries the `openshell` CLI (the [sandbox] extra:
+# ACC_FEATURES includes "sandbox").
+services:
+  acc-agent-coding-agent:
+    environment:
+      ACC_SANDBOX_NAME: acc-coding-agent
+      ACC_SANDBOX_REQUIRED: "1"
+      OPENSHELL_GATEWAY: openshell
+      XDG_CONFIG_HOME: /var/run/acc/openshell-client
+    extra_hosts:
+      # the SAN on the gateway's certificate; the gateway binds 0.0.0.0:17670
+      - "host.openshell.internal:host-gateway"
+    volumes:
+      - ${ACC_SANDBOX_CLIENT_DIR:-~/.config/acc-openshell-client}:/var/run/acc/openshell-client:ro

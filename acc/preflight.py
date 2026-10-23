@@ -417,25 +417,49 @@ def check_sandbox(ctx: Context) -> Iterable[Result]:
     """
     from acc import configschema as schema  # noqa: PLC0415
 
+    from acc.sandbox import runner as sb  # noqa: PLC0415
+
+    # The sandbox keys' values, .env first and the process environment over it,
+    # decided by the runner's own SandboxConfig -- so ACC_SANDBOX_ENABLED=0
+    # means off here exactly as it does at exec time.  These are names and
+    # switches, never secrets.
+    keys = (sb.ENV_SANDBOX_NAME, sb.ENV_SANDBOX_ENABLED, sb.ENV_SANDBOX_REQUIRED,
+            sb.ENV_OPENSHELL_GATEWAY, sb.ENV_OPENSHELL_BIN)
+    env: dict[str, str] = {}
     env_path = schema.resolve_path("env", repo_root=ctx.repo_root)
-    declared: set[str] = set()
     if env_path.is_file():
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
-                declared.add(line.split("=", 1)[0].strip())
+                name, value = line.split("=", 1)
+                if name.strip() in keys:
+                    env[name.strip()] = value.strip().strip("'\"")
+    for name in keys:
+        if str(ctx.environ.get(name, "")).strip():
+            env[name] = str(ctx.environ[name])
+    config = sb.SandboxConfig.from_env(env)
 
-    def _present(name: str) -> bool:
-        return name in declared or bool(str(ctx.environ.get(name, "")).strip())
-
-    enabled = str(ctx.environ.get("ACC_SANDBOX_ENABLED", "")).strip().lower() in (
-        "1", "true", "yes", "on",
-    ) or "ACC_SANDBOX_ENABLED" in declared
-
-    if not enabled:
-        yield Result("sandbox", Severity.OK, "sandbox delegation is off")
+    # 058 Phase 3 -- the sandbox is mandatory (operator Q2): without one the
+    # exec skills refuse to run, which is safe but stops every coding task.
+    if not config.enabled:
+        if sb.sandbox_required(env):
+            yield Result(
+                name="sandbox", severity=Severity.BROKEN,
+                summary="no OpenShell sandbox: shell_exec and python_exec will refuse",
+                detail="The sandbox is mandatory (058 Q2). Provision one per agent "
+                       "(deploy/openshell/README.md) and set ACC_SANDBOX_NAME.",
+                subject="ACC_SANDBOX_NAME",
+            )
+        else:
+            yield Result(
+                name="sandbox", severity=Severity.DRIFTED,
+                summary="ACC_SANDBOX_REQUIRED=0: code execution runs on the host",
+                detail="Only for a developer's own box. Every other deployment runs "
+                       "exec skills in an OpenShell sandbox (058 Q2).",
+                subject="ACC_SANDBOX_REQUIRED",
+            )
         return
-    if not _present("OPENSHELL_GATEWAY"):
+    if not config.gateway:
         yield Result(
             name="sandbox",
             severity=Severity.BROKEN,
@@ -448,6 +472,78 @@ def check_sandbox(ctx: Context) -> Iterable[Result]:
         )
         return
     yield Result("sandbox", Severity.OK, "sandbox delegation is configured")
+
+
+@register("posture")
+def check_posture(ctx: Context) -> Iterable[Result]:
+    """The deployment-wide part of the posture scan (058 Phase 5, EC-02).
+
+    A blocking finding here stops every mission and standing grant from being
+    offered (every call is asked), so it is BROKEN: the operator should know
+    why "Ask once" asks every time.  Role and agentset findings are in
+    ``acc-cli posture scan``."""
+    from acc.posture_scan import BLOCKING, scan_environment  # noqa: PLC0415
+
+    findings = scan_environment(dict(ctx.environ))
+    blocking = [f for f in findings if f.severity in BLOCKING]
+    if blocking:
+        for f in blocking:
+            yield Result("posture", Severity.BROKEN, f"{f.rule_id}: {f.message}",
+                         detail="No mission or standing grant is offered while this holds.",
+                         subject=f.subject)
+        return
+    yield Result("posture", Severity.OK,
+                 "no blocking posture findings (acc-cli posture scan for roles and agentsets)")
+
+
+@register("capabilities")
+def check_capabilities(ctx: Context) -> Iterable[Result]:
+    """Every skill and MCP on this host against its recorded digest (061).
+
+    The registries run the same check at load.  In ``report`` mode (the
+    default this release) a failure only logs, so this is where the operator
+    sees what ``ACC_CAPABILITY_VERIFY=enforce`` would refuse before turning it
+    on; in ``enforce`` mode a failure is a capability the agents do not have.
+    """
+    from acc import capability_verify as cv  # noqa: PLC0415
+    from acc.mcp.registry import list_mcp_server_ids  # noqa: PLC0415
+    from acc.pkg.registry import installed_capability_dirs  # noqa: PLC0415
+    from acc.skills.loader import list_skills  # noqa: PLC0415
+
+    from acc import paths as _paths  # noqa: PLC0415
+
+    env = ctx.environ
+    enforce = str(env.get(cv.MODE_ENV, "")).strip().lower() == "enforce"
+
+    def _in_tree(var: str, sub: str) -> Path:
+        explicit = str(env.get(var, "")).strip()
+        if explicit:
+            return Path(explicit)
+        return ctx.repo_root / sub if ctx.repo_root else Path(_paths.path_of(sub))
+
+    roots = {
+        "skill": [*installed_capability_dirs("skills"), _in_tree("ACC_SKILLS_ROOT", "skills")],
+        "mcp": [*installed_capability_dirs("mcps"), _in_tree("ACC_MCPS_ROOT", "mcps")],
+    }
+    lister = {"skill": list_skills, "mcp": list_mcp_server_ids}
+    checked, failed = 0, []
+    for kind, kind_roots in roots.items():
+        for root in kind_roots:
+            names = (["_base"] if (root / "_base").is_dir() else []) + list(lister[kind](root))
+            for name in names:
+                result = cv.check(kind, name, root / name)
+                checked += 1
+                if not result.ok:
+                    failed.append(result)
+    if not failed:
+        yield Result("capabilities", Severity.OK,
+                     f"{checked} skill/MCP tree(s) match their recorded sha256")
+        return
+    severity = Severity.BROKEN if enforce else Severity.DRIFTED
+    verb = "refused" if enforce else "would be refused under ACC_CAPABILITY_VERIFY=enforce"
+    for result in failed:
+        yield Result("capabilities", severity, f"{result.kind} {result.name}: {verb}",
+                     detail=result.message(), subject=result.path)
 
 
 @register("backend-plugins")

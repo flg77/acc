@@ -167,6 +167,42 @@ class HTTPTransport:
 # Stdio
 # ---------------------------------------------------------------------------
 
+#: What a stdio server inherits from the agent without declaring it: what a
+#: process needs to start (``npx`` / ``uvx`` resolve through PATH and HOME),
+#: reach the network through the lab proxy and trust the lab CA.  No
+#: credential: a server gets a secret only by naming it in its manifest's
+#: ``env:`` (OpenSpec 20261019-scoped-mcp-env-and-sandbox-env-names).
+STDIO_BASE_ENV: frozenset[str] = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LC_ALL",
+    "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS",
+    # Windows: a child process cannot start without these.
+    "SYSTEMROOT", "SystemRoot", "COMSPEC", "PATHEXT", "WINDIR", "USERPROFILE",
+    "APPDATA", "LOCALAPPDATA", "PROGRAMDATA", "PROGRAMFILES",
+})
+
+
+def stdio_env(declared: dict[str, str], environ: dict[str, str] | None = None) -> dict[str, str]:
+    """The environment a stdio MCP server starts with.
+
+    The base allowlist, plus the manifest's ``env:``.  A declared name with
+    an empty value is passed through from the agent (process env or the
+    mounted secret, via :mod:`acc.secret_source`) -- the manifests' documented
+    "set on the host" -- and left out when the agent has no value, rather
+    than set to "".  A non-empty declared value is used as written.
+    """
+    src = os.environ if environ is None else environ
+    env = {k: v for k, v in src.items() if k in STDIO_BASE_ENV}
+    for name, value in declared.items():
+        if value:
+            env[name] = value
+            continue
+        inherited = secret_source.get(name, environ=environ)
+        if inherited:
+            env[name] = inherited
+    return env
+
 
 class StdioTransport:
     """Newline-delimited JSON-RPC 2.0 over a subprocess's stdin/stdout.
@@ -213,8 +249,7 @@ class StdioTransport:
                 "requires non-empty 'command' list"
             )
 
-        env = dict(os.environ)
-        env.update(self._manifest.env or {})
+        env = stdio_env(self._manifest.env or {})
 
         try:
             self._proc = await asyncio.create_subprocess_exec(

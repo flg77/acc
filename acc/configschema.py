@@ -33,6 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Literal, get_args, get_origin
 
+from acc.sandbox import runner as _sb
+
 # --------------------------------------------------------------------------
 # Files
 # --------------------------------------------------------------------------
@@ -360,10 +362,13 @@ ENV_KEYS: tuple[Key, ...] = tuple(
         # gateway sandbox.  Read by acc/sandbox/runner.py; the operator injects
         # them from the AgentCorpus CRD's spec.sandbox block, so on an
         # operator-managed deployment they arrive from there rather than .env.
-        ("ACC_SANDBOX_ENABLED", False, "Delegate code execution to an OpenShell sandbox."),
-        ("ACC_SANDBOX_NAME", False, "Sandbox resource name for this agent."),
-        ("OPENSHELL_GATEWAY", False, "OpenShell gateway URL the runtime delegates to."),
-        ("OPENSHELL_BIN", False, "Path to the OpenShell client binary."),
+        # The names are the runner's own constants, so the two cannot drift
+        # (20261019-scoped-mcp-env-and-sandbox-env-names).
+        (_sb.ENV_SANDBOX_NAME, False, "Sandbox resource name for this agent; setting it turns delegation on."),
+        (_sb.ENV_SANDBOX_ENABLED, False, "0/false forces delegation off even when a sandbox name is set."),
+        (_sb.ENV_SANDBOX_REQUIRED, False, "0 lets exec skills run on the host without a sandbox (developer box only)."),
+        (_sb.ENV_OPENSHELL_GATEWAY, False, "OpenShell gateway the runtime delegates to."),
+        (_sb.ENV_OPENSHELL_BIN, False, "Path to the openshell CLI (default: openshell on PATH)."),
         # `20260923-lessons-that-travel`: reflected notes ride KNOWLEDGE_SHARE
         # to peers and land in their next prompt.  "0" keeps every prompt
         # byte-identical to v0.21.0 (nothing published, nothing rendered).
@@ -383,12 +388,12 @@ ENV_KEYS: tuple[Key, ...] = tuple(
 )
 
 
-#: Env keys that only mean something together.  ``ACC_SANDBOX_ENABLED`` without
+#: Env keys that only mean something together.  A sandbox name without
 #: a gateway is the OpenShell version of the backend-without-a-credential
 #: fault: the agent believes execution is sandboxed, the delegation target is
 #: absent, and nothing says so until a task tries to run code.
 REQUIRES: dict[str, tuple[str, ...]] = {
-    "ACC_SANDBOX_ENABLED": ("OPENSHELL_GATEWAY",),
+    _sb.ENV_SANDBOX_NAME: (_sb.ENV_OPENSHELL_GATEWAY,),
 }
 
 

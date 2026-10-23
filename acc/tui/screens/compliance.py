@@ -1259,6 +1259,16 @@ class ComplianceScreen(NavScreen):
 from textual.message import Message  # noqa: E402
 
 
+class _MissionAction(Message):
+    """058 Phase 1 -- close / revoke / purge / restore a mission; the app
+    publishes it as MISSION_CONTROL."""
+
+    def __init__(self, action: str, mission_id: str) -> None:
+        super().__init__()
+        self.action = action
+        self.mission_id = mission_id
+
+
 class _OversightAction(Message):
     """Request an oversight approve/reject action.
 

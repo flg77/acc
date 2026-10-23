@@ -39,6 +39,9 @@ role_definition:
     token_budget: 20480
     rate_limit_rpm: 30
   version: "1.0.0"
+  # 061 PS-09: the operating mode is part of the signed profile, not left to
+  # the runtime default.
+  default_operating_mode: ASK_ONCE
   domain_id: "general"
   max_parallel_tasks: 1
   # OpenSpec `20260603-capability-pool` Phase 1.4.

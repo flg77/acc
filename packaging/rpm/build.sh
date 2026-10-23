@@ -53,6 +53,7 @@ import sys, zipfile
 names = zipfile.ZipFile(sys.argv[1]).namelist()
 share = [n for n in names if "/_share/" in n]
 assert any(n.endswith("_share/roles/assistant/role.yaml") for n in share), "the wheel carries no acc/_share tree"
+assert any(n.endswith("_share/man/man1/acc-cli.1") for n in share), "the wheel carries no man pages"
 print(f"  {len(names)} files, {len(share)} under acc/_share")
 EOF
 [[ "$MODE" == wheel ]] && exit 0

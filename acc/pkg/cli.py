@@ -33,6 +33,8 @@ Subcommands
         (--key <pub> | --issuer <oidc> --subject <regex>)``
 * ``acc-pkg inspect <pkg.accpkg>``
 * ``acc-pkg list [--available [--name <@scope/name>]]``
+* ``acc-pkg bom resolve <bom.yaml>`` / ``acc-pkg bom verify <bom.yaml> --running``
+  (061: pin and check every skill and MCP of an AgentBOM)
 """
 
 from __future__ import annotations
@@ -759,7 +761,70 @@ def _build_parser() -> argparse.ArgumentParser:
     val = sub.add_parser("validate", help="lint a pack source tree before build")
     val.add_argument("pack", nargs="?", default=".", help="pack source dir (default cwd)")
 
+    # bom — capability pins in an AgentBOM (061)
+    bom = sub.add_parser("bom", help="pin and check the skills and MCPs of an AgentBOM")
+    bs = bom.add_subparsers(dest="bom_cmd", required=True)
+    br = bs.add_parser("resolve", help="fill spec.capabilities[] from installed packs + the built-in manifest")
+    br.add_argument("bom", help="path to the AgentBOM yaml")
+    br.add_argument("-o", "--output", default=None, help="write here (default: rewrite the input)")
+    br.add_argument("--roles-root", default=None, help="in-tree roles/ (default: the host layout)")
+    bv = bs.add_parser("verify", help="check the BOM; --running recomputes every capability digest here")
+    bv.add_argument("bom", help="path to the AgentBOM yaml")
+    bv.add_argument("--running", action="store_true",
+                    help="recompute each pinned capability's sha256 on this host")
+
     return p
+
+
+def _cmd_bom(args: argparse.Namespace, out: _Output) -> int:
+    """``acc-pkg bom resolve|verify`` — capability pins (061)."""
+    from acc.pkg.agent_bom import (  # noqa: PLC0415
+        load_agent_bom, resolve_capabilities, verify_running,
+    )
+
+    try:
+        bom = load_agent_bom(args.bom)
+    except FileNotFoundError:
+        print(f"error: no such file: {args.bom}", file=sys.stderr)
+        return EXIT_USER_ERROR
+    except ValidationError as exc:
+        print(f"error: AgentBOM failed validation:\n{exc}", file=sys.stderr)
+        return EXIT_SCHEMA
+
+    if args.bom_cmd == "resolve":
+        pins, problems = resolve_capabilities(
+            bom, roles_root=Path(args.roles_root) if args.roles_root else None)
+        if problems:
+            for p in problems:
+                print(f"error: {p}", file=sys.stderr)
+            print(f"error: {len(problems)} capability(ies) cannot be pinned; "
+                  f"{args.bom} not written", file=sys.stderr)
+            return EXIT_HASH_MISMATCH
+        bom.spec.capabilities = pins
+        bom.spec.schema_version = 2
+        target = Path(args.output) if args.output else Path(args.bom)
+        target.write_text(bom.to_yaml(), encoding="utf-8")
+        out.emit({"bom": bom.name, "capabilities": len(pins), "written": str(target)})
+        return EXIT_OK
+
+    # verify
+    if not bom.signing_floor_ok():
+        print("error: the BOM names no keyless signing identity (required_signer)", file=sys.stderr)
+        return EXIT_SIGNATURE
+    if not bom.spec.capabilities:
+        print("error: the BOM pins no capabilities: run `acc-pkg bom resolve` first", file=sys.stderr)
+        return EXIT_HASH_MISMATCH
+    if not args.running:
+        out.emit({"bom": bom.name, "capabilities": len(bom.spec.capabilities), "ok": True})
+        return EXIT_OK
+    rows = verify_running(bom)
+    bad = [r for r in rows if not r.ok]
+    out.emit([{"name": r.name, "kind": r.kind, "source": r.source, "ok": r.ok,
+               "expected": r.expected, "actual": r.actual, "message": r.message()}
+              for r in rows])
+    for r in bad:
+        print(f"error: {r.message()}", file=sys.stderr)
+    return EXIT_OK if not bad else EXIT_HASH_MISMATCH
 
 
 def _cmd_eval(args: argparse.Namespace, out: _Output) -> int:
@@ -909,6 +974,7 @@ def _cmd_golden_pack(args: argparse.Namespace, out: _Output) -> int:
 
 
 _HANDLERS = {
+    "bom": _cmd_bom,
     "build": _cmd_build,
     "golden-pack": _cmd_golden_pack,
     "install": _cmd_install,

@@ -79,6 +79,9 @@ role_definition:
   # a SIP bandit safely (matches the AoA-P6 progressive opt-in pattern).
   policy_enabled: false
   version: "3.0.0-beta1"
+  # 061 PS-09: the operating mode is part of the signed profile, not left to
+  # the runtime default.
+  default_operating_mode: ASK_ONCE
   domain_id: "general"
   max_parallel_tasks: 1
   # OpenSpec `20260603-capability-pool` Phase 1.4.

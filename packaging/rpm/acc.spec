@@ -63,7 +63,7 @@
 %{!?acc_python: %global acc_python python3}
 %{!?acc_python_pkg: %global acc_python_pkg python3}
 %endif
-# The venv's `pythonX.Y` is asked of the interpreter inside %install, not of a
+# The venv's `pythonX.Y` is asked of the interpreter inside %%install, not of a
 # parse-time %%(...) expansion: the spec is parsed before its BuildRequires are
 # installed, and on a fresh chroot the interpreter is not there yet.
 %global __brp_mangle_shebangs %{nil}
@@ -188,6 +188,10 @@ for f in acc-config.yaml models.yaml collective.yaml catalogs.yaml; do
 done
 install -m 0640 "$SHARE/.env.example" %{buildroot}%{_sysconfdir}/acc/acc.env
 
+# man pages: the wheel carries them in the share tree (man/man1)
+install -d %{buildroot}%{_mandir}/man1
+install -m 0644 "$SHARE"/man/man1/*.1 %{buildroot}%{_mandir}/man1/
+
 # state
 install -d %{buildroot}%{_sharedstatedir}/acc/packages
 install -d %{buildroot}%{_sharedstatedir}/acc/instances
@@ -235,12 +239,20 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -R %{_sharedstatedir}/
 %{_bindir}/acc-agent
 %{_bindir}/acc-catalog
 %{_datadir}/acc
+%{_mandir}/man1/acc.1*
+%{_mandir}/man1/acc-cli.1*
+%{_mandir}/man1/acc-pkg.1*
+%{_mandir}/man1/acc-tui.1*
+%{_mandir}/man1/acc-webgui.1*
+%{_mandir}/man1/acc-agent.1*
+%{_mandir}/man1/acc-catalog.1*
 
 # The host layer on top: the operator's configuration, the state root, the unit
 # and the user that runs it.  `acc-deploy` lives here because it drives the
 # host's podman-compose stack, which is precisely what a pod does not do.
 %files
 %{_bindir}/acc-deploy
+%{_mandir}/man1/acc-deploy.1*
 # 0755: the four *.yaml are 0644 and only reachable through a traversable
 # directory -- the operator's own `acc` must read them without joining group
 # acc.  The secrets are the one file that stays 0640 root:acc.
@@ -267,6 +279,11 @@ if command -v restorecon >/dev/null 2>&1; then restorecon -R %{_sharedstatedir}/
 %{_tmpfilesdir}/acc.conf
 
 %changelog
+* Thu Oct 22 2026 ACC <flg@nomiras.com> - %{acc_version}-%{acc_release}
+- Man pages for every shipped command: acc(1), acc-cli(1), acc-pkg(1),
+  acc-tui(1), acc-webgui(1), acc-agent(1) and acc-catalog(1) in the runtime,
+  acc-deploy(1) with the host layer.
+
 * Sun Oct 04 2026 ACC <flg@nomiras.com> - %{acc_version}-%{acc_release}
 - Self-contained SRPM for COPR and mock: the version globals are pinned into
   the spec by build.sh, the interpreter is chosen from %%{?rhel} at build time,

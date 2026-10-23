@@ -163,6 +163,9 @@ class HumanOversightQueue:
 
     _KEY_ITEM = "acc:{cid}:oversight:{oid}"
     _KEY_PENDING_LIST = "acc:{cid}:oversight:pending"
+    # 058 Q4 -- rows with no deadline (proposals): listed here, with no TTL on
+    # the row or the set, so they stay answerable until someone decides them.
+    _KEY_OPEN_LIST = "acc:{cid}:oversight:open"
     # 1.3 -- decided items (human or policy) in resolution order, newest
     # first, capped.  This is the history the Compliance pane renders; the
     # pending set alone forgets a row the moment it is decided.
@@ -205,6 +208,7 @@ class HumanOversightQueue:
         evidence: list | None = None,
         requester: str = "",
         ceiling: str = "",
+        deadline: bool = True,
     ) -> str:
         """Submit a task to the oversight queue.
 
@@ -222,6 +226,10 @@ class HumanOversightQueue:
             evidence: What the call actually does, as lines for the decision
                 panel (UX-03).  Empty for a row that has none -- the panel
                 then renders exactly as it did before.
+            deadline: ``False`` for a row nobody waits on -- a proposal.  It
+                gets no deadline (``timeout_ms == 0``) and never expires, here
+                or in Redis: it stays answerable until it is decided (058 Q4,
+                operator 2026-10-15).  Capability gates keep the queue timeout.
 
         Returns:
             ``oversight_id`` — UUID string identifying this oversight request.
@@ -240,7 +248,7 @@ class HumanOversightQueue:
             role_id=role_id,
             agent_id=self._agent_id,
             submitted_at_ms=now_ms,
-            timeout_ms=now_ms + (self._timeout_s * 1000),
+            timeout_ms=now_ms + (self._timeout_s * 1000) if deadline else 0,
             required_approvals=max(1, int(required_approvals or 1)),
             question=dict(question or {}),
             evidence=list(evidence or []),
@@ -555,7 +563,8 @@ class HumanOversightQueue:
         expired: list[str] = []
 
         for item in items:
-            if now_ms > item.timeout_ms:
+            # A row with no deadline (a proposal, 058 Q4) is never expired.
+            if item.timeout_ms and now_ms > item.timeout_ms:
                 item.status = "EXPIRED"
                 item.resolved_at_ms = now_ms
                 await self._save(item)
@@ -660,13 +669,20 @@ class HumanOversightQueue:
         value = json.dumps(asdict(item))
 
         # A decided row is history and must outlive the gate window; a
-        # pending row only needs to outlive its own timeout.
+        # pending row only needs to outlive its own timeout -- and a pending
+        # row with no deadline (a proposal, 058 Q4) does not expire at all.
+        open_row = item.status == "PENDING" and not item.timeout_ms
         ttl = (
             self._timeout_s * 2 if item.status == "PENDING"
             else max(self._timeout_s * 2, self._DECIDED_TTL_S)
         )
         if self._redis is not None:
             try:
+                if open_row:
+                    await _call_redis(self._redis.set, key, value)
+                    okey = self._KEY_OPEN_LIST.format(cid=self._cid)
+                    await _call_redis(self._redis.sadd, okey, item.oversight_id)
+                    return
                 await _call_redis(self._redis.set, key, value, ex=ttl)
                 # Add to pending list if still pending
                 if item.status == "PENDING":
@@ -714,16 +730,19 @@ class HumanOversightQueue:
     async def _remove_from_pending(self, oversight_id: str) -> None:
         if self._redis is not None:
             try:
-                pkey = self._KEY_PENDING_LIST.format(cid=self._cid)
-                await _call_redis(self._redis.srem, pkey, oversight_id)
+                for lkey in (self._KEY_PENDING_LIST, self._KEY_OPEN_LIST):
+                    await _call_redis(
+                        self._redis.srem, lkey.format(cid=self._cid), oversight_id,
+                    )
             except Exception as exc:
                 logger.error("oversight: Redis remove failed: %s", exc)
         else:
             pass  # in-process: status update is sufficient
 
     async def _pending_redis(self) -> list[OversightItem]:
-        pkey = self._KEY_PENDING_LIST.format(cid=self._cid)
-        ids = await _call_redis(self._redis.smembers, pkey)
+        ids = set()
+        for lkey in (self._KEY_PENDING_LIST, self._KEY_OPEN_LIST):
+            ids |= set(await _call_redis(self._redis.smembers, lkey.format(cid=self._cid)) or ())
         items: list[OversightItem] = []
         for oid in ids:
             item = await self._load(oid.decode() if isinstance(oid, bytes) else oid)

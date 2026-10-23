@@ -1,0 +1,18 @@
+name: getdone_fix_failing_test
+description: |
+  058 K1 "get things done" set. The coding agent writes a buggy module and its
+  test, runs the test, fixes the bug and runs it again: fs_write + shell_exec,
+  the calls that are asked one by one today. Measures asks per task; the
+  058 G2 target is one approval (the mission) once Phase 1 lands.
+prompt: |
+  In the workspace, create calc.py with a function add(a, b) that wrongly
+  returns a - b, and test_calc.py with a pytest test for add(2, 3) == 5.
+  Run the test, fix the bug, run the test again, and report both results.
+target_role: coding_agent
+operating_mode: AUTO
+timeout_s: 900.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_contains:
+    - "passed"

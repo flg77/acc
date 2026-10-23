@@ -153,12 +153,12 @@ The `assistant` is a capability-aware navigator, not just an advisor. Its loop:
    ```
    [PROPOSE_INFUSE:@acc/workspace-roles@^1.0:operator needs a coding + review team]
    ```
-3. **The Compliance gate.** Here is the crucial rule: **`PROPOSE_INFUSE` ALWAYS
-   routes through the Compliance queue, regardless of operating mode.** Other
-   markers (`PROPOSE_ROUTE`, `PROPOSE_SPAWN`) auto-execute under `AUTO`; infusion
-   does **not** — it changes filesystem state and requires a cosign signature
-   verification, so it is `_NEVER_AUTOEXEC`. Even in AutoMode the operator (or a
-   policy) approves the infusion in the Compliance pane before anything installs.
+3. **The plan card.** Under Ask once (the default), the infuse, the spawn and
+   the route wait in **one plan card**. It names the installed roles that are
+   idle, so you can see whether a reuse would do. Allowing the plan installs,
+   spawns and routes with no further question. Under `AUTO` they run at once.
+   The trust anchor for the install is the catalog signer, checked by cosign:
+   an unsigned pack is refused, never queued (D-011).
 4. **Install on approval, then spawn.** On approval the catalog-walk +
    cosign-verify + install runs; then the assistant emits
    `[PROPOSE_SPAWN:role:cluster:reason]` to wake the now-installed role
@@ -166,10 +166,10 @@ The `assistant` is a capability-aware navigator, not just an advisor. Its loop:
 
 So "AutoMode" means **the assistant discovers the gap, grounds it in the live
 catalog, and drives the whole sequence** — capability-missing → infuse → spawn →
-route — with the operator only approving the one signed install gate. The
-operating mode (`PLAN` / `ACCEPT_EDITS` / `ASK_PERMISSIONS` / `AUTO`) governs how
-much of the *rest* (routing, spawning) the dispatcher auto-executes; infusion is
-always gated.
+route — with the operator approving the plan once. The operating mode
+(`ASK_ONCE` default / `AUTO` / `PLAN` / `ACCEPT_EDITS` / `ASK_PERMISSIONS`)
+governs how much is asked; [security/constraints.md](security/constraints.md)
+has the full rule set.
 
 **When to use it:** interactive sessions where you want the assistant to figure
 out *which* pack/role a goal needs and walk you through it. The
@@ -246,7 +246,7 @@ On a containerized stack the packages root `/var/lib/acc/packages` is the
 |---|---|---|
 | Initiator | assistant, on detecting a capability gap | operator |
 | Catalog grounding | `catalog_query` skill, automatic | you run `pkg list --available` |
-| Install trigger | `[PROPOSE_INFUSE]` → executes (AUTO / ACCEPT_EDITS) or asked in the Prompt pane (ASK_PERMISSIONS) | `pkg add` / `infuse --from-pkg` / TUI `g` |
+| Install trigger | `[PROPOSE_INFUSE]` → in the plan card (ASK_ONCE), executes (AUTO / ACCEPT_EDITS) or asked in the Prompt pane (ASK_PERMISSIONS) | `pkg add` / `infuse --from-pkg` / TUI `g` |
 | Auto-executes under AUTO? | **Yes** — the gate is the signing floor at install (unsigned → refused, never queued) | n/a (you run it) |
 | Then | `[PROPOSE_SPAWN]` + `[PROPOSE_ROUTE]` | declare in `required_packages` / spawn |
 | Best for | interactive, "figure out what I need" | scripted/repeatable provisioning, CI |

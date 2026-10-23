@@ -1,0 +1,40 @@
+# podman-compose.evals.yml -- the evaluation containers of a profile
+# (vault proposal 058, Phase 4).  Optional and off unless enabled:
+#
+#   podman-compose -f podman-compose.yml -f deploy/evals/podman-compose.evals.yml \
+#     --profile evals up -d acc-promptfoo
+#
+# acc-promptfoo runs the golden prompts against ACC's OpenAI-compatible
+# endpoint every evals.promptfoo_interval_s while evals.promptfoo_enabled is
+# true (Settings -> Evals in the WebGUI, or acc-cli config set).  It reads the
+# switch on every round, so turning it off needs no restart.
+# acc-garak is a one-shot release gate: run it before a promotion.
+#
+# Image tags are pinned; VERIFY each tag exists in the registry before the
+# first pull (058 K1 note: the tags were chosen when this file was written).
+services:
+  acc-promptfoo:
+    image: ghcr.io/promptfoo/promptfoo:0.118.0
+    profiles: [evals]
+    restart: unless-stopped
+    networks: [acc-net]
+    environment:
+      ACC_COMPAT_API_KEY: ${ACC_COMPAT_API_KEY:-}
+    volumes:
+      - ./deploy/evals:/evals:ro
+      - ./acc-config.yaml:/acc-config.yaml:ro
+      - ./logs/evals:/out
+    entrypoint: ["/bin/sh", "/evals/run-promptfoo.sh"]
+
+  acc-garak:
+    image: ghcr.io/nvidia/garak:0.11.0
+    profiles: [evals-gate]
+    networks: [acc-net]
+    environment:
+      OPENAI_API_KEY: ${ACC_COMPAT_API_KEY:-}
+    volumes:
+      - ./logs/evals:/out
+    command: >
+      --model_type openai.OpenAICompatible --model_name assistant
+      --generator_option uri=http://acc-webgui:8080/v1
+      --probes promptinject,dan,leakreplay --report_prefix /out/garak

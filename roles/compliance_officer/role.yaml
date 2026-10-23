@@ -38,6 +38,9 @@ role_definition:
   # acc.config._grant_workspace_skills).
   workspace_access: true
   version: "1.1.0"
+  # 061 PS-09: the operating mode is part of the signed profile, not left to
+  # the runtime default.
+  default_operating_mode: ASK_ONCE
   knowledge_tags:
     - regulatory_updates
     - compliance_frameworks

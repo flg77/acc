@@ -84,7 +84,8 @@ class TestRole:
         assert role.proactive_wakeup is True and role.wakeup_interval_s == 900  # Q7: 15 min
         assert role.default_operating_mode == "ASK_PERMISSIONS"
         assert "control_model_serving" in role.allowed_actions
-        assert role.max_mcp_risk_level == "LOW"
+        # 061 PS-02: os_basics grants web_fetch (MEDIUM); a LOW ceiling refused every call.
+        assert role.max_mcp_risk_level == "MEDIUM"
 
     def test_capabilities_exist_and_the_action_is_human_gated(self, role, skills, mcps):
         for sid in ("ocp_model_control", "gpu_capacity_estimate", "prometheus_query"):

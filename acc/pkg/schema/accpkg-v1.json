@@ -58,6 +58,12 @@
           "title": "Path",
           "type": "string"
         },
+        "sha256": {
+          "default": "",
+          "description": "Schema v2 (061): sha256 tree digest of the capability directory at ``path`` (acc.pkg.build.tree_digest); stamped by `acc-pkg build`, empty in a source manifest and in a v1 manifest.",
+          "title": "Sha256",
+          "type": "string"
+        },
         "tier": {
           "enum": [
             "bundle_in_role",
@@ -138,6 +144,12 @@
           "title": "Path",
           "type": "string"
         },
+        "sha256": {
+          "default": "",
+          "description": "Schema v2 (061): sha256 tree digest of the capability directory at ``path`` (acc.pkg.build.tree_digest); stamped by `acc-pkg build`, empty in a source manifest and in a v1 manifest.",
+          "title": "Sha256",
+          "type": "string"
+        },
         "tier": {
           "enum": [
             "bundle_in_role",
@@ -157,7 +169,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "The top-level ``accpkg.yaml`` model \u2014 v1.\n\nA package MAY ship zero of any one component type (a memory-seed-\nonly pack has no roles + no skills + no mcps), but the manifest\nmust declare ``name`` + ``version`` + ``schema_version`` always.",
+  "description": "The top-level ``accpkg.yaml`` model \u2014 v1 and v2.\n\nA package MAY ship zero of any one component type (a memory-seed-\nonly pack has no roles + no skills + no mcps), but the manifest\nmust declare ``name`` + ``version`` + ``schema_version`` always.\n\nSchema v2 (061, capability digests) adds ``SkillRef.sha256`` /\n``McpRef.sha256``.  ``acc-pkg build`` stamps a v2 manifest; the reader\naccepts both, so a v1 pack still installs (it loads with a PS-07\nfinding in ``report`` mode and is refused in ``enforce`` mode).",
   "properties": {
     "bundles": {
       "items": {
@@ -204,8 +216,11 @@
       "type": "array"
     },
     "schema_version": {
-      "const": 1,
       "default": 1,
+      "enum": [
+        1,
+        2
+      ],
       "title": "Schema Version",
       "type": "integer"
     },

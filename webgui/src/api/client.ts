@@ -205,7 +205,7 @@ export const sendPrompt = (
   content: string,
   targetAgentId?: string,
   sessionId?: string,
-  // Per-request operating mode (AUTO | PLAN | ACCEPT_EDITS | ACCEPT_ALL) and
+  // Per-request operating mode (AUTO | PLAN | ACCEPT_EDITS | ASK_PERMISSIONS) and
   // the workspace project the agent resolves file paths under. Both were
   // accepted by the channel long before this surface could send them.
   operatingMode?: string,
@@ -220,13 +220,16 @@ export const sendPrompt = (
     output: string;
     blocked: boolean;
     block_reason: string;
+    // 058 Phase 2 -- where the work is heading, and how often it asked.
+    heading?: Heading | null;
+    asks?: Record<string, number> | null;
   }>("/api/prompt", {
     collective_id: cid,
     target_role: targetRole,
     content,
     target_agent_id: targetAgentId ?? null,
     session_id: sessionId ?? null,
-    operating_mode: operatingMode ?? "AUTO",
+    operating_mode: operatingMode ?? "ASK_ONCE",
     workspace: workspace ?? null,
     attachments: attachments ?? [],
   });
@@ -273,13 +276,67 @@ export const oversightDecision = (
   oversightId: string,
   decision: "APPROVE" | "REJECT",
   reason = "",
+  // 058 Phase 2 -- the option chosen on a row that asks a question.
+  answer = "",
 ) =>
   postJSON("/api/oversight", {
     collective_id: cid,
     oversight_id: oversightId,
     decision,
     reason,
+    ...(answer ? { answer } : {}),
   });
+
+// --- "ask once" missions (058 Phase 1/2) -----------------------------------
+
+export interface MissionSummary {
+  mission_id: string;
+  status: string;
+  used_calls: number;
+  max_calls: number;
+  roles_used: string[];
+  approver: string;
+  principal: string;
+  workspace: string;
+  created_ms: number;
+  expires_ms: number;
+  threads: string[];
+  quarantine: { path: string; kept_at: string; ts_ms: number; role?: string }[];
+}
+
+export interface Heading {
+  done: string[];
+  refused: string[];
+  waiting_on_you: string[];
+  mission?: string;
+  next: string;
+}
+
+// --- configuration (058 Phase 4: Settings -> Evals) --------------------------
+
+export interface ConfigEntry {
+  key: string;
+  file: string;
+  type: string;
+  value: unknown;
+  set: boolean;
+  posture: boolean;
+  writable: boolean;
+  write_block_reason: string;
+}
+
+export const fetchConfiguration = () =>
+  getJSON<{ entries: ConfigEntry[]; posture_keys: string[]; note: string }>("/api/config");
+
+export const setConfigValue = (key: string, value: string) =>
+  postJSON<{ key: string; after: unknown; note?: string }>("/api/config/set", { key, value });
+
+export const missionControl = (
+  cid: string,
+  missionId: string,
+  action: "close" | "revoke" | "purge" | "restore",
+) =>
+  postJSON("/api/mission", { collective_id: cid, mission_id: missionId, action });
 
 // --- work board (20260903-work-board-webgui) -------------------------------
 

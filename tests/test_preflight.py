@@ -216,23 +216,50 @@ class TestDuplicateKeys:
 
 class TestSandbox:
     def test_delegation_on_without_a_gateway_is_broken(self, deployment):
-        results = preflight.run(Context(environ={"ACC_SANDBOX_ENABLED": "true"}))
+        results = preflight.run(Context(environ={"ACC_SANDBOX_NAME": "acc-coding-agent"}))
         assert severities(results, "sandbox") == {Severity.BROKEN}
         assert only(results, "sandbox")[0].subject == "OPENSHELL_GATEWAY"
 
-    def test_delegation_on_with_a_gateway_is_ok(self, deployment):
-        results = preflight.run(
-            Context(
-                environ={
-                    "ACC_SANDBOX_ENABLED": "true",
-                    "OPENSHELL_GATEWAY": "https://openshell:8080",
-                }
-            )
-        )
-        assert severities(results, "sandbox") == {Severity.OK}
+    def test_enabled_without_a_name_is_no_sandbox(self, deployment):
+        """The runner turns delegation on by a sandbox NAME; ENABLED alone
+        sandboxes nothing, so doctor must not call it configured."""
+        results = preflight.run(Context(environ={
+            "ACC_SANDBOX_ENABLED": "true", "OPENSHELL_GATEWAY": "https://openshell:8080",
+        }))
+        assert severities(results, "sandbox") == {Severity.BROKEN}
+        assert only(results, "sandbox")[0].subject == "ACC_SANDBOX_NAME"
 
-    def test_delegation_off_is_ok(self, deployment):
+    def test_enabled_0_in_the_env_file_is_off(self, deployment):
+        """``ACC_SANDBOX_ENABLED=0`` forces delegation off at exec time; doctor
+        used to read the key's presence as "on" and demand a gateway."""
+        (deployment / ".env").write_text(
+            "ACC_SANDBOX_NAME=acc-coding-agent\nACC_SANDBOX_ENABLED=0\n", encoding="utf-8",
+        )
+        results = preflight.run(Context(environ={}))
+        assert severities(results, "sandbox") == {Severity.BROKEN}
+        assert only(results, "sandbox")[0].subject == "ACC_SANDBOX_NAME"
+
+    def test_a_sandbox_named_in_the_env_file_is_read(self, deployment):
+        (deployment / ".env").write_text(
+            "ACC_SANDBOX_NAME=acc-coding-agent\nOPENSHELL_GATEWAY=openshell\n", encoding="utf-8",
+        )
         assert severities(preflight.run(Context(environ={})), "sandbox") == {Severity.OK}
+
+    def test_no_sandbox_is_broken_because_it_is_mandatory(self, deployment):
+        """058 Q2: the sandbox is mandatory wherever ACC runs."""
+        results = preflight.run(Context(environ={}))
+        assert severities(results, "sandbox") == {Severity.BROKEN}
+        assert only(results, "sandbox")[0].subject == "ACC_SANDBOX_NAME"
+
+    def test_switching_the_requirement_off_is_drift(self, deployment):
+        results = preflight.run(Context(environ={"ACC_SANDBOX_REQUIRED": "0"}))
+        assert severities(results, "sandbox") == {Severity.DRIFTED}
+
+    def test_a_named_sandbox_with_a_gateway_is_ok(self, deployment):
+        results = preflight.run(Context(environ={
+            "ACC_SANDBOX_NAME": "acc-coding-agent", "OPENSHELL_GATEWAY": "openshell",
+        }))
+        assert severities(results, "sandbox") == {Severity.OK}
 
 
 class TestDrift:

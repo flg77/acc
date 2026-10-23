@@ -1,0 +1,15 @@
+name: getdone_research_summary
+description: |
+  058 K1 "get things done" set. Research that needs a tool call (a fetch)
+  rather than recall, then a cited summary.
+prompt: |
+  Look up what the EU AI Act Article 14 (human oversight) requires and
+  summarise it in five bullet points, citing the source you fetched.
+target_role: research_synthesizer
+operating_mode: AUTO
+timeout_s: 900.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_contains:
+    - "oversight"

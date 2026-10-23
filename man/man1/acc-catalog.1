@@ -1,0 +1,63 @@
+.TH ACC-CATALOG 1 2026-10-22 "ACC" "ACC Manual"
+.SH NAME
+acc-catalog \- serve a writable ACC package catalog over HTTP
+.SH SYNOPSIS
+.B acc-catalog
+.SH DESCRIPTION
+.B acc-catalog
+is a package catalog that
+.BR acc-pkg (1)
+can install from and publish to.
+It serves \fIindex.json\fR and the package files to the resolver, and
+accepts uploads from \fBacc\-pkg publish\fR.
+.PP
+An upload is staged until its signature arrives, then verified, and only a
+verified package is promoted into the index.
+A package whose signature does not verify, or that an Enterprise Contract
+policy rejects, is refused and logged.
+Writes need a bearer token; with no token configured uploads are disabled
+and the catalog is read-only.
+.PP
+The command takes no arguments; it is configured through the environment.
+.SH ENVIRONMENT
+.TP
+.B ACC_CATALOG_ROOT
+The data directory (default \fI/var/lib/acc\-catalog\fR).
+.TP
+.B ACC_CATALOG_TIER
+The tier tag written into the index (default \fBcommunity\fR).
+.TP
+.B ACC_CATALOG_PUBKEY
+A cosign public key (PEM); when set, packages are verified in keypair mode.
+.TP
+.B ACC_CATALOG_SIGNER_ISSUER
+The OIDC issuer for keyless verification, or an audit label in keypair
+mode (default \fBlab\-keypair\fR).
+.TP
+.B ACC_CATALOG_SIGNER_SUBJECT
+The subject regular expression for keyless verification (default \fB.*\fR).
+.TP
+.B ACC_CATALOG_EC_POLICY
+An Enterprise Contract policy file (default: an empty policy).
+.TP
+.B ACC_CATALOG_TOKEN
+The bearer token uploads must carry.
+Unset disables uploads; reads are still served.
+.TP
+.BR ACC_CATALOG_HOST ", " ACC_CATALOG_PORT
+The bind address (default \fB0.0.0.0\fR, meant to sit behind an ingress)
+and port (default \fB8080\fR).
+.SH FILES
+.TP
+.I /var/lib/acc\-catalog
+Staged uploads, promoted packages and the index.
+.SH EXAMPLES
+.nf
+ACC_CATALOG_ROOT=/srv/catalog ACC_CATALOG_PUBKEY=/etc/acc/cosign.pub \e
+  ACC_CATALOG_TOKEN=... acc\-catalog
+acc\-pkg publish dist/my_role.accpkg \-\-catalog\-url http://localhost:8080/
+.fi
+.SH SEE ALSO
+.BR acc-pkg (1),
+.BR acc (1),
+.BR cosign (1)

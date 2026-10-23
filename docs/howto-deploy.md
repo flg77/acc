@@ -37,6 +37,7 @@ Before running for the first time, verify:
 | Ollama running (if local LLM) | `ollama list` | model list |
 | `acc-config.yaml` present | `ls acc-config.yaml` | found |
 | `.env` present (repo root) | `ls .env` | found (optional) |
+| OpenShell sandbox for exec agents | `acc doctor --check sandbox` | OK (set up with `deploy/openshell/`) |
 
 Install missing tools:
 ```bash
@@ -348,7 +349,7 @@ export OPENROUTER_API_KEY=...
 
 ## 10. Compliance Configuration
 
-ACC ships OWASP LLM Top 10 guardrails and an audit trail. All enforcement is **observe-only by default** — violations are logged but do not block processing.
+ACC ships OWASP LLM Top 10 guardrails and an audit trail. Guardrail enforcement is **observe-only by default** — violations are logged but do not block processing — except under the `edge_secure` profile, which turns it on. Code-execution confinement is not optional: exec skills refuse without an OpenShell sandbox (`ACC_SANDBOX_REQUIRED=1`; see [security/constraints.md](security/constraints.md)).
 
 To enable enforcement:
 
@@ -550,3 +551,10 @@ See `tests/container/` for each tier's requirements and what is validated.
 | `ACC_HIPAA_MODE` | `false` | Enable PHI redaction before LanceDB storage |
 | `ACC_AUDIT_BACKEND` | `file` | Audit backend (`file` / `kafka` / `multi`) |
 | `ACC_AUDIT_KAFKA_BOOTSTRAP` | _(empty)_ | Kafka bootstrap servers (RHOAI only) |
+| `ACC_SANDBOX_NAME` | _(empty)_ | The agent's OpenShell sandbox; setting it turns delegation on |
+| `OPENSHELL_GATEWAY` | _(empty)_ | The OpenShell gateway; required with a sandbox name |
+| `ACC_SANDBOX_REQUIRED` | `1` | `0` lets exec skills run on the host (developer box only) |
+| `ACC_SANDBOX_ENABLED` | _(on)_ | `0` forces delegation off even with a name |
+| `ACC_OPENSHELL_BIN` | `openshell` | Path to the OpenShell CLI |
+| `ACC_MISSION_MAX_CALLS` / `ACC_MISSION_TTL_S` | `200` / `28800` | An Ask once mission's call budget and lifetime |
+| `ACC_SSH_HOST_ALLOWLIST` | _(empty)_ | Seed list of ssh hosts reached without asking |

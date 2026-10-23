@@ -149,9 +149,19 @@ class SkillRegistry:
             roots.extend(installed_capability_dirs("skills"))
         roots.append(root)
 
+        from acc.capability_verify import gate  # noqa: PLC0415 — 061
+
         new: dict[str, Skill] = {}
         for scan_root in roots:
+            # 061: verify each tree against its recorded digest before the
+            # adapter is imported.  `_base` merges into every manifest under
+            # this root, so a refused `_base` refuses the whole root.
+            base = scan_root / "_base"
+            if base.is_dir() and not gate("skill", "_base", base):
+                continue
             for skill_id in list_skills(scan_root):
+                if not gate("skill", skill_id, scan_root / skill_id):
+                    continue
                 skill = SkillLoader(scan_root, skill_id).load()
                 if skill is None:
                     continue

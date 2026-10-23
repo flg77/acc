@@ -102,6 +102,11 @@ with the host image, so a node with no connectivity at stack start already
 has them. Off by default, because every image the compose names must then
 exist in the registry or the upgrade fails. `--build-arg ACC_PROFILE=edge`
 applies the `edge` feature profile (`profiles/edge.yaml`) at build time.
+`--build-arg ACC_PROFILE=edge_secure` applies `profiles/edge_secure.yaml`
+instead. It turns on the guardrails in enforce mode and the garak release
+gate, and it requires the OpenShell sandbox and MLflow tracking. promptfoo
+runs as an optional container (`deploy/evals/`), switched on by the operator
+from the WebGUI or `acc-cli evals`.
 
 A bootc host has no `dnf upgrade`: the image is the unit of change. To change
 what the node runs, change the image and `bootc upgrade`.
@@ -331,6 +336,22 @@ The agent will:
 4. If no result arrives within the timeout: handle the task locally with the available 3B model.
 
 ---
+
+## Code execution needs an OpenShell sandbox
+
+Since Ask once (058), `shell_exec`, `python_exec` and `ssh_exec` run inside the
+agent's OpenShell sandbox and **refuse without one**. On this host:
+
+```bash
+deploy/openshell/setup-edge-sandbox.sh          # gateway + one sandbox per agent (README §2)
+podman-compose -f podman-compose.yml -f deploy/openshell/podman-compose.sandbox.yml up -d
+acc doctor --check sandbox                      # OK = delegation configured
+```
+
+Each exec agent gets `ACC_SANDBOX_NAME`, `OPENSHELL_GATEWAY` and
+`ACC_SANDBOX_REQUIRED=1`. `ACC_SANDBOX_REQUIRED=0` lets a developer's own box
+run exec on the host, and `acc doctor` reports it as drift. What asks and what
+runs: [security/constraints.md](security/constraints.md).
 
 ## Disconnected Operation
 

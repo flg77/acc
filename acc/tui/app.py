@@ -35,7 +35,7 @@ from textual.widgets import Label
 from acc.tui.client import NATSObserver
 from acc.tui.messages import PromptLoadMessage, RolePreloadMessage
 from acc.tui.models import CollectiveSnapshot
-from acc.tui.screens.compliance import _OversightAction
+from acc.tui.screens.compliance import _MissionAction, _OversightAction
 from acc.tui.screens.dashboard import _RefreshMessage
 from acc.tui.screens.infuse import InfuseScreen, _PublishMessage
 from acc.tui.screens.prompt import PromptScreen
@@ -657,6 +657,26 @@ class ACCTUIApp(App):
             )
         except Exception as exc:
             logger.warning("app: oversight publish failed: %s", exc)
+
+    async def on__mission_action(self, message: _MissionAction) -> None:
+        """058 Phase 1 -- publish MISSION_CONTROL (close / revoke / purge /
+        restore an "ask once" mission) for the agents to apply."""
+        obs = self._observers[self._active_collective_idx] if self._observers else None
+        if obs is None or not message.mission_id:
+            return
+        cid = self._active_collective_id
+        from acc.signals import SIG_MISSION_CONTROL, subject_mission_control  # noqa: PLC0415
+        import time as _time  # noqa: PLC0415
+        payload = {
+            "signal_type": SIG_MISSION_CONTROL, "action": message.action,
+            "mission_id": message.mission_id, "by": _tui_actor(),
+            "ts": _time.time(), "collective_id": cid,
+        }
+        try:
+            await obs.publish(subject_mission_control(cid), payload)
+            logger.info("app: published MISSION_CONTROL %s %s", message.action, message.mission_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("app: mission publish failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Public accessor (for WebBridge and tests)

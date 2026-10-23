@@ -64,6 +64,9 @@ role_definition:
 
   # OPTIONAL — SemVer. Bump on every change; RoleLoader hot-reloads on version change.
   version: "1.0.0"
+  # 061 PS-09: the operating mode is part of the signed profile, not left to
+  # the runtime default.
+  default_operating_mode: ASK_ONCE
 
   # OPTIONAL — How often (ms) to emit TASK_PROGRESS during task execution.
   # Default: 30000 (30 seconds). Set to 0 to emit only at step boundaries.

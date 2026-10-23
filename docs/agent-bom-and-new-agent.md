@@ -27,7 +27,8 @@ palette and the generated `/help` read from it, so they never drift.
 | `/goal [<text>\|clear]` | control | Set a pinned objective | |
 | `/help` | general | List the available commands | |
 | `/loop <30s\|5m\|2h> <prompt>` | control | Re-run a prompt on an interval | **yes** |
-| `/mode <AUTO\|PLAN\|…>` | control | Set the operating mode | |
+| `/mode <ASK_ONCE\|AUTO\|PLAN\|…>` | control | Set the operating mode (Ask once is the default) | |
+| `/mission [list\|show\|close\|revoke\|purge\|restore] [<id>]` | control | Ask once missions: what they ran, what they backed up | |
 | `/model` | query | List the `models.yaml` registry | |
 | `/new-agent <intent>` | control | Scaffold + launch a governed agentset (signed A-BOM) | **yes** |
 | `/oversight pending\|approve\|reject` | oversight | Review the oversight queue | |

@@ -34,7 +34,8 @@ are independent layers (defence-in-depth):
    which the operating-mode write-action classifier flags. Under
    `ACCEPT_EDITS` / `ASK_PERMISSIONS`, every write is funnelled through
    the human-oversight queue before touching disk; under `AUTO` it
-   proceeds (still bounded by gates 1 + 2 and the constitution).
+   proceeds (still bounded by gates 1 + 2 and the constitution); under
+   `ASK_ONCE` (the default) the thread's mission covers it once allowed.
 
 ---
 

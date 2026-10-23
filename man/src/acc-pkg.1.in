@@ -1,0 +1,113 @@
+.TH ACC-PKG 1 2026-10-22 "ACC" "ACC Manual"
+.SH NAME
+acc-pkg \- build, sign, publish, install and query ACC role packages
+.SH SYNOPSIS
+.B acc-pkg
+.RB [ \-\-quiet ]
+.RB [ \-\-json ]
+.RB [ \-\-version ]
+.I COMMAND
+.RI [ ARGS ...]
+.SH DESCRIPTION
+.B acc-pkg
+is the toolchain for ACC role packages (\fI.accpkg\fR): signed archives
+carrying roles, skills, MCP definitions, evals and golden prompts.
+Its query verbs are modelled on
+.BR rpm (8)
+(\fBqf\fR, \fBql\fR, \fBqi\fR, \fBqv\fR) and its build and scaffold verbs on
+.BR rpmbuild (8).
+.PP
+Installation verifies the package signature before anything is unpacked:
+keypair mode with a cosign public key (\fB\-\-key\fR), or keyless mode
+against a Sigstore bundle (\fB\-\-issuer\fR, \fB\-\-subject\fR).
+An unsigned package is refused unless \fB\-\-allow\-unsigned\fR is given,
+which is logged as an audit event.
+An Enterprise Contract policy, when present, is evaluated before the install
+is committed.
+.PP
+.B acc-pkg
+never prompts; it is built for CI and automation.
+It is the package toolchain;
+.BR acc-cli (1)
+drives a running collective.
+.SH OPTIONS
+These sit before the command and apply to every command.
+.TP
+.B \-\-quiet
+Suppress non-error standard output.
+The \fB\-\-allow\-unsigned\fR audit line still prints.
+.TP
+.B \-\-json
+Emit machine-readable JSON for the commands that produce data.
+.TP
+.B \-\-version
+Print the version and exit.
+.SH COMMANDS
+The commands below are generated from the parser of this release.
+.\" @COMMANDS@
+.SH ENVIRONMENT
+.TP
+.B ACC_PACKAGES_ROOT
+Where packages are installed and queried (default \fB/var/lib/acc/packages\fR).
+.TP
+.B ACC_SYSTEM_CATALOG
+The system catalog list (default \fB/etc/acc/catalogs.yaml\fR).
+.TP
+.B ACC_USER_CATALOG
+The per-user catalog list (default \fB~/.acc/catalogs.yaml\fR).
+.TP
+.B COSIGN_PRIVATE_KEY
+Private key for keypair signing in \fBpublish\fR when \fB\-\-key\fR is not given.
+.TP
+.BR SIGSTORE_ID_TOKEN ", " SIGSTORE_OIDC_ISSUER
+The OIDC token and issuer for keyless signing; \fBacc\-pkg login\fR reports
+whether they are usable.
+.SH FILES
+.TP
+.I /var/lib/acc/packages
+The installed packages and their registry.
+.TP
+.I /etc/acc/catalogs.yaml
+The catalogs \fBlist \-\-available\fR and the resolver read.
+.TP
+.I /etc/acc/policy/enterprise\-contract.yaml
+The default Enterprise Contract policy for \fBinstall\fR and \fBverify\fR.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+User or argument error: missing file, bad arguments, unsafe path, already installed.
+.TP
+.B 2
+Manifest schema failure, validation or lint errors.
+.TP
+.B 3
+Dependency resolution failure, or an uninstall refused because something
+still depends on the package.
+.TP
+.B 4
+Content hash mismatch (tampering or corruption).
+.TP
+.B 5
+Signature missing or rejected.
+.TP
+.B 6
+Enterprise Contract policy violation.
+.SH EXAMPLES
+.nf
+acc\-pkg init my_role \-\-scope @you \-\-domain finance
+acc\-pkg validate ./my_role
+acc\-pkg build ./my_role \-o dist/my_role.accpkg
+acc\-pkg publish dist/my_role.accpkg \-\-catalog\-url https://catalog.example/
+acc\-pkg install dist/my_role.accpkg \-\-key cosign.pub
+acc\-pkg list \-\-available
+acc\-pkg qf \-\-kind role coding_agent    # which package provides a role
+acc\-pkg qv                              # re-check every installed hash
+.fi
+.SH SEE ALSO
+.BR acc (1),
+.BR acc-cli (1),
+.BR acc-catalog (1),
+.BR cosign (1)

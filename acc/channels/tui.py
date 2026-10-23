@@ -310,4 +310,6 @@ def _payload_to_response(task_id: str, data: dict) -> PromptResponse:
         ),
         eval_verdict=eval_verdict,
         usage=usage,
+        asks=data.get("asks") if isinstance(data.get("asks"), dict) else None,
+        heading=data.get("heading") if isinstance(data.get("heading"), dict) else None,
     )

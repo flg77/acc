@@ -47,11 +47,27 @@ _MAX_PARAM_LEN = 500
 _MAX_KEY_LEN = 250
 
 
+def _configured_uri() -> str:
+    """``ACC_MLFLOW_TRACKING_URI``, else ``evals.mlflow_tracking_uri`` from the
+    configuration (058 Phase 4: a profile attaches an edge host to MLflow)."""
+    uri = os.environ.get(_ENV_TRACKING_URI, "").strip()
+    if uri:
+        return uri
+    try:
+        from acc.config import load_config  # noqa: PLC0415
+        uri = str(getattr(getattr(load_config(), "evals", None), "mlflow_tracking_uri", "") or "").strip()
+    except Exception:  # noqa: BLE001 -- no config, no MLflow
+        return ""
+    if uri:
+        os.environ[_ENV_TRACKING_URI] = uri  # mlflow itself reads the env
+    return uri
+
+
 def enabled() -> bool:
     """True iff MLFlow run-logging is configured (tracking URI set) AND
     the ``mlflow`` package is importable.  Cheap — import attempt is
     cached by the interpreter after first call."""
-    if not os.environ.get(_ENV_TRACKING_URI, "").strip():
+    if not _configured_uri():
         return False
     try:
         import mlflow  # noqa: F401, PLC0415
@@ -165,6 +181,8 @@ def log_golden_results(
 
     * ``golden.count`` / ``golden.passed`` / ``golden.pass_rate`` (aggregate)
     * per-prompt ``pass.<name>`` (1.0/0.0) + ``latency_ms.<name>``
+    * ``golden.asks`` (total) + per-prompt ``asks.<name>`` when the agent
+      reported how often it asked a person (058 K1)
 
     Returns True when a run was logged, False on the no-op/disabled/error
     path.  Best-effort — never raises.
@@ -191,12 +209,18 @@ def log_golden_results(
             mlflow.log_metric("golden.count", float(total))
             mlflow.log_metric("golden.passed", float(passed))
             mlflow.log_metric("golden.pass_rate", float(rate))
+            asks_total = 0
             for r in results:
                 rname = _safe_key(getattr(r, "name", "unknown"))
                 mlflow.log_metric(f"pass.{rname}", 1.0 if getattr(r, "passed", False) else 0.0)
                 elapsed = getattr(r, "elapsed_ms", None)
                 if isinstance(elapsed, (int, float)):
                     mlflow.log_metric(f"latency_ms.{rname}", float(elapsed))
+                asks = getattr(r, "asks", None) or {}
+                if asks:
+                    asks_total += int(asks.get("asks", 0) or 0)
+                    mlflow.log_metric(f"asks.{rname}", float(asks.get("asks", 0) or 0))
+            mlflow.log_metric("golden.asks", float(asks_total))
         logger.info(
             "mlflow_runs: logged golden suite (%d/%d passed) to experiment %r",
             passed, total, _experiment_name(experiment),

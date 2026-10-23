@@ -758,10 +758,6 @@ def check(*, repo_root: Path | None = None) -> list[Finding]:
     return findings
 
 
-def _truthy(value: str | None) -> bool:
-    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
-
-
 def _first_line(exc: Exception) -> str:
     return str(exc).strip().splitlines()[0] if str(exc).strip() else exc.__class__.__name__
 
@@ -789,7 +785,9 @@ def _check_references(*, repo_root: Path | None = None) -> list[Finding]:
     # it points at was never configured.
     env_names = read("env", repo_root=repo_root)
     for trigger, required in cs.REQUIRES.items():
-        enabled = trigger in env_names or _truthy(os.environ.get(trigger))
+        # "Set" on both sides: .env is read for presence only, and the trigger
+        # (a sandbox name) is a value, not a boolean.
+        enabled = trigger in env_names or bool(str(os.environ.get(trigger) or "").strip())
         if not enabled:
             continue
         for name in required:

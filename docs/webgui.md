@@ -192,6 +192,15 @@ The screens that gained TUI-parity surfaces in the latest cycle:
   diagnostics.
 - **Prompt** — composing is **Enter-to-send** (Shift+Enter inserts a
   newline); the explicit Send button is gone, matching the TUI.
+  - The mode selector offers the five modes by what they do. It defaults to **Ask once**; `ACCEPT_ALL` is gone.
+  - The heading line (done / now / next / waiting on you) sits above the thread.
+- **Decisions** — answers the same questions as the TUI:
+  - the plan card (allow the plan / just these steps / don't do it);
+  - the mission card;
+  - "always allow for <role>" on a system-access or ssh-host question;
+  - closing and settling a mission (`POST /api/mission`).
+
+  See [security/constraints.md](security/constraints.md).
 
 - **Knowledge** (`20260928-rdf-provenance-and-memory-views`) — what the agents
   remember and learned, and why. **Memory**: the notes per tier (private,

@@ -110,7 +110,11 @@ _apply_started_ts`. When found, status flips to
 `✓ Agent <id> registered`. Without a dormant worker it never fires —
 the pane's `✗ spawn …` line is the honest signal to look for.
 
-**Where the decision is made.** Under `AUTO` / `ACCEPT_EDITS` a
+**Where the decision is made.** Under `ASK_ONCE` (the default) the
+assistant's infuse, spawn and route wait in **one plan card**; allowing it
+creates the mission and they run, and a later step outside the plan raises
+an amendment card (see [security/constraints.md](security/constraints.md)).
+Under `AUTO` / `ACCEPT_EDITS` a
 curated infuse, a spawn and a route execute without a question and are
 tracked as `AUTO_APPROVED` rows in Compliance → DECISION HISTORY. Under
 `ASK_PERMISSIONS`, and for system access / acting on the operator's

@@ -1,0 +1,81 @@
+.TH ACC-AGENT 1 2026-10-22 "ACC" "ACC Manual"
+.SH NAME
+acc-agent \- run one ACC agent (a cell) on the collective's bus
+.SH SYNOPSIS
+.B acc-agent
+.SH DESCRIPTION
+.B acc-agent
+is the process behind every agent in an ACC collective.
+One process is one cell: it loads its configuration, builds its backends
+(bus, vector store, working memory, LLM), connects to NATS, loads its role
+definition, and announces itself.
+It then runs its loops concurrently \(em heartbeat, task processing, role
+updates \(em until it receives SIGINT or SIGTERM, when it drains and closes
+its connections.
+.PP
+The command takes no arguments: everything comes from the configuration
+file and the environment.
+It is normally started by the stack
+.RB ( acc-deploy (1),
+the operator on Kubernetes), one container per role, not by hand.
+.PP
+A role's governance travels with the role definition: the constitutional
+rules, the setpoints and learned rules, the category ceiling, and the
+oversight queue the agent must route risky actions through.
+.SH ENVIRONMENT
+Any key of \fIacc\-config.yaml\fR can be overridden; these are the ones a
+deployment usually sets.
+.TP
+.B ACC_CONFIG_PATH
+The configuration file (default: found through the layout in
+.BR acc (1)).
+.TP
+.B ACC_AGENT_ROLE
+The role this cell takes.
+.TP
+.B ACC_COLLECTIVE_ID
+The collective the cell joins.
+.TP
+.B ACC_NATS_URL
+The bus.
+.TP
+.B ACC_DEPLOY_MODE
+\fBstandalone\fR, \fBrhoai\fR or \fBedge\fR: where the cell runs, which
+decides where roles are loaded from and which signing defaults apply.
+.TP
+.B ACC_OPERATOR_MODE
+The security floor; \fBdev\fR tolerates absent secrets and lowers the
+signing and authentication floors for local use.
+.TP
+.BR ACC_LLM_BACKEND ", " ACC_LLM_MODEL ", " ACC_LLM_BASE_URL
+The LLM backend (for example \fBollama\fR, \fBanthropic\fR, \fBvllm\fR,
+\fBopenai_compat\fR), the model and the endpoint.
+.TP
+.B ACC_LLM_API_KEY_ENV
+The \fIname\fR of the variable that holds the API key; the key itself is
+never put in the configuration.
+.TP
+.BR ACC_VECTOR_BACKEND ", " ACC_LANCEDB_PATH ", " ACC_MILVUS_URI
+The vector store: \fBlancedb\fR, \fBmilvus\fR or \fBturbovec\fR.
+.TP
+.B ACC_REDIS_URL
+Working memory.
+.TP
+.B ACC_SIGNING_MODE
+How role updates are signed: \fBed25519\fR, \fBspiffe\fR or \fBauto\fR.
+.TP
+.B ACC_ROLES_ROOT
+The roles tree.
+.SH SIGNALS
+.TP
+.BR SIGINT ", " SIGTERM
+Stop taking work, drain, close the bus connection and exit.
+.SH FILES
+.TP
+.I acc\-config.yaml
+The cell's configuration; see the layout in
+.BR acc (1).
+.SH SEE ALSO
+.BR acc (1),
+.BR acc-cli (1),
+.BR acc-deploy (1)

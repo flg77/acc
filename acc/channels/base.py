@@ -83,6 +83,13 @@ class PromptResponse:
     """This task's ``{prompt_tokens, completion_tokens, total_tokens}`` (F1).
     ``None`` when the agent did not report it — an agent older than F1, a
     blocked task, or a backend that does not count.  Never read as zero."""
+    asks: dict | None = None
+    heading: dict | None = None
+    """Where the work is heading (058 Phase 2, :mod:`acc.heading`): done,
+    refused, waiting_on_you, mission, next.  ``None`` from an older agent."""
+    """How often this task asked a person and how that ended (058 K1,
+    :func:`acc.capability_dispatch.ask_stats`).  ``None`` when the agent did
+    not report it -- an older agent, or a task that dispatched no tool."""
 
 
 @runtime_checkable

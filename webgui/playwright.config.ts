@@ -18,7 +18,11 @@ const PY = process.env.ACC_E2E_PYTHON || "python";
 const backend = (mode: "cluster" | "edge", port: number) => ({
   command: `${PY} webgui/e2e/mock_webgui.py`,
   cwd: REPO_ROOT,
-  env: { MODE: mode, PORT: String(port), ACC_WEBGUI_STATIC_DIR: DIST_DIR },
+  env: {
+    MODE: mode, PORT: String(port), ACC_WEBGUI_STATIC_DIR: DIST_DIR,
+    // 058: the "ask once" seed (e2e/ask-once.spec.ts) — off for the normal run.
+    ...(process.env.ACC_E2E_058 ? { ACC_E2E_058: "1" } : {}),
+  },
   url: `http://127.0.0.1:${port}/health`,
   reuseExistingServer: !process.env.CI,
   timeout: 30_000,

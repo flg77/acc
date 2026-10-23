@@ -1,0 +1,79 @@
+# CI for acc-spearhead on GitHub-hosted runners, so pull requests no longer
+# need the workstation or lighthouse to run the suite.
+#
+# * gate  -- the 061 role QA gate and the capability checksums: fast, and the
+#            one to make a required check.
+# * tests -- the whole suite except tests/container (those build images or
+#            drive a compose stack; they stay with the Tekton acc-build gate).
+#
+# Both ways stay (operator, 2026-10-19): this workflow for every PR, and the
+# in-house Tekton acc-build pipeline, which tests AND builds the images, so
+# everything can be tested in house. Both call tools/ci/run_tests.sh.
+# Minutes, the budget and the Tekton side are backlog item CI-01 in the vault.
+name: ci
+
+on:
+  pull_request:
+    paths-ignore: ["**/*.md", "docs/**", "openspec/**"]
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/**", "openspec/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  gate:
+    name: role QA gate + capability checksums
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e '.[tui,dev]'
+      - name: Role QA gate (posture at MEDIUM over every role profile) and checksums
+        run: tools/ci/run_tests.sh gate
+      - name: Posture scan (SARIF artifact)
+        if: always()
+        run: acc-cli posture scan --no-installed --sarif posture.sarif || true
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: posture-sarif
+          path: posture.sarif
+          if-no-files-found: ignore
+
+  tests:
+    name: test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        # The extras the suite imports; mlflow, turbovec, speech and sandbox
+        # stay out (heavy, and their tests skip without them).
+        run: pip install -e '.[tui,dev,rdf,webgui,a2a,slack]'
+      - name: pytest (everything but tests/container)
+        run: tools/ci/run_tests.sh suite --junitxml=pytest.xml
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: pytest-junit
+          path: pytest.xml
+          if-no-files-found: ignore

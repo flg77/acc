@@ -1,0 +1,16 @@
+name: getdone_cli_flag
+description: |
+  058 K1 "get things done" set. A small feature end to end: add a CLI flag,
+  add a test for it, run the tests.
+prompt: |
+  In the workspace, create greet.py: a command-line tool that prints
+  "hello <name>" and, with a new --shout flag, prints it in upper case.
+  Add test_greet.py covering both cases, run the tests and report the result.
+target_role: coding_agent
+operating_mode: AUTO
+timeout_s: 900.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_contains:
+    - "--shout"

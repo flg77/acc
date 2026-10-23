@@ -1,0 +1,210 @@
+.TH ACC-DEPLOY 1 2026-10-22 "ACC" "ACC Manual"
+.SH NAME
+acc-deploy \- build, start, stop and reconcile the ACC container stack
+.SH SYNOPSIS
+.B acc-deploy
+.RI [ command ]
+.RI [ args ...]
+.SH DESCRIPTION
+.B acc-deploy
+drives the ACC stack on a host with
+.BR podman-compose (1):
+NATS, Redis, one container per agent, the TUI, and optionally the web UI.
+It picks the compose files, resolves the image version and the host
+layout, and runs the requested command, so callers never need to remember
+file paths.
+Without a command it runs \fBup\fR.
+.PP
+On an RPM install the
+.B acc-stack.service
+unit runs \fBacc\-deploy up \-\-webgui\fR as the unprivileged \fBacc\fR
+user with rootless podman, and \fBacc\-deploy down\fR to stop.
+.BR acc (1)
+runs it as \fBacc stack\fR.
+It is part of the \fBacc\fR package only: a container that installs
+\fBacc\-runtime\fR has no stack to drive.
+.SH COMMANDS
+.SS Lifecycle
+.TP
+.BR up " [" \-\-webgui ]
+Start the stack, detached (the default command).
+\fB\-\-webgui\fR adds the web UI.
+.TP
+.BR down " [" \-v ]
+Stop and remove the containers; \fB\-v\fR also removes the volumes.
+.TP
+.B restart
+Roll the stack onto the current images (down, then up with
+force-recreate).
+Use it after \fBbuild\fR or \fBrebuild\fR: a plain restart reuses the old
+image.
+.TP
+.BR status ", " ps
+Show the running ACC containers.
+.TP
+.BR logs " [" \fIservice\fR ]
+Tail the logs of every service, or of one.
+\fBlogs acc\-tui\fR reads the TUI's log file from its volume, since the
+TUI's standard output is screen drawing, not log text.
+.TP
+.B tui\-logs
+The same as \fBlogs acc\-tui\fR.
+.TP
+.BR version ", " image ", " images
+Print the resolved code version and whether each image for it is built.
+.SS Images
+.TP
+.B build
+Build the container images; needed before the first \fBup\fR.
+.TP
+.B rebuild
+Pull the checkout fast-forward, then rebuild every image with no cache and
+fresh base images.
+It does not restart the stack: run \fBrestart\fR afterwards.
+.TP
+.BI "flavour " name " " \fR[ options ]
+Build an immutable flavour image: a base with chosen packs baked in and the
+governance and control roles always included.
+Options: \fB\-\-profile\fR \fIP\fR or \fB\-\-features\fR "\fIa b\fR",
+\fB\-\-packs\fR "\fIpacks\fR", \fB\-\-local\-catalog\fR (an unsigned
+development bake) or \fB\-\-signer\-key\fR \fIpubkey\fR (verify signed packs
+at build), \fB\-\-base\fR \fIimage\fR, \fB\-\-registry\fR \fIR\fR,
+\fB\-\-push\fR, \fB\-\-dry\-run\fR.
+Profiles: \fBnano\fR, \fBstandard\fR, \fBvoice\fR, \fBedge\fR; bundles:
+\fBcomms\fR, \fBoffice\fR; \fBfulltest\fR.
+.TP
+.BI "new\-stack " name " \-\-packs " packs " " \fR[ options ]
+Roll a dedicated stack: write \fIcollective.<name>.yaml\fR (control set and
+domain agents) and build, tag and optionally push a flavour with its roles
+baked in.
+Options: \fB\-\-agents\fR \fIr1,r2\fR, \fB\-\-profile\fR
+{\fBfull\fR|\fBedge\fR|\fBedge\-min\fR|\fBdc\fR}, \fB\-\-registry\fR
+\fIR\fR, \fB\-\-push\fR.
+.SS Agentsets
+.TP
+.BR apply " [" \fIspec\fR "] [" \-\-dry\-run "] [" \-\-prune "] [" \-\-recreate ]
+Reconcile the running agents with \fIcollective.yaml\fR, or with
+\fIspec\fR: a path, or a preset name under \fIcollectives/\fR
+(\fBapply coding\-split\fR reads \fIcollectives/collective.coding\-split.yaml\fR).
+Additive and non-disruptive by default: agents in the spec that are not
+running are started; the TUI and the baseline keep running.
+\fB\-\-dry\-run\fR prints the diff; \fB\-\-prune\fR also removes agents not
+in the spec; \fB\-\-recreate\fR applies configuration changes to running
+agents, restarting them.
+.TP
+.BR instance " {" up | down | synth "} " \fIid\fR
+Run, stop, or render the compose overlay of an instance: a collective bound
+to an owner, a posture and its own state roots (see
+\fBacc\-cli instance\fR).
+.TP
+.BI "hibernate " cid
+Stop a sub-collective's containers and keep its volumes, so its memory
+survives.
+.TP
+.BI "resume " cid
+Bring a hibernated sub-collective back.
+.SS Workspaces
+.TP
+.BI "apply\-workspace " path
+Point the agents' \fI/workspace\fR mount at \fIpath\fR and recreate only the
+agents; the TUI and the memory volumes are untouched.
+The path must lie under \fBACC_WORKSPACE_BASE\fR (default: the deploying
+user's home).
+.TP
+.BR watcher " {" start | stop | status }
+The host-side watcher that runs \fBapply\-workspace\fR when the TUI asks.
+.TP
+.BR lifecycle\-watcher " {" start | stop | status }
+The host-side watcher that runs \fBhibernate\fR and \fBresume\fR when the
+collective asks.
+.SS Other
+.TP
+.B setup
+Create \fI.env\fR from \fI.env.example\fR when it is absent.
+.TP
+.BI "pkg " verb " " \fR[ args ]
+Run
+.BR acc-pkg (1)
+against the stack's packages root.
+\fBpkg add\fR \fI@scope/name\fR [\fIcatalog\fR] fetches and installs by
+name; \fBpkg list\fR [\fB\-\-available\fR]; \fBpkg install\fR
+\fIfile.accpkg\fR; \fBinspect\fR, \fBeval\fR, \fBverify\fR, \fBinfo\fR and
+\fBcontents\fR pass through.
+.TP
+.BI "cli " args...
+Run
+.BR acc-cli (1)
+once in its container, with host networking and the configuration and
+roles mounted read-only.
+.TP
+.I other
+Any other command is passed to \fBpodman\-compose\fR with the selected
+compose files.
+.SH ENVIRONMENT
+.TP
+.BR ACC_HOME ", " ACC_SHARE ", " ACC_STATE
+The configuration, the data trees (\fIcontainer/\fR, \fIroles/\fR) and the
+state; unset, all three are the directory of the script, as in a checkout.
+.TP
+.B ACC_ENV_FILE
+The secrets file (default \fI$ACC_HOME/.env\fR; the RPM uses
+\fI/etc/acc/acc.env\fR).
+.TP
+.B ACC_VERSION
+The image tag to build and run (default: \fBgit describe\fR of the
+checkout, else the installed package version).
+.TP
+.B ACC_IMAGE_PREFIX
+The image registry prefix (default \fBlocalhost\fR).
+.TP
+.BR STACK "=" production | beta
+Which compose file (default \fBproduction\fR).
+.TP
+.BR TUI ", " WEBGUI ", " CODING_SPLIT ", " MCP_ECHO ", " AUTORESEARCHER "=" true | false
+Include the TUI (default true), the web UI, the coding-split demo agents,
+the diagnostic echo MCP server, or the research MCP servers (default false).
+.TP
+.BR DETACH "=" false
+Run in the foreground.
+.TP
+.BR ACC_SUPPORT_TIER "=" upstream | rhel
+Where subscription-gated images (Redis) come from at build time: the
+community image (default), or RHEL AppStream on UBI 9, which needs an
+entitled build host.
+.TP
+.BR ACC_CLI_IMAGE ", " ACC_CLI_NETWORK
+The image and network of \fBcli\fR.
+.TP
+.BR ACC_NATS_URL ", " ACC_COLLECTIVE_ID
+The bus and default collective for \fBcli\fR.
+.TP
+.B ACC_ALLOW_UNSIGNED
+Set to 1 to let \fBpkg\fR install unsigned development packs.
+.SH FILES
+.TP
+.I /usr/share/acc/acc\-deploy.sh
+The script itself (\fI/usr/bin/acc\-deploy\fR links to it).
+.TP
+.I /usr/share/acc/container/production
+The compose files and Containerfiles.
+.TP
+.I /etc/acc/acc.env
+The stack's secrets on an RPM install.
+.TP
+.I /usr/lib/systemd/system/acc\-stack.service
+The unit that runs the stack as the \fBacc\fR user.
+.SH EXAMPLES
+.nf
+acc\-deploy build && acc\-deploy up \-\-webgui
+acc\-deploy apply \-\-dry\-run
+acc\-deploy logs acc\-agent\-ingester
+acc\-deploy cli oversight pending
+TUI=false acc\-deploy up
+systemctl status acc\-stack
+.fi
+.SH SEE ALSO
+.BR acc (1),
+.BR acc-cli (1),
+.BR acc-pkg (1),
+.BR podman-compose (1),
+.BR systemctl (1)

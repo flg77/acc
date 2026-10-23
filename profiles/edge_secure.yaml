@@ -1,0 +1,20 @@
+# ACC deployment profile: edge_secure (vault proposal 058, Phase 4)
+# An edge host on par with the cloud: code runs in the OpenShell sandbox
+# (mandatory since Phase 3), guardrails block instead of observe, runs are
+# logged to MLflow, and a release must pass the garak gate.  promptfoo stays
+# the operator's switch (058 Q6) -- turn it on in Settings -> Evals.
+#
+# Carries configuration only. Credentials and host-specific paths are NEVER
+# part of a profile -- see requires_env for what a receiving site provisions.
+description: "Edge on par with the cloud: sandbox, guardrails enforcing, MLflow, garak release gate."
+settings:
+  compliance.enabled: true
+  compliance.owasp_enforce: true
+  compliance.cat_a_enforce: true
+  evals.garak_gate: true
+  evals.promptfoo_enabled: false
+role_models: {}
+requires_env:
+  - ACC_SANDBOX_NAME
+  - OPENSHELL_GATEWAY
+  - ACC_MLFLOW_TRACKING_URI

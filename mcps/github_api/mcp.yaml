@@ -18,7 +18,8 @@ command:
   - "-y"
   - "@modelcontextprotocol/server-github"
 env:
-  # Required.  Set on the host before bringing the agent up.
+  # Required.  Set on the host before bringing the agent up; the empty value
+  # passes the agent's value through (nothing undeclared reaches the server).
   GITHUB_PERSONAL_ACCESS_TOKEN: ""
 timeout_s:      30
 

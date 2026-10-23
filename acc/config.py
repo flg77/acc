@@ -344,7 +344,17 @@ class RoleDefinitionConfig(BaseModel):
     # screen's mode selector from this value; the operator can
     # override per task.  See docs/DECISIONS.md D-003 and
     # ``acc/operating_modes.py``.
-    default_operating_mode: str = "AUTO"
+    #
+    # 058 Q2 (operator 2026-10-15): the default is ``ASK_ONCE`` -- one
+    # question per thread (the mission card), then the in-scope calls run.
+    default_operating_mode: str = "ASK_ONCE"
+
+    # 061 (role QA gate, PS-08): a role that may execute code or reach a host
+    # (shell_exec, python_exec, ssh_exec) declares ``sandbox: required`` so its
+    # signed profile states that the code runs in the OpenShell sandbox.  The
+    # runtime refusal itself is deployment-wide (ACC_SANDBOX_REQUIRED, 058 Q2);
+    # the posture scan reports a role that grants exec without this line.
+    sandbox: Literal["", "required"] = ""
 
     # Proposal 004 — first-class subrole hierarchy.
     # ``parent_role`` declares the role's logical parent in a flat
@@ -1372,6 +1382,30 @@ _ROLE_SOURCE_BY_DEPLOY_MODE: dict[str, str] = {
 }
 
 
+class EvalsConfig(BaseModel):
+    """Evaluation attachments of a deployment (vault proposal 058, Phase 4).
+
+    Switched by the ``edge-secure`` profile and, for promptfoo, by the operator
+    (058 Q6: "a container which can be enabled by the operator, also from
+    within the webgui")."""
+
+    mlflow_tracking_uri: str = ""
+    """Where golden / promptfoo / garak runs are logged.  ``ACC_MLFLOW_TRACKING_URI``
+    wins when set; this lets a profile attach an edge host to MLflow."""
+
+    promptfoo_enabled: bool = False
+    """Run the promptfoo container on the golden prompts (deploy/evals)."""
+
+    promptfoo_interval_s: int = 86400
+    """How often the promptfoo container runs when enabled."""
+
+    garak_gate: bool = False
+    """A garak scan must pass against its baseline before a release is promoted.
+    Posture: it can only be switched through oversight."""
+
+    garak_probes: list[str] = Field(default_factory=lambda: ["promptinject", "dan", "leakreplay"])
+
+
 class RoleSyncConfig(BaseModel):
     """Cross-surface role-definition sync settings (proposal 010).
 
@@ -1420,6 +1454,7 @@ class ACCConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     working_memory: WorkingMemoryConfig = Field(default_factory=WorkingMemoryConfig)
     compliance: ComplianceConfig = Field(default_factory=ComplianceConfig)
+    evals: EvalsConfig = Field(default_factory=EvalsConfig)
 
     @model_validator(mode="after")
     def _validate_deploy_mode_fields(self) -> "ACCConfig":
@@ -1660,6 +1695,9 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_COMPLIANCE_ENABLED":    ("compliance", "enabled"),
     "ACC_HIPAA_MODE":            ("compliance", "hipaa_mode"),
     "ACC_OWASP_ENFORCE":         ("compliance", "owasp_enforce"),
+    # Evaluation attachments (058 Phase 4)
+    "ACC_PROMPTFOO_ENABLED":     ("evals", "promptfoo_enabled"),
+    "ACC_GARAK_GATE":            ("evals", "garak_gate"),
     "ACC_CAT_A_ENFORCE":         ("compliance", "cat_a_enforce"),
     "ACC_CAT_A_WASM_PATH":       ("compliance", "cat_a_wasm_path"),
     # Runtime-evidence / kernel-event Cat-A (proposal 015)

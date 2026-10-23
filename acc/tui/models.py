@@ -279,6 +279,10 @@ class CollectiveSnapshot:
     # resolved_at_ms, approver_id ("policy:<mode>" for auto rows), outcome.
     oversight_recent_items: list[dict] = field(default_factory=list)
 
+    # 058 Phase 1 -- the collective's "ask once" missions from the arbiter's
+    # HEARTBEAT (acc.agent._mission_summaries), newest first.
+    missions: list[dict] = field(default_factory=list)
+
     # 1.4 -- pending Assistant proposals by proposal_id (the full payload:
     # kind, params, summary, rationale, goal_text, task_id).  A pending
     # oversight row joins by ``item.task_id == proposal_id``.  FIFO-capped.

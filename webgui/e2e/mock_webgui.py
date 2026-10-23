@@ -257,6 +257,71 @@ app.dependency_overrides[routes_knowledge.get_sources] = lambda collective_id: S
     redis=_KnowledgeRedis(), collective_id=collective_id, hub_collective_id="hub-e2e",
     ledger_rows=lambda cid: [r for r in _LEDGER if r["collective_id"] == cid])
 
+# ── 058 "ask once" (ACC_E2E_058=1): a mission card waiting, two missions, a
+#    prompt reply that carries the heading, and an acc-config.yaml in the temp
+#    dir for the Settings -> Evals switch. Synthetic, like everything here.
+if os.environ.get("ACC_E2E_058") == "1":
+    from acc.channels.base import PromptResponse  # noqa: E402
+    import acc.channels.webgui as _webchan  # noqa: E402
+    from acc.mission import mission_question  # noqa: E402
+    from acc.question import destructive_confirm  # noqa: E402
+
+    os.environ["ACC_CONFIG_PATH"] = str(work / "acc-config.yaml")
+    (work / "acc-config.yaml").write_text(
+        "evals:\n  promptfoo_enabled: false\n  garak_gate: true\n"
+        "compliance:\n  owasp_enforce: true\n  cat_a_enforce: true\n", encoding="utf-8")
+    _ws = "/workspace/calc"
+    _EXTRA["oversight_pending_items"] = [
+        {"oversight_id": "ov-mission-0001", "task_id": "e7918f4807b64e4b", "agent_id": "coding-1",
+         "risk_level": "HIGH", "summary": "SYSTEM-ACCESS skill fs_write", "status": "PENDING",
+         "submitted_at_ms": int(_now * 1000), "requester": "operator",
+         "question": mission_question("coding_agent", _ws, kind="skill", target="fs_write").to_dict(),
+         "evidence": ['skill fs_write {"path": "calc.py"}', "writes inside /workspace/calc"]},
+        {"oversight_id": "ov-destr-0002", "task_id": "1274dbcf05514858", "agent_id": "coding-1",
+         "risk_level": "HIGH", "summary": "DESTRUCTIVE skill shell_exec", "status": "PENDING",
+         "submitted_at_ms": int(_now * 1000),
+         "question": destructive_confirm("skill", "shell_exec", "git reset --hard").to_dict(),
+         "evidence": ['skill shell_exec {"argv": ["git", "reset", "--hard"]}']},
+    ]
+    _EXTRA["missions"] = [
+        {"mission_id": "m-3f9a2c71b0de", "status": "ACTIVE", "used_calls": 4, "max_calls": 200,
+         "roles_used": ["coding_agent"], "approver": "webgui:operator", "principal": "operator",
+         "workspace": _ws, "created_ms": int((_now - 600) * 1000), "expires_ms": int((_now + 27000) * 1000),
+         "threads": ["s-41", "e7918f4807b64e4b"], "quarantine": []},
+        {"mission_id": "m-8c1d07e4aa52", "status": "CLOSED", "used_calls": 9, "max_calls": 200,
+         "roles_used": ["coding_agent", "assistant"], "approver": "tui:operator", "principal": "operator",
+         "workspace": "/workspace/greet", "created_ms": int((_now - 7200) * 1000),
+         "expires_ms": int((_now + 21600) * 1000), "threads": ["s-17"],
+         "quarantine": [
+             {"path": "build", "kept_at": ".acc-quarantine/m-8c1d07e4aa52/1760551200000/build", "ts_ms": 1760551200000},
+             {"path": "old_greet.py", "kept_at": ".acc-quarantine/m-8c1d07e4aa52/1760551260000/old_greet.py", "ts_ms": 1760551260000},
+         ]},
+    ]
+
+    async def _send(self, prompt, **kw):
+        return "e7918f4807b64e4bbb760876a0002a20"
+
+    async def _receive(self, task_id, timeout=None):
+        return PromptResponse(
+            task_id=task_id, agent_id="coding-1",
+            output="calc.py had add() returning a - b; fixed to a + b.\npytest: 1 passed.\n"
+                   "Next: add a test for adding zero.",
+            invocations=[{"kind": "skill", "target": "fs_write", "ok": True},
+                         {"kind": "skill", "target": "fs_write", "ok": True},
+                         {"kind": "skill", "target": "shell_exec", "ok": True}],
+            asks={"calls": 3, "asks": 1, "by_mission": 2, "by_grant": 0, "approved": 1},
+            heading={"done": ["skill:fs_write", "skill:fs_write", "skill:shell_exec"], "refused": [],
+                     "waiting_on_you": [], "mission": "m-3f9a2c71b0de",
+                     "next": "add a test for adding zero."},
+        )
+
+    async def _close(self):
+        return None
+
+    _webchan.WebPromptChannel.send = _send
+    _webchan.WebPromptChannel.receive = _receive
+    _webchan.WebPromptChannel.close = _close
+
 _real_latest = ObserverHub.latest
 ObserverHub.latest = (
     lambda self, cid: {"agents": AGENTS, "collective_id": CID, **_EXTRA}

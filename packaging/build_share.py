@@ -2,7 +2,7 @@
 
 `20260909-acc-install` IN-05 (proposal 055).  ``roles/``, ``skills/``,
 ``mcps/``, ``collectives/``, ``container/production/``,
-``regulatory_layer/``, the ``*.example`` configs, ``acc-deploy.sh`` and
+``regulatory_layer/``, ``man/man1/``, the ``*.example`` configs, ``acc-deploy.sh`` and
 ``packaging/control-roles.yaml`` live at the repository root, so a plain
 ``pip install`` never carried them and every command needed a checkout.
 ``setup.py`` calls :func:`collect` at build time to copy them into
@@ -28,6 +28,8 @@ SHARE_TREES: tuple[str, ...] = (
     "collectives",
     "container/production",
     "regulatory_layer",
+    # the man pages; the RPM installs them into /usr/share/man/man1
+    "man/man1",
 )
 #: Single files copied to the same relative place.
 SHARE_FILES: tuple[str, ...] = (

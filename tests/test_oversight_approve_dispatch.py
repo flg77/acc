@@ -41,10 +41,14 @@ from acc.assistant_proposal import (
 class TestBackendsHasNoWorkingMemory:
     """The root cause: the attribute the old code read never existed."""
 
-    def test_backends_bundle_lacks_working_memory(self):
+    def test_backends_bundle_lacks_working_memory(self, monkeypatch, tmp_path):
         from acc.config import build_backends, load_config
         import os
         from pathlib import Path
+
+        # The example config's LanceDB path is the image's /app/data/lancedb,
+        # which a non-root CI runner cannot create.
+        monkeypatch.setenv("ACC_LANCEDB_PATH", str(tmp_path / "lancedb"))
 
         root = Path(__file__).resolve().parents[1]
         cfg = root / "acc-config.yaml"

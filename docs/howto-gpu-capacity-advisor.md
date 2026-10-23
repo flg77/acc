@@ -128,8 +128,8 @@ subjects:
   the action and a HIGH skill-risk ceiling. If any of these is missing, the
   call becomes an escalation question instead of running.
 * **Gate.** Because the manifest declares `requires_oversight`, every call goes
-  to the human oversight queue in `AUTO`, `ACCEPT_EDITS` and
-  `ASK_PERMISSIONS`. `PLAN` dispatches nothing.
+  to the human oversight queue in `ASK_ONCE`, `AUTO`, `ACCEPT_EDITS` and
+  `ASK_PERMISSIONS` (no mission or grant covers it). `PLAN` dispatches nothing.
 * **No queue, no call.** In a deployment with no oversight queue, the
   dispatcher refuses the call before it reaches the skill: "needs a human
   approval for every call and there is no oversight queue to ask". It never

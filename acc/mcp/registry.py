@@ -158,9 +158,18 @@ class MCPRegistry:
             roots.extend(installed_capability_dirs("mcps"))
         roots.append(root)
 
+        from acc.capability_verify import gate  # noqa: PLC0415 — 061
+
         manifests: dict[str, MCPManifest] = {}
         for scan_root in roots:
+            # 061: verify each tree against its recorded digest before its
+            # manifest is used.  A refused `_base` refuses the whole root.
+            base = scan_root / _BASE_DIR_NAME
+            if base.is_dir() and not gate("mcp", _BASE_DIR_NAME, base):
+                continue
             for server_id in list_mcp_server_ids(scan_root):
+                if not gate("mcp", server_id, scan_root / server_id):
+                    continue
                 try:
                     manifests[server_id] = _load_manifest(scan_root, server_id)
                 except MCPManifestError as exc:

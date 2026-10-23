@@ -100,7 +100,8 @@ role_definition:
   default_mcps:
   - feast
   - aisimulators
-  max_mcp_risk_level: LOW
+  # 061 (PS-02): os_basics grants web_fetch (MEDIUM); ASK_PERMISSIONS asks first.
+  max_mcp_risk_level: MEDIUM
   # 057 §5 step 6. Every call the model emits is asked; the wake-up's reads
   # run as the prefetch below, so they are not.
   default_operating_mode: ASK_PERMISSIONS

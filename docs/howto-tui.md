@@ -436,7 +436,7 @@ The Prompt screen sends a task to the collective and shows the agents' work — 
 │       prior learnings → options A/B → evaluation → plan                           │
 │   impl-1: <final answer / code>                                                   │
 │  …running: calling LLM (1.2k tok in / 0.4k out)…                                  │
-│  [ Mode: AUTO ]  [+]  ┌ type a task, Ctrl+S to send ───────────────────────────┐ │
+│  [ Ask once ]    [+]  ┌ type a task, Ctrl+S to send ───────────────────────────┐ │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -457,7 +457,7 @@ A live **activity line** under the transcript shows the current step label and `
 
 #### Operating mode & workspace
 
-- **Shift+Tab** cycles the operating mode (`PLAN` / `ACCEPT_EDITS` / `ASK_PERMISSIONS` / `AUTO`); it pre-fills from the role's `default_operating_mode`.
+- **Shift+Tab** cycles the operating mode: **Ask once** (`ASK_ONCE`, the default) → Ask per system call (`AUTO`) → Plan only (`PLAN`) → Ask before edits (`ACCEPT_EDITS`) → Ask me each step (`ASK_PERMISSIONS`). It pre-fills from a role's `default_operating_mode` when the role sets one. What each mode asks: [security/constraints.md](security/constraints.md).
 - **`+`** (or **Ctrl+Shift+`+`**) opens a working-directory picker — for roles with `workspace_access`, the chosen host path is mounted so the agent can read/write files. The selected path is shown beneath the input.
 
 #### Prompt Keyboard Shortcuts
@@ -470,6 +470,19 @@ A live **activity line** under the transcript shows the current step label and `
 | `Ctrl+R` | Hide / show the reasoning stream |
 | `Ctrl+L` | Clear the transcript |
 | `Ctrl+Shift++` / `+` | Select working directory |
+
+#### Ask once: plan card, mission, always allow
+
+- **Plan card.** Under Ask once, the assistant's staffing proposals arrive as one card:
+  - each step, with its role and whether that role is reused or installed;
+  - the packs and hosts the plan needs;
+  - on every install step, the roles that are installed but not running.
+
+  `1` allows the plan (a mission is created), `2` runs just these steps, `3` refuses. A later proposal outside the plan raises an amendment card with only the difference.
+- **Mission card.** When there is no plan, the first gated call of a thread asks this card instead: `1` allow the mission, `2` just this call, `3` don't run it, `4` always allow (a standing grant instead of a mission). Allowed, the thread's later system-access calls in the workspace run without asking, follow-ups included.
+- **`/mission`** lists missions. `/mission show|close|revoke|purge|restore <id>` settles one. Closing reports the deletions that were backed up; `purge` is your final allowance.
+- **Always allow.** A system-access or ssh-host question offers `2 always allow for <role>`. That gives a standing grant (`acc-cli grants list|revoke`), and the call is not asked again.
+- **The heading line** above the decision panel says what is done, what runs now, what is next, and what waits on you.
 | `1`–`9` | Navigate to screen |
 
 ---

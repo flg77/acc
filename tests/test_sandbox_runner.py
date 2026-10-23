@@ -99,8 +99,15 @@ def test_run_in_sandbox_timeout_raises_valueerror(monkeypatch):
 
 
 def test_maybe_run_sandboxed_disabled_returns_none():
-    # Not sandboxed → returns None so the skill runs the command locally.
-    assert maybe_run_sandboxed(["true"], env={}) is None
+    # Not sandboxed on a developer's own box (ACC_SANDBOX_REQUIRED=0) → None,
+    # so the skill runs the command locally.
+    assert maybe_run_sandboxed(["true"], env={"ACC_SANDBOX_REQUIRED": "0"}) is None
+
+
+def test_maybe_run_sandboxed_without_a_sandbox_refuses_by_default():
+    # 058 Q2: the sandbox is mandatory; no sandbox is no execution.
+    with pytest.raises(SandboxUnavailable):
+        maybe_run_sandboxed(["true"], env={})
 
 
 def test_maybe_run_sandboxed_enabled_delegates(monkeypatch):

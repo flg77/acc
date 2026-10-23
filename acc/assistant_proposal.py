@@ -57,6 +57,7 @@ from typing import Any
 
 from acc.operating_modes import (
     MODE_ACCEPT_EDITS,
+    MODE_ASK_ONCE,
     MODE_ASK_PERMISSIONS,
     MODE_AUTO,
     MODE_PLAN,
@@ -90,9 +91,14 @@ PROPOSAL_LIFECYCLE_KINDS: frozenset[str] = frozenset({
     PROPOSAL_LIFECYCLE_PAUSE, PROPOSAL_LIFECYCLE_RESUME,
 })
 
+# Vault 059 (`20261018-plan-card`) -- the plan card: under ASK_ONCE the
+# staffing proposals of a reply are held in one plan the operator confirms
+# once.  Built by the agent, never parsed from a marker as a proposal itself.
+PROPOSAL_PLAN = "plan"
+
 PROPOSAL_KINDS: frozenset[str] = frozenset({
     PROPOSAL_SPAWN, PROPOSAL_ROLE_UPDATE, PROPOSAL_ROUTE, PROPOSAL_INFUSE,
-    PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH,
+    PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH, PROPOSAL_PLAN,
 }) | PROPOSAL_LIFECYCLE_KINDS
 
 
@@ -110,6 +116,7 @@ DEFAULT_RISK_LEVEL: dict[str, str] = {
     PROPOSAL_LIFECYCLE_STOP: "MEDIUM",    # idle workers only; busy ones are refused
     PROPOSAL_LIFECYCLE_PAUSE: "LOW",      # idle workers only; memory kept in RAM
     PROPOSAL_LIFECYCLE_RESUME: "MEDIUM",
+    PROPOSAL_PLAN: "HIGH",           # holds infuse/spawn/route; as high as what it holds
 }
 
 
@@ -237,6 +244,8 @@ _ANONYMOUS_APPROVERS: frozenset[str] = frozenset({"default", "tui:anonymous", "u
 
 _NEVER_AUTOEXEC: frozenset[str] = frozenset({
     PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH,
+    # The plan card IS the question; executing it unasked would defeat it.
+    PROPOSAL_PLAN,
 })
 
 
@@ -266,6 +275,8 @@ _DISPATCH_SUBJECTS_OF: dict[str, tuple[str, ...]] = {
     PROPOSAL_LIFECYCLE_STOP:   ("lifecycle_intent",),
     PROPOSAL_LIFECYCLE_PAUSE:  ("lifecycle_intent",),
     PROPOSAL_LIFECYCLE_RESUME: ("lifecycle_intent",),
+    # A plan dispatches what it holds.
+    PROPOSAL_PLAN: ("collective_reconcile", "task_assign", "assistant_proposal", "lifecycle_intent"),
 }
 
 
@@ -314,7 +325,7 @@ def decide_dispatch(operating_mode: str, kind: str, *, operator_mode: str | None
         return DISPATCH_PLAN
     if kind in _NEVER_AUTOEXEC:
         return DISPATCH_QUEUE
-    if mode == MODE_AUTO:
+    if mode in (MODE_AUTO, MODE_ASK_ONCE):
         return DISPATCH_EXECUTE
     if mode == MODE_ACCEPT_EDITS and kind in _ACCEPT_EDITS_AUTOEXEC:
         return DISPATCH_EXECUTE
@@ -1368,6 +1379,7 @@ __all__ = [
     "PROPOSAL_ROLE_UPDATE",
     "PROPOSAL_ROUTE",
     "PROPOSAL_INFUSE",
+    "PROPOSAL_PLAN",
     "PROPOSAL_KINDS",
     "PROPOSAL_LIFECYCLE_KINDS",
     "PROPOSAL_LIFECYCLE_SCALE",

@@ -1,0 +1,116 @@
+.TH ACC-CLI 1 2026-10-22 "ACC" "ACC Manual"
+.SH NAME
+acc-cli \- operator command line for an ACC collective
+.SH SYNOPSIS
+.B acc-cli
+.RB [ \-v | \-vv ]
+.RB [ \-\-version ]
+.I COMMAND
+.RI [ ACTION ]
+.RI [ ARGS ...]
+.SH DESCRIPTION
+.B acc-cli
+is the one-shot operator interface to an ACC (Agentic Cell Corpus)
+collective.
+It surfaces every internal channel \(em the NATS bus, the LLM backend, the
+role loader, the oversight queue, the session tracelog, the knowledge store
+\(em through one command, so the same operations a TUI screen offers can be
+scripted, run over SSH, or driven from CI.
+.PP
+Each command lives in its own module and imports its dependencies only when
+it runs: a command that never touches the bus (\fBrole list\fR,
+\fBconfig show\fR) works on a host where the collective is down.
+Without a command,
+.B acc-cli
+prints its help and exits 0.
+.PP
+Most read commands accept
+.B \-\-json
+for machine-readable output.
+Commands that change governed state (oversight decisions, role infusion,
+configuration, access) act as the principal
+.B acc-cli access whoami
+reports, and are subject to that principal's ceiling.
+.SH OPTIONS
+.TP
+.BR \-v ", " \-\-verbose
+Increase log verbosity: \fB\-v\fR for INFO, \fB\-vv\fR for DEBUG.
+Logs go to standard error.
+.TP
+.B \-\-version
+Print the version and exit.
+.TP
+.BR \-h ", " \-\-help
+Print help for
+.B acc-cli
+or for any command or action and exit.
+.SH COMMANDS
+The commands below are generated from the parser of this release.
+Every action also accepts
+.BR \-h .
+.\" @COMMANDS@
+.SH ENVIRONMENT
+.TP
+.B ACC_NATS_URL
+NATS endpoint for every bus command (default \fBnats://localhost:4222\fR).
+.TP
+.B ACC_COLLECTIVE_ID
+Default collective for the bus and oversight commands (default \fBsol\-01\fR).
+.TP
+.B ACC_CONFIG_PATH
+The \fBacc\-config.yaml\fR to read; otherwise found through the host layout
+described in
+.BR acc (1).
+.TP
+.BR ACC_ROLES_ROOT ", " ACC_SKILLS_ROOT ", " ACC_MCPS_ROOT
+The role, skill and MCP trees; otherwise the share tree of the layout.
+.TP
+.BR ACC_HOME ", " ACC_SHARE ", " ACC_STATE
+Override the configuration, data and state roots; see
+.BR acc (1).
+.TP
+.B ACC_PACKAGES_ROOT
+Where installed packages live (default \fB/var/lib/acc/packages\fR).
+.SH FILES
+.TP
+.I /etc/acc/acc\-config.yaml
+The system configuration (an RPM install); \fI~/.config/acc/acc\-config.yaml\fR
+for a per-user one.
+.TP
+.I /etc/acc/acc.env
+Secrets for the stack, mode 0640 root:acc.
+.B acc-cli secrets
+and
+.B acc-cli auth
+report names only, never values.
+.TP
+.I ~/.config/acc/trust.yaml
+Trusted workspace directories, managed by
+.BR "acc-cli workspace" .
+.TP
+.I /var/lib/acc
+Shared state: packages, instances, workspaces, sessions, trace.
+.SH EXIT STATUS
+0 on success; non-zero when the action failed or found a fault (for
+example \fBdoctor\fR and \fBconfig check\fR exit non-zero on a finding);
+130 when interrupted with Ctrl-C.
+.SH EXAMPLES
+.nf
+acc\-cli doctor                       # deployment health, read-only
+acc\-cli status                       # per-agent and collective health
+acc\-cli role list
+acc\-cli oversight pending
+acc\-cli oversight approve <oversight_id>
+acc\-cli nats sub 'acc.sol\-01.>'
+acc\-cli trace <task_id> \-\-limit 100
+acc\-cli config set \-\-dry\-run llm.backend openai_compat
+acc\-cli collective diff               # spec vs. running containers
+acc\-cli doctor \-\-paths              # where this host's ACC lives
+.fi
+.SH SEE ALSO
+.BR acc (1),
+.BR acc-pkg (1),
+.BR acc-tui (1),
+.BR acc-deploy (1),
+.BR acc-agent (1),
+.BR acc-webgui (1)

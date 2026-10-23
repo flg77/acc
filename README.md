@@ -51,6 +51,13 @@ Highlights across the `0.5.x` → `0.7.x` release cycles — see [`CHANGELOG.md`
 
 | Feature | What it is | Status |
 |---|---|---|
+| **Ask once, then get things done** | The default operating mode is **Ask once**.
+  - **Plan card:** the assistant shows its plan (roles reused or installed, packs, hosts, and the installed roles that are idle). You confirm once, and a **mission** covers the plan and its follow-ups.
+  - **Always allow:** a question offers "always allow for <role>", which gives a standing grant for one role and one target, including ssh hosts.
+  - **Sandbox:** shell, Python and ssh run in the agent's OpenShell sandbox, and granted hosts go into its network policy.
+  - **Soft delete:** a workspace `rm` inside a mission is backed up first (only when `shell_exec` runs on the agent host, i.e. `ACC_SANDBOX_REQUIRED=0`; a sandboxed `rm` sees the sandbox's own filesystem, so it is asked instead).
+  - **Scoped stdio MCP:** a stdio MCP server sees only the variables it declares.
+  - **Also:** a posture scan, the `edge_secure` profile with promptfoo and garak, `acc-cli ask`, and the heading line. **Not opt-in** — see [Upgrading to Ask once](#upgrading-to-ask-once) and [the constraints page](docs/security/constraints.md). | ✅ Built (proposals 058–060; PRs #550–#555, #559–#561) |
 | **Operator command surface (v0.8.0)** | The whole unparked specification backlog landed as twenty capabilities — `acc-cli` now carries **28 commands**. Health (`doctor`, `status`), configuration (`config`, `profile`, `setup`), credentials (`auth`, `secrets`, `access`, `egress`), forensics (`logs`, `sessions`, `checkpoints`), governance (`objective`, `hooks`, `scan`) and `backup`/`restore`. Full matrix in [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md). | ✅ Landed (v0.8.0) |
 | **Identity from the substrate** | ACC does **not** define its own identity model: it resolves a principal from wherever it runs — real cluster RBAC on OpenShift, system authentication at the edge, the existing oauth2-proxy/Keycloak session in the web GUI. What ACC owns is what a principal may ask an *agent* to do, which no cluster can express. External requesters (chat, webhooks) are **default deny** and can never be promoted to operator by an allowlist entry. | ✅ Landed (v0.8.0) |
 | **Session lifecycle + governed retention** | Resume an investigation across restarts — a resume starts a new session recording which one it continues, so history is appended to, never rewritten. Retention is policy-driven and defaults to **keep forever**; there is **no removal path that leaves no trace**, and a session that recorded a block is kept regardless of age. | ✅ Landed (v0.8.0) |
@@ -65,7 +72,7 @@ Highlights across the `0.5.x` → `0.7.x` release cycles — see [`CHANGELOG.md`
 | **Unattended-run governance** | Headless / e2e deployments stay safe without a human at the console: `ACC_OVERSIGHT_HEADLESS` auto-**rejects** a CRITICAL action when no reviewer is present (audit-trailed, no dead wait), and `ACC_ROLE_TOKEN_BUDGET` is a per-role Category-B token circuit-breaker. | ✅ Landed (v0.6.0) |
 | **MLflow two-way (operator)** | The operator's `observability.mlflowTrackingUri` injects `ACC_MLFLOW_TRACKING_URI` into the TUI/WebGUI pods so golden-suite runs **log runs + traces** to MLflow and the eval-history `trace →` deep-links resolve; a `WorkspaceHeaderProvider` lets ACC log to a multi-tenant RHOAI MLflow. | ✅ Landed on `main` (#142/#154) |
 | **Role & package ecosystem** | The 43 movable roles moved out of core into signed, versioned `@acc/*` **family packs** served from the public [`acc-ecosystem`](https://github.com/flg77/acc-ecosystem) registry. `acc-pkg` builds/signs/verifies/installs `.accpkg` bundles; `collective.yaml` `required_packages:` + a dual-source loader fetch and verify them at boot; **Marketplace** + **Catalog** panes (TUI/WebGUI) and the [`acc-podman-desktop`](https://github.com/flg77/acc-podman-desktop) extension are the discovery surfaces. Core keeps only the 7 CONTROL roles. See [**Role & Package Ecosystem**](#role--package-ecosystem). | ✅ Landed (Stage 1 + Stage 2 cutover) |
-| **Interaction, oversight & operating modes** | Human-in-the-loop autonomy — a per-role **operating-mode** ceiling (`PLAN` / `ACCEPT_EDITS` / `ASK_PERMISSIONS` / `AUTO`, per-task overridable), a live **oversight queue** that gates high-consequence actions to a signed approval, and an optional **browser TUI** (`ttyd` behind the corpus's Keycloak oauth2-proxy). See the Interaction & Oversight ADR (025). | ✅ Landed (proposals 023 / 025) |
+| **Interaction, oversight & operating modes** | Human-in-the-loop autonomy — a per-role **operating-mode** ceiling (`ASK_ONCE` default / `PLAN` / `ACCEPT_EDITS` / `ASK_PERMISSIONS` / `AUTO`, per-task overridable), a live **oversight queue** that gates high-consequence actions to a signed approval, and an optional **browser TUI** (`ttyd` behind the corpus's Keycloak oauth2-proxy). See the Interaction & Oversight ADR (025). | ✅ Landed (proposals 023 / 025) |
 | **A2A agent federation** | Agent-to-Agent interop — an agent publishes an **AgentCard** (`/.well-known/agent-card.json`) and serves/consumes JSON-RPC `message/send`; peer **discovery + delegation** routes over A2A (with a NATS-bridge fallback), and inbound calls hit the same Cat-A/B gates as NATS. SPIRE JWT-SVID card signing. Opt-in via `ACC_A2A_PORT`. | ✅ Landed |
 | **Embedded vector backends + semantic routing** | A `turbovec` embedded, quantized vector backend (the `rhoai` default when no Milvus is configured) alongside LanceDB / Milvus; opt-in **semantic capability routing** (`ACC_SEMANTIC_ROUTING`) and a **document store** (`document_store` + doc skills + the `@acc/rag-roles` pack). | ✅ Landed (proposal 024) |
 | **Adaptive Category-C (self-improving policy)** | The arbiter learns Cat-C setpoints from collective behaviour under a **composite reward + drift constraint** — windowed updates, **frozen-in-AUTO**, pinning / bounds / reset, and an audit event per change; contextual features + a linear policy head are opt-in. | ✅ Landed |
@@ -77,7 +84,7 @@ Highlights across the `0.5.x` → `0.7.x` release cycles — see [`CHANGELOG.md`
 | **Golden-prompt diagnostics** | A YAML golden-prompt suite + CLI/TUI runner and a scheduled history runner; the WebGUI Diagnostics screen lists the suite. | ✅ Landed (PR-K/N/O) |
 | **acc-webgui** | An optional FastAPI + React web frontend — feature parity with the `acc-tui` terminal UI plus enhanced tracing views (task-step waterfall, PLAN DAG, tamper-evident audit-chain timeline). Mirrors the latest TUI surfaces (governance layers, frameworks + gap scan, rule proposals, model registry, golden-prompt diagnostics, Enter-to-send Prompt). Reuses the TUI's data layer; capability-tiered auth (oauth-proxy / OIDC / mTLS / htpasswd / token). Opt-in: a separate container + compose profile. | ✅ Landed (proposal acc-webgui) |
 | **Runtime-evidence Cat-A** | Provider-agnostic kernel-event governance — the operator detects whichever runtime-security tool the cluster runs (RHACS / Falco / Tetragon) plus NetObserv for network flows, a bridge normalises `execve`/`openat`/`connect` events onto NATS, and CognitiveCore folds them into Category-A. Observe-by-default. Opt-in via `governance.runtimeEvidence.enabled`. | ✅ Landed (proposal 015) |
-| **Kernel-enforced exec sandbox (OpenShell)** | The *enforcement* complement to Runtime-evidence Cat-A — turns Cat-A/B/C from *evaluated-at-dispatch* into *enforced-at-the-kernel* for the untrusted surface. An opted-in agent's code execution (`shell_exec` / `python_exec`) is delegated into a per-agent [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox — Landlock + seccomp + per-binary egress — carrying the corpus's Cat-A/B/C policy. The operator provisions it (policy `ConfigMap` + idempotent `openshell sandbox create` initContainer + declarative `spec.sandbox.landlockCompatibility` + OIDC/SPIFFE gateway auth); the runtime (`acc/sandbox`) delegates exec **fail-closed** (never falls back to un-caged local execution). Default-OFF, inert unless `spec.sandbox.gatewayURL` is set. | ✅ Landed (Model 2, v0.5.49); operator provisioning + opt-in kernel-enforcement smoke shipped |
+| **Kernel-enforced exec sandbox (OpenShell)** | The *enforcement* complement to Runtime-evidence Cat-A — turns Cat-A/B/C from *evaluated-at-dispatch* into *enforced-at-the-kernel* for the untrusted surface. An agent's code execution (`shell_exec` / `python_exec` / `ssh_exec`) is delegated into a per-agent [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox — Landlock + seccomp + per-binary egress — carrying the corpus's Cat-A/B/C policy. The operator provisions it (policy `ConfigMap` + idempotent `openshell sandbox create` initContainer + declarative `spec.sandbox.landlockCompatibility` + OIDC/SPIFFE gateway auth); the runtime (`acc/sandbox`) delegates exec **fail-closed** (never falls back to un-caged local execution). Since Ask once (058): **mandatory by default** on every target (`ACC_SANDBOX_REQUIRED=1`); without a sandbox these skills refuse. Standalone and edge hosts get one from `deploy/openshell/`. | ✅ Landed (Model 2, v0.5.49); operator provisioning + opt-in kernel-enforcement smoke shipped |
 | **L7 / eBPF NetworkPolicy** | Capability-tiered network isolation for agent pods — Tier 1 standard `NetworkPolicy` (the portable L3/L4 must-have), Tier 2 FQDN egress (OVN `EgressFirewall` or Cilium), Tier 3 Cilium L7. The operator emits the highest tier the cluster's CNI can enforce; honest `CNIDoesNotEnforce` status on K3s/Flannel. Opt-in via `networkPolicy.enabled`. | ✅ Landed (proposal 014) |
 | **NATS NKeys** | Per-role NKey authentication with a server-enforced publish/subscribe permission matrix (six agent roles + `tui` + `leaf` identities); the `acc.{cid}.task` subject split into `.task.assign` / `.task.complete`. Opt-in via `security.nkey.enabled`. | ✅ Landed (proposal 013) |
 | **SPIFFE workload identity** | Agents authenticate `ROLE_UPDATE` signatures with SPIRE-issued JWT-SVIDs instead of a static Ed25519 key — operator-issued `ClusterSPIFFEID` resources, a `spiffe-helper` sidecar, agent-side verification, edge nested/federated topologies with offline survival. Opt-in via `security.signing_mode: spiffe`. | ✅ Landed (proposals 011 + 012) |
@@ -341,7 +348,7 @@ acc-tui
 The TUI panes (switch with the nav bar / `Tab`):
 - **Dashboard** — live agent cards (drift score sparkbar, reprogramming ladder, staleness), governance panel (Cat-A/B/C triggers), memory panel (ICL episodes, patterns), LLM metrics (p95 latency, token utilisation, blocked tasks)
 - **Infuse** — compose a role definition (purpose, persona, task types, seed context, Cat-B overrides), publish as a `ROLE_UPDATE` to NATS, monitor arbiter approval status and role history
-- **Prompt** — drive an agent directly (Enter-to-send, operating-mode aware: PLAN / ACCEPT_EDITS / ASK_PERMISSIONS / AUTO), optionally scoping a workspace directory
+- **Prompt** — drive an agent directly (Enter-to-send, operating-mode aware: Ask once (default) / AUTO / PLAN / ACCEPT_EDITS / ASK_PERMISSIONS; plan card, mission card and "always allow" answered in Decisions), optionally scoping a workspace directory
 - **Compliance** — the live oversight queue plus the Category A/B/C governance layers, regulatory frameworks + gap scan, and the arbiter rule-proposal review surface
 - **Ecosystem** — collective roles + the `models.yaml` model registry; infuse roles
 - **Marketplace** — discover + install signed `@acc/*` role packs from the configured catalogs
@@ -354,6 +361,34 @@ The TUI panes (switch with the nav bar / `Tab`):
 See [`docs/howto-tui.md`](docs/howto-tui.md) for the full guide including deployment as a container pod.
 
 ---
+
+## Upgrading to Ask once
+
+The release that ships proposals 058–060 changes behaviour on purpose. Read
+[docs/security/constraints.md](docs/security/constraints.md) first.
+
+1. **Code execution needs an OpenShell sandbox.** `shell_exec`, `python_exec`
+   and `ssh_exec` refuse without one. On a standalone or edge host, set one up
+   with [`deploy/openshell/`](deploy/openshell/README.md) and set
+   `ACC_SANDBOX_NAME` and `OPENSHELL_GATEWAY` per agent. Then check it with
+   `acc doctor --check sandbox`. `ACC_SANDBOX_REQUIRED=0` is for a developer's
+   own box only.
+2. **The default mode is Ask once.**
+   - The assistant's staffing proposals wait in one plan card.
+   - System access in a thread runs under the mission you allow.
+   - A role that sets `default_operating_mode` keeps its own mode.
+3. **ssh hosts.** `ACC_SSH_HOST_ALLOWLIST` is now a seed list. Other hosts are
+   asked about once ("always allow") or granted ahead with
+   `acc-cli grants add --role <role> --target host:<name> --by <you>`.
+4. **stdio MCP servers see only declared variables.** If a server needs one,
+   declare it in the manifest's `env:` with an empty value; the agent's value
+   is then passed through.
+
+```bash
+acc doctor --check sandbox     # is code execution caged?
+acc-cli posture scan           # may this configuration be granted on?
+acc-cli mission list           # what did Ask once allow, and what did it back up?
+```
 
 ## Upgrading to v0.8.0
 
@@ -400,6 +435,10 @@ acc-cli doctor          # is this deployment configured correctly?
 acc-cli status          # what is running, and on what?
 acc-cli config check    # what is missing, unknown or unresolvable?
 acc-cli secrets scope   # which credentials does each role actually need?
+acc-cli ask "<task>"    # a task from a plain shell; its questions answered inline
+acc-cli mission list    # Ask once missions: what ran, what was backed up
+acc-cli grants list     # what is allowed without asking, and who gave it
+acc-cli posture scan    # is this configuration safe to grant on?
 ```
 
 The TUI's Diagnostics screen (`h`) runs the **same check registry** `doctor`
@@ -408,7 +447,7 @@ healthy is a failure mode in itself.
 
 ## Security
 
-ACC's security hardening follows a phased approach. Phases 0a, 0b, 0c, 1, 2, 3, and 5 are implemented (0c, 1, 2, 3, and 5 ship opt-in); phase 4 is planned:
+ACC's security hardening follows a phased approach. Phases 0a, 0b, 0c, 1, 2, 3, and 5 are implemented (0c, 1, 2 and 3 ship opt-in; 5 is mandatory by default since Ask once); phase 4 is planned:
 
 Phases marked _opt-in_ are additive — they change no behaviour until
 explicitly enabled, so the Status column reports `Implemented` for all
@@ -423,7 +462,7 @@ of them; the "opt-in" switch is named in each row's Controls cell.
 | **2** — SPIFFE workload identity | SPIRE-issued JWT-SVIDs sign/verify `ROLE_UPDATE`; operator-issued `ClusterSPIFFEID`s; `spiffe-helper` sidecar; edge nested/federated topologies + offline survival. _Opt-in_ via `signing_mode: spiffe` (NATS/Redis mTLS via the X.509-SVID still to come) | ✅ Implemented |
 | **3** — Runtime-evidence Cat-A | Provider-agnostic kernel-event evidence (`execve`/`openat`/`connect`) folded into Cat-A — detects RHACS / Falco / Tetragon (process+file) and NetObserv (network); a bridge normalises events onto NATS.  Opt-in via `governance.runtimeEvidence.enabled` | ✅ Implemented (opt-in) |
 | **4** — Hardened Standalone | NKeys + self-signed CA mTLS for Podman mode; no SPIRE/Tetragon dependency | 🔲 Planned |
-| **5** — Kernel-enforced execution (OpenShell) | Cat-A/B/C enforced at the kernel (Landlock / seccomp / per-binary egress) for delegated code execution — the operator provisions a per-agent [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox that the runtime delegates exec into, **fail-closed**. _Opt-in_ via `spec.sandbox` + `gatewayURL`; opt-in enforcement smoke in `tests/integration/` (live-cluster run pending) | ✅ Implemented (v0.5.49) |
+| **5** — Kernel-enforced execution (OpenShell) | Cat-A/B/C enforced at the kernel (Landlock / seccomp / per-binary egress) for delegated code execution — the operator provisions a per-agent [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox that the runtime delegates exec into, **fail-closed**. Provisioned via `spec.sandbox` + `gatewayURL` on a cluster and `deploy/openshell/` on standalone/edge; **required by default** since Ask once (`ACC_SANDBOX_REQUIRED=1`), with granted ssh hosts written into the sandbox's network policy; enforcement smoke in `tests/integration/` (live-cluster run pending) | ✅ Implemented (v0.5.49; mandatory since Ask once) |
 
 > **Phase 1 design decision — Cilium is _not_ ACC's prime mechanism.**
 > The roadmap item was originally sketched as "Cilium L7 NetworkPolicy",
@@ -508,6 +547,13 @@ or `export ACC_LLM_BACKEND=anthropic`. No other code changes required.
 | `ACC_COLLECTIVE_ID` | `agent.collective_id` | `sol-01` | Collective identifier |
 | `ACC_NATS_URL` | `signaling.nats_url` | `nats://localhost:4222` | NATS server URL |
 | `ACC_NATS_HUB_URL` | `signaling.hub_url` | _(empty)_ | NATS leaf hub URL (edge only) |
+| `ACC_SANDBOX_NAME` | — | _(empty)_ | The agent's OpenShell sandbox; setting it turns delegation on |
+| `OPENSHELL_GATEWAY` | — | _(empty)_ | The OpenShell gateway; required with a sandbox name |
+| `ACC_SANDBOX_REQUIRED` | — | `1` | `0` lets exec skills run on the host (developer box only) |
+| `ACC_SANDBOX_ENABLED` | — | _(on)_ | `0` forces delegation off even with a name |
+| `ACC_OPENSHELL_BIN` | — | `openshell` | Path to the OpenShell CLI |
+| `ACC_MISSION_MAX_CALLS` / `ACC_MISSION_TTL_S` | — | `200` / `28800` | An Ask once mission's call budget and lifetime |
+| `ACC_SSH_HOST_ALLOWLIST` | — | _(empty)_ | Seed list of ssh hosts reached without asking; more are granted once |
 | `ACC_LANCEDB_PATH` | `vector_db.lancedb_path` | `/app/data/lancedb` | LanceDB data directory |
 | `ACC_MILVUS_URI` | `vector_db.milvus_uri` | _(empty)_ | Milvus URI (rhoai mode) |
 | `ACC_LLM_BACKEND` | `llm.backend` | `ollama` | LLM backend |

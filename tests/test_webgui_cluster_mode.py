@@ -55,21 +55,22 @@ def _read_only(monkeypatch, root: Path) -> None:
     """Make *root* what the operator's ConfigMap mount is: not writable
     (``r-x``, so the 0444 files inside stay readable).
 
-    ``os.chmod`` is the real thing on POSIX; Windows (and root on POSIX)
-    report every directory writable through ``os.access``, so there the
-    probe is patched to say what the mount would say.
+    ``os.chmod`` is the real thing on POSIX, but only for the root itself:
+    the role directories under it stay writable for a non-root user (a CI
+    runner), and Windows (and root on POSIX) report every directory writable
+    through ``os.access``.  So the probe is always patched to say what the
+    mount would say for everything under *root*.
     """
     os.chmod(root, stat.S_IRUSR | stat.S_IXUSR | stat.S_IRGRP | stat.S_IXGRP
              | stat.S_IROTH | stat.S_IXOTH)
-    if os.access(root, os.W_OK):
-        real_access = os.access
+    real_access = os.access
 
-        def _access(path, mode, *args, **kwargs):
-            if mode & os.W_OK and str(path).startswith(str(root)):
-                return False
-            return real_access(path, mode, *args, **kwargs)
+    def _access(path, mode, *args, **kwargs):
+        if mode & os.W_OK and str(path).startswith(str(root)):
+            return False
+        return real_access(path, mode, *args, **kwargs)
 
-        monkeypatch.setattr(os, "access", _access)
+    monkeypatch.setattr(os, "access", _access)
 
 
 @pytest.fixture

@@ -1,0 +1,78 @@
+.TH ACC-WEBGUI 1 2026-10-22 "ACC" "ACC Manual"
+.SH NAME
+acc-webgui \- web UI and HTTP API for ACC collectives
+.SH SYNOPSIS
+.B acc-webgui
+.SH DESCRIPTION
+.B acc-webgui
+serves the ACC web UI: a REST and WebSocket API over the collectives it
+observes on the NATS bus, and the compiled single-page application that
+uses it.
+When the package carries no compiled UI it serves the API alone.
+An OpenAI-compatible endpoint may be mounted at \fI/v1\fR.
+.PP
+The command takes no arguments; it is configured through the environment.
+It binds \fB127.0.0.1:8080\fR by default and
+.B refuses to start
+on any other address unless an authentication mode is configured: an
+unauthenticated UI is never exposed on the network.
+.SH ENVIRONMENT
+.TP
+.BR ACC_WEBGUI_HOST ", " ACC_WEBGUI_PORT
+The bind address (default \fB127.0.0.1\fR) and port (default \fB8080\fR).
+.TP
+.B ACC_NATS_URL
+The bus (default \fBnats://localhost:4222\fR).
+.TP
+.BR ACC_COLLECTIVE_IDS ", " ACC_COLLECTIVE_ID
+The collectives to observe, comma-separated, or a single one.
+.TP
+.B ACC_WEBGUI_AUTH_MODE
+How users authenticate: \fBoauth\-proxy\fR, \fBoidc\fR, \fBhtpasswd\fR,
+\fBmtls\fR or \fBtoken\fR.
+Unset means none, which is only allowed on a loopback address.
+.TP
+.B ACC_WEBGUI_OPERATOR_USERS
+Comma-separated users who get the operator tier; everyone else is a viewer.
+Used when no group mapping is configured.
+.TP
+.BR ACC_WEBGUI_HTPASSWD_PATH ", " ACC_WEBGUI_SESSION_SECRET ", " ACC_WEBGUI_SESSION_TTL
+For \fBhtpasswd\fR: the password file, the secret that signs session
+cookies, and the session lifetime in seconds (default 43200, 12 hours).
+.TP
+.BR ACC_WEBGUI_OIDC_ISSUER ", " ACC_WEBGUI_OIDC_AUDIENCE ", " ACC_WEBGUI_OIDC_GROUPS_CLAIM
+For \fBoidc\fR: the issuer, the expected audience, and the claim that
+carries group membership (default \fBgroups\fR).
+.TP
+.B ACC_WEBGUI_GROUP_MAPPINGS
+Maps identity-provider groups to the \fBviewer\fR, \fBoperator\fR and
+\fBpublisher\fR tiers, for example
+\fBoperator=acc\-operators;publisher=acc\-publishers,acc\-release\fR.
+.TP
+.BR ACC_WEBGUI_MTLS_HEADER ", " ACC_WEBGUI_MTLS_VERIFY_HEADER
+For \fBmtls\fR: the headers a terminating proxy sets with the client
+identity and the verification result.
+\fBacc\-webgui\fR trusts them, so it must be reachable only through that
+proxy.
+.TP
+.BR ACC_WEBGUI_OPERATOR_TOKEN ", " ACC_WEBGUI_VIEWER_TOKEN
+For \fBtoken\fR: the bearer tokens for each role.
+.TP
+.B ACC_WEBGUI_STATIC_DIR
+Serve the UI from this directory instead of the packaged one.
+.SH FILES
+.TP
+.I /usr/share/acc/acc\-webgui.htpasswd.example
+An example \fBhtpasswd\fR file.
+.SH EXAMPLES
+.nf
+acc\-webgui                                  # local only, no login
+acc\-deploy up \-\-webgui                       # as part of the stack
+ACC_WEBGUI_HOST=0.0.0.0 ACC_WEBGUI_AUTH_MODE=htpasswd \e
+  ACC_WEBGUI_HTPASSWD_PATH=/etc/acc/acc\-webgui.htpasswd acc\-webgui
+.fi
+.SH SEE ALSO
+.BR acc (1),
+.BR acc-tui (1),
+.BR acc-deploy (1),
+.BR htpasswd (1)

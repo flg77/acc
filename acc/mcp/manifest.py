@@ -89,8 +89,12 @@ class MCPManifest(BaseModel):
 
         command: Required for ``stdio`` transport (when implemented).
             Shell-tokenised list, e.g. ``["python", "-m", "my_mcp"]``.
-        env: Extra environment variables for the spawned subprocess.
-            Stdio only; ignored for HTTP.
+        env: The environment variables the spawned subprocess may have,
+            beyond a non-secret base (PATH, HOME, locale, proxy, CA bundle;
+            ``acc.mcp.transports.STDIO_BASE_ENV``).  An empty value passes
+            the agent's value through; a non-empty value is used as written.
+            Nothing else from the agent reaches the server.  Stdio only;
+            ignored for HTTP.
 
         api_key_env: Name of the environment variable holding a bearer
             token; sent as ``Authorization: Bearer <value>``.  Empty

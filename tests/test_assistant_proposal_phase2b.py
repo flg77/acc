@@ -224,22 +224,19 @@ def test_handle_assistant_proposals_queues_with_cache_and_announce():
     # Submitted to the oversight queue.
     rt._oversight_queue.submit.assert_awaited_once()
     # Cached under acc:{cid}:assistant_proposal:{oversight_id} PLUS a companion
-    # meta marker; both share a TTL decoupled from (never shorter than) the
-    # 300s oversight timeout so a valid approval near the window still dispatches.
-    assert rt._redis.setex.call_count == 2
-    setex_keys = [
-        c.args[0] for c in rt._redis.setex.call_args_list
-    ]
+    # meta marker; neither expires, because the proposal row has no deadline
+    # (058 Q4) and a late approval must still find its payload.
+    assert rt._redis.set.call_count == 2
+    assert rt._redis.setex.call_count == 0
+    set_keys = [c.args[0] for c in rt._redis.set.call_args_list]
     assert any(
-        k.startswith("acc:sol-01:assistant_proposal:") for k in setex_keys
+        k.startswith("acc:sol-01:assistant_proposal:") for k in set_keys
     )
     assert any(
-        k.startswith("acc:sol-01:assistant_proposal_meta:") for k in setex_keys
+        k.startswith("acc:sol-01:assistant_proposal_meta:") for k in set_keys
     )
-    assert all(
-        c.args[1] >= 300
-        for c in rt._redis.setex.call_args_list
-    )
+    assert all("ex" not in c.kwargs for c in rt._redis.set.call_args_list)
+    assert rt._oversight_queue.submit.await_args.kwargs["deadline"] is False
     # Announced on subject_assistant_proposal.
     subjects = [
         c.args[0] for c in rt.backends.signaling.publish.await_args_list

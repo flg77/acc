@@ -1,0 +1,14 @@
+name: getdone_cross_role
+description: |
+  058 K1 "get things done" set. The assistant brings in the role it needs
+  (infuse / route) and drives the work to a result: the G5 case. Counts the
+  role proposals as well as the tool asks.
+prompt: |
+  I need a FizzBuzz function with a passing pytest test in the workspace.
+  Get the right specialist to write and run it, then tell me the result.
+target_role: assistant
+operating_mode: AUTO
+timeout_s: 1200.0
+expects:
+  reply_non_empty: true
+  blocked: false

@@ -325,7 +325,8 @@ async def test_plan_mode_asks_nothing_and_runs_nothing():
 @pytest.mark.asyncio
 async def test_a_shell_listing_is_asked_as_before_without_a_question(monkeypatch):
     """shell_exec is still gated in AUTO (system access), but an `ls` is not a
-    destructive question."""
+    destructive question.  Since 060 the question offers "always allow" (a
+    grant given once); a plain approval still runs just this call."""
     monkeypatch.delenv("ACC_OVERSIGHT_HEADLESS", raising=False)
     queue = HumanOversightQueue(redis_client=None, collective_id="t", timeout_s=5)
     core = _Core({"shell_exec": _M(risk_level="HIGH", system_access=True)})
@@ -334,7 +335,8 @@ async def test_a_shell_listing_is_asked_as_before_without_a_question(monkeypatch
         [_inv("shell_exec", cmd="ls -la")], core, role, oversight_queue=queue,
     ))
     item = await _pending_one(queue)
-    assert item.summary.startswith("SYSTEM-ACCESS") and item.question == {}
+    assert item.summary.startswith("SYSTEM-ACCESS") and not item.question["destructive"]
+    assert [o["key"] for o in item.question["options"]] == ["1", "2", "3"]
     await queue.approve(item.oversight_id, "tui:op")
     [out] = await task
     assert out.ok and not out.critical

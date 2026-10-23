@@ -251,8 +251,11 @@ After `git pull && ./acc-deploy.sh build && ./acc-deploy.sh down &&
 4. **Prompt** — pick a role; the Mode dropdown prefills from the
    role default (L-2).  Send a task; the transcript shows the reply,
    the task-progress line ticks, the invocation waterfall populates.
-5. **Prompt with Mode=ASK_PERMISSIONS** — every skill invocation
-   lands in the Compliance queue.
+5. **Prompt with Mode=ASK_PERMISSIONS** — every skill invocation is
+   asked in the Prompt pane (Compliance keeps the record).
+5a. **Prompt the assistant with Mode=ASK_ONCE** (the default) — its staffing
+   proposals arrive as one plan card; allow the plan, then confirm the later
+   steps run without a question and `/mission show <id>` lists them.
 6. **Prompt with Mode=PLAN** — the agent describes its plan; no
    skill executions in the trace.
 7. **Compliance** — the master/detail panel shows gate reason +

@@ -668,6 +668,9 @@ class NATSObserver:
             recent = data.get("oversight_recent_items", [])
             if isinstance(recent, list):
                 self._snapshot.oversight_recent_items = recent
+            missions = data.get("missions", [])
+            if isinstance(missions, list):
+                self._snapshot.missions = missions
             # `20260903-work-board-tui` Phase 2 -- plan summaries: a TUI that
             # joined after the PLAN was broadcast still gets a Board.
             plans = data.get("active_plans", [])

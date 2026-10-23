@@ -204,8 +204,31 @@ All config fields can be overridden via environment variables. The full referenc
 | `ACC_HIPAA_MODE` | `compliance.hipaa_mode` | `false` | PHI redaction before LanceDB storage |
 | `ACC_AUDIT_BACKEND` | `compliance.audit_backend` | `file` | Audit backend (`file` / `kafka` / `multi`) |
 | `ACC_AUDIT_KAFKA_BOOTSTRAP` | `compliance.audit_kafka_bootstrap` | _(empty)_ | Kafka bootstrap servers (RHOAI) |
+| `ACC_SANDBOX_NAME` | — | _(empty)_ | The agent's OpenShell sandbox; setting it turns delegation on |
+| `OPENSHELL_GATEWAY` | — | _(empty)_ | The OpenShell gateway; required with a sandbox name |
+| `ACC_SANDBOX_REQUIRED` | — | `1` | `0` lets exec skills run on the host (developer box only) |
+| `ACC_SANDBOX_ENABLED` | — | _(on)_ | `0` forces delegation off even with a name |
+| `ACC_OPENSHELL_BIN` | — | `openshell` | Path to the OpenShell CLI |
+| `ACC_MISSION_MAX_CALLS` / `ACC_MISSION_TTL_S` | — | `200` / `28800` | An Ask once mission's call budget and lifetime |
+| `ACC_SSH_HOST_ALLOWLIST` | — | _(empty)_ | Seed list of ssh hosts reached without asking |
 
 ---
+
+## Code execution needs an OpenShell sandbox
+
+Since Ask once (058), `shell_exec`, `python_exec` and `ssh_exec` run inside the
+agent's OpenShell sandbox and **refuse without one**. On this host:
+
+```bash
+deploy/openshell/setup-edge-sandbox.sh          # gateway + one sandbox per agent (README §2)
+podman-compose -f podman-compose.yml -f deploy/openshell/podman-compose.sandbox.yml up -d
+acc doctor --check sandbox                      # OK = delegation configured
+```
+
+Each exec agent gets `ACC_SANDBOX_NAME`, `OPENSHELL_GATEWAY` and
+`ACC_SANDBOX_REQUIRED=1`. `ACC_SANDBOX_REQUIRED=0` lets a developer's own box
+run exec on the host, and `acc doctor` reports it as drift. What asks and what
+runs: [security/constraints.md](security/constraints.md).
 
 ## Step 5 — Start the Stack
 

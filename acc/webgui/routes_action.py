@@ -87,6 +87,19 @@ class OversightRequest(BaseModel):
     oversight_id: str
     decision: str = Field(..., pattern="^(APPROVE|REJECT)$")
     reason: str = ""
+    answer: str = Field(default="", max_length=16)
+    """The option chosen on a row that asks a question (058 Phase 2: the
+    mission card's "allow the mission" is option ``1``).  The queue refuses an
+    answer that is not one of the row's options or that contradicts the
+    decision."""
+
+
+class MissionRequest(BaseModel):
+    """058 Phase 2 -- close / revoke / purge / restore an "ask once" mission."""
+
+    collective_id: str
+    mission_id: str = Field(..., min_length=1, max_length=64)
+    action: str = Field(..., pattern="^(close|revoke|purge|restore)$")
 
 
 class TestLLMRequest(BaseModel):
@@ -236,6 +249,9 @@ async def send_prompt(
         "episode_id": reply.episode_id,
         "latency_ms": reply.latency_ms,
         "invocations": reply.invocations,
+        # 058 Phase 2 -- where the work is heading, and how often it asked.
+        "heading": getattr(reply, "heading", None),
+        "asks": getattr(reply, "asks", None),
     }
 
 
@@ -261,10 +277,36 @@ async def oversight_decision(
         "ts": time.time(),
         "collective_id": req.collective_id,
     }
+    if req.answer:
+        payload["answer"] = req.answer
     await obs.publish(
         subject_oversight_decision(req.collective_id, req.oversight_id), payload,
     )
     return {"status": "published", "decision": req.decision}
+
+
+@router.post("/mission")
+async def mission_control(
+    req: MissionRequest,
+    hub: ObserverHub = Depends(get_hub),
+    principal: Principal = Depends(require_operator),
+) -> dict:
+    """Publish a MISSION_CONTROL (058 Phase 2).  The agents apply it; the
+    mission's new state comes back on the arbiter's heartbeat.  An active
+    mission is never purged -- the agents refuse that, not this route."""
+    from acc.signals import SIG_MISSION_CONTROL, subject_mission_control  # noqa: PLC0415
+
+    obs = _require_observer(hub, req.collective_id)
+    payload = {
+        "signal_type": SIG_MISSION_CONTROL,
+        "action": req.action,
+        "mission_id": req.mission_id,
+        "by": f"webgui:{principal.user}",
+        "ts": time.time(),
+        "collective_id": req.collective_id,
+    }
+    await obs.publish(subject_mission_control(req.collective_id), payload)
+    return {"status": "published", "action": req.action, "mission_id": req.mission_id}
 
 
 @router.post("/board/control")

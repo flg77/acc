@@ -1550,3 +1550,50 @@ pins the index and both Containerfiles. An operator older than 0.4 keeps
 working against this image: its ConfigMap mount and `ACC_ROLES_ROOT` override
 the baked tree. `tests/test_role_store_roles_root.py` (D-029) still pins that
 an agent reads `ACC_ROLES_ROOT` wherever it points.
+
+## D-034 — Ask once: consent once per plan, confinement instead of consent, grants given once
+
+**Status:** ACCEPTED 2026-10-15 / 2026-10-18 (vault proposals 058, 059, 060; OpenSpec `20261015-ask-once-*`, `20261018-plan-card`, `20261018-grant-once-allowances`, `20261019-scoped-mcp-env-and-sandbox-env-names`).
+**Date:** 2026-10-19
+**Context:** a typical task in AUTO asked about every `shell_exec`,
+`python_exec` and `fs_write`, and blocked the agent's loop while it waited. The
+operator, 2026-10-15/18: "ask once, then get things done". The assistant lays
+out the plan, the operator confirms it once, and from then on everything runs.
+Only single risky actions (deleting, reaching other systems, acting in the
+operator's name) ask again. OpenShell is mandatory, and capabilities are signed
+and verified.
+**Decision:**
+1. **`ASK_ONCE` is the default mode.** The assistant's staffing proposals are
+   held in one **plan card**. Approving it creates a **mission** that covers
+   the plan's steps, the thread's follow-ups and system access in the
+   workspace. A step outside the plan is one amendment card.
+2. **Confinement replaces consent for workspace exec.** `shell_exec`,
+   `python_exec` and `ssh_exec` run in the agent's OpenShell sandbox and refuse
+   without one (`ACC_SANDBOX_REQUIRED=1`). Inside it, workspace exec is not
+   asked about.
+3. **Grants are given once, at the question.** "Always allow for <role>" gives
+   a standing grant for one role and one target (`skill:`, `mcp:`, `host:`), in
+   the approver's name. A host grant is written into the sandbox's network
+   policy.
+4. **Unchanged:**
+   - the requester ceiling (D-014);
+   - the role's own grants;
+   - CRITICAL calls and acting in the operator's name, which are always asked;
+   - destructive calls, which are always asked, except that a workspace `rm`
+     inside a mission is backed up first when it runs on the agent host (D-022
+     amended); a sandboxed `rm` is asked, because the sandbox's filesystem is not
+     the agent's;
+   - the signing floor at install (D-011).
+5. **stdio MCP servers see only declared variables.**
+**Rationale:** consent was the only safety mechanism for code execution, so it
+was asked constantly. Scope declared once (a plan or a mission), and
+confinement (the sandbox), replace most of those questions without lowering
+the bar. Every call a mission or grant answers is an `AUTO_APPROVED` row that
+names it, and so names the person who gave it.
+**Consequences:**
+- A deployment without a sandbox cannot run exec skills.
+- `docs/security/constraints.md` is the rule set, versioned per release.
+- D-003's per-call gating under AUTO is narrowed by this decision, and D-022 is
+  amended by soft delete.
+- Open: stdio MCP servers in the sandbox (`openshell sandbox exec` cannot carry
+  an interactive stream yet).

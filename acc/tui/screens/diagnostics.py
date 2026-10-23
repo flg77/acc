@@ -55,7 +55,7 @@ logger = logging.getLogger("acc.tui.diagnostics")
 # Proposal 033 WS-B — operating modes offered in the Form's Mode
 # selector (mirrors acc.operating_modes: PLAN / ACCEPT_EDITS /
 # ASK_PERMISSIONS / AUTO).
-_OPERATING_MODES = ("PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS", "AUTO")
+_OPERATING_MODES = ("PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS", "ASK_ONCE", "AUTO")
 
 
 class DiagnosticsScreen(NavScreen):

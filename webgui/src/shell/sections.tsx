@@ -23,9 +23,11 @@ import { OverviewPage } from "../pages/Overview";
 import { BoardPage } from "../pages/work/Board";
 import { CommsPage } from "../pages/work/Comms";
 import { PromptPage } from "../pages/work/Prompt";
+import { DecisionsPage } from "../pages/work/Decisions";
 import { CatalogsPage } from "../pages/packages/Catalogs";
 import { MarketplacePage } from "../pages/packages/Marketplace";
 import { CredentialsPage } from "../pages/settings/Credentials";
+import { EvalsPage } from "../pages/settings/Evals";
 import { ConflictsPage } from "../pages/knowledge/Conflicts";
 import { ContributionsPage } from "../pages/knowledge/Contributions";
 import { KnowledgeMapPage } from "../pages/knowledge/KnowledgeMap";
@@ -75,6 +77,7 @@ export const SECTIONS: Section[] = [
     question: "What are the agents doing, and what are they asking?",
     tabs: [
       { key: "prompt", label: "Prompt", element: <PromptPage /> },
+      { key: "decisions", label: "Decisions", element: <DecisionsPage /> },
       { key: "board", label: "Board", element: <BoardPage /> },
       { key: "comms", label: "Comms", element: <CommsPage /> },
     ],
@@ -135,6 +138,7 @@ export const SECTIONS: Section[] = [
     question: "Everything else.",
     tabs: [
       { key: "credentials", label: "Credentials", element: <CredentialsPage /> },
+      { key: "evals", label: "Evals", element: <EvalsPage /> },
       { key: "diagnostics", label: "Diagnostics", element: legacy(<Diagnostics />) },
       { key: "help", label: "Help", element: legacy(<Help />) },
     ],

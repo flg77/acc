@@ -1,0 +1,205 @@
+.TH ACC 1 2026-10-22 "ACC" "ACC Manual"
+.SH NAME
+acc \- start here: attach to the ACC collective, or run the stack
+.SH SYNOPSIS
+.B acc
+.RB [ \-\-workspace
+.IR dir " | " \fB\-\-no\-workspace\fR ]
+.RB [ \-\-no\-probe ]
+.RB [ \-\-profile
+.IR profile ]
+.RB [ \-\-resume
+.RI [ session_id ]]
+.br
+.B acc
+.B \-\-list\-sessions
+.br
+.B acc stack
+.RB { up | down | status " | ...}"
+.RI [ args ...]
+.br
+.B acc
+.RB { doctor | setup }
+.RI [ args ...]
+.br
+.B acc
+.RB { paths | tour }
+.br
+.B acc
+.RB { \-\-version | \-\-help }
+.SH DESCRIPTION
+.B acc
+is the one command an operator starts with on a host where ACC (Agentic
+Cell Corpus) is installed.
+Alone, it attaches the terminal UI,
+.BR acc-tui (1),
+to the running collective.
+When nothing answers on the bus it says so in one line and exits 3 rather
+than drawing an empty screen.
+.PP
+The first
+.B acc
+on a host with no configuration anywhere runs the guided setup
+(\fBacc\-cli setup\fR) and then the first-run tour.
+.SS Workspaces
+Started in a directory,
+.B acc
+proposes that directory as the session's workspace and asks once whether it
+is trusted:
+.TP
+.B y
+Trust this directory for this session only; nothing is recorded.
+.TP
+.B always
+Trust this directory and record it.
+.TP
+.B below
+Trust it and every directory below it, and record it.
+A directory holding many repositories asks for confirmation first.
+.TP
+.BR n ", " never
+Deny it and record that, so it is not asked again
+(\fBacc\-cli workspace revoke\fR asks again).
+.TP
+.RB "Enter (the default " N )
+No workspace this time; nothing is recorded.
+.PP
+A trusted directory rides the session as \fBACC_WORKSPACE_HOST_DIR\fR and
+.B acc stack up
+mounts it into the cells at \fI/workspace\fR.
+A directory never trusted is never mounted, never read by a file skill and
+never selected.
+The record is kept in \fI~/.config/acc/trust.yaml\fR and managed with
+.BR "acc\-cli workspace" .
+.SH OPTIONS
+.TP
+.BI \-\-workspace " dir"
+Use \fIdir\fR as the session's workspace (still subject to trust).
+.TP
+.B \-\-no\-workspace
+Ask nothing and attach without a workspace.
+.TP
+.B \-\-no\-probe
+Do not check that a collective answers on the bus before starting the TUI.
+.TP
+.BR \-\-profile ", " \-\-resume ", " \-\-list\-sessions
+Passed through to
+.BR acc-tui (1).
+.TP
+.BR \-V ", " \-\-version
+Print the version and exit.
+.TP
+.BR \-h ", " \-\-help
+Print a short usage and exit.
+.SH COMMANDS
+.TP
+.BI "stack " args...
+Run the packaged deploy script,
+.BR acc-deploy (1),
+with \fIargs\fR (\fBup\fR, \fBdown\fR, \fBstatus\fR, \fBlogs\fR, ...).
+On \fBup\fR, \fBstart\fR and \fBrebuild\fR, a trusted current directory is
+mounted as the workspace.
+Needs
+.BR bash (1);
+on Windows use Podman Desktop or WSL.
+.TP
+.BI "doctor " args...
+The same as
+.BR "acc\-cli doctor" :
+a read-only report of deployment health.
+.TP
+.BI "setup " args...
+The same as
+.BR "acc\-cli setup" :
+the guided first-run configuration.
+.TP
+.B paths
+Print where this host's ACC lives \(em the configuration home, the data
+share and the state root \(em and why each was chosen.
+.TP
+.B tour
+Start the TUI with the first-run tour again.
+.SH HOST LAYOUT
+Every ACC command finds its files with the same rule, so a command works
+from any directory, not only inside a checkout.
+An environment variable always wins.
+.TP
+.B home
+The operator's configuration: \fB$ACC_HOME\fR; else \fI~/.config/acc\fR
+when it holds \fIacc\-config.yaml\fR; else \fI/etc/acc\fR when it does;
+else the checkout the current directory is in.
+.TP
+.B share
+The read-only data trees (roles, skills, mcps, collectives, container):
+\fB$ACC_SHARE\fR; else the home when it carries \fIroles/\fR; else the tree
+shipped inside the installed package; else \fI/usr/share/acc\fR; else the
+checkout.
+.TP
+.B state
+What is written at runtime: \fB$ACC_STATE\fR; else \fI/var/lib/acc\fR for
+the system configuration; else \fI$XDG_STATE_HOME/acc\fR
+(\fI~/.local/state/acc\fR) for a per-user one; else the checkout.
+.PP
+On an RPM install the system state is shared with the \fBacc\fR service
+user through the \fBacc\fR group; join it with
+\fBusermod \-aG acc\fR \fIuser\fR to install packages the service runs.
+.SH ENVIRONMENT
+.TP
+.B ACC_NATS_URL
+The bus to probe and attach to (default \fBnats://localhost:4222\fR).
+.TP
+.BR ACC_HOME ", " ACC_SHARE ", " ACC_STATE
+Override the layout above.
+.TP
+.B ACC_DEPLOY_SCRIPT
+The deploy script \fBacc stack\fR runs.
+.TP
+.B ACC_WORKSPACE_HOST_DIR
+The session's workspace; set by \fBacc\fR when one is trusted.
+.SH FILES
+.TP
+.I /etc/acc
+The system configuration: \fIacc\-config.yaml\fR, \fImodels.yaml\fR,
+\fIcollective.yaml\fR, \fIcatalogs.yaml\fR and the secrets in \fIacc.env\fR.
+.TP
+.I ~/.config/acc
+A per-user configuration, used before \fI/etc/acc\fR when it holds
+\fIacc\-config.yaml\fR.
+.TP
+.I ~/.config/acc/trust.yaml
+Trusted and denied workspace directories.
+.TP
+.I /usr/share/acc
+The data trees shipped with the package.
+.TP
+.I /var/lib/acc
+Shared state: packages, instances, workspaces, logs, sessions, trace.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 2
+Unknown option, or \fBacc stack\fR cannot find its script or bash.
+.TP
+.B 3
+No collective answers on \fBACC_NATS_URL\fR.
+.PP
+\fBdoctor\fR, \fBsetup\fR and \fBstack\fR return the exit status of the
+command they run.
+.SH EXAMPLES
+.nf
+acc stack up            # bring the collective up
+acc                     # attach the TUI, offering this directory as workspace
+acc \-\-no\-workspace      # attach without one
+acc doctor              # what is wrong, if anything
+acc paths               # which files this host uses, and why
+.fi
+.SH SEE ALSO
+.BR acc-tui (1),
+.BR acc-cli (1),
+.BR acc-pkg (1),
+.BR acc-deploy (1),
+.BR acc-webgui (1),
+.BR acc-agent (1),
+.BR acc-catalog (1)

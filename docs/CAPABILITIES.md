@@ -18,7 +18,7 @@ TUI and the Web GUI are for a human who is present.
 
 ---
 
-## 1. CLI — `acc-cli` (28 commands)
+## 1. CLI — `acc-cli` (43 commands)
 
 Argparse only, no runtime dependency beyond the standard library for parsing, so
 `--help` is fast and the command works inside a minimal container.
@@ -27,7 +27,7 @@ Argparse only, no runtime dependency beyond the standard library for parsing, so
 
 | Command | What it does |
 |---|---|
-| `acc-cli doctor` | One read-only health report. `--json` for monitoring, `--probe` to also dial endpoints, `--check NAME` for one check. **Non-zero exit only when a check is BROKEN.** |
+| `acc-cli doctor` | One read-only health report. `--json` for monitoring, `--probe` to also dial endpoints, `--check NAME` for one check (`sandbox` and `posture` among them). **Non-zero exit only when a check is BROKEN.** |
 | `acc-cli status` | Per-agent and collective-wide state: role, running/absent, resolved backend + model, last heartbeat, bus, working memory, oversight depth. `--json`, `--role`. Non-zero exit when unhealthy. |
 | `acc-cli config show/get/set/unset` | Typed access to the five configuration files. `set` validates against the schema and **preserves comments and formatting**. |
 | `acc-cli config path` | Where each configuration file resolves to on this host, and which are read-only or secret-bearing. |
@@ -55,7 +55,12 @@ to ignore the page.
 | `acc-cli compliance mappings/nexus/coverage/risks` | The frameworks and the threat model in the **Risk Atlas Nexus** vocabulary asago and OpenShift AI's EvalHub speak: an SSSOM export of every control → Nexus id mapping, the reverse lookup for a risk an asago policy extraction names, per-framework coverage against a pinned vocabulary, and `risks <risk-extraction.json>` — an asago policy dropped in: per extracted risk, the ACC controls and threats that answer to it and whether a loaded rule covers them (`docs/HOWTO-asago-policy.md`). |
 | `acc` / `acc stack up\|down\|status` / `acc doctor` / `acc setup` / `acc paths` | The one command an operator starts with: the TUI attached to the running collective (exit 3 and a hint when nothing answers), the stack through the deploy script from the host's ACC layout, the doctor and the guided setup, and the resolved layout with the source of every path. |
 | `acc tour` | The first-run tour: seven steps over the TUI — who you are here, the Prompt and the operating mode, the Board, Compliance with one sample gate to decide, your workspace, `/new-agent` — each stating the floor it keeps. Runs once on an installed layout, again on request, never in a checkout unasked. |
-| `acc-prompt` decision panel (Prompt pane) | Defer (`d`) with a promise to come back before the deadline, hand off (`h`) to a person or tier, copy the id or command (`y`/`Y`), allow a LOW/MEDIUM class for 30 min, `ACC_PROMPT_LINEAR` reading order (2026-09-25). One request of one step renders as a full decision: the question, the numbered options, and beside them what the highlighted option actually does — consequence, scope, destination, risk, approvals still needed. `PENDING 1/2` where the decision is made. `n` notes onto the decision (kept on that approver's record), `c` asks about it while it stays pending, `Esc` later, `Ctrl+G` back. Several steps keep the compact request region. `ACC_PROMPT_PANEL=0` disables it. |
+| `acc-prompt` decision panel (Prompt pane) | Ask once: the plan card (allow the plan / just these steps / don't do it), the mission card, and "always allow for <role>" on system-access and ssh-host questions (2026-10-19). Defer (`d`) with a promise to come back before the deadline, hand off (`h`) to a person or tier, copy the id or command (`y`/`Y`), allow a LOW/MEDIUM class for 30 min, `ACC_PROMPT_LINEAR` reading order (2026-09-25). One request of one step renders as a full decision: the question, the numbered options, and beside them what the highlighted option actually does — consequence, scope, destination, risk, approvals still needed. `PENDING 1/2` where the decision is made. `n` notes onto the decision (kept on that approver's record), `c` asks about it while it stays pending, `Esc` later, `Ctrl+G` back. Several steps keep the compact request region. `ACC_PROMPT_PANEL=0` disables it. |
+| `acc-cli ask "<task>"` | Give ACC a task from a plain shell; progress streams and its questions (plan card, mission card, "always allow", destructive confirm) are answered in the terminal. `--mode` (default `ASK_ONCE`), `--no-answer`. |
+| `acc-cli mission list/show/close/revoke/purge/restore/patterns` | Ask once missions: what each ran and backed up; close or revoke; `purge` (final allowance) or `restore` the backed-up deletions; `patterns` lists lesson candidates from closed plans. |
+| `acc-cli grants list/add/revoke/sync-sandbox/detect/accept/reject` | Standing grants: one role, one target (`skill:`, `mcp:`, `host:`), given by a named person; host grants go into the OpenShell network policy. |
+| `acc-cli posture scan` | Agent-configuration posture scan (PS-01..06, SARIF); a blocking finding withholds missions and grants. |
+| `acc-cli evals status/promptfoo-config/garak-gate` | promptfoo and garak attached to a profile (`edge_secure`). |
 | `acc-cli workspace list/check/trust/deny/revoke` | The trusted-directory record `acc` asks about on start (`~/.config/acc/trust.yaml`: path, scope `dir`/`below`, decision, since, by). Trusting writes the sentinel the cells check; a super-repo (many repositories below) needs `--force`; a directory never trusted is never mounted, read or selected. |
 | `acc-cli doctor --paths` | Where this host's ACC lives: home / share / state and every resolved path (`config`, `models`, `roles`, `skills`, `mcps`, `packages`, `instances`, …) with its source — `env`, `home`, `share`, `checkout`, `cwd` or the legacy `default`. |
 | `acc-cli egress policy/check/journal` | Destination policy and brokered credentials. ACC injects the credential so the agent never holds it; *where* traffic may go is the substrate's job. |
@@ -145,7 +150,7 @@ chord away. A profile is a view choice — nothing about what may be done differ
 | Screen | What it is for | Keys |
 |---|---|---|
 | **Dashboard** | Collective at a glance | — |
-| **Prompt** | Send work to a role and watch it reason | `ctrl+s` send, `shift+tab` cycle mode, `ctrl+l` clear |
+| **Prompt** | Send work to a role and watch it reason; the heading line says done / now / next / waiting on you | `ctrl+s` send, `shift+tab` cycle mode (Ask once first), `/mission`, `ctrl+l` clear |
 | **Ecosystem** | Roles, skills, MCPs; infuse from here | — |
 | **Marketplace** | Browse and install packages | `/` filter, `enter` install, `r` refresh, `+`/`-` rate |
 | **Catalogs** | Catalog sources and priority | `n` new, `d` delete, `r` refresh, `+`/`-` priority |
@@ -201,7 +206,8 @@ GUI error.
 | `GET /governance/proposals` | Open proposals. |
 | `POST /governance/proposals/{id}/decision` | Approve or reject. |
 | `POST /governance/gap-scan` | Scan for compliance gaps. |
-| `POST /oversight` | Act on the oversight queue. |
+| `POST /oversight` | Act on the oversight queue (including the plan card and "always allow" answers). |
+| `POST /mission` | Close, revoke, purge or restore a mission. |
 
 ### Action
 
@@ -292,7 +298,7 @@ feature that overstates its reach is worse than a smaller one that is honest.
 | **What a principal may ask an agent** | **ACC** | the tier model; no cluster can express this |
 | **Where traffic may go** | the substrate — NetworkPolicy, egress proxy, sandbox | a destination check as defence in depth, so an honest mistake is diagnosable |
 | **That an agent never holds a brokered credential** | **ACC** | injected at the boundary; it cannot be exfiltrated from a process that never had it |
-| **That code runs in a cage** | the OpenShell gateway | delegates, and **fails closed** when the gateway is unreachable |
+| **That code runs in a cage** | the OpenShell gateway | delegates, **fails closed** when the gateway is unreachable, and refuses exec outright when the agent has no sandbox (mandatory by default); granted ssh hosts go into the sandbox's network policy |
 | **Which credentials an agent holds** | **ACC** | scoping at the receiving end, so no delivery mechanism has to change |
 
 ## See also

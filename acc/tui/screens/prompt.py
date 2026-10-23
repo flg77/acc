@@ -342,9 +342,9 @@ class PromptScreen(NavScreen):
         # selected; agents then have no file-write target for the task.
         self._workspace_project: str | None = None
         # PR-V2 — operating mode is now internal state (the dropdown was
-        # replaced by a shift+tab cycle + a tiny hint).  AUTO default;
-        # role selection prefills it (on_select_changed).
-        self._operating_mode: str = "AUTO"
+        # replaced by a shift+tab cycle + a tiny hint).  ASK_ONCE default
+        # (058 Q2); role selection prefills it (on_select_changed).
+        self._operating_mode: str = "ASK_ONCE"
         # 1.4 -- in-pane permission requests: grants the operator gave for
         # the rest of a task, gates already shown (don't re-steal focus),
         # gates the operator set aside with Esc, gates the pane resolved
@@ -1249,7 +1249,7 @@ class PromptScreen(NavScreen):
 
     def action_cycle_mode(self) -> None:
         """PR-V2 — shift+tab cycles the operating mode + updates the hint."""
-        order = ["AUTO", "PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS"]
+        order = ["ASK_ONCE", "AUTO", "PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS"]
         try:
             i = order.index(self._operating_mode)
         except ValueError:
@@ -1271,9 +1271,11 @@ class PromptScreen(NavScreen):
         if self._operating_mode == "AUTO":
             suffix = "\n[dim yellow]💤 policy frozen[/dim yellow]"
         try:
+            from acc.operating_modes import label  # noqa: PLC0415
+            # 058 step 9 -- the outcome first ("Ask once"), the mode under it.
             self.query_one("#prompt-mode-hint", Static).update(
-                f"[b]{self._operating_mode}[/b]\n"
-                f"[dim]shift+tab[/dim]{suffix}"
+                f"[b]{label(self._operating_mode)}[/b]\n"
+                f"[dim]{self._operating_mode} · shift+tab[/dim]{suffix}"
             )
         except Exception:
             pass
@@ -1823,6 +1825,40 @@ class PromptScreen(NavScreen):
             "blocked": False,
         })
 
+    def _handle_mission_verb(self, args: dict, say) -> None:
+        """058 Phase 1 -- list / show the missions, or act on one."""
+        from acc.mission import Mission, report  # noqa: PLC0415
+
+        snap = getattr(self, "snapshot", None)
+        missions = list(getattr(snap, "missions", []) or []) if snap is not None else []
+        action = str(args.get("action") or "list")
+        wanted = str(args.get("mission_id") or "")
+        if action == "list":
+            if not missions:
+                say("no missions yet — under Ask once, the first system-access call of a thread asks for one.")
+                return
+            say("\n".join(
+                f"{m.get('mission_id')}  {m.get('status')}  {m.get('used_calls')}/{m.get('max_calls')} calls  "
+                f"{len(m.get('quarantine') or [])} backed up  roles={','.join(m.get('roles_used') or []) or '-'}"
+                for m in missions
+            ))
+            return
+        match = [m for m in missions if str(m.get("mission_id", "")).startswith(wanted)]
+        if len(match) != 1:
+            say(f"no single mission matches {wanted!r}")
+            return
+        m = match[0]
+        if action == "show":
+            say("\n".join(report(Mission.from_dict({**m, "threads": m.get("threads") or [],
+                                                      "status": m.get("status", "ACTIVE")}))))
+            return
+        if action in ("purge", "restore") and m.get("status") == "ACTIVE":
+            say(f"mission {m['mission_id']} is still active — /mission close it first")
+            return
+        from acc.tui.screens.compliance import _MissionAction  # noqa: PLC0415
+        self.app.post_message(_MissionAction(action, str(m["mission_id"])))
+        say(f"mission {m['mission_id']}: {action} sent")
+
     def _resolve_gate(
         self, oversight_id: str, *, approve: bool, reason: str = "", answer: str = "",
     ) -> None:
@@ -2269,6 +2305,12 @@ class PromptScreen(NavScreen):
 
         if intent.kind == _sc.KIND_SKILLS:
             self._render_skills_summary()
+            return
+
+        # 058 Phase 1 -- /mission: the "ask once" missions from the arbiter's
+        # heartbeat; close / revoke / purge / restore go out as MISSION_CONTROL.
+        if intent.kind == _sc.KIND_MISSION:
+            self._handle_mission_verb(intent.args, _system)
             return
 
         # 1.4 -- /oversight pending | approve <id> | reject <id> <reason>,
@@ -2855,6 +2897,15 @@ class PromptScreen(NavScreen):
             "blocked": reply.blocked,
             "latency_ms": reply.latency_ms,
         })
+        # 058 Phase 2 -- where the work is heading (done / refused / waiting on
+        # you / mission / next), under the answer.
+        from acc.heading import render as _render_heading  # noqa: PLC0415
+        _heading_lines = _render_heading(getattr(reply, "heading", None))
+        if _heading_lines:
+            self._append_history({
+                "role": "system", "task_id": task_id,
+                "text": "↳ " + "\n↳ ".join(_heading_lines), "ts": time.time(),
+            })
         status = "[red]blocked[/red]" if reply.blocked else "[green]ok[/green]"
         self.query_one("#prompt-status", Static).update(
             f"[dim]Reply received {status} — "

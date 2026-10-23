@@ -18,6 +18,7 @@ command:
   - "semantic-scholar-fast-mcp-server"
 env:
   # Optional but recommended — raises rate limit from 100/5min to 5000/5min.
+  # The empty value passes the agent's value through.
   S2_API_KEY: ""
 timeout_s:      30
 

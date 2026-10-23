@@ -54,6 +54,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -130,6 +131,16 @@ class InvocationOutcome:
     # The question the gate asked and how it ended (oversight_id, text,
     # evidence, status, answer, approver_id).  Empty when nothing was asked.
     question: dict[str, Any] = field(default_factory=dict)
+    # 058 K1 -- the call interrupted a person: it reached the oversight queue.
+    # ``ask_status`` is how that ended (APPROVED / REJECTED / EXPIRED / FAILED)
+    # and ``ask_wait_s`` how long the agent waited for it.  :func:`ask_stats`
+    # folds them into the per-task count on TASK_COMPLETE.
+    asked: bool = False
+    ask_status: str = ""
+    ask_wait_s: float = 0.0
+    #: 058 -- the mission that answered this call, or that this call's
+    #: question created ("" when no mission was involved).
+    mission_id: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +293,8 @@ async def dispatch_invocations(
     operating_mode: str = "AUTO",
     requester_ceiling: str = "",
     requester: str = "",
+    thread_ids: "list[str] | None" = None,
+    workspace: str = "",
 ) -> list[InvocationOutcome]:
     """Execute each parsed marker through the cognitive core.
 
@@ -327,6 +340,11 @@ async def dispatch_invocations(
             is refused before any escalation or gate — the ceiling is a
             floor under human judgement, not a question for it. ``""``
             (an unattributed task) applies no ceiling.
+        thread_ids: The keys of the task's thread (session id, task id) a
+            mission is looked up by (058 Phase 1, :mod:`acc.mission`).
+            Empty = no mission is consulted or raised.
+        workspace: The absolute workspace directory a mission raised here
+            is scoped to.
 
     Returns:
         One :class:`InvocationOutcome` per input marker, in the same
@@ -394,11 +412,84 @@ async def dispatch_invocations(
                 operating_mode=mode,
                 requester_ceiling=requester_ceiling,
                 requester=requester,
+                thread_ids=list(thread_ids or []),
+                workspace=workspace,
             ))
     return outcomes
 
 
+def ask_stats(outcomes: "list[InvocationOutcome]") -> dict[str, Any]:
+    """058 K1 -- how often a task interrupted a person, and how that ended.
+
+    ``asks`` counts the calls that reached the oversight queue (a person was
+    asked); ``refused`` the calls refused without asking (the ceiling, no queue
+    to ask, a malformed call).  ``wait_s`` is the time the agent spent waiting
+    on answers.  This is the number "ask once" has to bring down."""
+    stats: dict[str, Any] = {
+        "calls": len(outcomes), "asks": 0, "approved": 0, "rejected": 0,
+        "expired": 0, "failed": 0, "refused": 0, "wait_s": 0.0, "by_mission": 0,
+        "by_grant": 0,
+    }
+    for o in outcomes:
+        if o.ask_status == "MISSION":
+            stats["by_mission"] += 1
+        elif o.ask_status == "GRANT":
+            stats["by_grant"] += 1
+        elif o.asked:
+            stats["asks"] += 1
+            key = {"APPROVED": "approved", "REJECTED": "rejected",
+                   "EXPIRED": "expired"}.get(o.ask_status, "failed")
+            stats[key] += 1
+            stats["wait_s"] += float(o.ask_wait_s or 0.0)
+        elif not o.ok and str(o.error).startswith("refused:"):
+            stats["refused"] += 1
+    stats["wait_s"] = round(stats["wait_s"], 3)
+    return stats
+
+
+def _note_ask(ask: dict[str, Any], gate_outcome: "InvocationOutcome | None", t0: float) -> None:
+    """Record how a gate ended into *ask*.  A row that never reached the queue
+    (the submit failed) interrupted nobody and is not an ask."""
+    if gate_outcome is None:
+        status = "APPROVED"
+    else:
+        err = gate_outcome.error
+        if err.startswith("oversight_submit_failed"):
+            return
+        if err.startswith(("oversight_rejected", "oversight_auto_rejected")):
+            status = "REJECTED"
+        elif err.startswith(("oversight_expired", "oversight_timeout")):
+            status = "EXPIRED"
+        else:
+            status = "FAILED"
+    ask.update(status=status, wait_s=time.monotonic() - t0)
+
+
 async def _dispatch_one(
+    inv: ParsedInvocation,
+    core: "CognitiveCore",
+    role: "RoleDefinitionConfig",
+    **kwargs: Any,
+) -> InvocationOutcome:
+    """Run one marker (:func:`_dispatch_gated`) and stamp whether a person was
+    asked about it (058 K1)."""
+    ask: dict[str, Any] = {}
+    outcome = await _dispatch_gated(inv, core, role, ask=ask, **kwargs)
+    outcome.mission_id = str(ask.get("mission") or (outcome.question or {}).get("mission_id") or "")
+    if ask.get("grant") and "status" not in ask:
+        # Answered by a standing grant: nobody was asked (058 Phase 5).
+        outcome.ask_status = "GRANT"
+    elif ask.get("mission") and "status" not in ask:
+        # Answered by a mission: nobody was asked (058 Phase 1).
+        outcome.ask_status = "MISSION"
+    elif ask.get("status"):
+        outcome.asked = True
+        outcome.ask_status = ask["status"]
+        outcome.ask_wait_s = round(ask["wait_s"], 3)
+    return outcome
+
+
+async def _dispatch_gated(
     inv: ParsedInvocation,
     core: "CognitiveCore",
     role: "RoleDefinitionConfig",
@@ -408,6 +499,9 @@ async def _dispatch_one(
     operating_mode: str = "AUTO",
     requester_ceiling: str = "",
     requester: str = "",
+    ask: "dict[str, Any] | None" = None,
+    thread_ids: "list[str] | None" = None,
+    workspace: str = "",
 ) -> InvocationOutcome:
     """Run one marker; convert every exception path to an
     :class:`InvocationOutcome` with a populated ``error``.
@@ -487,6 +581,43 @@ async def _dispatch_one(
     evidence = destructive_evidence(inv.kind, inv.target, inv.args, manifest)
     if evidence and _sandboxed(inv, manifest, role, core):
         evidence = ""
+    # 058 Phase 1 -- the thread's mission, when there is one.  Consulted only
+    # after the ceiling (above) and, for gates, after the role's own grants
+    # (below): a mission can spare a question, never widen a grant.
+    from acc.operating_modes import MODE_ASK_ONCE, MODE_ASK_PERMISSIONS  # noqa: PLC0415
+    from acc import mission as _mission  # noqa: PLC0415
+    mission = None
+    store = None
+    if oversight_queue is not None and thread_ids and operating_mode != MODE_ASK_PERMISSIONS:
+        store = _mission.MissionStore.for_queue(oversight_queue)
+        try:
+            mission = await store.for_threads(thread_ids)
+        except Exception:  # noqa: BLE001 -- no mission is the safe answer
+            logger.debug("capability_dispatch: mission lookup failed", exc_info=True)
+    role_label = _role_name(role, core)
+    soft_deleted = False
+    if (evidence and mission is not None and not _guard_denial(inv, manifest, role, core)
+            and not (inv.target in _CONFINED_EXEC_SKILLS and _sandbox_enabled())):
+        # Inside the OpenShell sandbox the rm sees the sandbox's filesystem and
+        # ignores ``cwd``, so a backup taken here could miss the file it
+        # deletes; a sandboxed rm is asked instead (review 2026-10-19).
+        # 058 Q1 -- a workspace rm is backed up first, then runs; the closing
+        # report lists it and the operator's purge is the final allowance.
+        # Anything else destructive is still asked.
+        targets = _mission.soft_delete_targets(inv.kind, inv.target, inv.args, mission.workspace)
+        reason = _mission.covers(
+            mission, kind=inv.kind, target=inv.target, args=inv.args,
+            categories=gate_categories(inv.kind, inv.target, manifest),
+            risk_level=str(risk_level),
+        ) if targets else "not a backed-up delete"
+        if targets and not reason:
+            try:
+                _mission.back_up(mission, targets, role=role_label)
+            except Exception:  # noqa: BLE001 -- no backup, no delete without asking
+                logger.warning("capability_dispatch: backup failed; asking instead", exc_info=True)
+            else:
+                soft_deleted = True
+                evidence = ""
     if evidence:
         if oversight_queue is None:
             reason = (
@@ -510,29 +641,123 @@ async def _dispatch_one(
     if oversight_queue is not None:
         denial = _guard_denial(inv, manifest, role, core)
         if denial:
+            t0 = time.monotonic()
             gate_outcome = await _gate_on_oversight(
                 inv, manifest, role, oversight_queue, task_id,
                 escalation=denial, question=question, record=record, core=core,
                 requester=requester, requester_ceiling=requester_ceiling,
             )
+            if ask is not None:
+                _note_ask(ask, gate_outcome, t0)
             if gate_outcome is not None:
                 gate_outcome.question = record
                 return gate_outcome
             role = _role_with_grant(role, inv, manifest)
             escalated = True
 
+    # 060 -- another system.  An ssh host is reached when it is local or on
+    # the operator's seed list, granted once by a person (a ``host:`` grant),
+    # listed by the thread's approved plan (059), or allowed for this call.
+    # The adapter trusts only this decision (``acc.hosts``), never the call's
+    # own arguments.  Answering the host question answers this call's
+    # system-access question too; a destructive remote command is still asked.
+    approved_host = ""
+    host_answered = False
+    host_once = ""
+    if inv.kind == "skill" and inv.target == "ssh_exec":
+        host_outcome, approved_host, host_answered, host_once = await _host_gate(
+            inv, manifest, role, oversight_queue, task_id, role_label, mission, store,
+            str(risk_level), record=record, core=core, requester=requester,
+            requester_ceiling=requester_ceiling, ask=ask, operating_mode=operating_mode,
+        )
+        if host_outcome is not None:
+            return host_outcome
+
     # 1.2 -- system access / acting on the operator's behalf are asked in
     # AUTO and ACCEPT_EDITS regardless of risk_level.  An approved escalation
     # already covered this exact call (and asked its question); don't ask twice.
     categories = gate_categories(inv.kind, inv.target, manifest)
+    # 058 Phase 3 -- confinement instead of consent.  An exec skill that runs
+    # in this agent's OpenShell sandbox (kernel-enforced, only the workspace
+    # mounted) does not reach the host, so "system access" is not asked about
+    # under AUTO / ASK_ONCE.  CRITICAL, the ceiling, the role's grants and the
+    # destructive question are unchanged: the workspace inside is real.
+    if (
+        inv.kind == "skill" and inv.target in _CONFINED_EXEC_SKILLS
+        and operating_mode in (MODE_ASK_ONCE, "AUTO") and _sandbox_enabled()
+    ):
+        categories = categories - {"system_access"}
     needs_gate = (
         not escalated
         and oversight_queue is not None
-        and (question is not None or requires_oversight or should_gate_invocation(
+        and (question is not None or requires_oversight or (not host_answered and should_gate_invocation(
             operating_mode, kind=inv.kind, target=inv.target,
             risk_level=str(risk_level), categories=categories,
-        ))
+        )))
     )
+    # 058 Phase 1 -- a covering mission answers the gate; under ASK_ONCE the
+    # first gate of a thread with no mission asks the mission card instead of
+    # a per-call question.
+    raise_mission = False
+    offer_grant = False
+    if needs_gate and question is None and not requires_oversight:
+        # 058 Phase 5 -- the posture scan is the check before any grant: a
+        # role whose configuration has a HIGH finding gets no mission and no
+        # standing grant; every call is asked, as before.
+        blocking = _posture_blocking(role, core)
+        if blocking:
+            logger.warning("capability_dispatch: no grant for %s -- posture %s",
+                           role_label, ", ".join(f.rule_id for f in blocking))
+            mission = None
+        grant = None
+        # "Ask me each step" means every step: no standing grant answers it.
+        if (not blocking and not escalated and categories
+                and operating_mode != MODE_ASK_PERMISSIONS
+                and categories <= _mission.COVERED_CATEGORIES
+                and str(risk_level).upper() != "CRITICAL"):
+            grant = await _standing_grant(oversight_queue, role_label, inv)
+        reason = "no mission" if mission is None else _mission.covers(
+            mission, kind=inv.kind, target=inv.target, args=inv.args,
+            categories=categories, risk_level=str(risk_level),
+        )
+        if grant is not None:
+            await _answer_by_grant(oversight_queue, grant, inv, role_label, task_id, str(risk_level))
+            if ask is not None:
+                ask["grant"] = grant.grant_id
+            needs_gate = False
+        elif mission is not None and not reason:
+            await _answer_by_mission(
+                oversight_queue, store, mission, inv, role_label, task_id,
+                str(risk_level), soft_deleted=soft_deleted,
+            )
+            if ask is not None:
+                ask["mission"] = mission.mission_id
+            needs_gate = False
+        elif (
+            not blocking and mission is None and operating_mode == MODE_ASK_ONCE and thread_ids
+            and str(risk_level).upper() != "CRITICAL"
+            and categories and categories <= _mission.COVERED_CATEGORIES
+        ):
+            question = _mission.mission_question(
+                role_label, workspace, kind=inv.kind, target=inv.target,
+            )
+            raise_mission = True
+        elif (
+            not blocking and mission is None and grant is None
+            and str(risk_level).upper() != "CRITICAL"
+            and categories and categories <= _mission.COVERED_CATEGORIES
+        ):
+            # 060 -- granted once: the question offers "always allow".
+            from acc.grants import grant_question  # noqa: PLC0415
+            question = grant_question(role_label, inv.kind, inv.target)
+            offer_grant = True
+    elif soft_deleted and mission is not None and not escalated:
+        await _answer_by_mission(
+            oversight_queue, store, mission, inv, role_label, task_id,
+            str(risk_level), soft_deleted=True,
+        )
+        if ask is not None:
+            ask["mission"] = mission.mission_id
     if needs_gate:
         # In AUTO mode we still need a manifest to gate (CRITICAL is
         # the only trigger); in ACCEPT_EDITS / ASK_PERMISSIONS we
@@ -542,22 +767,62 @@ async def _dispatch_one(
             risk_level=str(risk_level),
             target=inv.target,
         )
+        t0 = time.monotonic()
         gate_outcome = await _gate_on_oversight(
             inv, gate_manifest, role, oversight_queue, task_id,
             categories=categories, question=question, record=record, core=core,
             requester=requester, requester_ceiling=requester_ceiling,
         )
+        if ask is not None:
+            _note_ask(ask, gate_outcome, t0)
         if gate_outcome is not None:
             # Either rejected or timed out — surface and skip dispatch.
             gate_outcome.question = record
             return gate_outcome
         # APPROVED — fall through to normal dispatch below.
+        if raise_mission and record.get("answer") == _mission.ANSWER_MISSION and store is not None:
+            m = await store.create(
+                list(thread_ids or []), principal=requester,
+                approver=str(record.get("approver_id") or ""), workspace=workspace,
+            )
+            m.used_calls = 1
+            m.roles_used = [role_label]
+            m.calls.append({"ts_ms": int(time.time() * 1000), "role": role_label,
+                            "kind": inv.kind, "target": inv.target,
+                            "oversight_id": str(record.get("oversight_id") or "")})
+            await store.save(m)
+            record["mission_id"] = m.mission_id
+        from acc.grants import ANSWER_ALWAYS, give_from_answer  # noqa: PLC0415
+        # "Always allow" on the per-call question, or on the Ask once mission
+        # card (each question has its own option key).
+        if ((offer_grant and record.get("answer") == ANSWER_ALWAYS)
+                or (raise_mission and record.get("answer") == _mission.ANSWER_ALWAYS)):
+            g = await give_from_answer(
+                oversight_queue, role=role_label, target=f"{inv.kind}:{inv.target}",
+                approver=str(record.get("approver_id") or ""),
+            )
+            if g is not None:
+                record["grant_id"] = g.grant_id
 
     # A call a destructive or CRITICAL gate let through is a critical function.
     critical = critical_fn and (escalated or needs_gate)
     try:
         if inv.kind == "skill":
-            result = await core.invoke_skill(inv.target, inv.args, role)
+            from acc import hosts as _hosts  # noqa: PLC0415
+            # 060 -- the sandbox's network policy must hold the host too, or
+            # the ssh that ACC approved is refused inside the sandbox.  A host
+            # allowed for this call only leaves the policy again afterwards.
+            if approved_host and approved_host not in _hosts.LOCAL_HOSTS:
+                from acc.sandbox.policy import ensure_hosts  # noqa: PLC0415
+                ensure_hosts([_host_spec_of(inv)])
+            token = _hosts.approve(approved_host)
+            try:
+                result = await core.invoke_skill(inv.target, inv.args, role)
+            finally:
+                _hosts.reset(token)
+                if host_once:
+                    from acc.sandbox.policy import release_hosts  # noqa: PLC0415
+                    release_hosts([host_once])
             return InvocationOutcome(
                 parsed=inv, ok=True, result=result, critical=critical, question=record,
             )
@@ -586,6 +851,177 @@ async def _dispatch_one(
         return InvocationOutcome(
             parsed=inv, ok=False, error=err, critical=critical, question=record,
         )
+
+
+def _role_name(role: Any, core: Any) -> str:
+    """The calling role, as missions, grants and gate rows name it.
+
+    The role's own name (the core's label, e.g. ``devops_engineer``), so
+    "always allow for <role>" means that one role (vault 060).  It used to be
+    the role's ``domain_id``, which made a grant cover every role in the
+    domain.  ``domain_id`` / "agent" remain the fallback for a core without a
+    label."""
+    return str(getattr(core, "_role_label", "") or getattr(role, "domain_id", "") or "agent")
+
+
+def _posture_blocking(role: Any, core: Any) -> list:
+    """HIGH findings of the posture scan for *role* (058 Phase 5, EC-02)."""
+    try:
+        from acc.posture_scan import blocking_for  # noqa: PLC0415
+        return blocking_for(role, core)
+    except Exception:  # noqa: BLE001 -- a scan that cannot run blocks nothing
+        logger.debug("capability_dispatch: posture scan failed", exc_info=True)
+        return []
+
+
+def _host_spec_of(inv: ParsedInvocation) -> str:
+    """The ``host:<name>[:<port>]`` target of an ssh call (port already checked)."""
+    from acc.grants import host_target  # noqa: PLC0415
+    args = inv.args or {}
+    return host_target(str(args.get("host") or "").strip(), args.get("port", 22) or 22)
+
+
+async def _host_gate(
+    inv: ParsedInvocation, manifest: Any, role: Any, queue: Any, task_id: str,
+    role_label: str, mission: Any, store: Any, risk_level: str, *,
+    record: dict, core: Any, requester: str, requester_ceiling: str, ask: dict | None,
+    operating_mode: str = "AUTO",
+) -> tuple[Any, str, bool, str]:
+    """Decide the ssh host of *inv* (vault 060).
+
+    Returns ``(refusal_or_None, approved_host, answered, once_target)``:
+    ``answered`` is True when a grant, the plan or a person settled this call's
+    host, which also answers its system-access question; ``once_target`` names
+    a host allowed for this call only (it leaves the sandbox policy after it).
+
+    Under "Ask me each step" no grant or plan answers; a role with a blocking
+    posture finding gets no grant and no plan answer, and "always allow" gives
+    it nothing (the 058 rule for missions and grants)."""
+    from acc import hosts as _hosts  # noqa: PLC0415
+    from acc.grants import ANSWER_ALWAYS, give_from_answer, host_question, host_target  # noqa: PLC0415
+    from acc.operating_modes import MODE_ASK_PERMISSIONS  # noqa: PLC0415
+
+    args = inv.args or {}
+    host = str(args.get("host") or "").strip()
+    try:
+        port = int(args.get("port", 22) or 22)
+        if not 0 < port < 65536:
+            raise ValueError(port)
+    except (TypeError, ValueError):
+        reason = f"refused: ssh_exec port {args.get('port')!r} is not a TCP port"
+        logger.warning("capability_dispatch: %s (task %s)", reason, task_id)
+        return InvocationOutcome(parsed=inv, ok=False, error=reason), "", False, ""
+    if not host or _hosts.pre_allowed(host):
+        return None, host, False, ""
+    target = host_target(host, port)
+    may_spare = operating_mode != MODE_ASK_PERMISSIONS and not _posture_blocking(role, core)
+    if queue is not None and may_spare:
+        grant = await _standing_grant(queue, role_label, inv, target=target)
+        if grant is not None:
+            await _answer_by_grant(queue, grant, inv, role_label, task_id, risk_level)
+            if ask is not None:
+                ask["grant"] = grant.grant_id
+            return None, host, True, ""
+    plan_hosts = set(((getattr(mission, "plan", None) or {}).get("hosts") or [])) if mission else set()
+    if (may_spare and mission is not None and mission.active
+            and (host in plan_hosts or f"{host}:{port}" in plan_hosts)):
+        await _answer_by_mission(queue, store, mission, inv, role_label, task_id, risk_level)
+        if ask is not None:
+            ask["mission"] = mission.mission_id
+        return None, host, True, ""
+    if queue is None:
+        reason = (f"refused: ssh to {host!r} is not on the host allowance list and "
+                  "there is no oversight queue to ask")
+        logger.warning("capability_dispatch: %s (task %s)", reason, task_id)
+        return InvocationOutcome(parsed=inv, ok=False, error=reason), "", False, ""
+    gate_manifest = manifest if manifest is not None else _SyntheticManifest(
+        risk_level=risk_level, target=inv.target,
+    )
+    t0 = time.monotonic()
+    outcome = await _gate_on_oversight(
+        inv, gate_manifest, role, queue, task_id,
+        categories=frozenset({"system_access"}), question=host_question(role_label, host, port),
+        record=record, core=core, requester=requester, requester_ceiling=requester_ceiling,
+    )
+    if ask is not None:
+        _note_ask(ask, outcome, t0)
+    if outcome is not None:
+        outcome.question = record
+        return outcome, "", False, ""
+    if record.get("answer") == ANSWER_ALWAYS and may_spare:
+        g = await give_from_answer(queue, role=role_label, target=target,
+                                   approver=str(record.get("approver_id") or ""))
+        if g is not None:
+            record["grant_id"] = g.grant_id
+            return None, host, True, ""
+    return None, host, True, target
+
+
+async def _standing_grant(queue: Any, role_label: str, inv: ParsedInvocation, *, target: str = "") -> Any:
+    """The active standing grant for exactly this role and target, or None."""
+    try:
+        from acc.grants import GrantStore  # noqa: PLC0415
+        return await GrantStore.for_queue(queue).covering(role_label, target or f"{inv.kind}:{inv.target}")
+    except Exception:  # noqa: BLE001
+        logger.debug("capability_dispatch: grant lookup failed", exc_info=True)
+        return None
+
+
+async def _answer_by_grant(
+    queue: Any, grant: Any, inv: ParsedInvocation, role_label: str, task_id: str, risk_level: str,
+) -> None:
+    """Record a call a standing grant answered (approver ``policy:grant:<id>``)."""
+    try:
+        await queue.record_auto_approved(
+            task_id, risk_level,
+            f"{inv.kind} {inv.target} — answered by standing grant {grant.grant_id} "
+            f"(given by {grant.approved_by})",
+            role_label, policy=f"grant:{grant.grant_id}", outcome="dispatched",
+        )
+        from acc.grants import GrantStore  # noqa: PLC0415
+        grant.uses += 1
+        await GrantStore.for_queue(queue).save(grant)
+    except Exception:  # noqa: BLE001
+        logger.debug("capability_dispatch: grant audit row failed", exc_info=True)
+
+
+#: The exec skills that delegate into the agent's OpenShell sandbox
+#: (``acc.sandbox.maybe_run_sandboxed``).
+_CONFINED_EXEC_SKILLS: frozenset[str] = frozenset({"shell_exec", "python_exec"})
+
+
+def _sandbox_enabled() -> bool:
+    """This agent has an OpenShell sandbox to run code in (058 Phase 3)."""
+    from acc.sandbox.runner import SandboxConfig  # noqa: PLC0415
+    return SandboxConfig.from_env().enabled
+
+
+async def _answer_by_mission(
+    queue: Any, store: Any, mission: Any, inv: ParsedInvocation, role_label: str,
+    task_id: str, risk_level: str, *, soft_deleted: bool = False,
+) -> None:
+    """Record a call a mission answered: an ``AUTO_APPROVED`` row whose
+    approver is the mission (never a person), and the call on the mission."""
+    oid = ""
+    summary = f"{inv.kind} {inv.target} — answered by mission {mission.mission_id}"
+    if soft_deleted:
+        summary += " (deletion backed up first)"
+    try:
+        oid = await queue.record_auto_approved(
+            task_id, risk_level, summary, role_label,
+            policy=f"mission:{mission.mission_id}", outcome="dispatched",
+        )
+    except Exception:  # noqa: BLE001 -- the audit row is best-effort here
+        logger.debug("capability_dispatch: mission audit row failed", exc_info=True)
+    mission.used_calls += 1
+    if role_label not in mission.roles_used:
+        mission.roles_used.append(role_label)
+    mission.calls.append({"ts_ms": int(time.time() * 1000), "role": role_label,
+                          "kind": inv.kind, "target": inv.target, "oversight_id": oid})
+    try:
+        await store.save(mission)
+    except Exception:  # noqa: BLE001
+        logger.debug("capability_dispatch: mission save failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +1202,7 @@ async def _gate_on_oversight(
     summary = _build_oversight_summary(
         inv, manifest, categories, escalation=escalation, destructive=destructive,
     )
-    role_label = getattr(role, "domain_id", "") or "agent"
+    role_label = _role_name(role, core)
     # A category gate or an escalation carries the manifest's own risk (HIGH
     # for shell_exec, MEDIUM for telegram_send); every other gate keeps the
     # historical CRITICAL label.  A destructive call is at least HIGH, whatever

@@ -143,6 +143,16 @@ def _payload_bytes(msg) -> bytes:
     return raw if isinstance(raw, (bytes, bytearray)) else b"{}"
 
 
+class _HeldProposals:
+    """The proposals an approved plan held, shaped like a cognitive result so
+    they take the normal execute path (vault 059)."""
+
+    def __init__(self, held: list) -> None:
+        self.assistant_proposals_executed = list(held)
+        self.assistant_proposals_queued: list = []
+        self.output = ""
+
+
 def _resolve_task_workspace_dir(data: dict, mount: str | None = None) -> str | None:
     """PR-U2b — derive the per-task ACC_WORKSPACE_DIR from a TASK_ASSIGN.
 
@@ -329,17 +339,29 @@ STATE_DORMANT = "DORMANT"
 # a runtime ROLE_ASSIGN (D-001).
 _NO_COGNITIVE_ROLES = {"observer", "dormant", ""}
 
-# Assistant-proposal payload cache (see ``_handle_assistant_proposals`` →
-# ``_maybe_dispatch_assistant_proposal``).  The proposal payload the arbiter
-# needs on approval is cached in Redis under
-# ``acc:{cid}:assistant_proposal:{oversight_id}``.  Give it a lifetime
-# DECOUPLED from — and never shorter than — the (short, default 300 s)
-# oversight timeout so a valid approval near or just past the oversight window
-# still dispatches instead of racing an expired cache (the silent-stale-infuse
-# bug).  A companion ``…assistant_proposal_meta:{oversight_id}`` marker shares
-# this TTL so a payload-miss on approval can be told apart from a non-proposal
-# oversight item and surfaced loudly instead of dying silently.
-_ASSISTANT_PROPOSAL_CACHE_TTL_S: int = 3600
+def cache_proposal_payload(redis, collective_id: str, oversight_id: str, p) -> None:
+    """Cache a queued proposal for the approval that dispatches it.
+
+    The payload the arbiter needs on approval lives under
+    ``acc:{cid}:assistant_proposal:{oversight_id}`` (see
+    ``_maybe_dispatch_assistant_proposal``); a companion
+    ``…assistant_proposal_meta:{oversight_id}`` marker lets a payload-miss on
+    approval be told apart from a non-proposal oversight item and surfaced
+    loudly instead of dying silently.
+
+    Neither key expires: a proposal row has no deadline (058 Q4, operator
+    2026-10-15), so its payload must last as long as the row.  With the old
+    one-hour TTL an approval given later found no payload and did nothing.
+    Both keys are deleted when the proposal is dispatched or rejected."""
+    redis.set(
+        f"acc:{collective_id}:assistant_proposal:{oversight_id}",
+        json.dumps(p.to_payload(), default=str),
+    )
+    redis.set(
+        f"acc:{collective_id}:assistant_proposal_meta:{oversight_id}",
+        json.dumps({"kind": p.kind, "proposal_id": p.proposal_id,
+                    "summary": p.summary}, default=str),
+    )
 
 
 def _redteam_enabled(config) -> bool:
@@ -1107,6 +1129,61 @@ class Agent:
                 "policy_layer: failed to start reward harness"
             )
 
+    async def _mission_summaries(self, limit: int = 10) -> list[dict]:
+        """The newest missions, compact, for the heartbeat (058 Phase 1)."""
+        if self._oversight_queue is None:
+            return []
+        try:
+            from acc.mission import MissionStore  # noqa: PLC0415
+            missions = await MissionStore.for_queue(self._oversight_queue).all()
+        except Exception:  # noqa: BLE001
+            logger.debug("mission: summaries failed", exc_info=True)
+            return []
+        return [{
+            "mission_id": m.mission_id, "status": m.live_status(),
+            "used_calls": m.used_calls, "max_calls": m.max_calls,
+            "roles_used": list(m.roles_used), "approver": m.approver,
+            "principal": m.principal, "workspace": m.workspace,
+            "created_ms": m.created_ms, "expires_ms": m.expires_ms,
+            "threads": list(m.threads)[:4],
+            "quarantine": list(m.quarantine)[:20],
+        } for m in missions[:limit]]
+
+    async def _handle_mission_control(self, payload: dict) -> None:
+        """Close, revoke, purge or restore a mission (058 Phase 1).
+
+        Every agent hears the signal.  Ending a mission is idempotent; purge
+        and restore act only where the mission's workspace is mounted, and a
+        mission that is still active is never purged."""
+        from acc import mission as M  # noqa: PLC0415
+
+        action = str(payload.get("action", "") or "").lower()
+        mid = str(payload.get("mission_id", "") or "")
+        by = str(payload.get("by", "") or "tui:operator")
+        if not mid or self._oversight_queue is None:
+            return
+        store = M.MissionStore.for_queue(self._oversight_queue)
+        try:
+            if action in ("close", "revoke"):
+                await store.end(mid, by=by, status=(
+                    M.STATUS_CLOSED if action == "close" else M.STATUS_REVOKED))
+                return
+            if action not in ("purge", "restore"):
+                logger.warning("mission: unknown action %r", action)
+                return
+            m = await store.get(mid)
+            if m is None or m.active or not m.workspace or not Path(m.workspace).is_dir():
+                return
+            if action == "purge":
+                if M.purge(m):
+                    m.quarantine = []
+                    await store.save(m)
+                    logger.warning("mission: %s quarantine purged by %s", mid, by)
+            else:
+                M.restore(m)
+        except Exception:  # noqa: BLE001
+            logger.exception("mission: %s %s failed", action, mid)
+
     async def _queue_assistant_proposal(self, p, collective_id: str) -> str:
         """Queue one proposal outside the task path: an oversight row, the
         cached payload the approval dispatcher loads, and the pending
@@ -1123,20 +1200,11 @@ class Agent:
             summary=p.summary,
             role_id=self.config.agent.role,
             required_approvals=int((p.params or {}).get("required_approvals") or 1),
+            deadline=False,
         )
         if redis is not None and oversight_id:
             try:
-                ov_ttl = getattr(queue, "_timeout_s", 300) or 300
-                ttl = max(int(ov_ttl), _ASSISTANT_PROPOSAL_CACHE_TTL_S)
-                redis.setex(
-                    f"acc:{collective_id}:assistant_proposal:{oversight_id}", ttl,
-                    json.dumps(p.to_payload(), default=str),
-                )
-                redis.setex(
-                    f"acc:{collective_id}:assistant_proposal_meta:{oversight_id}", ttl,
-                    json.dumps({"kind": p.kind, "proposal_id": p.proposal_id,
-                                "summary": p.summary}, default=str),
-                )
+                cache_proposal_payload(redis, collective_id, oversight_id, p)
             except Exception:
                 logger.exception(
                     "assistant_proposal: redis cache failed for %s", oversight_id,
@@ -1191,6 +1259,12 @@ class Agent:
                 "assistant_proposal: import failed — skipping dispatch",
             )
             return
+
+        # ---- 059: under ASK_ONCE the staffing proposals become ONE plan ----
+        # card the operator confirms once (vault 059, `20261018-plan-card`).
+        executed, queued = await Agent._hold_staffing_in_plan(
+            self, result, task_payload, collective_id, list(executed), list(queued),
+        )
 
         # ---- PHASE 8: an auto-execute this identity may not publish ----
         # AUTO has no approval to leave for the arbiter, so a proposal this
@@ -1277,6 +1351,8 @@ class Agent:
                             summary=p.summary,
                             role_id="assistant",
                             required_approvals=int((p.params or {}).get("required_approvals") or 1),
+                            deadline=False,
+                            question=(p.params or {}).get("question") or None,
                         )
                     # Cache the proposal under the oversight_id so the
                     # approval handler can dispatch the right mutation
@@ -1284,43 +1360,7 @@ class Agent:
                     # → in-memory only (handler fails closed).
                     if redis is not None and oversight_id:
                         try:
-                            key = (
-                                f"acc:{collective_id}:"
-                                f"assistant_proposal:{oversight_id}"
-                            )
-                            meta_key = (
-                                f"acc:{collective_id}:"
-                                f"assistant_proposal_meta:{oversight_id}"
-                            )
-                            # Decouple the payload lifetime from the short
-                            # oversight timeout (never shorter) so a valid
-                            # approval near / just past the window still
-                            # dispatches; the meta marker lets a later
-                            # payload-miss be told apart from a non-proposal
-                            # oversight item (see _maybe_dispatch_...).
-                            ov_ttl = getattr(queue, "_timeout_s", 300) or 300
-                            ttl = max(
-                                int(ov_ttl), _ASSISTANT_PROPOSAL_CACHE_TTL_S,
-                            )
-                            redis.setex(
-                                key, ttl,
-                                json.dumps(p.to_payload(), default=str),
-                            )
-                            redis.setex(
-                                meta_key, ttl,
-                                json.dumps(
-                                    {
-                                        "kind": p.kind,
-                                        "proposal_id": p.proposal_id,
-                                        "summary": p.summary,
-                                    },
-                                    default=str,
-                                ),
-                            )
-                            logger.debug(
-                                "assistant_proposal: cached payload "
-                                "key=%s ttl=%ss", key, ttl,
-                            )
+                            cache_proposal_payload(redis, collective_id, oversight_id, p)
                         except Exception:
                             logger.exception(
                                 "assistant_proposal: redis cache failed for %s",
@@ -1651,6 +1691,150 @@ class Agent:
         except Exception as exc:  # noqa: BLE001
             logger.error("review: subscription error: %s", exc)
 
+    async def _hold_staffing_in_plan(
+        self, result, task_payload: dict, collective_id: str,
+        executed: list, queued: list,
+    ) -> tuple[list, list]:
+        """Under ASK_ONCE, hold this reply's staffing proposals in a plan card.
+
+        Vault 059.  No mission on the thread: the proposals become one
+        ``plan`` proposal (queued; its question is the card) instead of
+        executing.  A mission with a plan: proposals it covers execute, the
+        rest become ONE amendment card.  A 058 mission without a plan, and
+        every mode but ASK_ONCE, keep their behaviour.
+        """
+        from acc.operating_modes import MODE_ASK_ONCE, normalise  # noqa: PLC0415
+        mode = normalise(task_payload.get("operating_mode") or getattr(
+            getattr(self, "_active_role", None), "default_operating_mode", "AUTO"))
+        queue = getattr(self, "_oversight_queue", None)
+        if mode != MODE_ASK_ONCE or queue is None:
+            return executed, queued
+        from acc import plan_card as PC  # noqa: PLC0415
+        staffing = [p for p in executed if getattr(p, "kind", "") in PC.STAFFING_KINDS]
+        if not staffing:
+            return executed, queued
+        from acc.mission import MissionStore, thread_keys  # noqa: PLC0415
+        threads = thread_keys(task_payload)
+        mission = None
+        try:
+            mission = await MissionStore.for_queue(queue).for_threads(threads)
+        except Exception:  # noqa: BLE001 -- no mission: ask, the safe answer
+            logger.debug("plan_card: mission lookup failed", exc_info=True)
+        amendment = False
+        if mission is not None:
+            if not mission.plan:
+                return executed, queued  # a 058 mission (first gated call): unchanged
+            approved = PC.Plan.from_dict(mission.plan)
+            held = [p for p in staffing if PC.covers(approved, p)]
+            if not held:
+                return executed, queued
+            plan = PC.derive(held, goal=approved.goal)
+            amendment = True
+        else:
+            held = staffing
+            goal = str(task_payload.get("content") or task_payload.get("task_description") or "")[:300]
+            stated = PC.parse_plan(str(getattr(result, "output", "") or ""))
+            derived = PC.derive(held, goal=goal)
+            plan = PC.merge(stated, derived) if stated is not None else derived
+            if not plan.goal:
+                plan.goal = goal
+        perception = getattr(getattr(self, "_cognitive_core", None), "_perception", None)
+        PC.annotate_installed_idle(plan, perception)
+        held_ids = {getattr(p, "proposal_id", "") for p in held}
+        executed = [p for p in executed if getattr(p, "proposal_id", "") not in held_ids]
+        summary = PC.summary_line(plan, amendment=amendment)
+        # The same plan already waiting for an answer (a proactive wake-up
+        # repeating itself, a re-sent prompt) is not asked twice.
+        try:
+            waiting = await queue.pending()
+        except Exception:  # noqa: BLE001 -- cannot tell: ask
+            waiting = []
+        if any(str(getattr(i, "summary", "")) == summary for i in waiting or []):
+            logger.info("plan_card: an identical card is already waiting (%s) -- not queued again", summary)
+            return executed, queued
+        from acc.assistant_proposal import AssistantProposal  # noqa: PLC0415
+        rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+        risk = max((getattr(p, "risk_level", "") or "MEDIUM" for p in held),
+                   key=lambda r: rank.get(str(r).upper(), 1))
+        from acc.workspace import workspace_root  # noqa: PLC0415
+        workspace = str(workspace_root())
+        first = held[0]
+        card = AssistantProposal(
+            kind="plan",
+            risk_level=risk,
+            summary=summary,
+            rationale=plan.goal,
+            collective_id=collective_id,
+            agent_id=getattr(first, "agent_id", "") or self.agent_id,
+            task_id=str(task_payload.get("task_id") or ""),
+            operator_id=getattr(first, "operator_id", "default") or "default",
+            goal_text=getattr(first, "goal_text", "") or plan.goal,
+            params={
+                "plan": plan.to_dict(),
+                "proposals": [p.to_payload() for p in held],
+                "threads": threads,
+                "workspace": workspace,
+                "mission_id": getattr(mission, "mission_id", "") if amendment else "",
+                "amendment": amendment,
+                "task": {k: task_payload.get(k) for k in ("task_id", "session_id", "operating_mode")
+                         if task_payload.get(k) is not None},
+                "question": PC.plan_question(plan, amendment=amendment, workspace=workspace).to_dict(),
+            },
+        )
+        logger.info(
+            "plan_card: %s held %d staffing proposal(s) in one card (%s)",
+            "amendment" if amendment else "plan", len(held), card.summary,
+        )
+        return executed, [*queued, card]
+
+    async def _dispatch_plan(self, collective_id: str, card, approver_id: str, answer: str) -> None:
+        """An approved plan card: create or extend the mission, record the
+        plan, then run the held proposals through the normal execute path
+        (the mission now covers them, so the spawn/route handover applies)."""
+        from acc import plan_card as PC  # noqa: PLC0415
+        from acc.assistant_proposal import AssistantProposal  # noqa: PLC0415
+        from acc.mission import MissionStore  # noqa: PLC0415
+        if answer == PC.ANSWER_REFUSE:
+            return
+        params = card.params or {}
+        plan = PC.Plan.from_dict(params.get("plan"))
+        held = [AssistantProposal.from_payload(p) for p in params.get("proposals") or []]
+        task = dict(params.get("task") or {})
+        mission_id = ""
+        queue = self._oversight_queue
+        # Only "allow the plan" creates (or extends) a mission.  A plain
+        # approval with no option chosen (the Compliance pane, `acc-cli
+        # oversight approve`) runs the steps once, like "just these steps":
+        # the narrower reading of a yes, as the 058 mission card does.
+        if queue is not None and answer == PC.ANSWER_PLAN:
+            store = MissionStore.for_queue(queue)
+            if params.get("amendment") and params.get("mission_id"):
+                m = await store.get(str(params["mission_id"]))
+                if m is not None:
+                    m.plan = PC.merge(PC.Plan.from_dict(m.plan), plan).to_dict()
+                    await store.save(m)
+                    mission_id = m.mission_id
+                    PC.record(mission_id, PC.EVENT_AMENDED, plan=plan, by=approver_id)
+            else:
+                m = await store.create(
+                    list(params.get("threads") or []), principal=card.operator_id,
+                    approver=approver_id, workspace=str(params.get("workspace") or ""),
+                    plan=plan.to_dict(),
+                )
+                mission_id = m.mission_id
+                PC.record(mission_id, PC.EVENT_APPROVED, plan=plan, by=approver_id,
+                          threads=m.threads, task_id=card.task_id)
+        logger.info(
+            "plan_card: %s approved by %s (answer %s) -> mission %s, %d proposal(s)",
+            card.proposal_id, approver_id, answer or "-", mission_id or "-", len(held),
+        )
+        # With a mission the held proposals are covered under ASK_ONCE; with
+        # "just these steps" there is none, and AUTO runs them this once.
+        task["operating_mode"] = "ASK_ONCE" if mission_id else "AUTO"
+        await self._handle_assistant_proposals(
+            _HeldProposals(held), task, collective_id,
+        )
+
     async def _maybe_dispatch_assistant_proposal(
         self,
         collective_id: str,
@@ -1658,6 +1842,7 @@ class Agent:
         approver_id: str = "",
         approver_tier: str = "",
         approvals: list[dict] | None = None,
+        answer: str = "",
     ) -> None:
         """When ``oversight_id`` matches a cached Assistant proposal,
         publish the underlying mutation.
@@ -1814,6 +1999,11 @@ class Agent:
                 "assistant_proposal: cached payload malformed for %s",
                 oversight_id,
             )
+            return
+        if proposal.kind == "plan":
+            # 059: the plan creates (or extends) the mission and dispatches
+            # exactly what it holds, through the normal execute path.
+            await self._dispatch_plan(collective_id, proposal, approver_id, answer)
             return
         try:
             ok = await dispatch_approved_proposal(
@@ -2323,6 +2513,9 @@ class Agent:
                 # Other roles publish [] (cheap, omitted on the wire).
                 "oversight_pending_items": oversight_pending_items,
                 "oversight_recent_items": oversight_recent_items,
+                # 058 Phase 1 -- the collective's "ask once" missions (shared
+                # Redis, so the arbiter's list is the whole picture).
+                "missions": await self._mission_summaries(),
                 # `20260903-work-board-tui` Phase 2 -- arbiter-only plan
                 # summaries so a late-joining Board cold-starts; [] elsewhere.
                 "active_plans": (
@@ -2628,6 +2821,8 @@ class Agent:
                 from acc.attribution import (  # noqa: PLC0415
                     requester_of as _requester_of,
                 )
+                from acc.mission import thread_keys as _mission_thread_keys  # noqa: PLC0415
+                from acc.workspace import workspace_root as _workspace_root  # noqa: PLC0415
                 invocations = parse_invocations(result.output)
                 if invocations:
                     # PR-L (D-003) — resolve the operating mode for
@@ -2662,6 +2857,11 @@ class Agent:
                         # UX-09 -- and the person it was admitted for, so the
                         # decision panel can say whose work is being approved.
                         requester=_requester_of(data),
+                        # 058 Phase 1 -- the thread a mission is keyed to (the
+                        # session and the task: a hand-off and a continuation
+                        # keep the task id) and the workspace it is scoped to.
+                        thread_ids=_mission_thread_keys(data),
+                        workspace=str(_workspace_root()),
                     )
                     logger.info(
                         "task_loop: dispatched %d capability invocation(s) "
@@ -2832,6 +3032,17 @@ class Agent:
                     "compliance_health_score", 1.0,
                 ) or 0.0),
             }
+            # 058 K1 -- how often this task asked a person, and how it ended.
+            # Absent when the task dispatched no tool, so older consumers see
+            # the body they always saw.
+            if outcomes:
+                from acc.capability_dispatch import ask_stats  # noqa: PLC0415
+                complete_body["asks"] = ask_stats(outcomes)
+            # 058 Phase 2 -- where the work is heading: what ran, what waits on
+            # a person, the mission it ran under, the agent's own next step.
+            from acc.heading import heading as _heading  # noqa: PLC0415
+            _mid = next((o.mission_id for o in outcomes if getattr(o, "mission_id", "")), "")
+            complete_body["heading"] = _heading(outcomes, result.output or "", mission_id=_mid)
             # PR-1 — echo cluster_id back when present so the cluster
             # fan-in aggregator (PR-4 TUI panel + arbiter PR-2) can
             # match this completion to its originating cluster spawn.
@@ -4501,6 +4712,9 @@ class Agent:
             except json.JSONDecodeError:
                 logger.warning("oversight: invalid JSON payload")
                 return
+            if payload.get("signal_type") == "MISSION_CONTROL":
+                await self._handle_mission_control(payload)
+                return
 
             oversight_id = payload.get("oversight_id", "")
             decision = (payload.get("decision") or "").upper()
@@ -4545,6 +4759,7 @@ class Agent:
                     await self._maybe_dispatch_assistant_proposal(
                         collective_id, oversight_id, approver,
                         approver_tier=approver_tier, approvals=approvals,
+                        answer=answer,
                     )
                 elif decision == "DELEGATE":
                     # `20260925-decisions-that-wait-and-move` (UX-06) -- the

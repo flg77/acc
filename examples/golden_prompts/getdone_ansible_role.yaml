@@ -1,0 +1,17 @@
+name: getdone_ansible_role
+description: |
+  058 K1 "get things done" set. The devops engineer writes an idempotent role
+  and checks it, rather than only describing it.
+prompt: |
+  In the workspace, write an Ansible role "chrony" that installs chrony,
+  templates /etc/chrony.conf with two NTP servers from a variable and enables
+  the service. Add a playbook site.yml that applies it to localhost, then run
+  ansible-playbook --syntax-check site.yml and report the result.
+target_role: devops_engineer
+operating_mode: AUTO
+timeout_s: 900.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_contains:
+    - "chrony"

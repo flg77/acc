@@ -105,6 +105,10 @@ def _build_parser() -> argparse.ArgumentParser:
         sessions_cmd,
         setup_cmd,
         objective_cmd,
+        ask_cmd,
+        evals_cmd,
+        grants_cmd,
+        mission_cmd,
         oversight_cmd,
         plan_cmd,
         profile_cmd,
@@ -141,6 +145,10 @@ def _build_parser() -> argparse.ArgumentParser:
     scan_cmd.register(sub)
     setup_cmd.register(sub)
     objective_cmd.register(sub)
+    ask_cmd.register(sub)
+    evals_cmd.register(sub)
+    grants_cmd.register(sub)
+    mission_cmd.register(sub)
     oversight_cmd.register(sub)
     plan_cmd.register(sub)
     profile_cmd.register(sub)

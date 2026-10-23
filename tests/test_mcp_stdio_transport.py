@@ -312,3 +312,79 @@ def test_stdio_manifest_requires_command():
         MCPManifest(
             server_id="bad", purpose="x", transport="stdio", command=[],
         )
+
+
+# ---------------------------------------------------------------------------
+# Scoped environment (20261019-scoped-mcp-env-and-sandbox-env-names)
+# ---------------------------------------------------------------------------
+
+
+def test_stdio_env_keeps_the_base_and_drops_undeclared_secrets():
+    from acc.mcp.transports import stdio_env
+
+    env = stdio_env({}, environ={
+        "PATH": "/usr/bin", "HOME": "/home/acc", "HTTPS_PROXY": "http://proxy:3128",
+        "ANTHROPIC_API_KEY": "sk-agent", "REDIS_PASSWORD": "r", "MAAS_API_KEY": "m",
+    })
+    assert env == {"PATH": "/usr/bin", "HOME": "/home/acc", "HTTPS_PROXY": "http://proxy:3128"}
+
+
+def test_stdio_env_empty_declared_value_passes_the_agents_value_through():
+    """The manifests' "set on the host": ``GITHUB_PERSONAL_ACCESS_TOKEN: ""``
+    used to OVERWRITE the host's token with an empty string."""
+    from acc.mcp.transports import stdio_env
+
+    env = stdio_env({"GITHUB_PERSONAL_ACCESS_TOKEN": ""},
+                    environ={"PATH": "/usr/bin", "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_x"})
+    assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_x"
+
+
+def test_stdio_env_declared_name_the_agent_lacks_is_left_out():
+    from acc.mcp.transports import stdio_env
+
+    env = stdio_env({"S2_API_KEY": ""}, environ={"PATH": "/usr/bin"})
+    assert "S2_API_KEY" not in env
+
+
+def test_stdio_env_literal_declared_value_is_used_as_written():
+    from acc.mcp.transports import stdio_env
+
+    env = stdio_env({"LOG_LEVEL": "debug"}, environ={"LOG_LEVEL": "info"})
+    assert env["LOG_LEVEL"] == "debug"
+
+
+def test_stdio_env_passes_a_mounted_secret_through(tmp_path):
+    """Pass-through reads acc.secret_source, so a mounted Kubernetes Secret
+    reaches the server without ever being in the agent's os.environ."""
+    from acc.mcp.transports import stdio_env
+
+    (tmp_path / "GITHUB_PERSONAL_ACCESS_TOKEN").write_text("ghp_mounted", encoding="utf-8")
+    env = stdio_env({"GITHUB_PERSONAL_ACCESS_TOKEN": ""}, environ={
+        "ACC_SECRET_SOURCE": "mounted", "ACC_SECRET_DIR": str(tmp_path),
+    })
+    assert env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_mounted"
+
+
+@pytest.mark.asyncio
+async def test_stdio_server_cannot_see_an_undeclared_secret(monkeypatch):
+    """End to end: the spawned server sees its declared credential and not
+    the agent's LLM key."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-agent-secret")
+    monkeypatch.setenv("ACC_TEST_DECLARED", "declared-value")
+    probe = (
+        "import json, os, sys; sys.stdin.readline(); "
+        "print(json.dumps({'jsonrpc': '2.0', 'id': 1, 'result': {"
+        "'llm': os.environ.get('ANTHROPIC_API_KEY'), "
+        "'declared': os.environ.get('ACC_TEST_DECLARED')}}), flush=True)"
+    )
+    manifest = MCPManifest(
+        server_id="env_probe", purpose="env probe", transport="stdio",
+        command=[sys.executable, "-c", probe], env={"ACC_TEST_DECLARED": ""}, timeout_s=5,
+    )
+    transport = StdioTransport(manifest)
+    await transport.start()
+    try:
+        reply = await transport.send_rpc({"jsonrpc": "2.0", "id": 1, "method": "probe"})
+    finally:
+        await transport.close()
+    assert reply["result"] == {"llm": None, "declared": "declared-value"}

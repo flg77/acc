@@ -73,17 +73,57 @@ required).
   reply, reasoning stream and outcomes land in the thread; a follow-up in the
   same session continues the conversation (replayed from the tracelog).
   `@path`, `@dir/`, `@diff` attach workspace content as *data*.
-- **Operating modes** — `/mode AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS` (or
-  `Shift+Tab`). Under `AUTO` a curated infuse / spawn / route executes and is
-  tracked as an `AUTO_APPROVED` row; system access and acting on your behalf
-  are always asked; `ASK_PERMISSIONS` asks for everything. A call that
-  **deletes or overwrites data** (`rm`, `find -delete`, `git push --force`,
-  `kubectl delete`, `DROP TABLE`, a manifest's `destructive: true`, …) is asked
-  as a question in every mode but `PLAN`, and refused where nobody can be asked.
+- **Operating modes** — `/mode ASK_ONCE|AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS`
+  (or `Shift+Tab`). The surfaces show what each one does:
+
+  | Mode | Label | What asks |
+  |---|---|---|
+  | `ASK_ONCE` (default) | **Ask once** | One plan card or mission card per piece of work; then the work runs |
+  | `AUTO` | Ask per system call | Each system-access call (outside the sandbox) and each act in your name |
+  | `ACCEPT_EDITS` | Ask before edits | Writes, role updates, scale/stop |
+  | `ASK_PERMISSIONS` | Ask me each step | Everything |
+  | `PLAN` | Plan only | Nothing runs |
+
+  In every mode but `PLAN`, a call that **deletes or overwrites data** (`rm`,
+  `find -delete`, `git push --force`, `kubectl delete`, `DROP TABLE`, a
+  manifest's `destructive: true`, …) is asked, and refused where nobody can be
+  asked. The one exception is inside a mission: a workspace `rm` through
+  `shell_exec` is backed up first and runs (only when `shell_exec` runs on the agent host, i.e. `ACC_SANDBOX_REQUIRED=0`; a sandboxed `rm` sees the sandbox's own filesystem, so it is asked instead). The full rule set is in
+  [security/constraints.md](security/constraints.md).
+- **Ask once: the plan card and the mission** — under `ASK_ONCE`, the
+  assistant's staffing proposals (install a pack, start a role, hand it the
+  work) wait in **one plan card**. The card lists the steps, the packs and
+  hosts, and on every install step the roles that are installed but not
+  running.
+  - **Allow the plan:** a mission is created, and the steps and the thread's
+    follow-ups run without asking again. That includes system access in the
+    workspace, up to 200 calls or 8 hours.
+  - **Just these steps:** they run once, with no mission. An approval with no
+    option chosen (Compliance, `acc-cli oversight approve`) means the same.
+  - A later proposal outside the plan raises one **amendment** card.
+  - Without a plan (another role, a direct prompt), the first gated call asks
+    the **mission card** instead: allow the mission / just this call / don't run
+    it / **always allow** (a standing grant instead of a mission).
+  - `/mission` (TUI) or `acc-cli mission list|show|close|revoke|purge|restore`.
+    Closing a mission reports every backed-up deletion; `purge` is your final
+    allowance, `restore` puts them back.
+- **Always allow** — a system-access question that no mission answers offers
+  `1 allow once · 2 always allow for <role> · 3 don't run it`. Choosing `2`
+  gives a **standing grant**: one role, one target (`skill:`, `mcp:` or
+  `host:`), in your name. That call is not asked again until you revoke the
+  grant with `acc-cli grants revoke`. Under "Ask me each step" no grant answers.
+  An `ssh_exec` to a host that is not on
+  the list asks the same way. "Always allow" adds the host to the agent's
+  OpenShell network policy.
+- **The sandbox is mandatory** — `shell_exec`, `python_exec` and `ssh_exec`
+  run inside the agent's OpenShell sandbox and refuse without one (set it up
+  with `deploy/openshell/`; `acc doctor --check sandbox`). Inside the sandbox,
+  workspace shell and Python are not asked about under Ask once or AUTO.
 - **Answering a request in the Prompt pane** — when a gate arrives the request
   region takes focus: a proposal batch offers `1 approve all · 2 reject all ·
-  a/d this row`; a capability gate `1 allow once · 2 allow for this task · 3
-  deny`; an escalation `1 allow for this task · 2 deny`. HIGH takes the key
+  a/d this row`; a plan card `1 allow the plan · 2 just these steps · 3 don't
+  do it`; a system-access or host question `1 allow once · 2 always allow for
+  <role> · 3 don't run it`; an escalation `1 allow for this task · 2 deny`. HIGH takes the key
   twice. `Esc` leaves it pending, `Ctrl+G` returns, `r` prefills a reason. Every
   answer is recorded in Compliance. A decision is final — a conflicting second
   one is refused. Once answered, a request stays out of the pane even while
@@ -129,7 +169,10 @@ required).
   the key twice; "allow for this task", a bare "yes" and `/allow` never answer
   it (`/disallow` still refuses it). A call it lets through is marked
   `⚠ critical` in the transcript and the session trace, with the answer and who
-  gave it.
+  gave it. Inside a mission, a workspace `rm` through `shell_exec` is not asked:
+  it is backed up to `.acc-quarantine/` first, and the mission's closing report
+  lists it; `acc-cli mission purge` is the final allowance. This applies when
+  `shell_exec` runs on the agent host; a sandboxed `rm` is asked.
 - **Who sees what** — an operator sees the whole collective; anyone else
   (a viewer token, a Slack requester at a shared TUI) sees the tasks, plan
   steps, gates and signals they asked for, on every surface.
@@ -145,7 +188,14 @@ required).
   `Apply` publishes a signed `ROLE_UPDATE`), Marketplace / Catalogs (signed
   `.accpkg` packs; cosign-verified on install; a built-in day-0 catalog).
 - **Plans** — `acc-cli plan submit plan.json --watch`; the arbiter runs the DAG;
-  watch it on the Board or in Comms.
+  watch it on the Board or in Comms. (The assistant's *plan card* is a
+  different thing: see "Ask once" above.)
+- **Where the work is heading** — after each step the TUI, the Web GUI and
+  `acc-cli ask` show one line: done, doing now, next, and what waits on you.
+  Every task also records how many times it asked (`asks` on `TASK_COMPLETE`,
+  in the trace and in MLflow).
+- **From a plain shell** — `acc-cli ask "<task>"` submits the task, streams
+  its progress and asks its questions in the terminal.
 - **Memory** — per requester / channel / isolated scopes; `acc-cli memory notes
   --scope …`; publication to the shared tier is a proposal with a quorum of two
   people (`memory propose --to <scope>`); `acc-cli memory forget --person <id>`
@@ -159,7 +209,10 @@ required).
   `backup`/`restore` (no secret values), `sessions browse/resume/retention`,
   `checkpoints`, `logs --task`, `objective`, `hooks`, `scan`, `mcp`, `auth`
   (credential pools), `egress`, `access` (who may ask, and how far — a
-  requester's work stops at MEDIUM unless the role is narrower), `secrets scope`.
+  requester's work stops at MEDIUM unless the role is narrower), `secrets scope`,
+  `mission`, `grants` (`list`, `add`, `revoke`, `sync-sandbox`), `posture scan`
+  (is the configuration safe to grant on; `acc doctor --check posture`), `evals`
+  (promptfoo and garak for the `edge_secure` profile).
 - **Instances** — `acc-cli instance create alice-dev --owner system:alice
   --profile edge-lean --pack @acc/workspace-roles`, then `./acc-deploy.sh
   instance up alice-dev` and `eval "$(acc-cli instance env alice-dev)" &&
@@ -187,7 +240,11 @@ Key environment variables: `ACC_NATS_URL`, `ACC_REDIS_URL`, `ACC_COLLECTIVE_ID`,
 from a mounted Secret — rotation without a restart; `acc-cli doctor --check
 secrets`), `ACC_THREAD_CONTINUITY=0` (kill switch), `ACC_PROMPT_PERMISSION_REGION=0`
 (plain gate card), `ACC_WORKSPACE_CHECKPOINTS`, `ACC_COMPAT_API_KEYS`,
-`ACC_WEBGUI_AUTH_MODE`. The schema is derived from the config models:
+`ACC_WEBGUI_AUTH_MODE`, the sandbox (`ACC_SANDBOX_NAME`, `OPENSHELL_GATEWAY`,
+`ACC_SANDBOX_REQUIRED` — default `1`, `0` only on a developer's own box —
+`ACC_SANDBOX_ENABLED`, `ACC_OPENSHELL_BIN`), missions (`ACC_MISSION_MAX_CALLS`,
+default 200; `ACC_MISSION_TTL_S`, default 8 h) and `ACC_SSH_HOST_ALLOWLIST` (a
+seed list of hosts; more are granted once). The schema is derived from the config models:
 `acc-cli config check --all` lists every key.
 
 ## Setting a credential from the web GUI
@@ -247,7 +304,7 @@ sends everything to that list.
 ## Keyboard shortcuts (TUI)
 
 `Ctrl+A` + digit / `Ctrl+P` — jump to a screen · `?` help · `Ctrl+S` send ·
-`Shift+Tab` mode · `Ctrl+G` the pending decision · `Ctrl+O` reasoning · `Ctrl+L` clear · Board:
+`Shift+Tab` mode (Ask once → AUTO → Plan → Ask before edits → Ask me each step) · `Ctrl+G` the pending decision · `Ctrl+O` reasoning · `Ctrl+L` clear · Board:
 `c` `r` `a` `g` `Enter` · Compliance: `a` approve, `r` reject.
 
 ## Troubleshooting

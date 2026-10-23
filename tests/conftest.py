@@ -68,6 +68,14 @@ def isolated_tracelog(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def sandbox_not_required(monkeypatch):
+    """The suite is a developer's box: exec skills run locally here.  The
+    sandbox is mandatory everywhere else (058 Q2); a test about that sets
+    ``ACC_SANDBOX_REQUIRED`` itself (monkeypatch inside the test runs after)."""
+    monkeypatch.setenv("ACC_SANDBOX_REQUIRED", "0")
+
+
+@pytest.fixture(autouse=True)
 def forget_deploy_mode(monkeypatch, tmp_path):
     """``acc.deploy.environment()`` caches its answer for the process; a test
     that sets ``ACC_DEPLOY_MODE`` / ``ACC_CORPUS_NAME`` must not leak a

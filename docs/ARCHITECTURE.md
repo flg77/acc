@@ -18,7 +18,9 @@ with a human oversight queue for what a role's grants do not cover.
 | **hub_curator** (role, v0.14.1) | The enterprise brain's only agent: no chat surface, no skills; on its schedule it proposes qualifying shared notes from the instances bound to its hub into the hub's enterprise tier; a person approves at operator tier. |
 | **assistant** (role) | The operator's router: proposes infusion of catalog roles, specialist hand-off (spawn/route), never learns across people without a publish proposal (D-011, memory Phases 4–6). |
 | `acc/oversight.py` `HumanOversightQueue` | Pending / decided items in Redis (shared by every cell). A decision is final; one row per decision; one row per submit (D-013). A row can carry a typed **question** (`acc/question.py`, v0.17.0): the options and whether each lets the action run; the chosen option comes back as `answer` on the same decision (D-022). A gate that stops waiting expires its row. |
-| `acc/capability_dispatch.py` + `acc/operating_modes.py` | Skill / MCP invocation behind the role's `allowed_*`, gate categories (system access, acts on behalf), escalation for an off-role grant, operating modes `AUTO / PLAN / ACCEPT_EDITS / ASK_PERMISSIONS`. The requester's **category ceiling** (`acc/identity.py`, D-014) is checked first: above it, refused, never asked. A call that **deletes or overwrites data** (`destructive_evidence`: an exec skill's command, a manifest's `destructive`, or the name) is asked as a question in every mode but PLAN, refused with no queue, and marked `critical` on the outcome when let through. A role may take **one follow-up turn with what its tools returned** (`tool_result_turn`, off by default): the results are appended to the task content and the task is processed once more, so tool output meets the same pre-LLM guardrails as any other input. Exactly one extra turn, and markers in it are not dispatched (D-026). Markers are read with a JSON scanner, so several in one reply all dispatch. An MCP server is reached over `streamable-http` (the MCP HTTP binding: a session id, and responses that may stream), `stdio`, or plain `http` for a JSON-RPC endpoint that is not an MCP server (D-027). |
+| `acc/capability_dispatch.py` + `acc/operating_modes.py` | Skill / MCP invocation behind the role's `allowed_*`, gate categories (system access, acts on behalf), escalation for an off-role grant, operating modes `ASK_ONCE` (default) `/ AUTO / PLAN / ACCEPT_EDITS / ASK_PERMISSIONS`. The requester's **category ceiling** (`acc/identity.py`, D-014) is checked first: above it, refused, never asked. A call that **deletes or overwrites data** (`destructive_evidence`: an exec skill's command, a manifest's `destructive`, or the name) is asked as a question in every mode but PLAN (inside a mission a workspace `rm` is backed up first instead), refused with no queue, and marked `critical` on the outcome when let through. The order of checks and answers is in [security/constraints.md](security/constraints.md). A role may take **one follow-up turn with what its tools returned** (`tool_result_turn`, off by default): the results are appended to the task content and the task is processed once more, so tool output meets the same pre-LLM guardrails as any other input. Exactly one extra turn, and markers in it are not dispatched (D-026). Markers are read with a JSON scanner, so several in one reply all dispatch. An MCP server is reached over `streamable-http` (the MCP HTTP binding: a session id, and responses that may stream), `stdio`, or plain `http` for a JSON-RPC endpoint that is not an MCP server (D-027). |
+| Ask once (`acc/mission.py`, `acc/plan_card.py`, `acc/grants.py`, `acc/hosts.py`, `acc/posture_scan.py`, `acc/heading.py`) | A **mission** answers the thread's in-scope system-access calls after one approval. The assistant's staffing proposals are held in one **plan card**; approving it creates the mission, and the plan is recorded in the tracelog (`mission-<id>`). A **standing grant** covers one role and one target (`skill:`, `mcp:`, `host:`), given by "always allow" or `acc-cli grants add`. An ssh host's approval reaches the adapter through `acc.hosts`, never through the call's arguments. The **posture scan** withholds every mission and grant from a role with a blocking finding. The heading line says what is done, now, next and waiting. |
+| `acc/sandbox/` | OpenShell Model 2. `runner.py` delegates `shell_exec`, `python_exec` and `ssh_exec` to the agent's sandbox and refuses without one (`ACC_SANDBOX_REQUIRED`, default on). `policy.py` adds granted ssh hosts to the sandbox's network policy (`openshell policy update`). |
 | `acc/backends/` | Pluggable LLM (vLLM, Ollama, Anthropic, OpenAI-compatible, with a failover chain), vector (LanceDB / Milvus / TurboVec), signaling (NATS), metrics (OTel / MLflow). |
 | Memory (`acc/memory_*`, `acc/attribution.py`, `acc/memory_scope.py`, `acc/memory_curate.py`) | Episodes per requester + scope, private / shared note tiers, publish proposals with a quorum of people, erasure. A **hub's enterprise tier** (D-016) is the only cross-instance read path; every note carries the highest ceiling of its sources and is never read below it. |
 | `acc/pkg/` | `.accpkg` packages: cosign-verified install (keyless bundle or key), catalogs (built-in day-0, https, local), AgentBOM — which pins the **governance** it was assessed against (`spec.governance`) under the same rules as its capability pins, while `spec.policy` stays the install-time Enterprise Contract reference (D-024). |
@@ -40,7 +42,7 @@ with a human oversight queue for what a role's grants do not cover.
 - **A prompt.** A surface publishes `TASK_ASSIGN` (`target_role`, `operating_mode`,
   `requester`, optional `session_id`); the agent that owns the role runs the
   cognitive core; `TASK_PROGRESS` streams steps; `TASK_COMPLETE` carries the
-  reply, invocations and outcome; a task whose LLM call failed still ends,
+  reply, invocations, outcome and how often the task asked (`asks`); a task whose LLM call failed still ends,
   as a blocked completion with `task_error` (v0.12.1). Continuity replays
   earlier turns from the durable tracelog, never from a client transcript
   (RP-02).
@@ -50,7 +52,11 @@ with a human oversight queue for what a role's grants do not cover.
   it without asking); the arbiter HEARTBEAT carries the pending list; a human
   answers in the Prompt pane or Compliance (or `acc-cli`), which publishes
   `OVERSIGHT_DECISION`; every agent applies it, one claims the dispatch.
-  Auto-executed proposals under `AUTO` are recorded as `AUTO_APPROVED` rows.
+  Before asking, the dispatcher tries, in order: the thread's mission, a
+  standing grant, the approved plan's hosts (ssh). A call one of them answers
+  is recorded as an `AUTO_APPROVED` row naming it, as are proposals executed
+  under `AUTO`. Under `ASK_ONCE` the assistant's staffing proposals wait in
+  one plan card.
 - **A plan.** `PLAN` → the arbiter's executor dispatches steps as tasks in
   dependency order (fan-out clusters where the estimator says so), each step
   carrying the plan's attribution — requester, tier, ceiling, scope — so it
@@ -80,7 +86,12 @@ with a human oversight queue for what a role's grants do not cover.
   pods, oauth2-proxy/Keycloak in front of the Web GUI, the console plugin.
 - **Code execution**: OpenShell Model 2 — agents stay rich pods and delegate
   `shell/python/ssh_exec` to gateway-created sandboxes (`acc/sandbox/`); fails
-  closed when the gateway is unreachable.
+  closed when the gateway is unreachable. **Mandatory by default** on every
+  target: without a sandbox these skills refuse (`ACC_SANDBOX_REQUIRED=1`).
+  Standalone and edge hosts get one from `deploy/openshell/`. Granted ssh hosts
+  are added to the sandbox's network policy. stdio MCP servers do not run in
+  the sandbox yet; they start with a scoped environment (only declared
+  variables).
 - **Delivery to a host**: ACC installs as an RPM. The package splits —
   `acc-runtime` is what runs (the vendored virtualenv, the commands, the data
   trees under `/usr/share/acc`) and `acc` adds the host layer on top (the

@@ -82,7 +82,7 @@ An unbounded tool surface is a governance gap, and these are the servers it appl
 | `slack_post` | Post a message to a Slack channel via the Web API chat.postMessage. | `MEDIUM` | `send_message` | `{channel: string, text: string}` | `adapter.SlackPostSkill` |
 | `speech_synthesize` | Synthesize speech audio (WAV) from text (Piper, fully on-device). | `MEDIUM` | — | `{text: string, out_path: string?}` | `adapter.SpeechSynthesizeSkill` |
 | `speech_transcribe` | Transcribe a local audio file to text (Whisper, fully on-device). | `MEDIUM` | — | `{audio_path: string, language: string?}` | `adapter.SpeechTranscribeSkill` |
-| `ssh_exec` | Run a command on a remote host via SSH (argv only, key auth, allowlisted hosts). | `HIGH` | `execute_ssh` | `{host: string, user: string?, argv: array?, cmd: string?, port: integer?, identity_file: string?, timeout_s: integer?}` | `adapter.SshExecSkill` |
+| `ssh_exec` | Run a command on a remote host via SSH (argv only, key auth, granted hosts, inside the sandbox). | `HIGH` | `execute_ssh` | `{host: string, user: string?, argv: array?, cmd: string?, port: integer?, identity_file: string?, timeout_s: integer?}` | `adapter.SshExecSkill` |
 | `stat_path` | Stat a filesystem path (size, mtime, type). | `LOW` | — | `{path: string}` | `adapter.StatPathSkill` |
 | `tail_text` | Read the last N lines of a UTF-8 text file (cross-platform). | `LOW` | — | `{path: string, lines: integer?}` | `adapter.TailTextSkill` |
 | `telegram_send` | Send a text message to a Telegram chat via the official Bot API. | `MEDIUM` | `send_message` | `{chat_id: any, text: string}` | `adapter.TelegramSendSkill` |

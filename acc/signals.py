@@ -168,6 +168,10 @@ filter by their own ``pod_uid``."""
 
 # Compliance / EU AI Act human oversight signals (ACC-12)
 SIG_OVERSIGHT_DECISION = "OVERSIGHT_DECISION"
+# 058 Phase 1 -- the operator closes, revokes, purges or restores an "ask
+# once" mission (acc.mission).  Rides on the oversight subject space so every
+# surface that may decide may also end a mission, and every agent hears it.
+SIG_MISSION_CONTROL = "MISSION_CONTROL"
 # 1.4 -- a pending Assistant proposal announced on subject_assistant_proposal;
 # stamped so the TUI observer's signal_type router can pick it up.
 SIG_ASSISTANT_PROPOSAL = "ASSISTANT_PROPOSAL"
@@ -249,6 +253,7 @@ SIGNAL_MODES: dict[str, str] = {
     SIG_BRIDGE_RESULT:          SIGNAL_MODE_ENDOCRINE,
     SIG_DOMAIN_DIFFERENTIATION: SIGNAL_MODE_ENDOCRINE,
     SIG_OVERSIGHT_DECISION:     SIGNAL_MODE_ENDOCRINE,
+    SIG_MISSION_CONTROL:        SIGNAL_MODE_ENDOCRINE,
     # 1.4 / 1.5 -- a pending proposal and what became of it: every agent
     # and the TUI observer read them, no receptor filtering (like the
     # decision they lead to).
@@ -1104,6 +1109,15 @@ def subject_oversight_decision(collective_id: str, oversight_id: str) -> str:
         # → "acc.sol-01.oversight.ov-7c91a"
     """
     return f"acc.{collective_id}.oversight.{oversight_id}"
+
+
+def subject_mission_control(collective_id: str) -> str:
+    """The subject a MISSION_CONTROL is published on (058 Phase 1).
+
+    One token under ``acc.{cid}.oversight.*``: the surfaces that may publish
+    an OVERSIGHT_DECISION may publish it, and the agents' decision subscriber
+    receives it, with no new NATS permission."""
+    return f"acc.{collective_id}.oversight.mission-control"
 
 
 def subject_oversight_decision_all(collective_id: str) -> str:

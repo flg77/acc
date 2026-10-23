@@ -15,7 +15,8 @@ The schema is intentionally tight (``extra="forbid"``) so misspelt
 fields are caught at parse time rather than silently ignored.
 
 JSON Schema export (for non-Python consumers) lives at
-``acc/pkg/schema/accpkg-v1.json``. Re-emit with
+``acc/pkg/schema/accpkg-v1.json`` (the file name predates v2; it covers
+both schema versions). Re-emit with
 ``python -m acc.pkg.manifest --emit-schema``.
 """
 
@@ -213,6 +214,13 @@ class RoleRef(BaseModel):
 PackagedTier = Literal["bundle_in_role", "own_pack"]
 
 
+_REF_SHA256_DESCRIPTION = (
+    "Schema v2 (061): sha256 tree digest of the capability directory at "
+    "``path`` (acc.pkg.build.tree_digest); stamped by `acc-pkg "
+    "build`, empty in a source manifest and in a v1 manifest."
+)
+
+
 class SkillRef(BaseModel):
     """A skill bundled inside the package tree."""
 
@@ -221,6 +229,7 @@ class SkillRef(BaseModel):
     name: str = Field(..., min_length=1)
     tier: PackagedTier
     path: str = Field(..., description="Path inside the package, e.g. skills/<name>/")
+    sha256: str = Field("", description=_REF_SHA256_DESCRIPTION)
 
 
 class McpRef(BaseModel):
@@ -231,6 +240,7 @@ class McpRef(BaseModel):
     name: str = Field(..., min_length=1)
     tier: PackagedTier
     path: str = Field(..., description="Path inside the package, e.g. mcps/<name>/")
+    sha256: str = Field("", description=_REF_SHA256_DESCRIPTION)
 
 
 class BundleRef(BaseModel):
@@ -271,16 +281,21 @@ class SignedDepEntry(BaseModel):
 
 
 class AccPkgManifest(BaseModel):
-    """The top-level ``accpkg.yaml`` model — v1.
+    """The top-level ``accpkg.yaml`` model — v1 and v2.
 
     A package MAY ship zero of any one component type (a memory-seed-
     only pack has no roles + no skills + no mcps), but the manifest
     must declare ``name`` + ``version`` + ``schema_version`` always.
+
+    Schema v2 (061, capability digests) adds ``SkillRef.sha256`` /
+    ``McpRef.sha256``.  ``acc-pkg build`` stamps a v2 manifest; the reader
+    accepts both, so a v1 pack still installs (it loads with a PS-07
+    finding in ``report`` mode and is refused in ``enforce`` mode).
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 1
     name: str = Field(..., description="Scoped package name, @scope/name")
     version: str = Field(..., description="Exact semver of this build")
     description: str = ""
@@ -343,6 +358,23 @@ class AccPkgManifest(BaseModel):
             raise ValueError(
                 "content_sha256 must be 64 hex chars (or empty in source)"
             )
+
+        # Per-capability digests (schema v2).  A v1 manifest has none; a
+        # built v2 manifest has one on every skill and MCP.
+        for ref in [*self.skills, *self.mcps]:
+            if ref.sha256 and not re.fullmatch(r"[0-9a-f]{64}", ref.sha256):
+                raise ValueError(
+                    f"{ref.name}: sha256 must be 64 hex chars (or empty in source)"
+                )
+            if ref.sha256 and self.schema_version < 2:
+                raise ValueError(
+                    f"{ref.name}: a per-capability sha256 needs schema_version 2"
+                )
+            if self.schema_version >= 2 and self.content_sha256 and not ref.sha256:
+                raise ValueError(
+                    f"{ref.name}: a built schema v2 manifest carries a sha256 "
+                    "for every skill and MCP"
+                )
 
         return self
 

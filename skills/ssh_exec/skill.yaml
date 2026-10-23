@@ -24,7 +24,7 @@
 # include `execute_ssh` in `allowed_actions`.  Every approved call
 # enqueues an OVERSIGHT_SUBMIT on the Compliance pane.
 
-purpose:        "Run a command on a remote host via SSH (argv only, key auth, allowlisted hosts)."
+purpose:        "Run a command on a remote host via SSH (argv only, key auth, granted hosts, inside the sandbox)."
 version:        "0.1.0"
 adapter_class:  "SshExecSkill"
 risk_level:     "HIGH"

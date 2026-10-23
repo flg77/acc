@@ -107,6 +107,11 @@ class ExpectsBlock(BaseModel):
     """Each named target must appear among the reply's
     ``invocations``.  Useful for ``["code_generate"]`` etc."""
 
+    asks_max: Optional[int] = None
+    """058 K1 -- the most times the task may ask a person (the reply's
+    ``asks.asks``).  None disables the check; a task that dispatched no tool
+    asked nobody and passes."""
+
 
 class GoldenPrompt(BaseModel):
     """One golden-prompt definition (one YAML file)."""
@@ -158,6 +163,9 @@ class GoldenResult(BaseModel):
     = not reported (render "—", never a perfect score)."""
     eval_verdict: str = ""
     """The model's ``[EVAL_OUTCOME]`` self-verdict, when present (proposal G P2)."""
+    asks: dict = Field(default_factory=dict)
+    """How often the task asked a person and how that ended (058 K1).  Empty
+    when the agent did not report it."""
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +290,13 @@ def evaluate(prompt: GoldenPrompt, reply: dict, elapsed_ms: int) -> GoldenResult
                 f"invocations missing target={need!r} (saw {sorted(seen_targets)})"
             )
 
+    # 6. asks (058 K1)
+    asks = reply.get("asks") if isinstance(reply.get("asks"), dict) else {}
+    if expects.asks_max is not None:
+        n = int(asks.get("asks", 0) or 0)
+        if n > expects.asks_max:
+            failures.append(f"asks: {n} exceed the budget of {expects.asks_max}")
+
     excerpt = output[:200] + ("…" if len(output) > 200 else "")
     return GoldenResult(
         name=prompt.name,
@@ -289,6 +304,7 @@ def evaluate(prompt: GoldenPrompt, reply: dict, elapsed_ms: int) -> GoldenResult
         elapsed_ms=elapsed_ms,
         output_excerpt=excerpt,
         failures=failures,
+        asks=dict(asks),
     )
 
 
@@ -332,6 +348,9 @@ async def run_one(
             prompt=prompt.prompt,
             target_role=prompt.target_role,
             target_agent_id=prompt.target_agent_id or None,
+            # The prompt's mode was declared but never sent, so every golden
+            # run measured AUTO whatever the YAML said (found in 058 K1).
+            operating_mode=prompt.operating_mode,
         )
         reply = await channel.receive(task_id, timeout=prompt.timeout_s)
     except Exception as exc:
@@ -357,6 +376,7 @@ async def run_one(
         "blocked": getattr(reply, "blocked", False),
         "block_reason": getattr(reply, "block_reason", ""),
         "invocations": getattr(reply, "invocations", []) or [],
+        "asks": getattr(reply, "asks", None) or {},
     }
     result = evaluate(prompt, reply_dict, elapsed_ms)
     # Proposal G — stamp the join keys + the per-task signals the reply now

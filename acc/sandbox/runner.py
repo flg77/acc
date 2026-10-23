@@ -25,6 +25,17 @@ ENV_SANDBOX_NAME = "ACC_SANDBOX_NAME"       # the per-agent OpenShell sandbox to
 ENV_SANDBOX_ENABLED = "ACC_SANDBOX_ENABLED"  # "0"/"false"/… to force off even if a name is set
 ENV_OPENSHELL_BIN = "ACC_OPENSHELL_BIN"      # override the `openshell` CLI path
 ENV_OPENSHELL_GATEWAY = "OPENSHELL_GATEWAY"  # the registered gateway name (CLI reads it)
+# 058 Phase 3 (operator 2026-10-15, Q2: "the openshell sandbox is mandatory!
+# Doesn't matter where we are running").  On by default: an exec skill with no
+# sandbox to run in refuses rather than running on the host.  "0" exists for a
+# developer's own box and is reported by ``acc doctor`` as drift.
+ENV_SANDBOX_REQUIRED = "ACC_SANDBOX_REQUIRED"
+
+
+def sandbox_required(env: dict[str, str] | None = None) -> bool:
+    """Whether code execution must run in a sandbox (default yes, 058 Q2)."""
+    e = os.environ if env is None else env
+    return e.get(ENV_SANDBOX_REQUIRED, "").strip().lower() not in ("0", "false", "no", "off")
 
 
 class SandboxUnavailable(RuntimeError):
@@ -150,5 +161,12 @@ def maybe_run_sandboxed(
     """
     config = SandboxConfig.from_env(env)
     if not config.enabled:
+        if sandbox_required(env):
+            # 058 Phase 3 -- fail closed: no sandbox, no code execution.
+            raise SandboxUnavailable(
+                "code execution needs an OpenShell sandbox and this agent has none "
+                f"({ENV_SANDBOX_NAME} unset); provision one (deploy/openshell/README.md) "
+                f"or, on a developer's own box only, set {ENV_SANDBOX_REQUIRED}=0"
+            )
         return None
     return run_in_sandbox(argv, config, timeout_s=timeout_s).as_dict()

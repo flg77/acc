@@ -319,9 +319,9 @@ class TestConstitutionalInvariant:
 # ---------------------------------------------------------------------------
 
 
-def test_role_default_operating_mode_is_auto():
+def test_role_default_operating_mode_is_ask_once():
     role = _role()
-    assert role.default_operating_mode == "AUTO"
+    assert role.default_operating_mode == "ASK_ONCE"
 
 
 def test_role_can_set_default_operating_mode():

@@ -79,7 +79,7 @@ description: |
 | `transport`        | `http` or `stdio` — both implemented.  Use `http` for MCP servers running as a service (typically alongside the agent in compose); use `stdio` for CLI-shaped MCP servers spawned as subprocesses (Anthropic's reference SDK + most community servers ship in this shape). |
 | `url`              | Required for `http`.  Full base URL of the JSON-RPC endpoint. |
 | `command`          | Required for `stdio`.  Argv list, e.g. `["mcp-server-filesystem", "/app/workspace"]`.  Resolved against `$PATH`. |
-| `env`              | Per-server env var overrides for the spawned subprocess (`stdio` only).  Merged on top of the agent's own environment. |
+| `env`              | The variables the spawned subprocess may have (`stdio` only), beyond a non-secret base (`PATH`, `HOME`, locale, temp dirs, proxy, CA bundle). An empty value passes the agent's value through (from the environment or the mounted secret); a non-empty value is used as written. **Nothing else from the agent reaches the server**: not its LLM keys, Redis/NATS settings or another server's token. Declare every variable a server needs. |
 | `api_key_env`      | Name of the env var carrying a bearer token; sent as `Authorization: Bearer <value>`.  Empty = unauthenticated.  HTTP only. |
 | `allowed_tools`    | Operator-side sandbox.  Empty = "allow everything the server advertises"; non-empty = strict whitelist.  Tools blocked here are filtered out of `list_tools()` and raise `MCPToolNotFoundError` from `call_tool`. |
 | `denied_tools`     | Applied AFTER `allowed_tools`.  Useful when you want "everything except shell.exec". |

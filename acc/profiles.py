@@ -70,6 +70,11 @@ SETTABLE = (
     "compliance.cat_a_enforce",
     "compliance.runtime_enforce",
     "compliance.hipaa_mode",
+    # 058 Phase 4 -- the edge-secure profile.
+    "compliance.owasp_enforce",
+    "evals.mlflow_tracking_uri",
+    "evals.promptfoo_enabled",
+    "evals.garak_gate",
 )
 
 #: Changes that alter the security or governance posture. These are called out
@@ -83,6 +88,12 @@ POSTURE_KEYS = frozenset(
         "compliance.cat_a_enforce",
         "compliance.runtime_enforce",
         "compliance.hipaa_mode",
+        # 058 Phase 4 -- guardrails that block, and the release gate (and what
+        # it probes: dropping a probe weakens the gate as surely as turning
+        # it off).
+        "compliance.owasp_enforce",
+        "evals.garak_gate",
+        "evals.garak_probes",
     }
 )
 

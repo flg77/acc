@@ -151,7 +151,8 @@ async def test_operator_mode_badge_renders():
 @pytest.mark.asyncio
 async def test_mode_hint_and_shift_tab_cycles():
     """PR-V2 — the Mode dropdown is gone; a tiny hint shows the mode and
-    shift+tab (action_cycle_mode) cycles AUTO→PLAN→ACCEPT_EDITS→ASK."""
+    shift+tab (action_cycle_mode) cycles ASK_ONCE→AUTO→PLAN→ACCEPT_EDITS→ASK
+    (058: "Ask once" is the default)."""
     app = _PromptHarness()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -159,14 +160,14 @@ async def test_mode_hint_and_shift_tab_cycles():
         # No dropdown; the tiny hint widget exists instead.
         assert not screen.query("#select-operating-mode")
         screen.query_one("#prompt-mode-hint", Static)
-        assert screen._operating_mode == "AUTO"
+        assert screen._operating_mode == "ASK_ONCE"
         # Cycle.
         screen.action_cycle_mode()
         await pilot.pause()
-        assert screen._operating_mode == "PLAN"
-        for _ in range(3):
+        assert screen._operating_mode == "AUTO"
+        for _ in range(4):
             screen.action_cycle_mode()
-        assert screen._operating_mode == "AUTO"  # wrapped around
+        assert screen._operating_mode == "ASK_ONCE"  # wrapped around
 
 
 @pytest.mark.asyncio

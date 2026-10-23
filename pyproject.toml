@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-cell-corpus"
-version = "0.28.0"
+version = "0.29.0"
 description = "Biologically-inspired distributed AI agent governance framework"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -224,7 +224,7 @@ include = ["acc*"]
 # Built-in day-0 catalog metadata (the bundled ACC role families), loaded via
 # importlib.resources by acc/pkg/builtin_catalog.py so the Marketplace +
 # Catalogs panes show real content offline after `pip install --no-deps .`.
-"acc.pkg.data" = ["*.yaml"]
+"acc.pkg.data" = ["*.yaml", "*.sig"]
 # Compiled React SPA (Vite `dist/`).  Containerfile.webgui copies the
 # build output into acc/webgui/static BEFORE `pip install --no-deps .`;
 # without this entry pip copies only .py files, so the installed package

@@ -2,8 +2,8 @@
 //
 // Behaviour kept from the old screen: Enter sends, Shift+Enter is a newline; the
 // first reply's session id is adopted so the next turn continues the thread
-// (RP-02) and a new thread is an explicit act; AUTO is the default mode because an
-// unknown mode normalises to AUTO agent-side, so the stricter gate wins on a typo.
+// (RP-02) and a new thread is an explicit act; ASK_ONCE ("Ask once") is the default
+// mode (058 Q2); an unknown mode still normalises to AUTO agent-side.
 // New: the target is picked from the roles that are running, and the page says
 // it is waiting — an agent turn can take minutes.
 // Images (20260830-attachment-delivery-path): uploaded first, sent as sha256
@@ -31,6 +31,7 @@ import {
 import {
   AttachmentCapability,
   AttachmentRef,
+  Heading,
   fetchAttachmentCapability,
   sendPrompt,
   uploadAttachment,
@@ -42,11 +43,36 @@ type Turn = {
   text: string;
   task?: string;
   images?: string[];
+  heading?: Heading | null;
 };
+
+// 058 Phase 2 -- where the work is heading, under the answer.
+function HeadingLines({ h }: { h: Heading }) {
+  const lines: string[] = [];
+  if (h.done.length) lines.push(`done: ${h.done.join(", ")}`);
+  if (h.refused.length) lines.push(`refused: ${h.refused.join("; ")}`);
+  if (h.waiting_on_you.length) lines.push(`waiting on you: ${h.waiting_on_you.join("; ")}`);
+  if (h.mission) lines.push(`mission: ${h.mission} (Work → Decisions)`);
+  lines.push(`next: ${h.next || "nothing named — ask a follow-up, or you are done"}`);
+  return (
+    <div className="acc-source" data-testid="heading">
+      {lines.map((l) => <div key={l}>↳ {l}</div>)}
+    </div>
+  );
+}
 
 const short = (sha: string) => sha.slice(0, 12);
 
-const MODES = ["AUTO", "PLAN", "ACCEPT_EDITS", "ACCEPT_ALL"];
+// The modes acc.operating_modes knows, each with what it does for the operator
+// (058 step 9). ACCEPT_ALL was offered here but never existed agent-side (058 K1).
+const MODES = ["ASK_ONCE", "AUTO", "PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS"];
+const MODE_LABELS: Record<string, string> = {
+  ASK_ONCE: "Ask once",
+  AUTO: "Ask per system call",
+  PLAN: "Plan only",
+  ACCEPT_EDITS: "Ask before edits",
+  ASK_PERMISSIONS: "Ask me each step",
+};
 
 export function PromptPage() {
   const { collectiveId, snapshot } = useSnapshot();
@@ -67,7 +93,7 @@ export function PromptPage() {
   const [text, setText] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
-  const [mode, setMode] = useState("AUTO");
+  const [mode, setMode] = useState("ASK_ONCE");
   const [workspace, setWorkspace] = useState("");
   const [busy, setBusy] = useState(false);
   const [attached, setAttached] = useState<AttachmentRef[]>([]);
@@ -110,7 +136,7 @@ export function PromptPage() {
         ...t,
         r.blocked
           ? { kind: "error", text: `Refused: ${r.block_reason || "blocked"}`, task: r.task_id.slice(0, 8) }
-          : { kind: "agent", text: r.output, task: r.task_id.slice(0, 8) },
+          : { kind: "agent", text: r.output, task: r.task_id.slice(0, 8), heading: r.heading },
       ]);
     } catch (e) {
       setTurns((t) => [...t, { kind: "error", text: String(e) }]);
@@ -152,6 +178,7 @@ export function PromptPage() {
                 </Label>
                 <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
                   {t.text}
+                  {t.heading && <HeadingLines h={t.heading} />}
                   {t.images && t.images.length > 0 && (
                     <div className="acc-source">
                       {t.images.map((sha) => (
@@ -213,7 +240,7 @@ export function PromptPage() {
           <FormGroup label="Mode" fieldId="prompt-mode">
             <FormSelect id="prompt-mode" value={mode} onChange={(_, v) => setMode(v)}>
               {MODES.map((m) => (
-                <FormSelectOption key={m} value={m} label={m} />
+                <FormSelectOption key={m} value={m} label={`${MODE_LABELS[m] ?? m} (${m})`} />
               ))}
             </FormSelect>
           </FormGroup>

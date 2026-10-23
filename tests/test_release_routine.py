@@ -11,9 +11,12 @@ pure (the CHANGELOG section) is tested as code.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 RPM = ROOT / "packaging" / "rpm"
@@ -119,6 +122,7 @@ def test_the_pipeline_has_a_public_leg_that_follows_the_satellite_proof():
     assert "acc-promote" in s                                               # and the promote stays a human step
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git (tags the checkout); the acc-build test image has none")
 def test_a_dry_run_narrates_every_leg_without_tools_or_network(tmp_path):
     """The three scripts run end to end with --dry-run on a tag that exists
     only here, with no copr-cli, no gh, no cosign and no mirror tag: they

@@ -85,7 +85,51 @@ acc-cli oversight pending [--watch]
 acc-cli oversight submit --task-id ID --agent-id ID --risk HIGH|UNACCEPTABLE  <summary…>
 acc-cli oversight approve <oversight_id>
 acc-cli oversight reject  <oversight_id> [--reason TEXT]
+
+# Ask once (058-060) -- see docs/security/constraints.md
+acc-cli ask "<task>" [--role R] [--mode ASK_ONCE|AUTO|ASK_PERMISSIONS|PLAN] [--session S] [--no-answer]
+acc-cli mission list | show <id> | close <id> | revoke <id> | purge <id> | restore <id> [--by NAME]
+acc-cli mission patterns [--min-missions N]
+acc-cli grants list | add --role R --target skill:<id>|mcp:<server.tool>|host:<name>[:<port>] --by NAME
+acc-cli grants revoke <grant_id> --by NAME | sync-sandbox
+acc-cli grants detect | accept <evidence> --by NAME | reject <evidence>
+acc-cli posture scan [--sarif FILE] [--json]
+acc-cli evals status | promptfoo-config --out FILE | garak-gate ...
 ```
+
+### Ask once: tasks, missions and grants
+
+```bash
+# Give the assistant a task and answer its questions in this terminal.
+# The first question is usually the plan card: allow the plan (a mission),
+# just these steps, or don't do it.
+acc-cli ask "write a security report for the lab servers"
+
+# What did the open missions run, and what did they back up?
+acc-cli mission list
+acc-cli mission show m-1a2b3c4d5e6f
+
+# Close a mission; its report lists the backed-up deletions.  Purge is the
+# final allowance; restore puts them back.
+acc-cli mission close m-1a2b3c4d5e6f --by alice
+acc-cli mission purge  m-1a2b3c4d5e6f
+
+# Roles planned but never needed, or needed but never planned (proposals only)
+acc-cli mission patterns
+
+# Grant once without waiting for the question: this role may ssh to lab1
+# without asking; the host is added to the agent's OpenShell network policy.
+acc-cli grants add --role devops_engineer --target host:lab1.ic3net.internal --by alice
+acc-cli grants list
+acc-cli grants revoke g-0123456789ab --by alice
+
+# Is the configuration safe to grant on?  Exit 1 on a blocking finding.
+acc-cli posture scan --sarif posture.sarif
+```
+
+The **role** of a grant is the calling role's own name (for example
+`devops_engineer`), as the question that offers "always allow" shows it. A grant
+covers that one role, not every role in its domain.
 
 ## Examples
 

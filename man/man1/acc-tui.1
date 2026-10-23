@@ -1,0 +1,97 @@
+.TH ACC-TUI 1 2026-10-22 "ACC" "ACC Manual"
+.SH NAME
+acc-tui \- terminal UI for observing and driving ACC collectives
+.SH SYNOPSIS
+.B acc-tui
+.RB [ \-\-profile
+.RB { operator | user }]
+.RB [ \-\-resume
+.RI [ session_id ]]
+.br
+.B acc-tui
+.B \-\-list\-sessions
+.SH DESCRIPTION
+.B acc-tui
+is the operator's terminal UI for one or more ACC collectives.
+It subscribes to \fBacc.\fR\fIcollective_id\fR\fB.>\fR on the NATS bus for
+every collective it observes, and presents the collective as a strip of
+screens: Soma (the dashboard), Nucleus, Prompt, Board, Compliance, Memory,
+Performance, Comms, Ecosystem, Marketplace, Catalogs, Configuration and
+Diagnostics.
+.PP
+Most operators start it through
+.BR acc (1),
+which first checks that a collective answers and settles the session's
+workspace.
+.B acc-tui
+itself attaches without either check and keeps retrying the bus with
+backoff.
+.SH OPTIONS
+.TP
+.BR \-\-profile " {" operator | user }
+Which screens sit on the strip and where the TUI starts.
+\fBoperator\fR shows everything and starts on Soma (the default);
+\fBuser\fR shows Prompt and Compliance and starts on Prompt, with the
+rest one Ctrl+A chord away.
+.TP
+.BR \-\-resume " [" \fIsession_id\fR ]
+Resume a saved Prompt session; without a value, the latest.
+.TP
+.B \-\-list\-sessions
+List saved sessions, newest first, and exit.
+.TP
+.BR \-h ", " \-\-help
+Print help and exit.
+.SH KEYS
+.TP
+.B ?
+Help for the current screen.
+.TP
+.B Ctrl+A
+The navigation leader: Ctrl+A followed by a key moves to another screen.
+.TP
+.B Ctrl+P
+The command palette: jump to any screen or run any action of the current one.
+.TP
+.B Ctrl+Q
+Quit.
+.SH ENVIRONMENT
+.TP
+.B ACC_NATS_URL
+The bus (default \fBnats://localhost:4222\fR).
+.TP
+.B ACC_COLLECTIVE_IDS
+Comma-separated collectives to observe, for example \fBsol\-01,sol\-02\fR.
+.TP
+.B ACC_COLLECTIVE_ID
+A single collective, used when \fBACC_COLLECTIVE_IDS\fR is unset.
+.TP
+.B ACC_TUI_PROFILE
+The same as \fB\-\-profile\fR.
+.TP
+.B ACC_SESSIONS_DIR
+Where Prompt sessions are saved (default \fI~/.acc/sessions\fR).
+.TP
+.B ACC_TUI_LOG_DIR
+Where \fIacc\-tui.log\fR is written (default \fI/app/logs\fR, falling back
+to \fI./acc\-tui\-logs\fR when that is not writable).
+Logs never go to the terminal: they would draw over the screen.
+.TP
+.B ACC_TUI_WEB_PORT
+Serve the web bridge on this port (0 or unset disables it).
+.TP
+.B ACC_ROLES_ROOT
+The roles tree; otherwise found through the layout in
+.BR acc (1).
+.SH FILES
+.TP
+.I ~/.acc/sessions
+Saved Prompt sessions.
+.TP
+.I $ACC_TUI_LOG_DIR/acc\-tui.log
+The TUI log, rotated at 5 MB with three backups.
+.SH SEE ALSO
+.BR acc (1),
+.BR acc-cli (1),
+.BR acc-webgui (1),
+.BR acc-deploy (1)

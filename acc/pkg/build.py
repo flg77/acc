@@ -11,6 +11,12 @@ Build flow
    gets stamped into ``manifest.content_sha256`` — it is not a
    self-referential tarball hash, so it can be recomputed after install
    directly from the unpacked tree.
+3b. Schema v2 (061): compute a **per-capability tree digest** for every
+   ``SkillRef`` / ``McpRef`` with :func:`tree_digest` (same algorithm,
+   scoped to the ref's ``path``, relpaths taken inside that directory so
+   the digest can be recomputed wherever the capability is installed)
+   and stamp ``schema_version: 2``.  The manifest is inside the signed
+   tarball, so the digests are signed with it.
 4. Emit a deterministic gzip-wrapped tar.  Determinism rules:
    * Entries sorted alphabetically.
    * ``accpkg.yaml`` always first (so streaming readers see the
@@ -94,6 +100,66 @@ def _content_tree_hash(file_entries: list[tuple[str, Path]]) -> str:
         norm = rel.replace("\\", "/")
         h.update(f"{norm}:{_sha256_file(abs_)}\n".encode("utf-8"))
     return h.hexdigest()
+
+
+# Runtime byproducts a capability directory grows after its adapter is
+# imported; they are not part of the capability and never enter its digest.
+_DIGEST_SKIP_DIRS = frozenset({"__pycache__"})
+_DIGEST_SKIP_SUFFIXES = (".pyc", ".pyo")
+
+
+def tree_digest(directory: Path) -> str:
+    """sha256 tree digest of one capability directory (061).
+
+    The :func:`_content_tree_hash` algorithm over every regular file under
+    *directory*, relpaths relative to *directory*, sorted by POSIX relpath,
+    skipping ``__pycache__`` and compiled bytecode.  The build stamps it into
+    ``SkillRef.sha256`` / ``McpRef.sha256``; :mod:`acc.capability_verify`
+    recomputes it at load.  Raises :class:`ValueError` on a missing directory
+    or a symlink.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise ValueError(f"capability directory not found: {directory}")
+    entries: list[tuple[str, Path]] = []
+    for p in directory.rglob("*"):
+        rel_parts = p.relative_to(directory).parts
+        if any(part in _DIGEST_SKIP_DIRS for part in rel_parts):
+            continue
+        if p.is_symlink():
+            raise ValueError(f"symlinks are not allowed in a capability: {p}")
+        if not p.is_file() or p.name.endswith(_DIGEST_SKIP_SUFFIXES):
+            continue
+        entries.append((p.relative_to(directory).as_posix(), p))
+    entries.sort(key=lambda t: t[0])
+    return _content_tree_hash(entries)
+
+
+def _stamp_capability_digests(
+    source_dir: Path, manifest: AccPkgManifest
+) -> AccPkgManifest:
+    """Return *manifest* with a v2 ``sha256`` on every skill and MCP ref."""
+    def _stamped(refs: list, kind: str) -> list:
+        out = []
+        for ref in refs:
+            if ref.sha256:
+                raise ValueError(
+                    f"source manifest must not pre-declare {kind} "
+                    f"{ref.name!r} sha256; build computes it"
+                )
+            ref_dir = (source_dir / ref.path).resolve()
+            if not ref_dir.is_relative_to(source_dir):
+                raise ValueError(f"{kind} {ref.name!r}: path escapes the package: {ref.path}")
+            if not ref_dir.is_dir():
+                raise ValueError(f"{kind} {ref.name!r}: path is not a directory: {ref.path}")
+            out.append(ref.model_copy(update={"sha256": tree_digest(ref_dir)}))
+        return out
+
+    return manifest.model_copy(update={
+        "schema_version": 2,
+        "skills": _stamped(manifest.skills, "skill"),
+        "mcps": _stamped(manifest.mcps, "mcp"),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -264,8 +330,12 @@ def build(
     file_entries = _walk_source(source_dir)
     content_hash = _content_tree_hash(file_entries)
 
+    # Step 3b: per-capability digests (schema v2), then
     # Step 4: stamp content_sha256 into a fresh manifest copy
-    stamped = manifest.model_copy(update={"content_sha256": content_hash})
+    stamped = _stamp_capability_digests(source_dir, manifest)
+    stamped = stamped.model_copy(update={"content_sha256": content_hash})
+    # model_copy skips validation; re-validate the stamped manifest.
+    stamped = AccPkgManifest.model_validate(stamped.model_dump(mode="json"))
 
     # Re-render the manifest deterministically.  ``model_dump`` returns
     # a dict with insertion order matching field order — pyyaml's

@@ -287,20 +287,41 @@ class TestCheck:
         execution is sandboxed while the target is absent — and nothing says so
         until a task actually tries to run code.
         """
-        (cfg / ".env").write_text("ACC_SANDBOX_ENABLED=true\n", encoding="utf-8")
+        # A sandbox NAME is what turns delegation on in acc/sandbox/runner.py.
+        (cfg / ".env").write_text("ACC_SANDBOX_NAME=acc-coding-agent\n", encoding="utf-8")
         errors = [f for f in st.check() if f.level == "error"]
         assert any("OPENSHELL_GATEWAY" in f.message for f in errors)
 
-    def test_sandbox_enabled_with_a_gateway_is_clean(self, cfg):
+    def test_sandbox_named_in_the_environment_without_a_gateway_is_an_error(self, cfg, monkeypatch):
+        """A name is a value, not a boolean: it used to be read as "truthy"."""
+        monkeypatch.setenv("ACC_SANDBOX_NAME", "acc-coding-agent")
+        monkeypatch.delenv("OPENSHELL_GATEWAY", raising=False)
+        errors = [f for f in st.check() if f.level == "error"]
+        assert any("OPENSHELL_GATEWAY" in f.message for f in errors)
+
+    def test_sandbox_named_with_a_gateway_is_clean(self, cfg):
         (cfg / ".env").write_text(
-            "ACC_SANDBOX_ENABLED=true\nOPENSHELL_GATEWAY=https://openshell:8080\n",
+            "ACC_SANDBOX_NAME=acc-coding-agent\nOPENSHELL_GATEWAY=https://openshell:8080\n",
             encoding="utf-8",
         )
         assert not [f for f in st.check() if "OPENSHELL_GATEWAY" in f.message]
 
-    def test_sandbox_disabled_does_not_require_a_gateway(self, cfg):
-        (cfg / ".env").write_text("ACC_SANDBOX_NAME=unused\n", encoding="utf-8")
+    def test_enabled_without_a_name_does_not_require_a_gateway(self, cfg):
+        """ENABLED alone sandboxes nothing; ``acc doctor`` reports the missing name."""
+        (cfg / ".env").write_text("ACC_SANDBOX_ENABLED=true\n", encoding="utf-8")
         assert not [f for f in st.check() if "OPENSHELL_GATEWAY" in f.message]
+
+    def test_every_sandbox_name_the_runner_reads_is_a_known_key(self):
+        """The schema used to list OPENSHELL_BIN while the runner read
+        ACC_OPENSHELL_BIN, and missed ACC_SANDBOX_REQUIRED -- the correct names
+        were reported as unknown keys.  Every ENV_* constant must be described."""
+        from acc import configschema as cs
+        from acc.sandbox import runner
+
+        names = {getattr(runner, a) for a in dir(runner) if a.startswith("ENV_")}
+        known = {k.path.split(".", 1)[1] for k in cs.ENV_KEYS}
+        assert names and names <= known, sorted(names - known)
+        assert "OPENSHELL_BIN" not in known
 
     def test_role_bound_to_a_missing_model_is_an_error(self, cfg):
         (cfg / "models.yaml").write_text(

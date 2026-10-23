@@ -11,6 +11,133 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-10-23
+
+**Ask once, then get things done** — vault proposals 058–061. The assistant shows its plan, you confirm it once, and the work runs. Code execution runs in the OpenShell sandbox. A grant is given once, at the question. Every skill and MCP has a checksum.
+
+**Upgrade notes (read before upgrading):**
+- `shell_exec`, `python_exec` and `ssh_exec` **refuse without an OpenShell sandbox** (`ACC_SANDBOX_REQUIRED=1`). Provision one per agent (`deploy/openshell/`, or `spec.sandbox` on a cluster) and check with `acc doctor --check sandbox`.
+- The default operating mode is **Ask once**.
+- `ACC_SSH_HOST_ALLOWLIST` is now a seed list.
+- stdio MCP servers see only the variables they declare.
+- The capability digest check runs in `report` mode this release (`ACC_CAPABILITY_VERIFY=enforce` to refuse).
+- See `docs/security/constraints.md` and the README's "Upgrading to Ask once".
+
+**Grant once, enforced by the sandbox** (vault proposal 060, OpenSpec `20261018-grant-once-allowances`).
+
+### Added
+
+- **"Always allow" on the question.** A system-access call that no mission or grant answers is asked with *allow once / always allow for <role> / don't run it*. "Always allow" gives a standing grant in the operator's name; the next call is not asked. Deletions, CRITICAL calls and sending for the operator are still asked every time.
+- **Host allowance list for `ssh_exec`.** A host is reached when it is local, on the seed list `ACC_SSH_HOST_ALLOWLIST`, granted once (`host:<name>[:<port>]`), or listed by the approved plan; otherwise the operator is asked. The adapter trusts only the dispatcher's decision, never the call's arguments.
+- **Host grants in the OpenShell policy.** A host grant is added to the agent's sandbox with `openshell policy update --add-endpoint host:port --binary /usr/bin/ssh`, and removed on revoke. `acc-cli grants add|revoke|sync-sandbox`.
+
+### Changed
+
+- **`ssh_exec` runs inside the OpenShell sandbox** when the agent has one, and refuses when the sandbox is required and absent (as `shell_exec` does). `identity_file` is then a path inside the sandbox.
+
+**The plan card: the assistant's plan is the mission** (vault proposal 059, OpenSpec `20261018-plan-card`).
+
+### Added
+
+- **Plan card under Ask once.** A reply's staffing proposals (infuse, spawn, route, lifecycle) are held in ONE card that shows the plan: each step's role, whether it is reused or installed, the packs and hosts. Installed roles that are not running are named on every install step. Approving it creates the mission and runs exactly what the card held; "just these steps" runs them once without a mission. A later proposal outside the plan raises one amendment card. Optional `[PROPOSE_PLAN:{json}]` marker; without it the plan is derived from the proposals.
+- **The plan is recorded.** `PLAN_APPROVED`, `PLAN_AMENDED` and `PLAN_CLOSED` (with planned vs actual) in the tracelog session `mission-<id>`; `acc-cli mission show` prints them; `acc-cli mission patterns` lists lesson candidates across closed plans (proposals only).
+
+**Every capability has a checksum** (vault proposal 061, OpenSpec `20261018-capability-digests`).
+
+### Added
+
+- **A sha256 per skill and MCP in the pack manifest.** Manifest schema v2: `acc-pkg build` stamps a tree digest on every `skills[]` and `mcps[]` entry, inside the signed manifest. The reader accepts v1 and v2, so v1 packs still install.
+- **A built-in capability manifest**, `acc/pkg/data/builtin_capabilities.yaml`, for the skills and MCPs shipped in the image and the RPM (`python -m acc.pkg.builtin_capabilities --write` regenerates it after a skill or MCP edit; a test fails while it is stale). With `ACC_CAPABILITY_MANIFEST_PUBKEY` set, its detached cosign signature must verify.
+- **Verify before load.** The skill and MCP registries check each tree against its recorded digest (pack manifest first, then the built-in one) before the adapter is imported. `ACC_CAPABILITY_VERIFY=report` (the default this release) logs a mismatch or a missing digest; `enforce` refuses the capability. The message names the capability, the expected and actual sha256, the source and what to do. `acc doctor --check capabilities` lists what `enforce` would refuse.
+- **AgentBOM `spec.capabilities[]`** (name, kind, source, sha256; `spec.schema_version: 2`). `acc-pkg bom resolve <bom>` fills it from the installed packs and the built-in manifest; `acc-pkg bom verify <bom> --running` re-hashes every pinned capability on this host.
+- **The role QA gate.** Posture rules PS-07 (a granted capability without a verified digest), PS-08 (exec or host access and the profile does not set `sandbox: required`) and PS-09 (`default_operating_mode` unset); `acc-cli posture scan --fail-on <level>` (default HIGH); `tests/test_role_profiles_posture.py` runs it at MEDIUM over the in-tree roles, the installed packs' roles and the collective presets.
+- **`sandbox: required`** in a role profile (declarative; the runtime refusal stays `ACC_SANDBOX_REQUIRED`).
+
+### Changed
+
+- Every shipped role sets `default_operating_mode` (ASK_ONCE, the existing default, unless it already set one); the assistant sets `sandbox: required`; capacity_advisor's `max_mcp_risk_level` is MEDIUM, because `os_basics` grants it `web_fetch` (MEDIUM) and a LOW ceiling refused every call.
+
+**Scoped stdio MCP environment, and one set of sandbox env names** (OpenSpec `20261019-scoped-mcp-env-and-sandbox-env-names`).
+
+### Security
+
+- **A stdio MCP server no longer inherits the agent's whole environment.** It starts with a non-secret base (PATH, HOME, locale, proxy, CA bundle, Windows essentials) plus the names its manifest declares in `env:`. LLM keys, Redis and NATS settings, and other servers' tokens no longer reach it. A server that relied on an undeclared variable must now declare it.
+
+### Fixed
+
+- **An empty value in a manifest's `env:` passes the agent's value through** (from the process env or the mounted secret). It used to overwrite it with an empty string, so `github_api` started without `GITHUB_PERSONAL_ACCESS_TOKEN` and `semantic_scholar` without `S2_API_KEY`.
+- **The sandbox env names match the runner.** `acc config check` knows `ACC_SANDBOX_REQUIRED` and `ACC_OPENSHELL_BIN`; `OPENSHELL_BIN`, which nothing read, is gone. A sandbox *name* (what turns delegation on) now requires `OPENSHELL_GATEWAY`. `acc doctor` treats `ACC_SANDBOX_ENABLED=0` in the env file as off instead of reporting a missing gateway.
+
+**Ask once, Phase 5: quieter over time, never by itself** (vault proposal 058, OpenSpec `20261015-ask-once-p5-standing-grants`).
+
+### Added
+
+- **Standing grants** (`acc-cli grants detect|accept|reject|list|revoke`). After repeated, consistent approvals (≥ 10 over ≥ 7 days, no refusal, never CRITICAL) a person may give a grant for exactly that role and target. Each call it answers is recorded as `policy:grant:<id>`. `acc.approval_patterns` still only proposes.
+- **Agent-configuration posture scan** (`acc-cli posture scan [--sarif FILE]`, `doctor --check posture`), with rules PS-01 to PS-06: grants above a role's own ceiling, exec without a sandbox, unpinned agentset packages, a shell in the hook allowlist, the sandbox requirement off. A blocking finding withholds every mission and grant.
+
+### Changed
+
+- `evals.garak_probes` is a posture key: dropping a probe weakens the release gate.
+
+**Ask once, Phase 4: the `edge-secure` profile** (vault proposal 058, OpenSpec `20261015-ask-once-p4-edge-secure`).
+
+### Added
+
+- **`profiles/edge_secure.yaml`:** guardrails that block (`compliance.owasp_enforce`, `cat_a_enforce`), the garak release gate, and requirements for the sandbox and MLflow. `compliance.owasp_enforce` and `evals.garak_gate` are posture: a browser can only propose them through oversight.
+- **`evals:` configuration:** `mlflow_tracking_uri` (a profile attaches an edge host to MLflow), `promptfoo_enabled`, `promptfoo_interval_s`, `garak_gate`, `garak_probes`.
+- **promptfoo on the golden prompts:** `acc-cli evals promptfoo-config` generates a config against the OpenAI-compatible endpoint. The `acc-promptfoo` container (`deploy/evals/`) runs it while the switch is on, and the switch sits in **WebGUI → Settings → Evals** (058 Q6).
+- **Garak as a release gate:** `acc-cli evals garak-gate --report … --baseline …` exits 1 when a probe's pass rate drops past the tolerance or a probe was not run. The `acc-garak` one-shot container is included.
+
+**Ask once, Phase 2: answer from anywhere** (vault proposal 058, OpenSpec `20261015-ask-once-p2-answer-anywhere`).
+
+### Added
+
+- **WebGUI → Work → Decisions:** what the agents are asking you, with each question's options as buttons (so the mission card is answered here too), and your missions with close / revoke / purge / restore (`POST /api/mission`).
+- **`acc-cli ask "<task>"`:** give ACC a task from a plain command line and answer its questions inline. It ends with the answer, where the work is heading, and how often it asked.
+- **Where the work is heading:** every `TASK_COMPLETE` carries `heading` (done, refused, waiting on you, mission, next). The TUI, the WebGUI and `acc-cli ask` show it under the answer.
+
+**Ask once, Phase 3: the OpenShell sandbox is mandatory** (vault proposal 058, OpenSpec `20261015-ask-once-p3-sandbox-mandatory`, operator decision Q2).
+
+**Upgrade note:** `shell_exec` and `python_exec` now **refuse** on an agent with no OpenShell sandbox (`ACC_SANDBOX_REQUIRED`, default on). `acc-cli doctor --check sandbox` says so. Provision one (`deploy/openshell/README.md`) before upgrading a deployment that runs code. Only on a developer's own box, `ACC_SANDBOX_REQUIRED=0` keeps local execution, and doctor reports that as drift.
+
+### Changed
+
+- **Confinement instead of consent.** An exec call that runs in the agent's sandbox is no longer a system-access question under AUTO and ASK_ONCE. CRITICAL calls, ASK_PERMISSIONS, the ceiling, role grants and destructive commands are asked as before.
+
+### Added
+
+- `deploy/openshell/`: Podman edge provisioning for the agents' sandboxes, with the workspace bind-mounted at `/workspace`, plus a compose overlay.
+
+**Ask once, Phase 1: one question per thread** (vault proposal 058, OpenSpec `20261015-ask-once-p1-mission-grant`).
+
+**Upgrade note:** the default operating mode is now **`ASK_ONCE`** ("Ask once") for roles and both prompt surfaces. A role that pins `default_operating_mode` keeps its value.
+
+### Added
+
+- **The mission card.** Under `ASK_ONCE`, the first system-access call of a thread asks one question: allow the mission, just this call, or don't run it. An allowed mission answers the thread's later in-scope calls (`AUTO_APPROVED`, approver `policy:mission:<id>`). That includes hand-offs, continuations and follow-up prompts in the same session. Still asked: CRITICAL calls, acting on your behalf, anything above the ceiling or outside the role's grants, and destructive calls that cannot be backed up. Budget: `ACC_MISSION_MAX_CALLS` (200), `ACC_MISSION_TTL_S` (8 h).
+- **No `rm` without a backup.** Inside a mission, a `shell_exec` `rm` of workspace paths is copied to `.acc-quarantine/<mission>/` first, then runs. Closing the mission lists every backed-up item; `purge` is the final allowance, and `restore` puts them back.
+- `acc-cli mission list|show|close|revoke|purge|restore`, and `/mission` in the TUI. Missions ride on the arbiter heartbeat; actions use `MISSION_CONTROL` on the oversight subjects.
+- Outcome labels for every mode: Plan only, Ask me each step, Ask once, Ask per system call (AUTO), Ask before edits (ACCEPT_EDITS).
+
+**Ask once, Phase 0: measure first** (vault proposal 058 K1, OpenSpec `20261015-ask-once-phase0-measure`). Nothing is loosened; this release counts what the next ones will reduce.
+
+### Added
+
+- **Every task reports how often it asked a person.** `TASK_COMPLETE.asks` = `{calls, asks, approved, rejected, expired, failed, refused, wait_s}` (`capability_dispatch.ask_stats`). It reaches `PromptResponse.asks`, the golden run record and the MLflow golden run (`golden.asks`, `asks.<name>`). Golden prompts can set `expects.asks_max`.
+- **Five `getdone_*` golden prompts**: tasks that have to act (write, run, fix, bring in a role) rather than only answer.
+
+### Fixed
+
+- **A queued proposal no longer disappears.** Proposal rows have no deadline (operator decision 058 Q4). With Redis, a pending row expired after twice the gate timeout (about 10 minutes) and its payload after an hour, so a later approval did nothing. Proposal rows (`submit(deadline=False)`) are now kept with no TTL in a separate `oversight:open` set until decided, and `expire_timed_out()` skips them. Capability gates keep their timeout.
+- **The WebGUI Prompt page offered `ACCEPT_ALL`**, which the agent does not know (it ran as AUTO), and not `ASK_PERMISSIONS`. It now lists exactly the four modes.
+- **Golden prompts ran in AUTO whatever their `operating_mode` said.** `run_one` now sends it.
+
+**Man pages for every command acc and acc-runtime ship** (#574).
+
+### Added
+
+- **Man pages for every shipped command.** `acc(1)`, `acc-cli(1)`, `acc-pkg(1)`, `acc-tui(1)`, `acc-webgui(1)`, `acc-agent(1)` and `acc-catalog(1)` ship in `acc-runtime`, and `acc-deploy(1)` ships with the host package. They are installed into `/usr/share/man/man1` and carried in the wheel's share tree (`man/man1`). The command sections of `acc-cli(1)` and `acc-pkg(1)` are generated from their parsers (`python -m tools.gen_man_pages`). The prose comes from `man/src/*.1.in`. `tests/test_man_pages.py` fails when a page is stale, or when the RPM ships a command that has no page.
+
 ## [0.28.0] — 2026-10-07
 
 **The Kubernetes API group is `acc.ic3networks.com`** — OpenSpec `20261004-operator-release-split` OR-04, decision D-032. ACC is a community project and not a Red Hat product; the group `acc.redhat.io` said otherwise and is gone.

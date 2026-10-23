@@ -94,6 +94,7 @@ KIND_NEW_AGENT = "new_agent"
 KIND_DEFERRED = "deferred"
 KIND_DELEGATED = "delegated"
 KIND_SNOOZE = "snooze"
+KIND_MISSION = "mission"
 KIND_UNKNOWN = "unknown"
 KIND_INVALID = "invalid"
 KIND_NOT_SLASH = "not_slash"
@@ -161,7 +162,11 @@ COMMANDS: list[CommandSpec] = [
     CommandSpec("goal", "Set a pinned objective (prepended to prompts)", "[<text> | clear]", "control"),
     CommandSpec("help", "List the available commands", category="general"),
     CommandSpec("loop", "Re-run a prompt on an interval", "<30s|5m|2h> <prompt> | stop", "control", prod_locked=True),
-    CommandSpec("mode", "Set the operating mode", "<AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>", "control"),
+    CommandSpec(
+        "mission", "Your 'ask once' missions: list, close, revoke, purge, restore",
+        "[list|show|close|revoke|purge|restore] [<id>]", "oversight",
+    ),
+    CommandSpec("mode", "Set the operating mode", "<ASK_ONCE|AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>", "control"),
     CommandSpec("model", "Show the model for the Target role (--all: every role)", "[--all]", "query"),
     CommandSpec("new-agent", "Scaffold + launch a governed agentset from intent (signed A-BOM)", "<what the agent should do>", "control", prod_locked=True),
     CommandSpec(
@@ -359,17 +364,31 @@ def parse(text: str) -> SlashIntent:
     if verb == "status":
         return SlashIntent(kind=KIND_STATUS)
 
+    if verb == "mission":
+        sub = (rest[0].lower() if rest else "list")
+        if sub not in ("list", "show", "close", "revoke", "purge", "restore"):
+            return SlashIntent(
+                kind=KIND_INVALID,
+                error="usage: /mission [list | show|close|revoke|purge|restore <id>]",
+            )
+        if sub != "list" and len(rest) < 2:
+            return SlashIntent(kind=KIND_INVALID, error=f"usage: /mission {sub} <id>")
+        return SlashIntent(
+            kind=KIND_MISSION,
+            args={"action": sub, "mission_id": rest[1] if len(rest) > 1 else ""},
+        )
+
     if verb == "mode":
         if not rest:
             return SlashIntent(
                 kind=KIND_INVALID,
-                error="usage: /mode <AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>",
+                error="usage: /mode <ASK_ONCE|AUTO|PLAN|ACCEPT_EDITS|ASK_PERMISSIONS>",
             )
         m = rest[0].upper()
-        if m not in ("AUTO", "PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS"):
+        if m not in ("ASK_ONCE", "AUTO", "PLAN", "ACCEPT_EDITS", "ASK_PERMISSIONS"):
             return SlashIntent(
                 kind=KIND_INVALID,
-                error=f"unknown mode {rest[0]!r}; valid: AUTO PLAN ACCEPT_EDITS ASK_PERMISSIONS",
+                error=f"unknown mode {rest[0]!r}; valid: ASK_ONCE AUTO PLAN ACCEPT_EDITS ASK_PERMISSIONS",
             )
         return SlashIntent(kind=KIND_MODE, args={"mode": m})
 

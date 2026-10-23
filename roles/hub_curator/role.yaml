@@ -42,5 +42,8 @@ role_definition:
     token_budget: 0
     rate_limit_rpm: 0
   version: "1.0.0"
+  # 061 PS-09: the operating mode is part of the signed profile, not left to
+  # the runtime default.
+  default_operating_mode: ASK_ONCE
   domain_id: "governance"
   domain_receptors: []

@@ -337,6 +337,10 @@ messages. Use NATS NKeys (Phase 0c) for subject ACLs.
 | NATS/Redis mTLS (SVID) | 🔲 Phase 4 (self-signed) | ❌ Not available | 🔲 Phase 2 |
 | Runtime-evidence Cat-A | ❌ no eBPF attach | ⚠️ Phase 3 (opt-in, if a backend is detected) | ✅ Phase 3 (opt-in) |
 | Real Cat-A eval (OPA `opa eval`) | ✅ Implemented | ✅ Implemented | ✅ Implemented |
+| OpenShell exec sandbox (shell / python / ssh) | ✅ **Required by default** (`deploy/openshell/`) | ✅ **Required by default** (`deploy/openshell/`) | ✅ **Required by default** (`spec.sandbox`) |
+| ssh hosts in the sandbox network policy | ✅ granted hosts only | ✅ granted hosts only | ✅ granted hosts only |
+| Scoped stdio MCP environment | ✅ declared variables only | ✅ declared variables only | ✅ declared variables only |
+| Agent-configuration posture scan (PS-01..06) | ✅ blocks grants on a HIGH finding | ✅ | ✅ |
 
 ---
 
@@ -379,6 +383,10 @@ Phase 0c — NATS NKeys                   ← start next (depends on ACC-9 bridg
 | `ACC_ARBITER_VERIFY_KEY` | 0a | Base64 raw 32-byte Ed25519 public key for ROLE_UPDATE verification |
 | `ACC_REDIS_URL` | 0b | Redis connection URL |
 | `ACC_REDIS_PASSWORD` | 0b | Redis AUTH password |
+| `ACC_SANDBOX_REQUIRED` | 5 | `1` (default): exec skills refuse without an OpenShell sandbox |
+| `ACC_SANDBOX_NAME` / `OPENSHELL_GATEWAY` | 5 | The agent's sandbox and its gateway |
+| `ACC_SANDBOX_ENABLED` / `ACC_OPENSHELL_BIN` | 5 | Force delegation off; the CLI path |
+| `ACC_SSH_HOST_ALLOWLIST` | 5 | Seed list of ssh hosts; others are granted once and written into the sandbox policy |
 
 ### Env vars (planned)
 

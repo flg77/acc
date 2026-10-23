@@ -236,15 +236,10 @@ def _queue_publish_proposal(cfg, redis_client, proposal) -> str:
         task_id=proposal.proposal_id, risk_level=proposal.risk_level or "HIGH",
         summary=proposal.summary, role_id="memory",
         required_approvals=int((proposal.params or {}).get("required_approvals") or 1),
+        deadline=False,
     ))
-    ttl = max(int(getattr(queue, "_timeout_s", 300) or 300),
-              int(getattr(_agent, "_ASSISTANT_PROPOSAL_CACHE_TTL_S", 3600) or 3600))
     if redis_client is not None:
-        redis_client.setex(f"acc:{cid}:assistant_proposal:{oversight_id}", ttl,
-                           json.dumps(proposal.to_payload(), default=str))
-        redis_client.setex(f"acc:{cid}:assistant_proposal_meta:{oversight_id}", ttl,
-                           json.dumps({"kind": proposal.kind, "proposal_id": proposal.proposal_id,
-                                       "summary": proposal.summary}, default=str))
+        _agent.cache_proposal_payload(redis_client, cid, oversight_id, proposal)
     from acc.assistant_proposal import record_publish_proposed
     record_publish_proposed(proposal, oversight_id, redis_client)
     return oversight_id

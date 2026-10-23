@@ -371,6 +371,11 @@ role_definition:
     token_budget: 20480
     rate_limit_rpm: 30
   version: "2.6.0"
+  # 061 PS-09: the operating mode is part of the signed profile, not left to
+  # the runtime default.
+  default_operating_mode: ASK_ONCE
+  # 061 PS-08: shell_exec / python_exec run in the OpenShell sandbox only.
+  sandbox: required
   # Proposal 20260530-role-proposal-assistant-agent-of-agents Phase 6 — opt the
   # Assistant into SIP-P2's bandit learning.  Start conservative:
   # only `route_confidence_threshold` is un-pinned (the most

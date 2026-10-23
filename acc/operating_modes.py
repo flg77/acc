@@ -46,13 +46,38 @@ MODE_AUTO: Final[str] = "AUTO"
 MODE_PLAN: Final[str] = "PLAN"
 MODE_ACCEPT_EDITS: Final[str] = "ACCEPT_EDITS"
 MODE_ASK_PERMISSIONS: Final[str] = "ASK_PERMISSIONS"
+#: 058 Phase 1 -- the first gated call of a thread asks ONE question, the
+#: mission card; once it is allowed, the thread's in-scope calls run without
+#: asking again (:mod:`acc.mission`).  Gates exactly like AUTO otherwise.
+MODE_ASK_ONCE: Final[str] = "ASK_ONCE"
 
 ALL_MODES: Final[tuple[str, ...]] = (
     MODE_AUTO,
     MODE_PLAN,
     MODE_ACCEPT_EDITS,
     MODE_ASK_PERMISSIONS,
+    MODE_ASK_ONCE,
 )
+
+#: What each mode does, in the operator's words (058 step 9; the Codex Review
+#: finding that the names describe mechanisms, not outcomes).  The surfaces
+#: show the label with the mode underneath.
+MODE_LABELS: Final[dict[str, str]] = {
+    MODE_PLAN: "Plan only",
+    MODE_ASK_PERMISSIONS: "Ask me each step",
+    MODE_ASK_ONCE: "Ask once",
+    MODE_AUTO: "Ask per system call",
+    MODE_ACCEPT_EDITS: "Ask before edits",
+}
+
+#: The default for a new operator (058 Q2, operator 2026-10-15).
+DEFAULT_SURFACE_MODE: Final[str] = MODE_ASK_ONCE
+
+
+def label(mode: str | None) -> str:
+    """The operator-facing name of *mode* ("Ask once"), for the surfaces."""
+    m = normalise(mode)
+    return MODE_LABELS.get(m, m)
 
 
 def normalise(mode: str | None) -> str:
@@ -295,5 +320,6 @@ def should_gate_invocation(
     if mode == MODE_ACCEPT_EDITS:
         return is_write_action(kind, target) or critical or bool(categories)
     # PLAN never reaches this — dispatch is skipped before the call.
-    # AUTO: CRITICAL, plus the two gate categories (1.2).
+    # AUTO and ASK_ONCE: CRITICAL, plus the two gate categories (1.2).  Under
+    # ASK_ONCE a mission then answers the gate (acc.mission).
     return critical or bool(categories)
