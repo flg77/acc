@@ -355,6 +355,11 @@ ENV_KEYS: tuple[Key, ...] = tuple(
         ("ACC_LLM_BACKEND", False, "Overrides llm.backend."),
         ("ACC_LLM_MODEL", False, "Model id for openai_compat / vllm backends."),
         ("ACC_ANTHROPIC_MODEL", False, "Model id for the anthropic backend."),
+        ("ACC_ANTHROPIC_PROVIDER", False, "anthropic (API key) or vertex (Google Vertex AI)."),
+        ("ACC_VERTEX_PROJECT_ID", False, "Google Cloud project for llm.anthropic_provider=vertex."),
+        ("ACC_VERTEX_REGION", False, "Vertex AI region for llm.anthropic_provider=vertex."),
+        ("GOOGLE_APPLICATION_CREDENTIALS", False,
+         "Service-account or ADC file for llm.anthropic_provider=vertex (else gcloud's default)."),
         ("ACC_OLLAMA_MODEL", False, "Model id for the ollama backend."),
         ("ACC_MLFLOW_TRACKING_URI", False, "MLflow tracking endpoint."),
         ("ACC_SUPPORT_TIER", False, "Build-time package source: upstream | rhel."),
@@ -373,6 +378,8 @@ ENV_KEYS: tuple[Key, ...] = tuple(
         # to peers and land in their next prompt.  "0" keeps every prompt
         # byte-identical to v0.21.0 (nothing published, nothing rendered).
         ("ACC_PEER_LESSONS", False, "Publish and render peer lessons (default 1; 0 = off)."),
+        # RDF-06: the KNOWLEDGE_GRAPH prompt block, for roles with graph_retrieval.
+        ("ACC_GRAPH_RETRIEVAL", False, "Render knowledge-graph facts for graph_retrieval roles (default 1; 0 = off)."),
         # PA-09 Phase 1: the key set a receiver verifies a signed ask against.
         ("ACC_NKEY_PUBLIC_KEYS_PATH", False, "public_keys.json for sender verification (default: beside the seed)."),
         # RDF-01: the key person IRIs are an HMAC under.  Whoever holds it can
@@ -384,6 +391,8 @@ ENV_KEYS: tuple[Key, ...] = tuple(
         ("ACC_DOMAIN_TAXONOMY", False, "Taxonomy pack (@scope/name) for SKOS receptor matching; hubs and standalone collectives only."),
         # RDF-04: where a collective's knowledge store lives (one dir per collective).
         ("ACC_KG_PATH", False, "Root of the knowledge stores (default ~/.acc/kg); one store per collective under it."),
+        # RDF-05: the signed pack whose shapes/*.ttl gate every kg_propose write; unset = no writes.
+        ("ACC_KG_SHAPES", False, "SHACL shapes pack (@scope/name) gating kg_propose; unset means nothing may be written."),
     )
 )
 

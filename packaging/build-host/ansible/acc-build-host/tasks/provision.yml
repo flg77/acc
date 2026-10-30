@@ -6,7 +6,9 @@
   ansible.builtin.debug:
     msg:
       - "host          : {{ inventory_hostname }}"
-      - "packages      : {{ (_acc_build_host_packages + (_acc_build_host_packages_aarch64 if acc_build_host_aarch64 else [])) | join(' ') }}"
+      - "packages      : {{ (_acc_build_host_packages + (_acc_build_host_packages_copr if acc_build_host_copr else []) + (_acc_build_host_packages_aarch64 if acc_build_host_aarch64 else [])) | join(' ') }}"
+      - "epel          : {{ acc_build_host_epel_repo or '(the host has its own)' }}"
+      - "deploy key    : {{ acc_build_host_deploy_key or '(none)' }} (made once; the public half is added to acc-spearhead by hand)"
       - "build user    : {{ acc_build_host_user }} (home {{ acc_build_host_home }}, groups mock, sub-ids {{ acc_build_host_subid_start }}+{{ acc_build_host_subid_count }}, lingering)"
       - "directories   : {{ acc_build_host_build_root }}/{pip-cache,tmp}  {{ acc_build_host_gnupghome }} (0700, EMPTY — the key is moved by hand)"
       - "ssh keys      : {{ _acc_build_host_keys | length }} authorized key(s) for {{ acc_build_host_user }}"
@@ -17,9 +19,26 @@
   ansible.builtin.meta: end_host
   when: not (apply | bool)
 
+- name: Provision — EPEL is enabled
+  ansible.builtin.command: "subscription-manager repos --enable {{ acc_build_host_epel_repo }}"
+  register: _acc_build_host_epel
+  changed_when: "'is enabled' in _acc_build_host_epel.stdout"
+  failed_when: false
+  when: acc_build_host_epel_repo | length > 0
+
+- name: Provision — refuse an EPEL repo the host cannot see
+  ansible.builtin.assert:
+    that:
+      - _acc_build_host_epel.rc == 0
+    fail_msg: >-
+      subscription-manager cannot enable {{ acc_build_host_epel_repo }}:
+      {{ _acc_build_host_epel.stderr | default('') | trim }}. The host's content view must
+      carry EPEL (HOWTO §1): hammer host update --content-view-environments <one that does>.
+  when: acc_build_host_epel_repo | length > 0
+
 - name: Provision — packages
   ansible.builtin.dnf:
-    name: "{{ _acc_build_host_packages + (_acc_build_host_packages_aarch64 if acc_build_host_aarch64 else []) }}"
+    name: "{{ _acc_build_host_packages + (_acc_build_host_packages_copr if acc_build_host_copr else []) + (_acc_build_host_packages_aarch64 if acc_build_host_aarch64 else []) }}"
     state: present
 
 - name: Provision — the build user
@@ -61,6 +80,22 @@
 
 # ansible.builtin only, like ansible/acc-distribute: no collection to install
 # before the role runs, in an AAP execution environment or on a bare controller.
+# A home outside /home is var_t: sshd may not read its authorized_keys and the
+# login is refused ("Could not open user ... authorized keys: Permission
+# denied"). Label it as /home is labelled.
+- name: Provision — SELinux labels the home like /home
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if ! semanage fcontext -l -C | grep -q "^{{ acc_build_host_home }} = /home$"; then
+      semanage fcontext -a -e /home "{{ acc_build_host_home }}"
+      echo added
+    fi
+  args:
+    executable: /bin/bash
+  register: _acc_build_host_fcontext
+  changed_when: "'added' in _acc_build_host_fcontext.stdout"
+  when: ansible_selinux.status | default('disabled') == 'enabled'
+
 - name: Provision — the build user's ~/.ssh
   ansible.builtin.file:
     path: "{{ acc_build_host_home }}/.ssh"
@@ -79,6 +114,37 @@
     mode: "0600"
   loop: "{{ _acc_build_host_keys }}"
   no_log: true
+
+# The private half never leaves the host and is never printed; status prints the
+# public half for the deploy key.
+- name: Provision — the acc-spearhead deploy key (made once)
+  ansible.builtin.command: >-
+    ssh-keygen -q -t rsa -b 4096 -N '' -C "{{ acc_build_host_user }}@{{ inventory_hostname }} acc-spearhead read-only"
+    -f {{ acc_build_host_deploy_key }}
+  args:
+    creates: "{{ acc_build_host_deploy_key }}"
+  become_user: "{{ acc_build_host_user }}"
+  when: acc_build_host_deploy_key | length > 0
+
+- name: Provision — git reaches GitHub with that key
+  ansible.builtin.blockinfile:
+    path: "{{ acc_build_host_home }}/.ssh/config"
+    create: true
+    owner: "{{ acc_build_host_user }}"
+    group: "{{ acc_build_host_user }}"
+    mode: "0600"
+    marker: "# {mark} acc-build-host: github.com"
+    block: |
+      Host github.com
+          IdentityFile {{ acc_build_host_deploy_key }}
+          IdentitiesOnly yes
+          StrictHostKeyChecking accept-new
+  when: acc_build_host_deploy_key | length > 0
+
+- name: Provision — relabel the home (after everything above wrote into it)
+  ansible.builtin.command: "restorecon -RF {{ acc_build_host_home }}"
+  changed_when: false
+  when: ansible_selinux.status | default('disabled') == 'enabled'
 
 - name: Provision — aarch64 binfmt is registered (qemu-user-static)
   ansible.builtin.systemd:

@@ -79,6 +79,7 @@ from acc.signals import (
     subject_knowledge_share,
     subject_knowledge_share_all,
     subject_route_request,
+    subject_kg_write,
     redis_lesson_key,
     redis_lessons_index_key,
     redis_lesson_used_key,
@@ -1148,6 +1149,18 @@ class Agent:
             "threads": list(m.threads)[:4],
             "quarantine": list(m.quarantine)[:20],
         } for m in missions[:limit]]
+
+    async def _external_work_summaries(self, limit: int = 50) -> list[dict]:
+        """The newest external work items, compact, for the heartbeat (CS-03)."""
+        if self._oversight_queue is None:
+            return []
+        try:
+            from acc.external_work import ExternalWorkStore  # noqa: PLC0415
+            items = await ExternalWorkStore.for_queue(self._oversight_queue).all(limit)
+        except Exception:  # noqa: BLE001
+            logger.debug("external_work: summaries failed", exc_info=True)
+            return []
+        return [it.summary() for it in items]
 
     async def _handle_mission_control(self, payload: dict) -> None:
         """Close, revoke, purge or restore a mission (058 Phase 1).
@@ -2516,6 +2529,9 @@ class Agent:
                 # 058 Phase 1 -- the collective's "ask once" missions (shared
                 # Redis, so the arbiter's list is the whole picture).
                 "missions": await self._mission_summaries(),
+                # CS-03 -- external coding agents' work items (shared Redis,
+                # like missions), so a late-joining Board still shows them.
+                "external_work": await self._external_work_summaries(),
                 # `20260903-work-board-tui` Phase 2 -- arbiter-only plan
                 # summaries so a late-joining Board cold-starts; [] elsewhere.
                 "active_plans": (
@@ -3062,6 +3078,10 @@ class Agent:
             _fp = str(getattr(result, "harness_fingerprint", "") or "")
             if _fp:
                 complete_body["harness_fingerprint"] = _fp
+            # RDF-06 -- which graph entities fed the prompt; absent when none.
+            _seeds = list(getattr(result, "graph_seeds", []) or [])
+            if _seeds:
+                complete_body["graph_seeds"] = _seeds
             _used = list(getattr(result, "lessons_used", []) or [])
             if _used:
                 complete_body["lessons_used"] = _used
@@ -5647,6 +5667,102 @@ class Agent:
         )
         return True
 
+    # ------------------------------------------------------------------
+    # RDF-05 -- kg_propose writes: agent -> arbiter -> store
+    # ------------------------------------------------------------------
+    async def _submit_kg_write(self, payload: dict) -> bool:
+        """Send one SHACL-checked write to the arbiter, signed.  The skill
+        supplies requester / ceiling / task from the call context; this adds
+        who is sending."""
+        body = dict(payload)
+        body["from_agent"] = self.agent_id
+        body["from_role"] = self.config.agent.role
+        body["collective_id"] = body.get("collective_id") or self.config.agent.collective_id
+        try:
+            await self.backends.signaling.publish(
+                subject_kg_write(body["collective_id"]), self._sign_ask(body))
+            return True
+        except Exception:  # noqa: BLE001
+            logger.exception("kg: could not send the write to the arbiter")
+            return False
+
+    def _kg_write_refusal(self, payload: dict) -> str:
+        """Why this KG_WRITE must not be written, or ``""`` -- the sender is
+        proven first, then its role's signed definition must carry
+        ``knowledge_graph`` (the flag that granted ``kg_propose``)."""
+        from_agent = str(payload.get("from_agent", "") or "")
+        from_role = str(payload.get("from_role", "") or "")
+        if not from_agent or not from_role or not payload.get("ntriples"):
+            return "incomplete write"
+        if str(payload.get("collective_id", "")) != self.config.agent.collective_id:
+            return "write for another collective"
+        sender = self._sender_refusal(payload, claimed_role=from_role)
+        if sender:
+            return sender
+        entry = (getattr(self, "_worker_roster", {}) or {}).get(from_agent)
+        if entry is not None and str(getattr(entry, "role", "")) != from_role:
+            return f"roster says {from_agent} is {getattr(entry, 'role', '?')!r}, not {from_role!r}"
+        definition = self._resolve_role_definition(from_role)
+        if definition is None:
+            return f"role {from_role!r} is not resolvable"
+        if not definition.get("knowledge_graph", False):
+            return f"role {from_role!r} does not carry knowledge_graph"
+        return ""
+
+    async def _handle_kg_write(self, payload: dict) -> str:
+        """Arbiter: verify, re-validate, write the requester's private graph,
+        and queue a kg_share proposal when asked.  Returns the private graph
+        written ("" when refused)."""
+        if self.config.agent.role != "arbiter":
+            return ""
+        refusal = self._kg_write_refusal(payload)
+        if refusal:
+            logger.warning("kg: refused a write from %s (%s): %s",
+                           payload.get("from_agent"), payload.get("from_role"), refusal)
+            return ""
+        from acc.kg_shapes import load_shapes  # noqa: PLC0415
+        from acc.kg_writes import apply_write, share_proposal, with_writer  # noqa: PLC0415
+        try:
+            shapes, source = load_shapes()
+            name, n = await with_writer(self.config.agent.collective_id,
+                                        lambda store: apply_write(store, payload, shapes))
+        except Exception as exc:  # noqa: BLE001 -- refused shapes, a store locked past the wait
+            logger.warning("kg: write from %s not written: %s", payload.get("from_agent"), exc)
+            return ""
+        logger.info("kg: wrote %d triple(s) for task %s into %s (shapes %s)",
+                    n, payload.get("task_id", ""), name, source)
+        if payload.get("share"):
+            oversight_id = await self._queue_assistant_proposal(
+                share_proposal(payload, name), self.config.agent.collective_id)
+            logger.info("kg: share of task %s queued as %s", payload.get("task_id", ""),
+                        oversight_id or "(no queue)")
+        return name
+
+    async def _subscribe_kg_writes(self) -> None:
+        """Arbiter: hear kg_propose writes (the store's only writer)."""
+        if self.config.agent.role != "arbiter":
+            return
+        collective_id = self.config.agent.collective_id
+
+        async def _handle(msg: object) -> None:
+            try:
+                data = json.loads(_payload_bytes(msg))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning("kg: invalid JSON on KG_WRITE")
+                return
+            try:
+                await self._handle_kg_write(data)
+            except Exception:  # noqa: BLE001 -- never let the callback die
+                logger.debug("kg: write handling failed", exc_info=True)
+
+        try:
+            await self.backends.signaling.subscribe(subject_kg_write(collective_id), _handle)
+            logger.info("kg: listening on %s", subject_kg_write(collective_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("kg: subscribe failed: %s", exc)
+            return
+        await self._stop_event.wait()
+
     async def _subscribe_route_requests(self) -> None:
         """Arbiter: hear ``can_route`` roles asking for a re-dispatch."""
         if self.config.agent.role != "arbiter":
@@ -5703,6 +5819,12 @@ class Agent:
         restriction the deployment did not ask for -- so the answer is
         unconditionally yes, exactly as before this existed.
         """
+        # RDF-05 -- a kg_share writes the knowledge store, and the arbiter is
+        # its only writer: anywhere else, leave the approval unclaimed for it.
+        # Enforced with or without NKeys -- the lock on the store is not.
+        from acc.assistant_proposal import PROPOSAL_KG_SHARE  # noqa: PLC0415
+        if kind == PROPOSAL_KG_SHARE:
+            return self.config.agent.role == "arbiter"
         if not getattr(_nkey_config_of(self), "enabled", False):
             return True
         try:
@@ -6264,6 +6386,9 @@ class Agent:
             # pack for the instances bound to it, and a bound instance logs
             # which hub vocabulary its receptors will use.
             _domain_taxonomy_of(self)
+            # RDF-05 -- a kg_propose call in this process sends through here.
+            from acc.kg_writes import register_submitter  # noqa: PLC0415
+            register_submitter(self._submit_kg_write)
             # Run heartbeat, task, role-update, bridge-result, centroid,
             # (arbiter only) oversight-decision and plan-orchestration
             # loops concurrently.  Non-arbiter agents' plan / oversight
@@ -6303,6 +6428,7 @@ class Agent:
                 self._subscribe_agent_inbox(),
                 # Phase 9 -- arbiter-only; a no-op on every other role.
                 self._subscribe_route_requests(),
+                self._subscribe_kg_writes(),
                 # Proactive wakeup self-check (2026-06-09). No-ops unless the
                 # active role sets proactive_wakeup: true (only the Assistant
                 # does). Keeps an opted-in agent active instead of purely

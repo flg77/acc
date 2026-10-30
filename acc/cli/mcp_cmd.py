@@ -5,6 +5,7 @@
     acc-cli mcp add <server> --url URL [--api-key-env NAME]
     acc-cli mcp remove <server>
     acc-cli mcp tools <server> [--role ROLE] [--enable T | --disable T]
+    acc-cli mcp serve --executor NAME        ACC itself as an MCP server (stdio), for a coding agent
 
 Host overrides only ever **subtract**. A role's governed declaration is the
 ceiling; this command can lower it for a host and cannot raise it. Where
@@ -63,6 +64,17 @@ def register(sub: argparse._SubParsersAction) -> None:
     dis_p = sp.add_parser("disable", help="Disable a server on this host.")
     dis_p.add_argument("server")
     dis_p.set_defaults(func=_cmd_disable)
+
+    serve_p = sp.add_parser(
+        "serve", help="Serve ACC to a coding agent over stdio (CS-02): work items, notes, ask.")
+    serve_p.add_argument("--executor", required=True,
+                         help="Who is calling: claude-vertex, codex, cursor, ...")
+    serve_p.add_argument("--session", default="", help="Session id (default: generated).")
+    serve_p.add_argument("--collective-id", default=None)
+    serve_p.add_argument("--nats-url", default=None)
+    serve_p.add_argument("--redis-url", default=None,
+                         help="ACC's Redis (default ACC_REDIS_URL, else redis://localhost:6379).")
+    serve_p.set_defaults(func=_cmd_serve)
 
 
 # ---------------------------------------------------------------------------
@@ -263,4 +275,21 @@ def _cmd_tools(args: argparse.Namespace) -> int:
         print(f"  {tool:<{width}}  {state}")
         if not decision.allowed and decision.reason:
             print(f"  {'':<{width}}  {decision.reason}")
+    return 0
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """stdout is the protocol; ``main`` already sends logging to stderr."""
+    import os  # noqa: PLC0415
+
+    from acc.cli._common import default_collective, nats_url  # noqa: PLC0415
+    from acc.mcp.server import run_stdio  # noqa: PLC0415
+
+    asyncio.run(run_stdio(
+        executor=args.executor.strip(),
+        collective_id=args.collective_id or default_collective(),
+        nats_url=args.nats_url or nats_url(),
+        redis_url=args.redis_url or os.environ.get("ACC_REDIS_URL", "redis://localhost:6379"),
+        session_id=args.session,
+    ))
     return 0

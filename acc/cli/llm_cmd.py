@@ -65,6 +65,9 @@ def _build_llm_only_unrecorded(config: Any) -> Any:
         return AnthropicBackend(
             model=config.llm.anthropic_model,
             embedding_model_path=config.llm.embedding_model_path,
+            provider=config.llm.anthropic_provider,
+            vertex_project_id=config.llm.vertex_project_id,
+            vertex_region=config.llm.vertex_region,
         )
     if backend_name == "vllm":
         from acc.backends.llm_vllm import VLLMBackend  # noqa: PLC0415

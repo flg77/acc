@@ -136,6 +136,46 @@ Source of truth for the full report:
 [`test/history/vllmpunch-capacity-report-20260514.md`](../test/history/vllmpunch-capacity-report-20260514.md)
 (operator-local, gitignored).
 
+## Claude through Google Vertex AI
+
+The `anthropic` backend can reach Claude on a Google Cloud project instead of
+Anthropic's API, for example an employer's project (CS-07, proposal 062). It sends
+no API key. It authenticates with application default credentials, which the
+Anthropic SDK reads through `google-auth`.
+
+1. Install the extra: `pip install 'acc[vertex]'`, or build the image with the
+   `vertex` feature (`features/vertex.yaml`).
+2. Make credentials available. Either point `GOOGLE_APPLICATION_CREDENTIALS` at a
+   service-account or ADC file, or run `gcloud auth application-default login` for
+   your own user. In containers, mount the file read-only and set the variable; ACC
+   never opens the file itself.
+3. Select it, globally or per model:
+
+   ```yaml
+   # acc-config.yaml
+   llm:
+     backend: anthropic
+     anthropic_provider: vertex        # anthropic (default) | vertex
+     anthropic_model: <model id as Vertex lists it>
+     vertex_project_id: <project>      # else ANTHROPIC_VERTEX_PROJECT_ID
+     vertex_region: <region>           # else CLOUD_ML_REGION
+   ```
+
+   ```yaml
+   # models.yaml
+   - model_id: claude-vertex-sonnet
+     backend: anthropic
+     provider: vertex
+     model: <model id as Vertex lists it>
+     vertex_project_id: <project>
+     vertex_region: <region>
+     zone: vertex-<org>
+   ```
+
+The env overrides are `ACC_ANTHROPIC_PROVIDER`, `ACC_VERTEX_PROJECT_ID` and
+`ACC_VERTEX_REGION`. `acc-cli config check` does not ask for `ANTHROPIC_API_KEY` when
+the provider is `vertex`. `acc-cli llm test` proves the route answers.
+
 ## See also
 
 * [`deploy/host-configs/README.md`](../deploy/host-configs/README.md)

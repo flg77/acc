@@ -10,7 +10,7 @@ A capability the model can invoke that appears in no inventory is an ungoverned 
 
 | Skills | MCP servers | MCP servers with an unbounded tool surface |
 |---|---|---|
-| 58 | 14 | **5** |
+| 60 | 14 | **5** |
 
 ## What the model is actually told
 
@@ -59,6 +59,8 @@ An unbounded tool surface is a governance gap, and these are the servers it appl
 | `head_text` | Read the first N lines of a UTF-8 text file (cross-platform). | `LOW` | — | `{path: string, lines: integer?}` | `adapter.HeadTextSkill` |
 | `hostname` | Report the local host name (cross-platform). | `LOW` | — | `object` | `adapter.HostnameSkill` |
 | `http_get` | HTTP GET a URL (cross-platform via httpx; MEDIUM risk). | `MEDIUM` | `use_external_api` | `{url: string, timeout_s: number?, max_bytes: integer?, headers: object?}` | `adapter.HttpGetSkill` |
+| `kg_propose` | Propose facts (Turtle) for the requester's private knowledge graph; optionally ask to share them. | `MEDIUM` | — | `{turtle: string, share: boolean?, note: string?}` | `adapter.KgProposeSkill` |
+| `kg_query` | Query the collective's knowledge graph at the task's ceiling (SPARQL, read-only). | `LOW` | — | `{sparql: string, limit: integer?}` | `adapter.KgQuerySkill` |
 | `ls_dir` | List entries of a directory (non-recursive, bounded). | `LOW` | — | `{path: string, max_entries: integer?}` | `adapter.LsDirSkill` |
 | `market_sizer` | Market-size marker — round-trips TAM/SAM/SOM estimates. | `LOW` | — | `{text: string}` | `adapter.StubResearchSkill` |
 | `mattermost_post` | Create a post in a Mattermost channel via the REST API /api/v4/posts. | `MEDIUM` | `send_message` | `{channel_id: string, text: string}` | `adapter.MattermostPostSkill` |

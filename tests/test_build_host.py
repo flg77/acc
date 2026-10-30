@@ -60,10 +60,11 @@ def test_the_role_follows_the_galaxy_layout_and_every_verb_has_a_task_file():
 
 def test_the_role_installs_what_the_pipelines_need():
     v = _yaml(ROLE / "vars" / "main.yml")
-    for pkg in ("mock", "mock-core-configs", "podman", "copr-cli", "rpm-sign", "rpm-build",
+    for pkg in ("mock", "mock-core-configs", "podman", "rpm-sign", "rpm-build",
                 "python3.12", "python3.12-pip", "systemd-rpm-macros", "gcc", "git", "gnupg2"):
         assert pkg in v["_acc_build_host_packages"], pkg
     assert "qemu-user-static-aarch64" in v["_acc_build_host_packages_aarch64"]
+    assert "copr-cli" in v["_acc_build_host_packages_copr"]                              # optional: --no-copr
     d = _yaml(ROLE / "defaults" / "main.yml")
     assert d["acc_build_host_user"] == "acc-build" and d["acc_build_host_home"] == "/srv/acc-build"
     assert d["acc_build_host_gnupghome"].endswith("/.acc-rpm-gpg")
@@ -120,3 +121,25 @@ def test_the_runbook_moves_the_key_and_retires_lighthouse():
     assert "## The build host — `acc-build`" in readme
     hosts = (ROOT / "deploy" / "host-configs" / "README.md").read_text(encoding="utf-8")
     assert "lighthouse builds nothing" in hosts
+
+
+def test_the_host_reads_acc_spearhead_with_a_read_only_deploy_key_it_never_prints():
+    d = _yaml(ROLE / "defaults" / "main.yml")
+    assert d["acc_build_host_deploy_key"].endswith("/.ssh/acc-spearhead-deploy")
+    provision = (ROLE / "tasks" / "provision.yml").read_text(encoding="utf-8")
+    assert "ssh-keygen" in provision and "creates:" in provision                       # made once
+    assert "IdentitiesOnly yes" in provision
+    status = (ROLE / "tasks" / "status.yml").read_text(encoding="utf-8")
+    assert ".pub" in status and "deploy-key add" in status                              # only the public half
+    howto = (ROOT / "packaging" / "build-host" / "HOWTO.md").read_text(encoding="utf-8")
+    adds = [line for line in howto.splitlines() if line.startswith("gh repo deploy-key add")]
+    assert adds and not any("--allow-write" in line for line in adds)                   # read-only
+
+
+def test_the_home_outside_home_gets_home_labels_and_podman_its_own_runtime_dir():
+    provision = (ROLE / "tasks" / "provision.yml").read_text(encoding="utf-8")
+    assert "semanage fcontext -a -e /home" in provision and "restorecon -RF" in provision
+    assert "policycoreutils-python-utils" in _yaml(ROLE / "vars" / "main.yml")["_acc_build_host_packages"]
+    verify = (ROLE / "files" / "verify-build-host.sh").read_text(encoding="utf-8")
+    assert 'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' in verify
+    assert "(cd / && podman info" in verify

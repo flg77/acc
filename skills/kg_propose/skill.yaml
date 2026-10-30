@@ -1,0 +1,52 @@
+# skills/kg_propose/skill.yaml — propose facts for the knowledge store (RDF-05).
+#
+# Granted only with `knowledge_graph: true`.  The triples must conform to the
+# SHACL shapes of the collective's signed shapes pack (ACC_KG_SHAPES) — no
+# shapes, no writes.  Accepted triples go to the REQUESTER's private graph
+# (readable by them alone, at the task's ceiling); `share: true` additionally
+# queues a `kg_share` proposal a person approves before anyone else can read
+# them (operator decision 2026-10-03).  The agent never writes the store: it
+# sends the triples, signed, to the arbiter, which re-validates and writes.
+# risk_level MEDIUM: a write into one person's private graph, like doc_ingest.
+
+purpose:        "Propose facts (Turtle) for the requester's private knowledge graph; optionally ask to share them."
+version:        "0.1.0"
+adapter_class:  "KgProposeSkill"
+risk_level:     "MEDIUM"
+domain_id:      "knowledge"
+tags:           ["knowledge-graph", "rdf", "shacl", "write"]
+
+input_schema:
+  type: object
+  properties:
+    turtle:
+      type: string
+      description: "The facts, as Turtle or N-Triples (at most 200 triples). Prefixes acc:, prov:, skos:, dcterms:, rdf:, rdfs:, owl:, xsd: are predeclared."
+    share:
+      type: boolean
+      description: "Also ask a person to make these facts readable to others (a kg_share proposal)."
+    note:
+      type: string
+      description: "Why these facts, for the person who approves sharing them."
+  required: ["turtle"]
+  additionalProperties: false
+
+output_schema:
+  type: object
+  properties:
+    accepted:  {type: boolean}
+    sent:      {type: boolean}
+    triples:   {type: integer}
+    share:     {type: boolean}
+    messages:  {type: array, items: {type: string}}
+    error:     {type: string}
+  required: ["accepted"]
+  additionalProperties: false
+
+description: |
+  Propose facts for the knowledge graph, as Turtle. They are checked against
+  the collective's SHACL shapes first; if they do not conform you get the
+  shape violations back (messages) — fix the facts and call again. Accepted
+  facts go to the requester's private graph (only they can read them). Set
+  share=true to also ask a person to make them readable to others; nothing
+  becomes shared without that approval.

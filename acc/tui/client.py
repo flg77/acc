@@ -548,6 +548,14 @@ class NATSObserver:
         outcomes.append(dict(data))
         del outcomes[:-50]
 
+    @handles("EXTERNAL_WORK")
+    def _route_external_work(self, agent_id: str, data: dict) -> None:
+        """CS-03 -- one external work item changed; the next arbiter
+        heartbeat brings the durable list."""
+        row = data.get("item")
+        if isinstance(row, dict) and row.get("item_id"):
+            self._snapshot.external_work[str(row["item_id"])] = dict(row)
+
     @handles("HEARTBEAT")
     def _route_heartbeat(self, agent_id: str, data: dict) -> None:
         """Update AgentSnapshot from a HEARTBEAT payload (REQ-TUI-012).
@@ -671,6 +679,12 @@ class NATSObserver:
             missions = data.get("missions", [])
             if isinstance(missions, list):
                 self._snapshot.missions = missions
+            external = data.get("external_work")
+            if isinstance(external, list):
+                self._snapshot.external_work = {
+                    str(row["item_id"]): row for row in external
+                    if isinstance(row, dict) and row.get("item_id")
+                }
             # `20260903-work-board-tui` Phase 2 -- plan summaries: a TUI that
             # joined after the PLAN was broadcast still gets a Board.
             plans = data.get("active_plans", [])

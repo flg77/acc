@@ -53,6 +53,9 @@ _worker_publish: &worker_publish
   # `20260923-lessons-that-travel` Phase 9 -- a ``can_route`` role ASKS the
   # arbiter to re-dispatch; it still may not publish `task.assign` itself.
   - acc.*.route.request
+  # RDF-05 -- a `knowledge_graph` role SENDS its SHACL-checked triples to the
+  # arbiter, the knowledge store's only writer; it never writes the store.
+  - acc.*.kg.write
   - acc.bridge.*.*.delegate
   - acc.bridge.*.*.result
   - acc.bridge.*.pending

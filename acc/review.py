@@ -30,7 +30,7 @@ DEFAULT_MAX_ROUNDS = 2
 #: Bounds on what rides the bus.
 MAX_GOAL_CHARS = 4000
 MAX_BRIEF_CHARS = 4000
-MAX_RESULT_CHARS = 12000
+MAX_RESULT_CHARS = 16000  # = the TASK_COMPLETE bus cap (acc.agent._task_output_max_chars)
 MAX_NOTES = 5
 MAX_NOTE_CHARS = 500
 
@@ -91,10 +91,18 @@ def handover_content(block: dict, critique: str = "") -> str:
         ]
     parts += [
         "",
-        "Your answer goes back to the assistant, who reviews it before the operator "
-        "sees it. If you learned something the assistant should keep for later "
-        "(a fact about this environment, something you could not check), add it on "
-        "its own line as [NOTE_FOR_ASSISTANT: <the note>].",
+        "Rules for your answer (the assistant reviews it before the operator sees it):",
+        "- Every finding must rest on output you actually got from a tool in this task. "
+        "Quote or cite that output next to the finding.",
+        "- If a check could not run (file not found, permission denied, command missing), "
+        "report it as NOT CHECKED with the reason. Never fill in a value you did not observe, "
+        "and never use placeholders such as /path/to/script as evidence.",
+        "- You run inside your own container. Files, processes and settings you read are "
+        "that container's. If the request is about another machine (for example 'the local "
+        "server') and you have no tool that reaches it, say so at the top of your answer.",
+        "- If you learned something the assistant should keep for later (a fact about this "
+        "environment, something you could not check), add it on its own line as "
+        "[NOTE_FOR_ASSISTANT: <the note>].",
     ]
     return "\n".join(parts)
 
@@ -138,9 +146,20 @@ def review_content(
         parts += ["", f"Notes {role} left for you:"] + [f"- {n}" for n in notes]
     parts += [
         "",
+        "How to review:",
+        "- Judge only what the answer evidences. Do NOT add findings, evidence or sections of "
+        "your own: you have not run any checks, so anything you add would be invented.",
+        "- If the answer is incomplete or cut off, choose refine and name what is missing; "
+        "do not complete it yourself.",
+        "- A finding with no tool output behind it (or with placeholder evidence) is not a "
+        "finding: send it back, or present it to the operator explicitly as unverified.",
+        "- If the specialist could not reach what the request is about (for example it "
+        "inspected its own container instead of the operator's server), say so plainly; "
+        "escalate when no refinement can fix that.",
+        "",
         "Write your reply to the operator, then end with exactly one verdict on its own line:",
-        "  [REVIEW:accept] — the answer meets the request; your reply is the final answer "
-        f"(summarise it and credit {role}).",
+        "  [REVIEW:accept] — the answer meets the request on its own evidence; your reply "
+        f"presents it (summarise it and credit {role}), adding nothing it does not show.",
         "  [REVIEW:refine:<what to fix>] — send it back to the specialist with a concrete critique.",
         "  [REVIEW:escalate:<why>] — the operator has to decide (conflicting evidence, risk, "
         "or the specialist cannot do it).",

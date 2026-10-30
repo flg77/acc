@@ -11,7 +11,6 @@ _acc_build_host_packages:
   - mock
   - mock-core-configs
   - podman
-  - copr-cli
   - rpm-sign
   - rpm-build
   - rpmdevtools
@@ -27,6 +26,9 @@ _acc_build_host_packages:
   - rsync
   - tar
   - curl
+  - policycoreutils-python-utils   # semanage: the home under /srv is labelled like /home
+_acc_build_host_packages_copr:
+  - copr-cli
 _acc_build_host_packages_aarch64:
   - qemu-user-static-aarch64
 
@@ -34,7 +36,6 @@ _acc_build_host_packages_aarch64:
 _acc_build_host_required_bins:
   - mock
   - podman
-  - copr-cli
   - rpmsign
   - rpmbuild
   - createrepo_c

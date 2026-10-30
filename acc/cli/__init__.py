@@ -21,6 +21,8 @@ Usage::
     acc-cli oversight reject  <oversight_id> [--reason TEXT]
     acc-cli plan submit <plan.json> [--watch]
     acc-cli plan watch <plan_id>
+    acc-cli up [--webgui] | down | restart   # the container stack (acc-deploy.sh)
+    acc-cli stack <acc-deploy verb> [args]   # build, rebuild, ps, logs, ...
 
 Common environment variables (read on every invocation):
 
@@ -94,6 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
         oauth_cmd,
         logs_cmd,
         mcp_cmd,
+        ingest_cmd,
         trace_cmd,
         memory_cmd,
         lessons_cmd,
@@ -113,6 +116,7 @@ def _build_parser() -> argparse.ArgumentParser:
         plan_cmd,
         profile_cmd,
         schedule_cmd,
+        stack_cmd,
     )
     access_cmd.register(sub)
     auth_cmd.register(sub)
@@ -134,6 +138,7 @@ def _build_parser() -> argparse.ArgumentParser:
     llm_cmd.register(sub)
     logs_cmd.register(sub)
     mcp_cmd.register(sub)
+    ingest_cmd.register(sub)
     trace_cmd.register(sub)
     memory_cmd.register(sub)
     lessons_cmd.register(sub)
@@ -153,6 +158,7 @@ def _build_parser() -> argparse.ArgumentParser:
     plan_cmd.register(sub)
     profile_cmd.register(sub)
     instance_cmd.register(sub)
+    stack_cmd.register(sub)
     schedule_cmd.register_schedule_subparser(sub)
     # PR-K (D-005) — golden-prompt suite runner (CLI mode).
     # Shares its loader / assertion engine (`acc.golden_prompts`) with
@@ -181,7 +187,11 @@ def main(argv: list[str] | None = None) -> int:
     from acc import paths as _paths  # noqa: PLC0415
     _paths.adopt_shared_umask()      # IN-07: shared state stays group-writable
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    args, extra = parser.parse_known_args(argv)
+    if getattr(args, "stack_passthrough", False):
+        args.stack_args = extra          # up/down/restart/stack: all of it is acc-deploy's
+    elif extra:
+        parser.error(f"unrecognized arguments: {' '.join(extra)}")
     _configure_logging(args.verbose)
 
     if not getattr(args, "command", None):

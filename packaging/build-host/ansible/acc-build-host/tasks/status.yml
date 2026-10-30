@@ -10,6 +10,7 @@
       --build-root {{ acc_build_host_build_root }}
       --gnupghome {{ acc_build_host_gnupghome }}
       --min-free-gb {{ acc_build_host_min_free_gb }}
+      {{ '' if acc_build_host_copr else '--no-copr' }}
       --chroots "{{ (acc_build_host_mock_chroots + (acc_build_host_mock_chroots_aarch64 if acc_build_host_aarch64 else [])) | join(' ') }}"
       {{ ('--fingerprint ' ~ acc_build_host_key_fingerprint) if acc_build_host_key_fingerprint else '' }}
   register: _acc_build_host_status
@@ -19,3 +20,17 @@
 - name: Status — report
   ansible.builtin.debug:
     msg: "{{ _acc_build_host_status.stdout_lines }}"
+
+- name: Status — the deploy key's public half
+  ansible.builtin.command: "cat {{ acc_build_host_deploy_key }}.pub"
+  register: _acc_build_host_deploy_pub
+  changed_when: false
+  failed_when: false
+  when: acc_build_host_deploy_key | length > 0
+
+- name: Status — add it to acc-spearhead as a READ-ONLY deploy key (once)
+  ansible.builtin.debug:
+    msg:
+      - "{{ _acc_build_host_deploy_pub.stdout | default('') or 'no deploy key yet: provision makes it' }}"
+      - "gh repo deploy-key add <file with that line> --repo flg77/acc-spearhead --title {{ inventory_hostname }}"
+  when: acc_build_host_deploy_key | length > 0

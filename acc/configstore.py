@@ -804,8 +804,12 @@ def _check_references(*, repo_root: Path | None = None) -> list[Finding]:
                 )
             )
 
-    backend, _ = _dig(read("acc-config", repo_root=repo_root), "llm.backend")
+    cfg = read("acc-config", repo_root=repo_root)
+    backend, _ = _dig(cfg, "llm.backend")
     needed = cs.BACKEND_CREDENTIALS.get(str(backend or ""))
+    provider, _ = _dig(cfg, "llm.anthropic_provider")
+    if backend == "anthropic" and (os.environ.get("ACC_ANTHROPIC_PROVIDER") or provider) == "vertex":
+        needed = None    # CS-07: Vertex authenticates with Google credentials, not an API key
     if needed:
         if needed not in env_names and not os.environ.get(needed):
             findings.append(

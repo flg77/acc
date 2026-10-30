@@ -374,6 +374,9 @@ async def dispatch_invocations(
 
     outcomes: list[InvocationOutcome] = []
     total = len(invocations)
+    # One task dispatches one round, so this is the task's memory of how its
+    # questions ended -- see _GateMemory.
+    gate_memory = _GateMemory()
     for idx, inv in enumerate(invocations, start=1):
         if progress_callback is not None:
             try:
@@ -402,9 +405,16 @@ async def dispatch_invocations(
         # F3 -- whose task this call serves, for a credential minted per person
         # (an ``auth: oauth`` MCP). Scoped to the call: agents run tasks
         # concurrently.
+        from acc.call_context import CallContext, calling  # noqa: PLC0415
         from acc.credentials.live import serving  # noqa: PLC0415
 
-        with serving(requester):
+        # RDF-05 -- the task's requester and ceiling for skills that must act
+        # as the requester (kg_query, kg_propose); never from the arguments.
+        ctx = CallContext(
+            requester=requester, ceiling=requester_ceiling or "CRITICAL",
+            collective_id=str(getattr(core, "_collective_id", "") or ""), task_id=task_id,
+        )
+        with serving(requester), calling(ctx):
             outcomes.append(await _dispatch_one(
                 inv, core, role,
                 oversight_queue=oversight_queue,
@@ -414,6 +424,7 @@ async def dispatch_invocations(
                 requester=requester,
                 thread_ids=list(thread_ids or []),
                 workspace=workspace,
+                gate_memory=gate_memory,
             ))
     return outcomes
 
@@ -449,12 +460,13 @@ def ask_stats(outcomes: "list[InvocationOutcome]") -> dict[str, Any]:
 
 def _note_ask(ask: dict[str, Any], gate_outcome: "InvocationOutcome | None", t0: float) -> None:
     """Record how a gate ended into *ask*.  A row that never reached the queue
-    (the submit failed) interrupted nobody and is not an ask."""
+    (the submit failed, or the task already had the answer) interrupted nobody
+    and is not an ask."""
     if gate_outcome is None:
         status = "APPROVED"
     else:
         err = gate_outcome.error
-        if err.startswith("oversight_submit_failed"):
+        if err.startswith(("oversight_submit_failed", "oversight_not_asked")):
             return
         if err.startswith(("oversight_rejected", "oversight_auto_rejected")):
             status = "REJECTED"
@@ -502,6 +514,7 @@ async def _dispatch_gated(
     ask: "dict[str, Any] | None" = None,
     thread_ids: "list[str] | None" = None,
     workspace: str = "",
+    gate_memory: "_GateMemory | None" = None,
 ) -> InvocationOutcome:
     """Run one marker; convert every exception path to an
     :class:`InvocationOutcome` with a populated ``error``.
@@ -646,6 +659,7 @@ async def _dispatch_gated(
                 inv, manifest, role, oversight_queue, task_id,
                 escalation=denial, question=question, record=record, core=core,
                 requester=requester, requester_ceiling=requester_ceiling,
+                memory=gate_memory,
             )
             if ask is not None:
                 _note_ask(ask, gate_outcome, t0)
@@ -772,6 +786,7 @@ async def _dispatch_gated(
             inv, gate_manifest, role, oversight_queue, task_id,
             categories=categories, question=question, record=record, core=core,
             requester=requester, requester_ceiling=requester_ceiling,
+            memory=gate_memory,
         )
         if ask is not None:
             _note_ask(ask, gate_outcome, t0)
@@ -1169,6 +1184,37 @@ def _role_with_grant(
     return role.model_copy(update=update)
 
 
+@dataclass
+class _GateMemory:
+    """How the questions one task already asked have ended.
+
+    A model reply often carries several gated markers -- the same exec call
+    repeated, or a retry with other arguments -- and they are dispatched one
+    after another.  Without this every one of them opened its own item and
+    waited out the full oversight timeout: a task whose human was away
+    re-filed a fresh HIGH item every 5 minutes
+    (lighthouse 2026-09-27, PB-13 finding 11).
+
+    * ``unanswered`` -- the first item that ended with nobody deciding
+      (EXPIRED, still PENDING, lost).  Nobody is there, so every later gate
+      in the task is refused without asking.
+    * ``refused`` -- calls a decision refused (REJECTED, headless), keyed by
+      kind, target and arguments.  The identical call is not asked again; a
+      different one still is, because someone answered.
+
+    APPROVED is not remembered: an approval covers one call.
+    """
+
+    unanswered: str = ""
+    refused: dict[str, str] = field(default_factory=dict)
+
+    @staticmethod
+    def key(inv: ParsedInvocation) -> str:
+        return json.dumps(
+            [inv.kind, inv.target, inv.args], sort_keys=True, default=str,
+        )
+
+
 async def _gate_on_oversight(
     inv: ParsedInvocation,
     manifest: "Any",
@@ -1183,12 +1229,16 @@ async def _gate_on_oversight(
     core: "Any | None" = None,
     requester: str = "",
     requester_ceiling: str = "",
+    memory: "_GateMemory | None" = None,
 ) -> "InvocationOutcome | None":
     """Submit an oversight item and block on its resolution.
 
     *question* (an :class:`acc.question.Question`) rides on the row; how it
     ended is written into *record* (oversight_id, text, evidence, status,
     answer, approver_id) for the outcome and the session trace.
+
+    *memory* is the task's :class:`_GateMemory`: a gate whose answer the task
+    already has is refused here, before anything is submitted or previewed.
 
     Returns:
         ``None`` when the operator APPROVED — caller proceeds with
@@ -1198,6 +1248,25 @@ async def _gate_on_oversight(
         ``error`` field for REJECT / EXPIRED / queue failure — caller
         surfaces this directly without dispatching the adapter.
     """
+    if memory is not None:
+        not_asked = ""
+        if memory.unanswered:
+            not_asked = (
+                f"oversight_not_asked: an earlier question in this task "
+                f"(id={memory.unanswered}) went unanswered -- not asking again"
+            )
+        elif memory.key(inv) in memory.refused:
+            not_asked = (
+                f"oversight_not_asked: this exact call was already refused in "
+                f"this task ({memory.refused[memory.key(inv)]})"
+            )
+        if not_asked:
+            logger.warning(
+                "capability_dispatch: %s kind=%s target=%s task_id=%s",
+                not_asked, inv.kind, inv.target, task_id,
+            )
+            return InvocationOutcome(parsed=inv, ok=False, error=not_asked)
+
     destructive = bool(getattr(question, "destructive", False))
     summary = _build_oversight_summary(
         inv, manifest, categories, escalation=escalation, destructive=destructive,
@@ -1272,6 +1341,8 @@ async def _gate_on_oversight(
         )
         if question is not None:
             record.update(status="REJECTED", approver_id="headless-auto")
+        if memory is not None:
+            memory.refused[memory.key(inv)] = f"id={oversight_id} REJECTED"
         return InvocationOutcome(
             parsed=inv,
             ok=False,
@@ -1295,6 +1366,8 @@ async def _gate_on_oversight(
         # Item evaporated from storage before resolving (Redis TTL,
         # in-process restart).  Treat as a hard fail — we cannot prove
         # the operator approved, so we must not run the adapter.
+        if memory is not None:
+            memory.unanswered = oversight_id
         return InvocationOutcome(
             parsed=inv,
             ok=False,
@@ -1330,11 +1403,15 @@ async def _gate_on_oversight(
         return None
     if status == "REJECTED":
         reason = getattr(item, "rejection_reason", "")
+        if memory is not None:
+            memory.refused[memory.key(inv)] = f"id={oversight_id} REJECTED"
         return InvocationOutcome(
             parsed=inv,
             ok=False,
             error=f"oversight_rejected: id={oversight_id} reason={reason!r}",
         )
+    if memory is not None and status in ("EXPIRED", "PENDING"):
+        memory.unanswered = oversight_id  # nobody answered
     if status == "EXPIRED":
         return InvocationOutcome(
             parsed=inv,

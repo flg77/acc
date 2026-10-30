@@ -1,0 +1,13 @@
+name: cos_next_for_codex
+description: >-
+  Chief of staff (CS-11) — the assistant proposes what one executor should take
+  next from the queued items and the notes, with the item id and a reason.
+  Needs at least one QUEUED item reported by a coding agent.
+prompt: |
+  What should codex pick up next, and why? Use the queued items and the agents' notes.
+target_role: assistant
+timeout_s: 180.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: "ext-[0-9a-f]{10}"

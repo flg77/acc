@@ -57,6 +57,17 @@ models:
     model: claude-haiku-4-6
     label: "Claude Haiku (cheap/fast — worker)"
     notes: "Needs ACC_ANTHROPIC_API_KEY."
+  # Claude through Google Vertex AI (CS-07): no API key; application default
+  # credentials (GOOGLE_APPLICATION_CREDENTIALS, mounted read-only) and the
+  # `vertex` feature / pip extra.  `model` is the id as Vertex lists it.
+  # - model_id: claude-vertex-sonnet
+  #   backend: anthropic
+  #   provider: vertex
+  #   model: <Vertex model id, e.g. from `gcloud ai models list`>
+  #   vertex_project_id: <your project>
+  #   vertex_region: <your region>
+  #   zone: vertex-<org>
+  #   label: "Claude Sonnet via Vertex AI"
 
   # ── Backends ACC does not ship ────────────────────────────────────────
   # `backend:` may also name a third-party backend supplied by an installed

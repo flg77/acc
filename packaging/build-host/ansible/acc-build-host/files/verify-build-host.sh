@@ -22,6 +22,7 @@ FINGERPRINT=""
 CHANNEL_KEY_URL=""
 REPORT=0
 QUICK=0
+COPR=1
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --user) USER_NAME="$2"; shift 2 ;;
@@ -33,6 +34,7 @@ while [[ $# -gt 0 ]]; do
         --channel-key-url) CHANNEL_KEY_URL="$2"; shift 2 ;;
         --report) REPORT=1; shift ;;
         --quick) QUICK=1; shift ;;
+        --no-copr) COPR=0; shift ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -45,9 +47,14 @@ note() { printf '  --    %-22s %s\n' "$1" "$2"; }
 echo "== acc build host: $(hostname) =="
 
 # ------------------------------------------------------------------ tools
-for bin in mock podman copr-cli rpmsign rpmbuild createrepo_c git gpg python3.12 make; do
+for bin in mock podman rpmsign rpmbuild createrepo_c git gpg python3.12 make; do
     if command -v "$bin" >/dev/null 2>&1; then ok "$bin" "$(command -v "$bin")"; else fail "$bin" "missing"; fi
 done
+if [[ $COPR == 1 ]]; then
+    if command -v copr-cli >/dev/null 2>&1; then ok "copr-cli" "$(command -v copr-cli)"; else fail "copr-cli" "missing"; fi
+else
+    note "copr-cli" "not wanted on this host (--no-copr)"
+fi
 if python3.12 -m pip --version >/dev/null 2>&1; then ok "python3.12 pip" "$(python3.12 -m pip --version | awk '{print $2}')"; else fail "python3.12 pip" "missing (python3.12-pip)"; fi
 
 # ------------------------------------------------------------------ user
@@ -64,7 +71,12 @@ else
     fail "user" "$USER_NAME does not exist"
 fi
 if [[ "$(id -un)" == "$USER_NAME" ]]; then
-    if podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null | grep -q true; then ok "podman rootless" "works as $USER_NAME"; else fail "podman rootless" "podman info failed or is not rootless as $USER_NAME"; fi
+    # sudo -u (Ansible's become) keeps the caller's runtime dir, or none:
+    # rootless podman needs the user's own, which lingering creates.
+    if [[ -d "/run/user/$(id -u)" ]]; then export XDG_RUNTIME_DIR="/run/user/$(id -u)"; fi
+    # ... and from a directory it may enter: become starts in the caller's home,
+    # which podman cannot chdir back into ("cannot chdir to /home/flg").
+    if (cd / && podman info --format '{{.Host.Security.Rootless}}') 2>/dev/null | grep -q true; then ok "podman rootless" "works as $USER_NAME"; else fail "podman rootless" "podman info failed or is not rootless as $USER_NAME"; fi
 else
     note "podman rootless" "not checked (running as $(id -un), not $USER_NAME)"
 fi

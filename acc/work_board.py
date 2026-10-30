@@ -20,6 +20,7 @@ or dataclasses with the same attribute names (the TUI hands it
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
@@ -35,6 +36,14 @@ KIND_PLAN_STEP = "plan_step"
 KIND_CLUSTER_MEMBER = "cluster_member"
 KIND_TASK = "task"
 KIND_GATE = "gate"
+KIND_EXTERNAL = "external"         # CS-03 -- a coding agent ACC does not run
+
+SOURCE_ACC = "acc"
+SOURCE_EXTERNAL = "external"
+
+#: CS-03 -- mirrors acc.external_work.STALE_AFTER_S; kept here so the
+#: projection stays import-free.
+_EXTERNAL_STALE_S = 24 * 3600
 
 # Executor step status -> board column.  CANCELLED folds into FAILED with a
 # status_detail, so the board stays five columns wide.
@@ -74,10 +83,18 @@ class WorkItem:
     outcome: str = ""             # "AUTO_APPROVED", "installed …", "unmet …"
     output_head: str = ""
     updated_ts: float = 0.0
+    # CS-10 -- who did the work: "acc:<role>" for the collective's own agents,
+    # the coding agent's name ("claude-vertex", "codex", "cursor") otherwise.
+    executor: str = ""
+    source: str = SOURCE_ACC
+    repo: str = ""
+    cost_usd: float = 0.0           # reported by an external agent
+    tokens: int = 0                 # reported by an external agent
 
     @property
     def can_cancel(self) -> bool:
-        return self.status in (QUEUED, RUNNING, BLOCKED) and self.kind != KIND_GATE
+        # An external item is the coding agent's to move; ACC cannot cancel it.
+        return self.status in (QUEUED, RUNNING, BLOCKED) and self.kind not in (KIND_GATE, KIND_EXTERNAL)
 
     @property
     def can_retry(self) -> bool:
@@ -112,8 +129,13 @@ def project_board(
     oversight_recent_items: Iterable[dict] | None = None,
     assistant_outcomes: Iterable[dict] | None = None,
     signal_flow_log: Iterable[dict] | None = None,
+    external_work: Any = None,
+    now: float | None = None,
 ) -> list[WorkItem]:
-    """Every item the runtime is working on, newest first within a column."""
+    """Every item the runtime is working on, newest first within a column.
+
+    *external_work* is the snapshot's ``external_work`` (item_id -> summary
+    row, or a list of rows); *now* only decides which of them are stale."""
     items: dict[str, WorkItem] = {}
     by_task: dict[str, str] = {}          # task_id -> item id
 
@@ -292,6 +314,43 @@ def project_board(
             continue
         items[target] = _replace(items[target], outcome=text)
 
+    # 6. external coding agents (CS-03) --------------------------------------
+    rows = external_work.values() if isinstance(external_work, dict) else (external_work or [])
+    clock = time.time() if now is None else now
+    for row in list(rows):
+        iid = str(_get(row, "item_id", "") or "")
+        if not iid:
+            continue
+        status = str(_get(row, "status", "") or "").upper()
+        if status not in (QUEUED, RUNNING, DONE, FAILED):
+            status = QUEUED
+        updated = float(_get(row, "updated_ts", 0.0) or 0.0)
+        detail = ""
+        if status == RUNNING and updated and clock - updated > _EXTERNAL_STALE_S:
+            detail = "stale"
+        elif status == QUEUED and _get(row, "handoff_from", ""):
+            detail = f"handed over by {_get(row, 'handoff_from', '')}"
+        pr = str(_get(row, "pr", "") or "")
+        outcome = _first_line(_get(row, "outcome", ""), 120)
+        items[f"ext:{iid}"] = WorkItem(
+            id=f"ext:{iid}", kind=KIND_EXTERNAL,
+            title=_first_line(_get(row, "title", "") or iid),
+            status=status, status_detail=detail,
+            requester=str(_get(row, "requester", "") or ""),
+            outcome=f"{outcome} ({pr})" if outcome and pr else (outcome or pr),
+            output_head=_first_line(_get(row, "last_progress", ""), 120),
+            updated_ts=updated,
+            executor=str(_get(row, "executor", "") or ""), source=SOURCE_EXTERNAL,
+            repo=str(_get(row, "repo", "") or ""),
+            cost_usd=float(_get(row, "cost_usd", 0.0) or 0.0),
+            tokens=int(_get(row, "tokens", 0) or 0),
+        )
+
+    # CS-10 -- the collective's own items say which of its agents did them.
+    for key, it in list(items.items()):
+        if it.source == SOURCE_ACC and not it.executor:
+            items[key] = _replace(it, executor=f"acc:{it.role}" if it.role else "acc")
+
     order = {c: i for i, c in enumerate(COLUMNS)}
     return sorted(items.values(), key=lambda it: (order.get(it.status, 99), -it.updated_ts, it.id))
 
@@ -310,9 +369,9 @@ def _replace(item: WorkItem, **changes: Any) -> WorkItem:
 
 
 __all__ = [
-    "BLOCKED", "COLUMNS", "DONE", "FAILED", "KIND_CLUSTER_MEMBER", "KIND_GATE",
-    "KIND_PLAN_STEP", "KIND_TASK", "QUEUED", "RUNNING", "WorkItem", "columns",
-    "project_board",
+    "BLOCKED", "COLUMNS", "DONE", "FAILED", "KIND_CLUSTER_MEMBER", "KIND_EXTERNAL",
+    "KIND_GATE", "KIND_PLAN_STEP", "KIND_TASK", "QUEUED", "RUNNING", "SOURCE_ACC",
+    "SOURCE_EXTERNAL", "WorkItem", "columns", "project_board",
 ]
 
 
@@ -390,6 +449,10 @@ def filter_snapshot(snapshot: dict, viewer: str, tier: str) -> dict:
         e for e in log
         if viewer_can_see(str(_get(e, "requested_by", "") or owned.get(str(_get(e, "task_id", "") or ""), "")), viewer, tier)
     ]
+    out["external_work"] = {
+        iid: row for iid, row in dict(snapshot.get("external_work") or {}).items()
+        if viewer_can_see(str(_get(row, "requester", "") or ""), viewer, tier)
+    }
     out["cluster_topology"] = {
         cid: row for cid, row in dict(snapshot.get("cluster_topology") or {}).items()
         if any(viewer_can_see(owned.get(str(_get(m, "task_id", "") or ""), ""), viewer, tier)

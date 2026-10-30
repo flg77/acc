@@ -21,7 +21,7 @@ it); the pipelines' default `BUILD_HOST` switched; lighthouse builds nothing.
 
 | | |
 |---|---|
-| name | `acc-build.ic3net.internal` (DNS: lab-gitops `ansible/dns`) |
+| name | `rpm-builder.ic3net.internal`, a KubeVirt VM on acc1 (lab-gitops `vms/rpm-builder`, backlog 024); `acc-build` is the operator's ssh alias for it |
 | base | RHEL 10 (RHEL 9 also works; the chroots are mock's, not the host's) |
 | size | 4 vCPU, 16 GB RAM, **200 GB** disk — six mock chroots, a ~2.5 GB venv per build, the image builds |
 | GPU | none |
@@ -32,8 +32,15 @@ it); the pipelines' default `BUILD_HOST` switched; lighthouse builds nothing.
 | tools | `mock` + `mock-core-configs`, `qemu-user-static-aarch64`, `podman`, `copr-cli`, `rpm-sign`, `rpm-build`, `createrepo_c`, `python3.12`, `gcc`, `git` |
 
 The host is registered to the Satellite like every lab node (it needs AppStream,
-EPEL for `mock`, and `python3.12`), and it must reach PyPI, the PyTorch CPU index
-and GitHub: `packaging/rpm/build.sh` installs the venv from there.
+EPEL for `mock`, and `python3.12` -- on RHEL 10 that is `python3`, which provides
+the `python3.12*` names), and it must reach PyPI, the PyTorch CPU index and
+GitHub: `packaging/rpm/build.sh` installs the venv from there. EPEL comes from the
+Satellite, so the host's content view must carry it: `dev/dev-rcv-rhel10-acc`
+does, `dev/dev-rcv-rhel10` does not (the VM builder registers with the latter):
+
+```bash
+ssh sat1 'sudo hammer host update --name rpm-builder.ic3net.internal --content-view-environments dev/dev-rcv-rhel10-acc'
+```
 
 ## 1. Create the VM
 
@@ -67,6 +74,20 @@ ansible-playbook site.yml -e acc_build_host_operation=smoke             # any ti
 
 The smoke check fails on one thing after a fresh provision, by design: **no
 secret key in the keyring**. That is step 3.
+
+### 2b. The deploy key (for builds that clone)
+
+The workstation's pipelines hand the host a `git archive`; lab-gitops
+`ansible/acc-build` (the build AAP triggers) has no workstation, so the host
+clones acc-spearhead itself. Provision made a key pair for that
+(`/srv/acc-build/.ssh/acc-spearhead-deploy`); `status` prints the public half.
+Add it once, **read-only** (no `--allow-write`):
+
+```bash
+ansible-playbook site.yml -e acc_build_host_operation=status          # prints the public key line
+gh repo deploy-key add acc-spearhead-deploy.pub --repo flg77/acc-spearhead --title rpm-builder.ic3net.internal
+ssh acc-build 'git ls-remote git@github.com:flg77/acc-spearhead.git HEAD'   # answers with a SHA
+```
 
 The operator's ssh config:
 

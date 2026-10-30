@@ -85,6 +85,12 @@ class ModelEntry(BaseModel):
     declared ``false`` (every current Claude model takes images); the text-only
     backends refuse either way.
     """
+    provider: str = ""
+    """``anthropic`` backend only: ``vertex`` reaches Claude through Google
+    Vertex AI with application default credentials (CS-07); empty or
+    ``anthropic`` is Anthropic's API."""
+    vertex_project_id: str = ""
+    vertex_region: str = ""
     zone: str = ""
     """Trust / data-residency zone, for the failover policy gate.
 
@@ -191,6 +197,11 @@ def model_env(entry: ModelEntry) -> dict[str, str]:
     if b == "anthropic":
         if entry.model:
             env["ACC_ANTHROPIC_MODEL"] = entry.model
+        env["ACC_ANTHROPIC_PROVIDER"] = entry.provider or "anthropic"
+        if entry.vertex_project_id:
+            env["ACC_VERTEX_PROJECT_ID"] = entry.vertex_project_id
+        if entry.vertex_region:
+            env["ACC_VERTEX_REGION"] = entry.vertex_region
     elif b == "ollama":
         if entry.model:
             env["ACC_OLLAMA_MODEL"] = entry.model
@@ -465,7 +476,8 @@ def _entry_to_dict(entry: ModelEntry) -> dict:
     failover hop.  A governance control disabled by an unrelated save.
     """
     out: dict = {"model_id": entry.model_id, "backend": entry.backend}
-    for field in ("model", "base_url", "api_key_env", "label", "notes", "zone"):
+    for field in ("model", "base_url", "api_key_env", "label", "notes", "provider",
+                  "vertex_project_id", "vertex_region", "zone"):
         val = getattr(entry, field, "")
         if val:
             out[field] = val

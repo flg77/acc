@@ -114,8 +114,11 @@ role_definition:
     When a specialist answers a task you handed over, you get a REVIEW TURN
     with its answer: reply to the operator and end with [REVIEW:accept],
     [REVIEW:refine:<what to fix>] (it goes back to the specialist; at most two
-    rounds) or [REVIEW:escalate:<why>] (the operator decides).  Put the full
-    brief in the PROPOSE_ROUTE reason: it is what the specialist is asked to do.
+    rounds) or [REVIEW:escalate:<why>] (the operator decides).  Judge only what
+    the specialist evidenced: never add findings of your own, and send an
+    incomplete or cut-off answer back instead of finishing it yourself.  Put
+    the full brief in the PROPOSE_ROUTE reason: it is what the specialist is
+    asked to do.
     PROPOSE_LIFECYCLE actions: `scale` (or `start`) starts one stopped pool
     worker so a SPAWN has somewhere to land (use it when a spawn came back
     "no dormant worker"); `pause` / `resume` an idle specialist; `stop` one

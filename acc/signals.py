@@ -96,6 +96,13 @@ start immediately in parallel (A-012: only arbiter may publish)."""
 SIG_KNOWLEDGE_SHARE = "KNOWLEDGE_SHARE"
 """Namespace-scoped knowledge propagation between roles within a collective."""
 
+SIG_KG_WRITE = "KG_WRITE"
+"""RDF-05 -- triples an agent proposed with ``kg_propose``, already accepted by
+the SHACL shapes, sent to the arbiter: the collective's knowledge store has
+exactly one writer.  The arbiter verifies the sender and re-validates before it
+writes the requester's private graph, and queues a ``kg_share`` proposal when
+the agent asked to share."""
+
 SIG_ROUTE_REQUEST = "ROUTE_REQUEST"
 """`20260923-lessons-that-travel` Phase 9 -- a ``can_route`` role asking the
 arbiter to re-dispatch a task it received to another role.  The orchestrator
@@ -179,6 +186,10 @@ SIG_ASSISTANT_PROPOSAL = "ASSISTANT_PROPOSAL"
 # reconcile result (assigned + unmet).  Same subject; the TUI renders these
 # as system lines in the Prompt thread.
 SIG_ASSISTANT_PROPOSAL_OUTCOME = "ASSISTANT_PROPOSAL_OUTCOME"
+# CS-03 -- an external coding agent's work item changed (acc.external_work):
+# claimed, progressed, handed over or completed.  Surfaces render it on the
+# work board; the arbiter's HEARTBEAT carries the durable list.
+SIG_EXTERNAL_WORK = "EXTERNAL_WORK"
 """Endocrine signal carrying a human operator's approve / reject decision
 for a paused HIGH-risk task in the oversight queue.
 
@@ -249,6 +260,7 @@ SIGNAL_MODES: dict[str, str] = {
     SIG_PLAN_STEP_CONTROL:      SIGNAL_MODE_SYNAPTIC,
     SIG_AGENT_MESSAGE:          SIGNAL_MODE_SYNAPTIC,
     SIG_ROUTE_REQUEST:          SIGNAL_MODE_SYNAPTIC,
+    SIG_KG_WRITE:               SIGNAL_MODE_SYNAPTIC,
     SIG_BRIDGE_DELEGATE:        SIGNAL_MODE_ENDOCRINE,
     SIG_BRIDGE_RESULT:          SIGNAL_MODE_ENDOCRINE,
     SIG_DOMAIN_DIFFERENTIATION: SIGNAL_MODE_ENDOCRINE,
@@ -259,6 +271,7 @@ SIGNAL_MODES: dict[str, str] = {
     # decision they lead to).
     SIG_ASSISTANT_PROPOSAL:         SIGNAL_MODE_ENDOCRINE,
     SIG_ASSISTANT_PROPOSAL_OUTCOME: SIGNAL_MODE_ENDOCRINE,
+    SIG_EXTERNAL_WORK:          SIGNAL_MODE_ENDOCRINE,
     SIG_KERNEL_EVENT:           SIGNAL_MODE_ENDOCRINE,
 }
 """Authoritative mapping from signal type constant to its communication mode.
@@ -840,6 +853,19 @@ def subject_route_request(collective_id: str) -> str:
     return f"acc.{collective_id}.route.request"
 
 
+def subject_kg_write(collective_id: str) -> str:
+    """Return the NATS subject agents send ``kg_propose`` writes on
+    (KG_WRITE, RDF-05).  Workers publish; the arbiter -- the knowledge
+    store's only writer -- subscribes, verifies and writes.
+
+    Example::
+
+        subject_kg_write("sol-01")
+        # -> "acc.sol-01.kg.write"
+    """
+    return f"acc.{collective_id}.kg.write"
+
+
 def subject_agent_inbox(collective_id: str, agent_id: str) -> str:
     """Return the NATS subject of one agent's inbox (AGENT_MESSAGE,
     `20260923-lessons-that-travel` Phase 6).
@@ -1118,6 +1144,17 @@ def subject_mission_control(collective_id: str) -> str:
     an OVERSIGHT_DECISION may publish it, and the agents' decision subscriber
     receives it, with no new NATS permission."""
     return f"acc.{collective_id}.oversight.mission-control"
+
+
+def subject_external_work(collective_id: str) -> str:
+    """The subject an EXTERNAL_WORK change is published on (CS-03).
+
+    Example::
+
+        subject_external_work("sol-01")
+        # → "acc.sol-01.external.work"
+    """
+    return f"acc.{collective_id}.external.work"
 
 
 def subject_oversight_decision_all(collective_id: str) -> str:

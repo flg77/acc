@@ -1,0 +1,14 @@
+name: cos_who_is_on_what
+description: >-
+  Chief of staff (CS-11, proposal 062) — with at least one coding agent's work
+  item reported through `acc-cli mcp serve`, the assistant says who is on what
+  and cites the items by id (ext-…). With nothing reported it must say so rather
+  than invent work; seed one item before running this against a live stack.
+prompt: |
+  Which of my coding agents is working on what right now? Cite the item ids.
+target_role: assistant
+timeout_s: 180.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: "ext-[0-9a-f]{10}"

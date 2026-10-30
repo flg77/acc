@@ -25,7 +25,7 @@ from textual.widgets import DataTable, Footer, Label, Static
 
 from acc.tui.widgets.nav_bar import NavigateTo, NavigationBar, NavScreen
 from acc.tui.actor import tui_actor, tui_actor_tier
-from acc.work_board import KIND_PLAN_STEP, WorkItem, columns, project_board, visible_to
+from acc.work_board import KIND_PLAN_STEP, SOURCE_EXTERNAL, WorkItem, columns, project_board, visible_to
 
 logger = logging.getLogger("acc.tui.board")
 
@@ -106,6 +106,7 @@ class BoardScreen(NavScreen):
             oversight_recent_items=getattr(snap, "oversight_recent_items", None),
             assistant_outcomes=getattr(snap, "assistant_outcomes", None),
             signal_flow_log=getattr(snap, "signal_flow_log", None),
+            external_work=getattr(snap, "external_work", None),
         )
         # HG-40.1b item 4 -- a non-operator at this keyboard sees their own work.
         items = visible_to(items, tui_actor(), tui_actor_tier())
@@ -119,7 +120,7 @@ class BoardScreen(NavScreen):
             )
             for it in bucket:
                 self._items[it.id] = it
-                who = it.agent_id or it.role or "—"
+                who = it.agent_id or it.role or it.executor or "—"
                 extra = f" · {it.iteration}" if it.iteration else ""
                 detail = f" ({it.status_detail})" if it.status_detail and it.status != "BLOCKED" else ""
                 ts = time.strftime("%H:%M:%S", time.localtime(it.updated_ts)) if it.updated_ts else "—"
@@ -164,6 +165,13 @@ class BoardScreen(NavScreen):
         lines = [f"[b]{item.title}[/b]  [dim]{item.kind} · {item.id}[/dim]"]
         if item.role or item.agent_id:
             lines.append(f"role/agent: {item.role or '—'} / {item.agent_id or '—'}")
+        if item.source == SOURCE_EXTERNAL:
+            where = f" · {item.repo}" if item.repo else ""
+            lines.append(f"executor: {item.executor or '—'}{where}")
+            if item.output_head:
+                lines.append(f"last progress: {item.output_head}")
+            if item.tokens or item.cost_usd:
+                lines.append(f"reported: {item.tokens} tokens · ${item.cost_usd:.2f}")
         if item.depends_on:
             lines.append(f"depends on: {', '.join(item.depends_on)}")
         if item.task_id:

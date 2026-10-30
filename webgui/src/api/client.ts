@@ -342,7 +342,7 @@ export const missionControl = (
 
 export interface BoardItem {
   id: string;
-  kind: "plan_step" | "cluster_member" | "task" | "gate";
+  kind: "plan_step" | "cluster_member" | "task" | "gate" | "external";
   title: string;
   status: "QUEUED" | "RUNNING" | "BLOCKED" | "DONE" | "FAILED";
   role: string;
@@ -357,7 +357,13 @@ export interface BoardItem {
   iteration: string;
   critique: string;
   outcome: string;
+  output_head: string;
   updated_ts: number;
+  executor: string;
+  source: "acc" | "external";
+  repo: string;
+  cost_usd: number;
+  tokens: number;
   can_cancel: boolean;
   can_retry: boolean;
   can_reassign: boolean;

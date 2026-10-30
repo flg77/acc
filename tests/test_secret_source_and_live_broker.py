@@ -261,9 +261,14 @@ class TestOAuthCLI:
         assert b"verifier" not in pending.read_bytes(), "the verifier is sealed"
 
     def test_complete_exchanges_and_connects(self, cred_env, capsys, monkeypatch):
+        # The output also carries the consent URL, whose state and code_challenge are
+        # random base64url. A token with spaces can never occur there by chance; "AT"
+        # sometimes did.
+        access, refresh = "sentinel access token", "sentinel refresh token"
+
         async def fake_token_request(url, data):
             assert data["grant_type"] == "authorization_code" and data["code_verifier"]
-            return {"access_token": "AT", "refresh_token": "RT", "expires_in": 3600}
+            return {"access_token": access, "refresh_token": refresh, "expires_in": 3600}
 
         monkeypatch.setattr(broker_mod, "_token_request", fake_token_request)
         _cli("oauth", "connect", "google", "--for", "tui:alice")
@@ -271,7 +276,7 @@ class TestOAuthCLI:
                     "--for", "tui:alice") == 0
         assert _cli("oauth", "status", "google", "--for", "tui:alice") == 0
         out = capsys.readouterr().out
-        assert "connected" in out and "AT" not in out.replace("CONNECTED", "")
+        assert "connected" in out and access not in out and refresh not in out
         assert list(cred_env.glob("*.pending")) == [], "the verifier is single use"
 
     def test_complete_without_connect_is_refused(self, cred_env):

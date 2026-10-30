@@ -11,6 +11,25 @@ Tracked since proposal 003 (ACC TUI usability hardening,
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-10-30
+
+**Chief of staff for the coding agents** — vault proposal 062. Claude Code, Codex and Cursor report their work to ACC through ACC's own MCP server and a session-end hook. The work board shows their items next to the collective's own, with the executor named on every item. The assistant gets a bounded view of that work and the agents' notes, so it can answer "who is on what" with item ids. Claude through Google Vertex AI is a model route.
+
+**Upgrade notes:**
+- New optional config: `llm.anthropic_provider` (`anthropic` by default, or `vertex`), `llm.vertex_project_id`, `llm.vertex_region`. `model_env` now always emits `ACC_ANTHROPIC_PROVIDER` for an anthropic `models.yaml` entry.
+- The arbiter's heartbeat carries `external_work` (at most 50 rows). Older surfaces ignore it.
+- The assistant's prompt gets a `## Coding agents` block only when a coding agent has reported something; `ACC_CODING_AGENTS_VIEW=0` switches it off.
+- `acc-cli mcp serve` and `acc-cli ingest session` run on the host and need ACC's Redis and NATS there (the production compose publishes 6379 and 4222). See `docs/howto-coding-agents.md`.
+
+### Added
+
+- **Claude through Google Vertex AI (CS-07).** The `anthropic` backend takes `llm.anthropic_provider: vertex`, or `provider: vertex` on a `models.yaml` entry, plus a project and a region. It then reaches Claude on a Google Cloud project with application default credentials and sends no API key. Install the `vertex` extra or feature (`google-auth`). `acc-cli config check` no longer asks for `ANTHROPIC_API_KEY` on that route. See `docs/llm-backends.md`. OpenSpec `20261030-anthropic-vertex`.
+- **The assistant sees the coding agents' work (CS-11).** For the `control` perception profile, each task's system prompt gets a bounded `## Coding agents (outside the collective)` block. It shows the open items (stale ones flagged), hand-overs with their brief, work finished in the last day, recent sessions and the latest notes, and tells the assistant to cite items by id. It is empty, and the prompt byte-identical, when nothing has been reported. `ACC_CODING_AGENTS_VIEW=0` switches it off. There are three golden prompts (`cos_*`). OpenSpec `20261030-chief-of-staff-view`.
+- **ACC as an MCP server for coding agents (CS-02, CS-05).** `acc-cli mcp serve --executor <name>` serves nine tools over stdio: `register`, `board`, `claim`, `progress`, `handoff`, `complete`, `remember`, `recall` and `ask`. With them Claude Code, Codex or Cursor put their work on ACC's board, hand it to each other, leave notes the others can recall and ask ACC's assistant. Only the agent working on an item moves it. The server executes nothing, reads no file and refuses to start without ACC's Redis. `acc-cli ingest session`, run from each tool's session-end hook, writes one note per session (a digest, or a summary by a named local model; never the transcript) and closes items the session left running. See `docs/howto-coding-agents.md`. OpenSpec `20261030-acc-mcp-server`.
+- **External coding agents on the work board (CS-03, CS-10).** An external work item — work Claude Code, Codex or Cursor does outside the collective — is stored beside the oversight queue (`acc/external_work.py`, Redis `acc:{cid}:ext_work:*`), rides the arbiter's heartbeat and updates by a new `EXTERNAL_WORK` signal. The board shows it as kind `external`, flags a RUNNING item with no progress for 24 h as stale, and gives it no cancel/retry/reassign. Every board item now names its `executor` (`acc:<role>` for the collective's own agents); external items also carry `repo` and the cost and tokens their agent reported. WebGUI Board: executor chip and filter. Nothing writes these items yet — ACC's MCP server (CS-02) will. OpenSpec `20261030-external-work-board`.
+- **`acc-cli up | down | restart` and `acc-cli stack <verb>`** — `acc-cli` drives the container stack like `acc-deploy.sh` does. Each verb passes its arguments, in order, to the `acc-deploy.sh` the host's layout resolves (the same script `acc stack` runs), so `acc-cli up --webgui`, `acc-cli down -v` and `acc-cli stack rebuild` behave exactly as the script does. `acc-cli status` and `acc-cli logs` still report on the collective; the container views are `acc-cli stack status` and `acc-cli stack logs`.
+- **`acc-deploy.sh` takes extra compose overlays and a build hook.** `ACC_COMPOSE_OVERLAYS` (comma-separated, shell or `.env`) layers more compose files on the production stack, before `podman-compose.local.yml`. `ACC_BUILD_HOOK` names a bash script run after `build` and `rebuild`, with `--no-cache` on rebuild, for an image such an overlay needs. A named file that is missing is an error. Unset, nothing changes.
+
 ## [0.29.0] — 2026-10-23
 
 **Ask once, then get things done** — vault proposals 058–061. The assistant shows its plan, you confirm it once, and the work runs. Code execution runs in the OpenShell sandbox. A grant is given once, at the question. Every skill and MCP has a checksum.

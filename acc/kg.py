@@ -118,6 +118,8 @@ class GraphInfo:
     triples: int = 0
     modified: str = ""
     derived_from: list[str] = field(default_factory=list)
+    #: The owner pseudonym of a private graph; empty = not private.
+    owner: str = ""
 
 
 @dataclass
@@ -133,18 +135,68 @@ class QueryResult:
 class KnowledgeStore:
     """One collective's named graphs.  ``in_memory=True`` for tests."""
 
-    def __init__(self, collective_id: str, path: Path | str | None = None, *, in_memory: bool = False):
+    def __init__(self, collective_id: str, path: Path | str | None = None, *, in_memory: bool = False,
+                 read_only: bool = False):
         if not collective_id:
             raise KGError("a knowledge store belongs to a collective")
         self.ox = _oxigraph()
         self.collective_id = collective_id
+        self.read_only = read_only
+        self._persons = None
         if in_memory:
             self.store = self.ox.Store()
             self.path: Path | None = None
+            self._memory_salt = os.urandom(32)
         else:
             self.path = Path(path) if path else default_path(collective_id)
-            self.path.mkdir(parents=True, exist_ok=True)
-            self.store = self.ox.Store(str(self.path))
+            if read_only:
+                # Many readers beside one writer (the arbiter, RDF-05): a
+                # read-only open sees the store as of the moment it opened.
+                if not self.path.is_dir():
+                    raise KGError(f"no knowledge store at {self.path}")
+                self.store = self.ox.Store.read_only(str(self.path))
+            else:
+                self.path.mkdir(parents=True, exist_ok=True)
+                self.store = self.ox.Store(str(self.path))
+
+    # -- owners (RDF-05) ---------------------------------------------------
+    def owner_iri(self, subject: str) -> str:
+        """The pseudonym a person's private graphs are owned by in this store.
+
+        A keyed hash under a salt kept with the store (``.owner-salt``): the
+        catalogue names no person, and every process that opens the same
+        store maps the same person to the same owner.
+        """
+        from acc.attribution import person_of  # noqa: PLC0415
+        from acc.lib.rdf.iri import Persons  # noqa: PLC0415
+
+        if self._persons is None:
+            salt = self._salt()
+            if salt is None:
+                return ""          # no salt yet = no private graph exists to own
+            self._persons = Persons(salt)
+        return str(self._persons.node(person_of(subject)))
+
+    def _salt(self) -> bytes | None:
+        if self.path is None:
+            return self._memory_salt
+        salt_file = self.path / ".owner-salt"
+        if not salt_file.exists():
+            if self.read_only:
+                return None        # a reader never creates it; the writer does on first private write
+            salt_file.write_bytes(os.urandom(32))
+            try:
+                os.chmod(salt_file, 0o600)
+            except OSError:  # pragma: no cover -- Windows
+                pass
+        return salt_file.read_bytes()
+
+    def private_graph_name(self, subject: str, ceiling: str) -> str:
+        """``private-<16 hex>-<ceiling>``: one graph per person per ceiling, so
+        every graph keeps exactly one ceiling."""
+        token = self.owner_iri(subject).rsplit(":", 1)[-1][:16]
+        level = str(ceiling or "").upper() if str(ceiling or "").upper() in CEILINGS else "CRITICAL"
+        return f"private-{token}-{level.lower()}"
 
     # -- naming ------------------------------------------------------------
     def graph_iri(self, name: str) -> str:
@@ -187,7 +239,8 @@ class KnowledgeStore:
 
     # -- writing -----------------------------------------------------------
     def put(self, name: str, graph: Graph, *, ceiling: str, scope: str = "", source: str = "",
-            bnode_scope: str = "", derived_from: Iterable[str] = ()) -> GraphInfo:
+            bnode_scope: str = "", derived_from: Iterable[str] = (), owner: str = "",
+            append: bool = False) -> GraphInfo:
         """Replace graph *name* with *graph*, readable at *ceiling* and above.
 
         Only governed loaders call this (:func:`sync`, :meth:`infer`); an
@@ -195,8 +248,10 @@ class KnowledgeStore:
         """
         self._check_name(name)
         ox = self.ox
+        if self.read_only:
+            raise KGError("this store was opened read-only")
         g = ox.NamedNode(self.graph_iri(name))
-        if self.store.contains_named_graph(g):
+        if self.store.contains_named_graph(g) and not append:
             self.store.remove_graph(g)
         scope_key = bnode_scope or name
         self.store.extend(ox.Quad(self._term(s, scope_key), ox.NamedNode(p),
@@ -208,7 +263,7 @@ class KnowledgeStore:
         meta = [
             (RDF.type, ox.NamedNode(ACC.KnowledgeGraph)),
             (ACC.ceiling, ox.NamedNode(ceiling_iri(level))),
-            (ACC.tripleCount, self._term(lit(len(graph)), "")),
+            (ACC.tripleCount, self._term(lit(len(self._graph_triples(name))), "")),
             (DCTERMS.modified, self._term(datetime_lit(time.time()), "")),
         ]
         if scope:
@@ -217,12 +272,22 @@ class KnowledgeStore:
             meta.append((DCTERMS.source, ox.Literal(source)))
         for src in derived_from:
             meta.append((PROV.wasDerivedFrom, ox.NamedNode(self.graph_iri(src))))
+        if owner:
+            meta.append((ACC.owner, ox.NamedNode(self.owner_iri(owner))))
         self.store.extend(ox.Quad(g, ox.NamedNode(p), o, cat) for p, o in meta)
-        return next(i for i in self.graphs() if i.name == name)
+        return next(i for i in self._all_graphs() if i.name == name)
 
     # -- the catalogue -------------------------------------------------------
-    def graphs(self, reader_ceiling: str = "CRITICAL") -> list[GraphInfo]:
-        """The graphs a reader at *reader_ceiling* may read, by name."""
+    def graphs(self, reader_ceiling: str = "CRITICAL", reader: str = "") -> list[GraphInfo]:
+        """The graphs a reader at *reader_ceiling* may read, by name.
+
+        A private graph (RDF-05) is readable only by its owner -- *reader* is
+        the requester -- whatever their ceiling."""
+        mine = self.owner_iri(reader) if reader else ""
+        return [g for g in self._all_graphs()
+                if rank(g.ceiling) <= rank(reader_ceiling) and (not g.owner or g.owner == mine)]
+
+    def _all_graphs(self) -> list[GraphInfo]:
         cat = self._catalogue()
         prefix = self.graph_iri("x")[:-1]
         info: dict[str, GraphInfo] = {}
@@ -242,18 +307,19 @@ class KnowledgeStore:
                 gi.modified = o.value
             elif p == PROV.wasDerivedFrom:
                 gi.derived_from.append(o.value[len(prefix):])
+            elif p == ACC.owner:
+                gi.owner = o.value
         for gi in info.values():
             gi.derived_from.sort()
-        have = rank(reader_ceiling)
-        return sorted((g for g in info.values() if rank(g.ceiling) <= have), key=lambda g: g.name)
+        return sorted(info.values(), key=lambda g: g.name)
 
-    def hidden_count(self, reader_ceiling: str) -> int:
-        return len(self.graphs("CRITICAL")) - len(self.graphs(reader_ceiling))
+    def hidden_count(self, reader_ceiling: str, reader: str = "") -> int:
+        return len(self._all_graphs()) - len(self.graphs(reader_ceiling, reader))
 
     # -- reading -------------------------------------------------------------
-    def query(self, sparql: str, *, reader_ceiling: str) -> QueryResult:
+    def query(self, sparql: str, *, reader_ceiling: str, reader: str = "") -> QueryResult:
         form = check_query(sparql)
-        visible = self.graphs(reader_ceiling)
+        visible = self.graphs(reader_ceiling, reader)
         result = QueryResult(form=form, graphs_read=[g.name for g in visible])
         if not visible:
             # An empty dataset, not the store default graph: nothing is readable.
@@ -289,7 +355,7 @@ class KnowledgeStore:
         """RDFS/SKOS closure over *sources* into graph *name*, at the highest
         source ceiling: ``skos:broaderTransitive`` from ``skos:broader``, and
         ``rdf:type`` along ``rdfs:subClassOf``."""
-        known = {g.name: g for g in self.graphs("CRITICAL")}
+        known = {g.name: g for g in self._all_graphs() if not g.owner}
         missing = [s for s in sources if s not in known]
         if not sources or missing:
             raise KGError(f"inference needs existing source graphs; missing {missing or 'all'}")

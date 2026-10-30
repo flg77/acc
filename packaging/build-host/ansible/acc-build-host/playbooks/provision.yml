@@ -6,6 +6,7 @@
   become: true
   gather_facts: true
   roles:
-    - role: acc-build-host
+    # by path: AAP reads no ansible.cfg / ANSIBLE_ROLES_PATH (aap1: rhel-role-rpm-build)
+    - role: ../../acc-build-host  # noqa: role-name[path]
       vars:
         acc_build_host_operation: provision

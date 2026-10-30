@@ -222,6 +222,10 @@ class CognitiveResult:
 
     lessons_used: list = field(default_factory=list)
 
+    #: RDF-06 -- the knowledge-graph entities whose facts were in this task's
+    #: prompt; the outcome join PA-08's memory A/B needs.  Empty when none.
+    graph_seeds: list = field(default_factory=list)
+
     steer_used: list = field(default_factory=list)
 
     harness_fingerprint: str = ""
@@ -456,6 +460,13 @@ def _trace_identity(task_payload: dict) -> dict[str, str]:
     if session:
         out["session"] = session
     return out
+
+
+#: Appended to an answer the model cut off at its output-token limit.
+TRUNCATION_NOTE = (
+    "\n\n[⚠ This answer was cut off: the model reached its output limit "
+    "(ACC_LLM_MAX_OUTPUT_TOKENS). It is incomplete.]"
+)
 
 
 def _extract_output_text(response: dict) -> str:
@@ -890,6 +901,9 @@ class CognitiveCore:
         # ``build_system_prompt`` to render the ``## Currently available``
         # block.  None means "no snapshot this task" — block omitted.
         self._perception = None
+        # CS-11 -- the coding agents' reported work, rendered per task for the
+        # control profile (the assistant); "" leaves the prompt as it was.
+        self._coding_agents_block = ""
         # The profile the most-recent snapshot was built under — used by
         # marker validation to dispatch per-profile rules.  Defaults
         # to ``"none"`` so the validation pass is a no-op until a real
@@ -1359,6 +1373,11 @@ class CognitiveCore:
                 limit=int(getattr(role, "memory_note_bandwidth", 3) or 3),
             )
         lessons_used: list[str] = [lesson.lesson_id for lesson in peer_lessons]
+        # RDF-06 -- facts from the collective's knowledge graph about terms in
+        # this task, read at the task's ceiling as its requester.  Opt-in per
+        # role; added beside the notes, never instead of them.
+        graph_facts = self._graph_facts_for(role, task_payload, user_content)
+        graph_seeds: list[str] = list(graph_facts.seeds) if graph_facts and graph_facts.items else []
         # Phase 6 -- what the operator / arbiter said while this task was
         # in flight.  Always rendered (it is addressed, not hearsay).
         steer_msgs = self._steer.take()
@@ -1367,6 +1386,7 @@ class CognitiveCore:
             "episodes_count": len(retrieved_episodes),
             "notes_count": len(memory_notes),
             "peer_lessons_count": len(peer_lessons),
+            "graph_facts_count": len(graph_facts.items) if graph_facts else 0,
         })
         if retrieved_episodes or memory_notes:
             bits = []
@@ -1407,6 +1427,18 @@ class CognitiveCore:
                     exc_info=True,
                 )
                 self._perception = None
+        # CS-11 -- the chief of staff also sees what the coding agents outside
+        # the collective reported (acc.coding_agents_view).  Same rules as the
+        # perception step: never blocks the task, empty when unused.
+        self._coding_agents_block = ""
+        if self._perception_profile == "control" and self._redis is not None:
+            try:
+                from acc import coding_agents_view  # noqa: PLC0415
+                if coding_agents_view.enabled():
+                    self._coding_agents_block = coding_agents_view.render(
+                        await coding_agents_view.gather(self._redis, self._collective_id))
+            except Exception:
+                logger.debug("cognitive_core: coding agents view failed", exc_info=True)
         # PR-CA1 — the system prompt is the STABLE per-role prefix (no
         # RAG), so every backend's prefix cache hits.  The variable RAG
         # block rides the LLM user message instead.
@@ -1435,6 +1467,7 @@ class CognitiveCore:
             ),
             peer_lessons=peer_lessons,
             steer=steer_msgs,
+            graph_facts=graph_facts,
         )
         harness_fingerprint = self.harness_fingerprint(
             role, system_prompt, memory_notes, lessons_used, steer_used,
@@ -1563,6 +1596,10 @@ class CognitiveCore:
         # JSON object or {"text": …}.  Accept all shapes so the operator's
         # Prompt window never stays silent on a non-openai_compat backend.
         output_text = _extract_output_text(response)
+        if isinstance(response, dict) and response.get("truncated"):
+            # Visible to the operator and to a reviewing assistant alike: an
+            # answer that ran out of output tokens is not a finished answer.
+            output_text = (output_text or "").rstrip() + TRUNCATION_NOTE
 
         # PR-V3b — reasoning externalization.  When the role opted in, split the
         # <reasoning>…</reasoning> block out of the completion: the deliberation
@@ -1585,6 +1622,11 @@ class CognitiveCore:
         if (
             self._role_label == "assistant"
             and getattr(role, "can_route", False)
+            # A review turn judges a specialist's answer and ends with a
+            # REVIEW verdict, not a route/spawn marker; its prompt is full of
+            # act-intent words, so the guard re-prompted pointlessly and then
+            # prepended "I did not take a concrete action" (2026-10-05).
+            and not isinstance(task_payload.get("review"), dict)
             and _is_act_intent(user_content)
             and not _has_actionable_marker(output_text)
         ):
@@ -1950,11 +1992,33 @@ class CognitiveCore:
             lessons_used=lessons_used,
             steer_used=steer_used,
             harness_fingerprint=harness_fingerprint,
+            graph_seeds=graph_seeds,
         )
 
     # ------------------------------------------------------------------
     # `20260923-lessons-that-travel` -- peer lessons
     # ------------------------------------------------------------------
+
+    def _graph_facts_for(self, role: Any, task_payload: dict, user_content: str) -> "Any | None":
+        """RDF-06 -- the KNOWLEDGE_GRAPH facts for one task, or ``None``.
+
+        ``None`` (not an empty result) unless the role sets
+        ``graph_retrieval`` and ``ACC_GRAPH_RETRIEVAL`` is not off, so the
+        composed prompt for every other role is untouched.  The ceiling and
+        requester are the admitted task's (unattributed = CRITICAL, the
+        operator's own), exactly as for ``kg_query``.
+        """
+        if not getattr(role, "graph_retrieval", False):
+            return None
+        from acc import kg_retrieval  # noqa: PLC0415
+        if not kg_retrieval.enabled():
+            return None
+        from acc.identity import ceiling_of  # noqa: PLC0415
+        return kg_retrieval.facts_for_task(
+            self._collective_id, user_content,
+            reader_ceiling=ceiling_of(task_payload) or "CRITICAL",
+            reader=str(task_payload.get("requested_by", "") or ""),
+        )
 
     @staticmethod
     def _peer_lessons_enabled() -> bool:
@@ -2386,6 +2450,11 @@ class CognitiveCore:
                     "cognitive_core: perception block render failed",
                     exc_info=True,
                 )
+        # CS-11 -- the coding agents' reported work (acc.coding_agents_view),
+        # right after the live-state block it belongs with.
+        coding_block = getattr(self, "_coding_agents_block", "")
+        if coding_block:
+            parts.append("\n" + coding_block)
 
         # PR-V3b — reasoning externalization.  Opt-in per role; keeps the
         # system prompt a stable cacheable prefix (the block is constant per
@@ -2580,6 +2649,7 @@ class CognitiveCore:
         budget: "ContextBudget | None" = None,
         peer_lessons: list | None = None,
         steer: list | None = None,
+        graph_facts: "Any | None" = None,
     ) -> str:
         """Prepend durable memory notes + the RAG episode block (if any)
         to the task content for the LLM user message.  The bare task
@@ -2600,13 +2670,20 @@ class CognitiveCore:
             return self._packed_user_content(
                 user_content, retrieved_episodes, memory_notes,
                 thread_block=thread_block, budget=budget,
-                peer_lessons=peer_lessons, steer=steer,
+                peer_lessons=peer_lessons, steer=steer, graph_facts=graph_facts,
             )
 
         parts: list[str] = []
         notes_block = self._render_memory_notes_block(memory_notes or [])
         if notes_block:
             parts.append(notes_block)
+        # RDF-06 -- graph facts right after the reader's own notes; empty for
+        # every role without graph_retrieval and every task that matched nothing.
+        if graph_facts is not None:
+            from acc.kg_retrieval import render_graph_block  # noqa: PLC0415
+            graph_block = render_graph_block(graph_facts)
+            if graph_block:
+                parts.append(graph_block)
         # `20260923-lessons-that-travel` -- after the reader's own notes,
         # before the specifics; empty for every turn that heard nothing.
         if peer_lessons:
@@ -2675,6 +2752,7 @@ class CognitiveCore:
         budget: "ContextBudget",
         peer_lessons: list | None = None,
         steer: list | None = None,
+        graph_facts: "Any | None" = None,
     ) -> str:
         """Assemble under a ceiling, and record whatever did not fit.
 
@@ -2698,6 +2776,8 @@ class CognitiveCore:
         peer_heading, peer_items = peer_lessons_parts(peer_lessons)
         from acc.agent_messages import steering_parts  # noqa: PLC0415
         steer_heading, steer_items = steering_parts(steer)
+        from acc.kg_retrieval import graph_parts  # noqa: PLC0415
+        graph_heading, graph_items = graph_parts(graph_facts)
 
         blocks = standard_blocks(
             task=user_content,
@@ -2707,6 +2787,7 @@ class CognitiveCore:
             thread_heading=thread_heading, thread_items=thread_items,
             peer_heading=peer_heading, peer_items=peer_items,
             steer_heading=steer_heading, steer_items=steer_items,
+            graph_heading=graph_heading, graph_items=graph_items,
         )
         try:
             result = pack(

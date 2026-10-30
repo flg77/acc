@@ -47,6 +47,7 @@ _TERMS: dict[str, tuple[str, str, str]] = {
     "package": ("object", "", "A pinned capability package of an AgentBOM."),
     "governancePack": ("object", "", "A pinned governance pack an AgentBOM was assessed against."),
     "revised": ("object", "", "A note an erasure rebuilt or demoted (it survives, changed)."),
+    "owner": ("object", "", "The one person who may read a private knowledge graph (RDF-05)."),
     # data properties
     "rank": ("data", "", "Position of a ceiling on the scale, 0 = LOW."),
     "scope": ("data", "", "The memory scope key (source, source#group or source@who)."),

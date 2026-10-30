@@ -95,6 +95,10 @@ acc-cli grants revoke <grant_id> --by NAME | sync-sandbox
 acc-cli grants detect | accept <evidence> --by NAME | reject <evidence>
 acc-cli posture scan [--sarif FILE] [--json]
 acc-cli evals status | promptfoo-config --out FILE | garak-gate ...
+
+# Coding agents report to ACC (062) -- see docs/howto-coding-agents.md
+acc-cli mcp serve --executor claude-vertex|codex|cursor [--session S]     # stdio MCP server
+acc-cli ingest session --executor E [--event JSON|-] [--transcript F] [--model ID] [--strict]
 ```
 
 ### Ask once: tasks, missions and grants
@@ -119,7 +123,7 @@ acc-cli mission patterns
 
 # Grant once without waiting for the question: this role may ssh to lab1
 # without asking; the host is added to the agent's OpenShell network policy.
-acc-cli grants add --role devops_engineer --target host:lab1.ic3net.internal --by alice
+acc-cli grants add --role devops_engineer --target host:lab1.example.internal --by alice
 acc-cli grants list
 acc-cli grants revoke g-0123456789ab --by alice
 

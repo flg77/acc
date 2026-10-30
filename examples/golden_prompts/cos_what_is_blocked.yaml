@@ -1,0 +1,13 @@
+name: cos_what_is_blocked
+description: >-
+  Chief of staff (CS-11) — the assistant names stale or handed-over coding work
+  and what would unblock it. Needs at least one RUNNING item without progress
+  for a day, or one QUEUED hand-over, reported by a coding agent.
+prompt: |
+  Is any of my coding agents' work stuck or waiting on a hand-over? What would unblock it?
+target_role: assistant
+timeout_s: 180.0
+expects:
+  reply_non_empty: true
+  blocked: false
+  output_matches_regex: "(?i)(ext-[0-9a-f]{10}|nothing (is )?(stuck|blocked|waiting))"

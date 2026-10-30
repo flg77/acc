@@ -69,6 +69,8 @@ function BoardCard({
         <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--pf-t--global--spacer--xs)" }}>
           <Label isCompact variant="outline">{item.kind.replace("_", " ")}</Label>
           {(item.role || item.agent_id) && <Label isCompact variant="outline">{item.agent_id || item.role}</Label>}
+          {item.source === "external" && item.executor && <Label isCompact color="purple">{item.executor}</Label>}
+          {item.repo && <Label isCompact variant="outline">{item.repo}</Label>}
           {item.iteration && <Label isCompact variant="outline">iter {item.iteration}</Label>}
           {age && <Label isCompact variant="outline">{age}</Label>}
         </div>
@@ -78,6 +80,7 @@ function BoardCard({
             Waiting on gate <code>{item.blocked_on.slice(0, 12)}</code> — {item.status_detail}
           </p>
         )}
+        {item.output_head && <p className="acc-reason">{item.output_head}</p>}
         {item.critique && <p className="acc-reason">critique: {item.critique}</p>}
         {item.outcome && <p className="acc-reason">outcome: {item.outcome}</p>}
       </CardBody>
@@ -116,6 +119,7 @@ export function BoardPage() {
   const [cols, setCols] = useState<BoardColumn[]>([]);
   const [note, setNote] = useState<Note>(null);
   const [err, setErr] = useState("");
+  const [executor, setExecutor] = useState("");
 
   const load = () => {
     if (!collectiveId) return;
@@ -130,7 +134,13 @@ export function BoardPage() {
     new Set(Object.values((snapshot?.agents ?? {}) as Record<string, any>)
       .map((a) => String(a?.role ?? "")).filter(Boolean)),
   ).sort();
-  const total = cols.reduce((n, c) => n + c.items.length, 0);
+  // CS-10 -- one board across ACC's agents and the external coding agents;
+  // the filter narrows it to one executor.
+  const executors = Array.from(new Set(cols.flatMap((c) => c.items.map((it) => it.executor)).filter(Boolean))).sort();
+  const shown = executor
+    ? cols.map((c) => ({ ...c, items: c.items.filter((it) => it.executor === executor) }))
+    : cols;
+  const total = shown.reduce((n, c) => n + c.items.length, 0);
   const canAct = who?.role !== "viewer";
 
   return (
@@ -142,6 +152,13 @@ export function BoardPage() {
         Work in flight ({total}). The runtime moves cards; you may cancel, retry, reassign, or
         answer the gate a Blocked card waits on. Nobody drags a card to Done.
       </p>
+
+      {executors.length > 1 && (
+        <FormSelect value={executor} onChange={(_, v) => setExecutor(v)} aria-label="Filter by executor" style={{ inlineSize: "auto" }}>
+          <FormSelectOption value="" label="All executors" />
+          {executors.map((x) => <FormSelectOption key={x} value={x} label={x} />)}
+        </FormSelect>
+      )}
 
       {err && <Alert isInline variant="danger" title="The board could not be read" component="p">{err}</Alert>}
       {note && (
@@ -164,7 +181,7 @@ export function BoardPage() {
           gap: "var(--pf-t--global--spacer--md)",
           alignItems: "start",
         }}>
-          {cols.map((c) => (
+          {shown.map((c) => (
             <section key={c.status} aria-label={COLUMN[c.status]?.label ?? c.status}
                      style={{ display: "grid", gap: "var(--pf-t--global--spacer--sm)", alignContent: "start" }}>
               <Title headingLevel="h2" size="lg" style={{ display: "flex", gap: "var(--pf-t--global--spacer--sm)", alignItems: "center" }}>

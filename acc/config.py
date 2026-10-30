@@ -254,6 +254,23 @@ class RoleDefinitionConfig(BaseModel):
     # backends post-filter.  See acc/docstore.py.
     document_store: bool = False
 
+    # RDF-05 — the collective's knowledge store.  When True the role is
+    # granted ``kg_query`` (a SPARQL read at the task's ceiling) and
+    # ``kg_propose`` (SHACL-checked facts for the requester's private graph,
+    # sharing only by a person's approval).  Opt-in by operator decision
+    # (2026-10-03): default False keeps every role's tool list and prompt
+    # unchanged until a role is chosen for it.  The arbiter checks this flag
+    # on the sender's signed definition before it writes anything.
+    knowledge_graph: bool = False
+
+    # RDF-06 — add a bounded KNOWLEDGE_GRAPH block to the prompt: facts from
+    # the collective's knowledge store about terms the task mentions, read at
+    # the task's ceiling as its requester, evicted first under the context
+    # budget.  Beside the memory notes, never instead of them.  Off by default
+    # (prompts byte-identical); ``ACC_GRAPH_RETRIEVAL=0`` switches it off
+    # everywhere.  To be kept only if PA-08's memory A/B shows it helps.
+    graph_retrieval: bool = False
+
     # OKF P3 — governance retrieval boundary.  When ``memory_domain_scoping`` is
     # True, the agent binds a ``RetrievalBoundary`` (from this role's
     # ``domain_receptors`` + ``memory_sensitivity_clearance``) onto the document
@@ -560,6 +577,7 @@ class RoleDefinitionConfig(BaseModel):
 
     _WORKSPACE_SKILLS = ("fs_read", "fs_write")
     _DOC_STORE_SKILLS = ("doc_ingest", "doc_retrieve")
+    _KNOWLEDGE_GRAPH_SKILLS = ("kg_query", "kg_propose")
     # OKF P1 — the pure conformance helper is granted to EVERY role (it is
     # LOW-risk and touches nothing: format discipline, not data access).  The
     # disk-touching ``okf_transform`` is NOT auto-granted (workspace-gated).
@@ -622,6 +640,20 @@ class RoleDefinitionConfig(BaseModel):
         if not getattr(self, "document_store", False):
             return self
         for sid in self._DOC_STORE_SKILLS:
+            if sid not in self.allowed_skills:
+                self.allowed_skills.append(sid)
+            if sid not in self.default_skills:
+                self.default_skills.append(sid)
+        return self
+
+    @model_validator(mode="after")
+    def _grant_knowledge_graph_skills(self) -> "RoleDefinitionConfig":
+        """RDF-05 — when ``knowledge_graph`` is True, auto-grant ``kg_query``
+        (LOW) and ``kg_propose`` (MEDIUM).  Idempotent; disjoint from the
+        other granters.  No-op when False."""
+        if not getattr(self, "knowledge_graph", False):
+            return self
+        for sid in self._KNOWLEDGE_GRAPH_SKILLS:
             if sid not in self.allowed_skills:
                 self.allowed_skills.append(sid)
             if sid not in self.default_skills:
@@ -807,6 +839,13 @@ class LLMConfig(BaseModel):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"
     anthropic_model: str = "claude-sonnet-4-6"
+    # CS-07 -- where the anthropic backend reaches Claude: Anthropic's API
+    # (an API key) or Google Vertex AI (application default credentials, the
+    # employer's project).  Empty project / region defer to the SDK's own
+    # ANTHROPIC_VERTEX_PROJECT_ID / CLOUD_ML_REGION.
+    anthropic_provider: Literal["anthropic", "vertex"] = "anthropic"
+    vertex_project_id: str = ""
+    vertex_region: str = ""
     vllm_inference_url: str = ""
     llama_stack_url: str = ""
     embedding_model: str = "all-MiniLM-L6-v2"
@@ -1622,6 +1661,9 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "ACC_OLLAMA_BASE_URL":          ("llm", "ollama_base_url"),
     "ACC_OLLAMA_MODEL":             ("llm", "ollama_model"),
     "ACC_ANTHROPIC_MODEL":          ("llm", "anthropic_model"),
+    "ACC_ANTHROPIC_PROVIDER":       ("llm", "anthropic_provider"),
+    "ACC_VERTEX_PROJECT_ID":        ("llm", "vertex_project_id"),
+    "ACC_VERTEX_REGION":            ("llm", "vertex_region"),
     "ACC_VLLM_INFERENCE_URL":       ("llm", "vllm_inference_url"),
     "ACC_LLAMA_STACK_URL":          ("llm", "llama_stack_url"),
     # Universal LLM fields (ACC-LLM-Independence)
@@ -1815,6 +1857,9 @@ def _build_llm_backend_unrecorded(config: ACCConfig) -> LLMBackend:
             model=config.llm.anthropic_model,
             embedding_model_path=config.llm.embedding_model_path,
             accepts_images=config.llm.accepts_images,
+            provider=config.llm.anthropic_provider,
+            vertex_project_id=config.llm.vertex_project_id,
+            vertex_region=config.llm.vertex_region,
         )
     if config.llm.backend == "vllm":
         from acc.backends.llm_vllm import VLLMBackend

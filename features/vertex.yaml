@@ -1,0 +1,17 @@
+# features/vertex.yaml — Claude through Google Vertex AI (CS-07, proposal 062).
+#
+# The anthropic backend reaches Claude on an employer's or a team's Google Cloud
+# project instead of Anthropic's API: `llm.anthropic_provider: vertex`, or
+# `provider: vertex` on a models.yaml entry. The only byte cost is google-auth,
+# which the Anthropic SDK needs to read application default credentials. Mount the
+# credentials file read-only into the agents; ACC never opens it.
+id: vertex
+summary: "Claude via Google Vertex AI — the anthropic backend with application default credentials."
+extras: [vertex]
+enables: {}
+sidecars: []
+requires_env: []          # project and region may also come from models.yaml
+optional_env:
+  GOOGLE_APPLICATION_CREDENTIALS: "path of the mounted ADC / service-account file (else gcloud's default)"
+  ACC_VERTEX_PROJECT_ID: "Google Cloud project (else ANTHROPIC_VERTEX_PROJECT_ID)"
+  ACC_VERTEX_REGION: "Vertex AI region, e.g. us-east5 or europe-west1 (else CLOUD_ML_REGION)"

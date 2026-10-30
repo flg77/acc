@@ -104,6 +104,11 @@
 #                            (production only; default: false).  Equivalent
 #                            to passing the `--webgui` flag.  build/rebuild
 #                            always bake the acc-webgui image regardless.
+#   ACC_COMPOSE_OVERLAYS=a.yml,b.yml
+#                            Extra compose files layered on the production stack
+#                            (shell env or .env; relative to the config root).
+#   ACC_BUILD_HOOK=path.sh   Script run after build/rebuild for an image such an
+#                            overlay needs (gets --no-cache on rebuild).
 #   DETACH=false             Run in foreground instead of detached (default: true)
 #   ACC_CLI_IMAGE=...        Override the cli image reference (default: localhost/acc-cli:0.2.0)
 #   ACC_CLI_NETWORK=...      Override podman --network (default: host)
@@ -338,6 +343,52 @@ if [[ "$STACK" == "production" && -n "$USERNS_VAL" && -f "$USERNS_OVERLAY" ]]; t
     BASE_CMD+=(-f "$USERNS_OVERLAY")
 fi
 
+# ── Extra compose overlays + build hook (opt-in) ───────────────────────────────
+# ACC_COMPOSE_OVERLAYS  comma-separated compose files layered after the base
+#                       (and before podman-compose.local.yml, which still wins).
+# ACC_BUILD_HOOK        a bash script run after `build` / `rebuild`, for an
+#                       image an overlay needs that the base compose does not
+#                       build.  It gets ACC_IMAGE_PREFIX, ACC_VERSION and
+#                       ACC_SHARE_DIR in its environment, and `--no-cache` as
+#                       its argument on rebuild.
+# Read from the shell env first, then the env file.  Relative paths resolve
+# against the configuration root.  A named file that is missing is an error.
+_env_file_val() {
+    [[ -f "$ACC_ENV_FILE" ]] || return 0
+    grep -E "^$1=" "$ACC_ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"'" || true
+}
+_resolve_path() {
+    local p="${1#"${1%%[![:space:]]*}"}"
+    p="${p%"${p##*[![:space:]]}"}"
+    [[ -z "$p" || "$p" == /* ]] && { echo "$p"; return; }
+    echo "$REPO_ROOT/$p"
+}
+EXTRA_OVERLAYS="${ACC_COMPOSE_OVERLAYS:-$(_env_file_val ACC_COMPOSE_OVERLAYS)}"
+BUILD_HOOK="$(_resolve_path "${ACC_BUILD_HOOK:-$(_env_file_val ACC_BUILD_HOOK)}")"
+if [[ -n "$EXTRA_OVERLAYS" && "$STACK" == "production" ]]; then
+    IFS=',' read -ra _overlays <<< "$EXTRA_OVERLAYS"
+    for _ov in "${_overlays[@]}"; do
+        _ov="$(_resolve_path "$_ov")"
+        [[ -z "$_ov" ]] && continue
+        if [[ ! -f "$_ov" ]]; then
+            echo "ERROR: ACC_COMPOSE_OVERLAYS names a missing file: $_ov" >&2
+            exit 1
+        fi
+        BASE_CMD+=(-f "$_ov")
+    done
+elif [[ -n "$EXTRA_OVERLAYS" ]]; then
+    echo "WARNING: ACC_COMPOSE_OVERLAYS is only available in production. Ignoring it." >&2
+fi
+run_build_hook() {
+    [[ -n "$BUILD_HOOK" ]] || return 0
+    if [[ ! -f "$BUILD_HOOK" ]]; then
+        echo "ERROR: ACC_BUILD_HOOK names a missing file: $BUILD_HOOK" >&2
+        exit 1
+    fi
+    echo "▶ Build hook: $BUILD_HOOK $*"
+    bash "$BUILD_HOOK" "$@"
+}
+
 # ── Operator-local compose overrides (gitignored) ──────────────────────────────
 # Instance-specific mounts / env that must NOT live in the tracked compose —
 # e.g. a local package catalog for infuse.  Auto-included LAST (so it wins) when
@@ -568,6 +619,7 @@ case "$COMMAND" in
     build)
         echo "▶ Building images..."
         "${BASE_CMD[@]}" build "$@"
+        run_build_hook
         echo "✓ Build complete."
         ;;
 
@@ -1248,6 +1300,7 @@ PY
         # the FROM base images (UBI10, nats:alpine, etc.) so a CVE in the
         # base layer isn't carried forward by a stale cache.
         "${BASE_CMD[@]}" build --no-cache --pull "$@"
+        run_build_hook --no-cache
         echo "✓ Rebuild complete."
         echo ""
         echo "  Roll the running stack onto the new images:"

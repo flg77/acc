@@ -153,15 +153,15 @@ async def test_a_destructive_call_is_still_asked_despite_a_grant():
 async def test_an_unknown_host_is_asked_and_always_allow_puts_it_on_the_list():
     queue, core = _queue(), _Core()
     task = asyncio.create_task(dispatch_invocations(
-        [_inv("ssh_exec", host="lab1.ic3net.internal", cmd="uptime")], core, _role(),
+        [_inv("ssh_exec", host="lab1.example.internal", cmd="uptime")], core, _role(),
         oversight_queue=queue, operating_mode="AUTO"))
     item = await _answer(queue, ANSWER_ALWAYS)
-    assert "ssh to lab1.ic3net.internal" in item.question["text"]
+    assert "ssh to lab1.example.internal" in item.question["text"]
     [out] = await task
     assert out.ok and core.calls[-1][2] is True           # the adapter saw the approval
-    assert await GrantStore.for_queue(queue).covering(ROLE, "host:lab1.ic3net.internal")
+    assert await GrantStore.for_queue(queue).covering(ROLE, "host:lab1.example.internal")
     # The host grant also answers the call's system-access question: nothing asked.
-    [out2] = await dispatch_invocations([_inv("ssh_exec", host="lab1.ic3net.internal", cmd="uptime")],
+    [out2] = await dispatch_invocations([_inv("ssh_exec", host="lab1.example.internal", cmd="uptime")],
                                         core, _role(), oversight_queue=queue, operating_mode="AUTO")
     assert out2.ok and await queue.pending() == [] and core.calls[-1][2] is True
 
@@ -171,9 +171,9 @@ async def test_a_host_in_the_approved_plan_is_not_asked():
     queue, core = _queue(), _Core()
     store = MissionStore.for_queue(queue)
     await store.create(["t-1"], principal="op", approver="op", workspace="/ws",
-                       plan={"steps": [{"role": "devops_engineer"}], "hosts": ["lab2.ic3net.internal"]})
+                       plan={"steps": [{"role": "devops_engineer"}], "hosts": ["lab2.example.internal"]})
     [out] = await dispatch_invocations(
-        [_inv("ssh_exec", host="lab2.ic3net.internal", cmd="uptime")], core, _role(),
+        [_inv("ssh_exec", host="lab2.example.internal", cmd="uptime")], core, _role(),
         oversight_queue=queue, operating_mode="ASK_ONCE", thread_ids=["t-1"], task_id="t-1")
     assert out.ok and await queue.pending() == [] and core.calls[-1][2] is True
 

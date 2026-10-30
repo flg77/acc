@@ -283,6 +283,11 @@ class CollectiveSnapshot:
     # HEARTBEAT (acc.agent._mission_summaries), newest first.
     missions: list[dict] = field(default_factory=list)
 
+    # CS-03 -- external coding agents' work items by item_id (the summary
+    # rows of acc.external_work): the arbiter's HEARTBEAT replaces the set,
+    # an EXTERNAL_WORK signal updates one row between heartbeats.
+    external_work: dict[str, dict] = field(default_factory=dict)
+
     # 1.4 -- pending Assistant proposals by proposal_id (the full payload:
     # kind, params, summary, rationale, goal_text, task_id).  A pending
     # oversight row joins by ``item.task_id == proposal_id``.  FIFO-capped.

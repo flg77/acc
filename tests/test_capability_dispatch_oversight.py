@@ -229,3 +229,107 @@ async def test_headless_auto_rejects_without_blocking(monkeypatch):
     # Audit trail: the request was submitted then recorded resolved (not left
     # dangling in PENDING).
     assert await queue.pending_count() == 0
+
+
+# ---------------------------------------------------------------------------
+# A task does not re-ask a question it already has the answer to
+# (lighthouse 2026-09-27, PB-13 finding 11: an expired HIGH item was re-filed for
+# the same task every 5 minutes -- one item per gated marker in the reply)
+# ---------------------------------------------------------------------------
+
+
+def _counting(queue: HumanOversightQueue) -> list[str]:
+    """Record every submitted oversight_id; the real submit still runs."""
+    submitted: list[str] = []
+    real_submit = queue.submit
+
+    async def submit(*args, **kwargs):
+        oid = await real_submit(*args, **kwargs)
+        submitted.append(oid)
+        return oid
+
+    queue.submit = submit  # type: ignore[method-assign]
+    return submitted
+
+
+@pytest.mark.asyncio
+async def test_unanswered_gate_is_not_asked_again_in_the_same_task():
+    """Nobody answers the first question -> the rest of the reply's gated
+    calls end without a new item, identical or not, and without a second
+    wait."""
+    queue = HumanOversightQueue(redis_client=None, collective_id="t", timeout_s=1)
+    submitted = _counting(queue)
+    core = _StubCore({"danger": _StubManifest("CRITICAL")})
+    role = RoleDefinitionConfig(allowed_skills=["danger"])
+
+    outcomes = await asyncio.wait_for(
+        dispatch_invocations(
+            [_crit_inv(text="a"), _crit_inv(text="a"), _crit_inv(text="b")],
+            core, role, oversight_queue=queue, task_id="t-exp",
+        ),
+        timeout=1.9,  # one wait, not three
+    )
+
+    assert len(submitted) == 1, "only the first call may file an item"
+    assert "oversight_expired" in outcomes[0].error, outcomes[0].error
+    for o in outcomes[1:]:
+        assert o.ok is False
+        assert o.error.startswith("oversight_not_asked:"), o.error
+        assert submitted[0] in o.error
+    assert core.calls == []
+    assert await queue.pending_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_rejected_call_is_not_asked_again_but_another_call_is():
+    """A human answered: the identical call is not re-asked, a different one
+    is (and runs when approved)."""
+    queue = HumanOversightQueue(redis_client=None, collective_id="t", timeout_s=5)
+    submitted = _counting(queue)
+    core = _StubCore({"danger": _StubManifest("CRITICAL")})
+    role = RoleDefinitionConfig(allowed_skills=["danger"])
+
+    async def operator():
+        # First item: reject.  Second item (the different call): approve.
+        for decide in ("reject", "approve"):
+            while True:
+                items = await queue.pending()
+                if items:
+                    break
+                await asyncio.sleep(0.02)
+            if decide == "reject":
+                await queue.reject(items[0].oversight_id, "op", "no")
+            else:
+                await queue.approve(items[0].oversight_id, "op")
+
+    op = asyncio.create_task(operator())
+    outcomes = await asyncio.wait_for(
+        dispatch_invocations(
+            [_crit_inv(text="a"), _crit_inv(text="a"), _crit_inv(text="b")],
+            core, role, oversight_queue=queue, task_id="t-rej",
+        ),
+        timeout=5,
+    )
+    await op
+
+    assert len(submitted) == 2
+    assert "oversight_rejected" in outcomes[0].error
+    assert outcomes[1].error.startswith("oversight_not_asked:"), outcomes[1].error
+    assert outcomes[2].ok is True
+    assert core.calls == [("danger", {"text": "b"})]
+
+
+@pytest.mark.asyncio
+async def test_gate_memory_is_per_task():
+    """A new task asks again: the memory lives for one dispatch round."""
+    queue = HumanOversightQueue(redis_client=None, collective_id="t", timeout_s=1)
+    submitted = _counting(queue)
+    core = _StubCore({"danger": _StubManifest("CRITICAL")})
+    role = RoleDefinitionConfig(allowed_skills=["danger"])
+
+    for task_id in ("t-a", "t-b"):
+        outcomes = await dispatch_invocations(
+            [_crit_inv()], core, role, oversight_queue=queue, task_id=task_id,
+        )
+        assert "oversight_expired" in outcomes[0].error, outcomes[0].error
+    assert len(submitted) == 2

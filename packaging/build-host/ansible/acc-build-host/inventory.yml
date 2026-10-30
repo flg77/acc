@@ -9,4 +9,17 @@ all:
       vars:
         ansible_user: "{{ lookup('ansible.builtin.env', 'ACC_SSH_USER') | default('flg', true) }}"
       hosts:
-        acc-build.ic3net.internal:
+        # The VM is rpm-builder (lab-gitops vms/rpm-builder, backlog 024); the
+        # operator's `Host acc-build` ssh alias points at it as the build user.
+        rpm-builder.ic3net.internal:
+          # 200 GB disk, but the kickstart's automatic layout gave / (where
+          # /srv/acc-build lives) 70 GB and /home the rest.
+          acc_build_host_min_free_gb: 40
+          # mock, copr-cli and qemu-user-static come from EPEL 10, which the
+          # Satellite serves to hosts on the dev-rcv-rhel10-acc content view.
+          acc_build_host_epel_repo: ic3net_internal_Epel_10_Packages
+          # Neither EPEL 10 nor RHEL 10 ships qemu-user-static, and EPEL 10's
+          # copr-cli needs CodeReady Builder's pygments: x86_64 chroots only,
+          # and the COPR leg stays on the workstation.
+          acc_build_host_aarch64: false
+          acc_build_host_copr: false

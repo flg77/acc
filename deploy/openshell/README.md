@@ -59,7 +59,11 @@ podman exec acc-agent-coding-agent acc-cli doctor --check sandbox
   asked about as system access (it cannot reach the host). The mission card
   then only appears for calls that run in the agent itself, such as `fs_write`.
 - **Destructive commands are still destructive.** The workspace inside is the
-  real one, so `rm` is still backed up first (058 Q1) or asked.
+  real one, so a destructive command is asked. Inside the sandbox an `rm` is
+  asked rather than backed up first (058 Q1's soft delete applies only when
+  `shell_exec` runs on the agent host): the sandbox's filesystem and working
+  directory are not the agent's, so a backup taken by the agent could miss
+  the file.
 
 ## 6. Roll back
 

@@ -95,10 +95,14 @@ PROPOSAL_LIFECYCLE_KINDS: frozenset[str] = frozenset({
 # staffing proposals of a reply are held in one plan the operator confirms
 # once.  Built by the agent, never parsed from a marker as a proposal itself.
 PROPOSAL_PLAN = "plan"
+# RDF-05 -- make facts an agent put in a requester's private knowledge graph
+# readable to others (a shared graph at the write's ceiling).  Like PUBLISH it
+# moves information across a context boundary, so a person approves it.
+PROPOSAL_KG_SHARE = "kg_share"
 
 PROPOSAL_KINDS: frozenset[str] = frozenset({
     PROPOSAL_SPAWN, PROPOSAL_ROLE_UPDATE, PROPOSAL_ROUTE, PROPOSAL_INFUSE,
-    PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH, PROPOSAL_PLAN,
+    PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH, PROPOSAL_PLAN, PROPOSAL_KG_SHARE,
 }) | PROPOSAL_LIFECYCLE_KINDS
 
 
@@ -117,6 +121,7 @@ DEFAULT_RISK_LEVEL: dict[str, str] = {
     PROPOSAL_LIFECYCLE_PAUSE: "LOW",      # idle workers only; memory kept in RAM
     PROPOSAL_LIFECYCLE_RESUME: "MEDIUM",
     PROPOSAL_PLAN: "HIGH",           # holds infuse/spawn/route; as high as what it holds
+    PROPOSAL_KG_SHARE: "HIGH",       # moves facts from one person's graph to a shared one
 }
 
 
@@ -243,7 +248,7 @@ _ANONYMOUS_APPROVERS: frozenset[str] = frozenset({"default", "tui:anonymous", "u
 
 
 _NEVER_AUTOEXEC: frozenset[str] = frozenset({
-    PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH,
+    PROPOSAL_ROLE_GAP, PROPOSAL_PUBLISH, PROPOSAL_KG_SHARE,
     # The plan card IS the question; executing it unasked would defeat it.
     PROPOSAL_PLAN,
 })
@@ -277,6 +282,7 @@ _DISPATCH_SUBJECTS_OF: dict[str, tuple[str, ...]] = {
     PROPOSAL_LIFECYCLE_RESUME: ("lifecycle_intent",),
     # A plan dispatches what it holds.
     PROPOSAL_PLAN: ("collective_reconcile", "task_assign", "assistant_proposal", "lifecycle_intent"),
+    PROPOSAL_KG_SHARE:    ("assistant_proposal",),
 }
 
 
@@ -668,6 +674,8 @@ async def dispatch_approved_proposal(
             return await _dispatch_infuse(signaling, cid, proposal)
         if proposal.kind == PROPOSAL_ROLE_GAP:
             return await _dispatch_role_gap(signaling, cid, proposal)
+        if proposal.kind == PROPOSAL_KG_SHARE:
+            return await _dispatch_kg_share(signaling, cid, proposal)
         if proposal.kind == PROPOSAL_PUBLISH:
             return await _dispatch_publish(
                 signaling, cid, proposal, redis_client, approver_tier=approver_tier,
@@ -845,6 +853,39 @@ def record_publish_proposed(p: AssistantProposal, oversight_id: str, redis_clien
         )
     except Exception:  # noqa: BLE001
         logger.debug("assistant_proposal: propose ledger write failed", exc_info=True)
+
+
+async def _dispatch_kg_share(signaling, cid: str, p: AssistantProposal) -> bool:
+    """Write an approved share into ``shared-<ceiling>`` (RDF-05).
+
+    Runs in the arbiter -- the store's only writer; the agent refuses to claim
+    a ``kg_share`` anywhere else (``Agent._may_dispatch_proposal``).  The
+    triples are validated again against the shapes in force *now*, and an
+    approval nobody can be named for is refused, as for PUBLISH.
+    """
+    approver = str(p.operator_id or "").strip()
+    if not approver or approver in _ANONYMOUS_APPROVERS:
+        logger.warning("assistant_proposal: kg_share %s has no named approver -- refusing", p.proposal_id)
+        return False
+    from acc.kg_shapes import load_shapes  # noqa: PLC0415
+    from acc.kg_writes import apply_share, with_writer  # noqa: PLC0415
+    outcome: dict[str, Any] = {"trigger": "kg_shared", "proposal_id": p.proposal_id,
+                               "approved_by": approver, "ts": time.time()}
+    ok = False
+    try:
+        shapes, _ = load_shapes()
+        name, n = await with_writer(cid, lambda store: apply_share(store, p.params or {}, shapes))
+        outcome.update(graph=name, triples=n)
+        ok = True
+    except Exception as exc:  # noqa: BLE001 -- a refused shape, a busy store: journalled, never raised
+        outcome.update(trigger="kg_share_refused", reason=str(exc)[:300])
+        logger.warning("assistant_proposal: kg_share %s not written: %s", p.proposal_id, exc)
+    from acc.signals import subject_assistant_proposal  # noqa: PLC0415
+    try:
+        await signaling.publish(subject_assistant_proposal(cid), outcome)
+    except Exception:  # noqa: BLE001
+        logger.debug("assistant_proposal: kg_share outcome announcement failed", exc_info=True)
+    return ok
 
 
 async def _dispatch_publish(
@@ -1396,6 +1437,7 @@ __all__ = [
     "dispatch_approved_proposal",
     "PROPOSAL_PUBLISH",
     "build_publish_proposal",
+    "PROPOSAL_KG_SHARE",
     "record_publish_proposed",
     "QuorumNotMet",
     "publish_proposal_pending",

@@ -87,6 +87,7 @@ KIND_THREAD = "thread"
 KIND_NOTES = "notes"
 KIND_EPISODES = "episodes"
 KIND_PEER_LESSONS = "peer_lessons"
+KIND_GRAPH = "knowledge_graph"
 KIND_STEER = "steer"
 
 #: Cost of the newline that joins two items inside a block.
@@ -396,6 +397,8 @@ def standard_blocks(
     peer_items: Sequence[str] = (),
     steer_heading: str = "",
     steer_items: Sequence[str] = (),
+    graph_heading: str = "",
+    graph_items: Sequence[str] = (),
 ) -> list[Block]:
     """The six blocks ACC actually assembles, with the orders already set.
 
@@ -409,22 +412,28 @@ def standard_blocks(
     them.  With no peer items the block renders nothing, so every prompt built
     before this block existed is byte-identical.
 
+    Knowledge-graph facts (RDF-06) render right after the reader's own notes
+    and are evicted **first** -- before peer lessons -- because their value is
+    unmeasured until PA-08's memory A/B says otherwise.  Display ranks were
+    renumbered to make room; every existing block keeps its relative order,
+    so a prompt without graph facts is byte-identical.
+
     The priority and display constants live here rather than at the call site
     so there is one place that knows the answer, and so a caller cannot get the
     eviction order subtly wrong while looking correct.
     """
     return [
         Block(
-            kind=KIND_TASK, items=(task,), priority=0, display_rank=5,
+            kind=KIND_TASK, items=(task,), priority=0, display_rank=6,
             divisible=False,
         ),
         Block(
             kind=KIND_STEER, items=tuple(steer_items), priority=1,
-            display_rank=4, heading=steer_heading,
+            display_rank=5, heading=steer_heading,
         ),
         Block(
             kind=KIND_THREAD, items=tuple(thread_items), priority=2,
-            display_rank=3, heading=thread_heading,
+            display_rank=4, heading=thread_heading,
         ),
         Block(
             kind=KIND_NOTES, items=tuple(notes_items), priority=3,
@@ -432,11 +441,15 @@ def standard_blocks(
         ),
         Block(
             kind=KIND_EPISODES, items=tuple(episodes_items), priority=4,
-            display_rank=2, heading=episodes_heading, footer=episodes_footer,
+            display_rank=3, heading=episodes_heading, footer=episodes_footer,
         ),
         Block(
             kind=KIND_PEER_LESSONS, items=tuple(peer_items), priority=5,
-            display_rank=1, heading=peer_heading,
+            display_rank=2, heading=peer_heading,
+        ),
+        Block(
+            kind=KIND_GRAPH, items=tuple(graph_items), priority=6,
+            display_rank=1, heading=graph_heading,
         ),
     ]
 

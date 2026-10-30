@@ -725,6 +725,51 @@ Re-enable a server on this host.
 .TP
 \fBacc-cli mcp disable\fR \fIserver\fR
 Disable a server on this host.
+.TP
+\fBacc-cli mcp serve\fR \fB\-\-executor\fR \fIEXECUTOR\fR [\fB\-\-session\fR \fISESSION\fR] [\fB\-\-collective\-id\fR \fICOLLECTIVE_ID\fR] [\fB\-\-nats\-url\fR \fINATS_URL\fR] [\fB\-\-redis\-url\fR \fIREDIS_URL\fR]
+Serve ACC to a coding agent over stdio (CS-02): work items, notes, ask.
+.RS
+.TP
+\fB\-\-executor\fR \fIEXECUTOR\fR
+Who is calling: claude-vertex, codex, cursor, ...
+.TP
+\fB\-\-session\fR \fISESSION\fR
+Session id (default: generated).
+.TP
+\fB\-\-redis\-url\fR \fIREDIS_URL\fR
+ACC's Redis (default ACC_REDIS_URL, else redis://localhost:6379).
+.RE
+.SS "ingest"
+Bring a coding agent's session into ACC (CS-05).
+.TP
+\fBacc-cli ingest session\fR \fB\-\-executor\fR \fIEXECUTOR\fR [\fB\-\-event\fR \fIEVENT\fR] [\fB\-\-transcript\fR \fITRANSCRIPT\fR] [\fB\-\-session\fR \fISESSION\fR] [\fB\-\-cwd\fR \fICWD\fR] [\fB\-\-model\fR \fIMODEL\fR] [\fB\-\-collective\-id\fR \fICOLLECTIVE_ID\fR] [\fB\-\-redis\-url\fR \fIREDIS_URL\fR] [\fB\-\-strict\fR] [\fB\-\-json\fR]
+Summarise one coding session into ACC's notes.
+.RS
+.TP
+\fB\-\-executor\fR \fIEXECUTOR\fR
+claude-vertex, codex, cursor, ...
+.TP
+\fB\-\-event\fR \fIEVENT\fR
+The hook's JSON event, or '-' to read it from stdin.
+.TP
+\fB\-\-transcript\fR \fITRANSCRIPT\fR
+Transcript file (JSONL or text).
+.TP
+\fB\-\-session\fR \fISESSION\fR
+Session id (else from the event).
+.TP
+\fB\-\-cwd\fR \fICWD\fR
+Working directory (else from the event, else here).
+.TP
+\fB\-\-model\fR \fIMODEL\fR
+models.yaml entry that writes the summary (a local one); default: a digest.
+.TP
+\fB\-\-redis\-url\fR \fIREDIS_URL\fR
+ACC's Redis (default ACC_REDIS_URL, else redis://localhost:6379).
+.TP
+\fB\-\-strict\fR
+Exit non-zero on any error.
+.RE
 .SS "trace"
 Tail NATS for messages mentioning a specific task_id.
 .PP
@@ -1484,6 +1529,22 @@ Render the podman-compose overlay that runs the instance with its roots.
 .TP
 \fBacc-cli instance env\fR \fIid\fR
 Shell environment for the surfaces (TUI, acc-cli) to attach to the instance.
+.SS "up"
+Start the container stack (acc-deploy.sh up).
+.PP
+\fBacc-cli up\fR
+.SS "down"
+Stop the container stack (acc-deploy.sh down).
+.PP
+\fBacc-cli down\fR
+.SS "restart"
+Re-create the stack on the current images (acc-deploy.sh restart).
+.PP
+\fBacc-cli restart\fR
+.SS "stack"
+Any acc-deploy.sh verb (build, rebuild, ps, logs, ...).
+.PP
+\fBacc-cli stack\fR
 .SS "schedule"
 Manage recurring task schedules (proposal 005).
 .TP

@@ -62,7 +62,9 @@ def test_invalid_registry_is_empty(tmp_path, monkeypatch):
 
 def test_model_env_anthropic():
     env = model_env(ModelEntry(model_id="x", backend="anthropic", model="claude-sonnet-4-6"))
-    assert env == {"ACC_LLM_BACKEND": "anthropic", "ACC_ANTHROPIC_MODEL": "claude-sonnet-4-6"}
+    # CS-07: the provider is always set, so a role moved off Vertex does not keep it.
+    assert env == {"ACC_LLM_BACKEND": "anthropic", "ACC_ANTHROPIC_MODEL": "claude-sonnet-4-6",
+                   "ACC_ANTHROPIC_PROVIDER": "anthropic"}
 
 
 def test_model_env_ollama():

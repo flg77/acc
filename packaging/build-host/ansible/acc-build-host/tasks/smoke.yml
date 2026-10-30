@@ -12,6 +12,7 @@
       --build-root {{ acc_build_host_build_root }}
       --gnupghome {{ acc_build_host_gnupghome }}
       --min-free-gb {{ acc_build_host_min_free_gb }}
+      {{ '' if acc_build_host_copr else '--no-copr' }}
       --chroots "{{ (acc_build_host_mock_chroots + (acc_build_host_mock_chroots_aarch64 if acc_build_host_aarch64 else [])) | join(' ') }}"
       {{ ('--fingerprint ' ~ acc_build_host_key_fingerprint) if acc_build_host_key_fingerprint else '' }}
       {{ ('--channel-key-url ' ~ acc_build_host_channel_key_url) if acc_build_host_channel_key_url else '' }}

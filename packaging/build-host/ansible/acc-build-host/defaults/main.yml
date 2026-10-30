@@ -45,6 +45,22 @@ acc_build_host_channel_key_url: ""
 acc_build_host_authorized_keys: []
 acc_build_host_authorized_keys_file: ""
 
+# ---- EPEL (mock, mock-core-configs, copr-cli, qemu-user-static live there).
+# The subscription-manager repo id to enable before the packages; "" = the host
+# already has EPEL however it gets it (epel-release, a .repo file).
+acc_build_host_epel_repo: ""
+
+# ---- Read access to acc-spearhead for builds that clone instead of receiving
+# `git archive` from the workstation (lab-gitops ansible/acc-build's RPM leg).
+# Provision makes the key pair once; its PUBLIC half goes onto the repository as
+# a READ-ONLY deploy key by hand (gh repo deploy-key add, HOWTO §2b). "" = none.
+acc_build_host_deploy_key: "{{ acc_build_host_home }}/.ssh/acc-spearhead-deploy"
+
+# copr-cli, for the public COPR leg (release-copr.sh runs on the workstation).
+# false on a RHEL 10 host without CodeReady Builder: EPEL 10's copr-cli needs a
+# python3-pygments newer than AppStream's.
+acc_build_host_copr: true
+
 # ---- The mock chroots the host must be able to build (packaging/rpm/mock-matrix.sh).
 # The aarch64 rows run under qemu-user-static: slow, but unattended.
 acc_build_host_mock_chroots:

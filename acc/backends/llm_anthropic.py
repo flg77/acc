@@ -14,6 +14,41 @@ logger = logging.getLogger(__name__)
 _RETRYABLE_TYPES = {"overloaded_error", "api_error"}
 
 
+
+#: Output-token ceiling per call.  Was a hard-coded 4096, which cut long
+#: answers (audit reports, generated code) short without a word.
+DEFAULT_MAX_OUTPUT_TOKENS = 8192
+
+
+def _max_output_tokens() -> int:
+    try:
+        n = int(os.environ.get("ACC_LLM_MAX_OUTPUT_TOKENS", "") or DEFAULT_MAX_OUTPUT_TOKENS)
+    except ValueError:
+        n = DEFAULT_MAX_OUTPUT_TOKENS
+    return max(256, n)
+
+def _vertex_client(project_id: str, region: str) -> "anthropic.AsyncAnthropicVertex":
+    """Claude through Google Vertex AI (CS-07).
+
+    Authenticates with application default credentials -- the file named by
+    ``GOOGLE_APPLICATION_CREDENTIALS``, or gcloud's own -- which the SDK reads
+    through ``google-auth`` (the ``vertex`` extra).  ACC never opens the file.
+    An empty project or region defers to the SDK's ``ANTHROPIC_VERTEX_PROJECT_ID``
+    and ``CLOUD_ML_REGION``.  No API key is sent: a host that also holds
+    ``ANTHROPIC_API_KEY`` for another role cannot have this call billed to it.
+    """
+    try:
+        import google.auth  # noqa: F401, PLC0415 -- what AnthropicVertex needs at the first call
+    except ImportError as exc:
+        raise ImportError(
+            "anthropic backend with provider 'vertex' needs google-auth: "
+            "pip install 'acc[vertex]' (or the 'vertex' feature in the image)",
+            name="google.auth",
+        ) from exc
+    given = {k: v for k, v in (("project_id", project_id), ("region", region)) if v}
+    return anthropic.AsyncAnthropicVertex(**given)
+
+
 class AnthropicBackend:
     """Anthropic Claude SDK backend.
 
@@ -27,23 +62,30 @@ class AnthropicBackend:
 
     def __init__(
         self, model: str, embedding_model_path: str, *, accepts_images: bool | None = None,
+        provider: str = "anthropic", vertex_project_id: str = "", vertex_region: str = "",
     ) -> None:
         self._model = model
         # F2b -- every current Claude model takes images, so undeclared sends
         # them; a model declared `accepts_images: false` is refused.
         self._accepts_images = accepts_images
         self._embedding_model_path = embedding_model_path
-        # Accept the ACC-namespaced key OR the standard Anthropic SDK env name.
-        # Operators (and the SDK itself) default to ANTHROPIC_API_KEY; honouring
-        # it means "I set ANTHROPIC_API_KEY" actually authenticates instead of
-        # silently sending an empty key (2026-06-22 debug report).
-        api_key = (os.environ.get("ACC_ANTHROPIC_API_KEY")
-                   or os.environ.get("ANTHROPIC_API_KEY") or "")
-        if not api_key:
-            logger.warning(
-                "anthropic backend: no API key in ACC_ANTHROPIC_API_KEY or "
-                "ANTHROPIC_API_KEY — requests will 401")
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        self._provider = provider or "anthropic"
+        if self._provider == "vertex":
+            self._client = _vertex_client(vertex_project_id, vertex_region)
+        elif self._provider == "anthropic":
+            # Accept the ACC-namespaced key OR the standard Anthropic SDK env name.
+            # Operators (and the SDK itself) default to ANTHROPIC_API_KEY; honouring
+            # it means "I set ANTHROPIC_API_KEY" actually authenticates instead of
+            # silently sending an empty key (2026-06-22 debug report).
+            api_key = (os.environ.get("ACC_ANTHROPIC_API_KEY")
+                       or os.environ.get("ANTHROPIC_API_KEY") or "")
+            if not api_key:
+                logger.warning(
+                    "anthropic backend: no API key in ACC_ANTHROPIC_API_KEY or "
+                    "ANTHROPIC_API_KEY — requests will 401")
+            self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        else:
+            raise ValueError(f"anthropic backend: unknown provider {provider!r} (anthropic | vertex)")
         self._st_model = None  # lazy-loaded
 
     def _get_st_model(self):
@@ -101,7 +143,7 @@ class AnthropicBackend:
         try:
             message = await self._client.messages.create(
                 model=self._model,
-                max_tokens=4096,
+                max_tokens=_max_output_tokens(),
                 system=system_arg,
                 messages=[{
                     "role": "user",
@@ -152,6 +194,18 @@ class AnthropicBackend:
         # fold parsed-JSON keys in when the model emitted valid JSON;
         # keep ``text`` populated for legacy readers.
         result: dict = {"content": content, "usage": usage}
+        # A reply cut off at the output limit used to pass as a complete one
+        # (2026-10-05: a specialist's audit report ended mid-section and the
+        # reviewing assistant filled the gap with findings of its own).  Say so.
+        stop_reason = str(getattr(message, "stop_reason", "") or "")
+        result["stop_reason"] = stop_reason
+        if stop_reason == "max_tokens":
+            result["truncated"] = True
+            logger.warning(
+                "anthropic backend: reply hit max_tokens=%d (model=%s); raise "
+                "ACC_LLM_MAX_OUTPUT_TOKENS for longer answers",
+                _max_output_tokens(), self._model,
+            )
         try:
             parsed = json.loads(content)
             if isinstance(parsed, dict):

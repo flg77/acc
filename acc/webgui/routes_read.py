@@ -186,6 +186,7 @@ def board(collective_id: str, hub: ObserverHub = Depends(get_hub),
         oversight_recent_items=snap.get("oversight_recent_items"),
         assistant_outcomes=snap.get("assistant_outcomes"),
         signal_flow_log=snap.get("signal_flow_log"),
+        external_work=snap.get("external_work"),
     )
     # HG-40.1b item 4 -- a viewer sees the items they asked for; an operator
     # sees the collective.

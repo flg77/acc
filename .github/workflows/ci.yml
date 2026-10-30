@@ -10,6 +10,11 @@
 # in-house Tekton acc-build pipeline, which tests AND builds the images, so
 # everything can be tested in house. Both call tools/ci/run_tests.sh.
 # Minutes, the budget and the Tekton side are backlog item CI-01 in the vault.
+#
+# The budget switch: lab-gitops ansible/gha-budget sets the repository variable
+# ACC_CI_ROUTE from the included minutes left this month. While it says
+# "inhouse" every job here is skipped (no runner, no minutes) and the Tekton
+# acc-build pipeline is the only gate; unset or "online" runs as before.
 name: ci
 
 on:
@@ -33,6 +38,7 @@ env:
 jobs:
   gate:
     name: role QA gate + capability checksums
+    if: vars.ACC_CI_ROUTE != 'inhouse'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -57,6 +63,7 @@ jobs:
 
   tests:
     name: test suite
+    if: vars.ACC_CI_ROUTE != 'inhouse'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

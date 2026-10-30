@@ -141,12 +141,25 @@ def _may(agent, kind) -> bool:
     return Agent._may_dispatch_proposal(agent, kind)
 
 
-@pytest.mark.parametrize("kind", sorted(PROPOSAL_KINDS))
+#: Kinds whose dispatch is bound by something other than the bus matrix, so the
+#: NKey switch does not loosen them.  ``kg_share`` writes the knowledge store,
+#: whose lock admits one writer -- the arbiter (RDF-05).
+_NOT_MATRIX_BOUND = {"kg_share"}
+
+
+@pytest.mark.parametrize("kind", sorted(PROPOSAL_KINDS - _NOT_MATRIX_BOUND))
 def test_nkeys_off_permits_everything(kind):
     """Zero regression. With the matrix inert the publish would succeed, so
     refusing here would be ACC inventing a restriction the deployment never
     asked for."""
     assert _may(_mk(role="analyst", nkey_enabled=False), kind) is True
+
+
+@pytest.mark.parametrize("nkey_enabled", [False, True])
+def test_a_kg_share_is_the_arbiters_with_or_without_nkeys(nkey_enabled):
+    """Not invented by ACC: the store's own lock refuses a second writer."""
+    assert _may(_mk(role="analyst", nkey_enabled=nkey_enabled), "kg_share") is False
+    assert _may(_mk(role="arbiter", nkey_enabled=nkey_enabled), "kg_share") is True
 
 
 @pytest.mark.parametrize("kind, permitted", [

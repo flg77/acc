@@ -65,6 +65,16 @@ def _context(args):
             str(getattr(cfg.agent, "hub_collective_id", "") or ""), redis_client)
 
 
+def _me() -> str:
+    """Who runs the command, as a requester string -- so an operator's own
+    private graphs (RDF-05) are theirs to read, and nobody else's are."""
+    try:
+        from acc.identity import current  # noqa: PLC0415
+        return current().attribution()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _reader(args) -> tuple[str, str]:
     """``(ceiling, tier)``: the caller's, narrowed by ``--ceiling``."""
     from acc.kg import rank  # noqa: PLC0415
@@ -115,7 +125,7 @@ def _cmd_graphs(args) -> int:
     ceiling, _ = _reader(args)
     try:
         store = _store(cid)
-        graphs, hidden = store.graphs(ceiling), store.hidden_count(ceiling)
+        graphs, hidden = store.graphs(ceiling, _me()), store.hidden_count(ceiling, _me())
     except KGError as exc:
         print(f"kg: {exc}", file=sys.stderr)
         return EXIT_UNSUPPORTED
@@ -137,7 +147,7 @@ def _cmd_query(args) -> int:
     cid, _, _ = _context(args)
     ceiling, _ = _reader(args)
     try:
-        result = _store(cid).query(args.sparql, reader_ceiling=ceiling)
+        result = _store(cid).query(args.sparql, reader_ceiling=ceiling, reader=_me())
     except QueryRefused as exc:
         print(f"kg: refused: {exc}", file=sys.stderr)
         return EXIT_REFUSED

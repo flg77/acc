@@ -57,12 +57,12 @@ def test_parse_plan_reads_the_marker_and_validates():
     text = ('ok </reasoning>\n[PROPOSE_PLAN:{"goal": "security report", "steps": ['
             '{"role": "devops_engineer", "staffing": "reuse", "does": "audit {servers}"},'
             '{"role": "", "staffing": "reuse"}, {"role": "x", "staffing": "weird"}],'
-            ' "hosts": ["lab1.ic3net.internal", "bad host!", "10.0.0.5:22"]}]')
+            ' "hosts": ["lab1.example.internal", "bad host!", "10.0.0.5:22"]}]')
     plan = PC.parse_plan(text)
     assert plan is not None and plan.goal == "security report"
     assert [(s.role, s.staffing) for s in plan.steps] == [("devops_engineer", "reuse"), ("x", "reuse")]
     assert plan.steps[0].does == "audit {servers}"
-    assert plan.hosts == ["10.0.0.5:22", "lab1.ic3net.internal"]
+    assert plan.hosts == ["10.0.0.5:22", "lab1.example.internal"]
 
 
 @pytest.mark.parametrize("text", ["no plan here", "[PROPOSE_PLAN:{not json}]", "[PROPOSE_PLAN:{\"a\": 1"])

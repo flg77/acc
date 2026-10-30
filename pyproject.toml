@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentic-cell-corpus"
-version = "0.29.0"
+version = "0.30.0"
 description = "Biologically-inspired distributed AI agent governance framework"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -81,6 +81,8 @@ dev = [
     "rdflib>=7,<8",
     # The knowledge-store tests (tests/rdf/test_kg_store.py) skip without it.
     "pyoxigraph>=0.5,<0.6",
+    # The SHACL gate on kg_propose (tests/rdf/test_kg_skills.py).
+    "pyshacl>=0.26,<1",
 ]
 rdf = [
     # acc/lib/rdf is dependency-free; rdflib reads its output back (RDF-01)
@@ -89,6 +91,8 @@ rdf = [
     # The per-collective knowledge store (RDF-04): embedded Oxigraph, binary
     # wheels (abi3) for x86_64 Linux and Windows, no server.
     "pyoxigraph>=0.5,<0.6",
+    # The SHACL gate on what agents may write (RDF-05); pure Python.
+    "pyshacl>=0.26,<1",
 ]
 tui = [
     "textual>=0.80,<1.0",
@@ -122,6 +126,13 @@ mlflow = [
     # package (no server/UI deps) — keeps the extra light.  Opt-in via
     # ACC_MLFLOW_TRACKING_URI; acc.backends.mlflow_runs no-ops without it.
     "mlflow-skinny>=2.14,<3.0",
+]
+vertex = [
+    # CS-07 (proposal 062) -- the anthropic backend with
+    # `anthropic_provider: vertex` reaches Claude through Google Vertex AI.
+    # The SDK reads application default credentials through google-auth;
+    # only hosts that use Vertex need it (features/vertex.yaml).
+    "google-auth[requests]>=2.0,<3.0",
 ]
 sandbox = [
     # OpenShell kernel-enforced execution sandbox (proposal 051, Model 2).
